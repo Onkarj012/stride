@@ -1,3 +1,7 @@
 node_modules
-.env.local
+dist
+.env
+.env.*
+!.env.example
 .convex/local
+.DS_Store
