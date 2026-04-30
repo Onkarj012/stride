@@ -73,6 +73,55 @@ router.post("/chat", requireAuth, async (req: Request, res: Response) => {
       return;
     }
 
+    const today = new Date().toISOString().split("T")[0];
+
+    const profile = db
+      .prepare("SELECT * FROM user_profiles WHERE user_id = ?")
+      .get(req.user.userId) as any;
+
+    const todayMeals = db
+      .prepare("SELECT name, calories, protein, carbs, fat, time FROM meals WHERE user_id = ? AND date = ?")
+      .all(req.user.userId, today) as any[];
+
+    const todayWorkouts = db
+      .prepare("SELECT name, sets, duration, intensity FROM workouts WHERE user_id = ? AND date = ?")
+      .all(req.user.userId, today) as any[];
+
+    const recentDays = db
+      .prepare(
+        "SELECT date, SUM(calories) as cals FROM meals WHERE user_id = ? GROUP BY date ORDER BY date DESC LIMIT 7"
+      )
+      .all(req.user.userId) as any[];
+
+    const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
+    const totalProtein = todayMeals.reduce((s: number, m: any) => s + m.protein, 0);
+
+    let contextBlock = `USER PROFILE:\n`;
+    contextBlock += `Name: ${req.user.name}\n`;
+    if (profile?.weight) contextBlock += `Weight: ${profile.weight}kg\n`;
+    if (profile?.height) contextBlock += `Height: ${profile.height}cm\n`;
+    if (profile?.age) contextBlock += `Age: ${profile.age}\n`;
+    contextBlock += `Activity Level: ${profile?.activity_level || "moderate"}\n`;
+    if (profile?.calorie_target) contextBlock += `Daily Calorie Target: ${profile.calorie_target}\n`;
+    if (profile?.protein_target) contextBlock += `Daily Protein Target: ${profile.protein_target}g\n`;
+    if (profile?.carb_target) contextBlock += `Daily Carb Target: ${profile.carb_target}g\n`;
+    if (profile?.fat_target) contextBlock += `Daily Fat Target: ${profile.fat_target}g\n`;
+
+    contextBlock += `\nTODAY'S LOG (${today}):\n`;
+    contextBlock += `Calories consumed: ${totalCals}\n`;
+    contextBlock += `Protein: ${totalProtein}g\n`;
+    contextBlock += `Meals logged: ${todayMeals.length}\n`;
+    if (todayMeals.length > 0) {
+      contextBlock += `Meals: ${todayMeals.map((m: any) => `${m.name} (${m.calories}cal, ${m.time})`).join(", ")}\n`;
+    }
+    contextBlock += `Workouts logged: ${todayWorkouts.length}\n`;
+    if (todayWorkouts.length > 0) {
+      contextBlock += `Workouts: ${todayWorkouts.map((w: any) => `${w.name} (${w.duration}, ${w.intensity})`).join(", ")}\n`;
+    }
+
+    contextBlock += `\nRECENT 7-DAY TREND:\n`;
+    contextBlock += recentDays.map((d: any) => `${d.date}: ${Math.round(d.cals || 0)}cal`).join(", ");
+
     const history = db
       .prepare(
         "SELECT role, content FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 20",
@@ -83,7 +132,7 @@ router.post("/chat", requireAuth, async (req: Request, res: Response) => {
       {
         role: "system",
         content:
-          "You are NutriBot 9000, an AI fitness and nutrition coach for Stride. You're direct, motivating, and use a cyberpunk/military tone. Give concise, actionable advice about workouts, nutrition, and fitness. Keep responses under 3 sentences. Use terms like 'OPERATOR' to address the user.",
+          `You are StrideCoach, an elite AI fitness and nutrition coach for Stride. You're direct, motivating, and use a bold, military-inspired tone. You have access to the user's profile, today's meals/workouts, and recent history. Give concise, actionable advice. Keep responses under 4 sentences. Address the user by their name when appropriate. Be specific - reference their actual data, targets, and progress. If they ask about nutrition, calculate macros from their targets. If they ask about workouts, suggest based on their recent activity. Use terms like 'OPERATOR' occasionally.\n\n${contextBlock}`,
       },
       ...history.map((m) => ({ role: m.role, content: m.content })),
       { role: "user", content: message },
@@ -260,5 +309,120 @@ Give a brief (2-3 sentences) weekly summary and recommendation. Military/cyberpu
     }
   },
 );
+
+router.post("/log-meal", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { description, mealType, time } = req.body as {
+      description?: string;
+      mealType?: string;
+      time?: string;
+    };
+    if (!description) {
+      res.status(400).json({ error: "Meal description required" });
+      return;
+    }
+
+    const prompt = `Analyze this meal and estimate ALL nutritional values based on the description. Be realistic and thorough.
+
+Meal type: ${mealType || "general"}
+Description: "${description}"
+
+Return ONLY a JSON object with these exact keys (no other text):
+- name: a short name for the meal (max 4 words)
+- calories: total calories (number)
+- protein: grams of protein (number)
+- carbs: grams of carbs (number)
+- fat: grams of fat (number)
+- suggestion: a one-sentence tip about this meal (max 15 words)`;
+
+    const content = await callAI([{ role: "user", content: prompt }], 300);
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const result = JSON.parse(jsonMatch ? jsonMatch[0] : content) as any;
+
+    const id = uuidv4();
+    const today = new Date().toISOString().split("T")[0];
+    const mealTime = time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+
+    db.prepare(
+      "INSERT INTO meals (id, user_id, date, name, calories, protein, carbs, fat, time, ai_suggestion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(id, req.user.userId, today, result.name || description.slice(0, 50), result.calories || 0, result.protein || 0, result.carbs || 0, result.fat || 0, mealTime, result.suggestion || null);
+
+    res.json({
+      _id: id,
+      name: result.name || description.slice(0, 50),
+      calories: result.calories || 0,
+      protein: result.protein || 0,
+      carbs: result.carbs || 0,
+      fat: result.fat || 0,
+      time: mealTime,
+      suggestion: result.suggestion || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post("/log-workout", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { description, duration, intensity } = req.body as {
+      description?: string;
+      duration?: string;
+      intensity?: string;
+    };
+    if (!description) {
+      res.status(400).json({ error: "Workout description required" });
+      return;
+    }
+
+    const prompt = `Analyze this workout description and estimate the details. Be realistic.
+
+Description: "${description}"
+Duration: ${duration || "not specified"}
+Intensity: ${intensity || "not specified"}
+
+Return ONLY a JSON object with these exact keys (no other text):
+- name: a short exercise/workout name (max 3 words)
+- sets: estimated sets (string like "3x12" or "4x8")
+- reps: reps per set (string)
+- weight: estimated weight used (string like "135lbs" or "Bodyweight")
+- duration: formatted duration (string like "30 min")
+- intensity: one of LOW, MEDIUM, HIGH, MAX
+- rationale: one sentence why this is a good workout (max 15 words)`;
+
+    const content = await callAI([{ role: "user", content: prompt }], 300);
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    const result = JSON.parse(jsonMatch ? jsonMatch[0] : content) as any;
+
+    const id = uuidv4();
+    const today = new Date().toISOString().split("T")[0];
+
+    db.prepare(
+      "INSERT INTO workouts (id, user_id, date, name, sets, reps, weight, duration, intensity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(
+      id,
+      req.user.userId,
+      today,
+      result.name || description.slice(0, 30),
+      result.sets || "3x10",
+      result.reps || "10",
+      result.weight || "Bodyweight",
+      result.duration || duration || "30 min",
+      result.intensity || intensity || "HIGH",
+    );
+
+    res.json({
+      _id: id,
+      name: result.name || description.slice(0, 30),
+      sets: result.sets || "3x10",
+      reps: result.reps || "10",
+      weight: result.weight || "Bodyweight",
+      duration: result.duration || duration || "30 min",
+      intensity: result.intensity || intensity || "HIGH",
+      rationale: result.rationale || "",
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
 
 export default router;

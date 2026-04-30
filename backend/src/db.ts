@@ -82,6 +82,19 @@ db.exec(`
     UNIQUE(user_id, week_start)
   );
 
+  CREATE TABLE IF NOT EXISTS user_profiles (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    weight REAL,
+    height REAL,
+    age INTEGER,
+    activity_level TEXT NOT NULL DEFAULT 'moderate',
+    calorie_target REAL,
+    protein_target REAL,
+    carb_target REAL,
+    fat_target REAL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

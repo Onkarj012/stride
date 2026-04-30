@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   Flame, Utensils, Dumbbell, TrendingUp, Bot, Menu, X,
-  Zap, Send, Plus, Trash2, Edit2, Loader2, XCircle, LogOut,
-  Sparkles, BrainCircuit, Moon, Sun
+  Zap, Send, Trash2, Loader2, LogOut,
+  Sparkles, BrainCircuit, Moon, Sun, User
 } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
@@ -30,6 +30,7 @@ const navItems = [
   { icon: Dumbbell, label: 'WORKOUT' },
   { icon: TrendingUp, label: 'STATS' },
   { icon: Bot, label: 'AI COACH' },
+  { icon: User, label: 'PROFILE' },
 ]
 
 export default function Dashboard() {
@@ -78,9 +79,28 @@ export default function Dashboard() {
     }
   }, [token, today])
 
+  const fetchProfile = useCallback(async () => {
+    if (!token) return
+    try {
+      const p = await apiFetch('/api/profile', {}, token)
+      setProfile(p)
+      setProfileForm({
+        weight: p.weight ? String(p.weight) : '',
+        height: p.height ? String(p.height) : '',
+        age: p.age ? String(p.age) : '',
+        activityLevel: p.activityLevel || 'moderate',
+        calorieTarget: p.calorieTarget ? String(p.calorieTarget) : '',
+        proteinTarget: p.proteinTarget ? String(p.proteinTarget) : '',
+        carbTarget: p.carbTarget ? String(p.carbTarget) : '',
+        fatTarget: p.fatTarget ? String(p.fatTarget) : '',
+      })
+    } catch (e) {}
+  }, [token])
+
   useEffect(() => {
     fetchData()
-  }, [fetchData])
+    fetchProfile()
+  }, [fetchData, fetchProfile])
 
   const totalCals = meals?.reduce((s: number, m: any) => s + m.calories, 0) || 0
   const totalProtein = meals?.reduce((s: number, m: any) => s + m.protein, 0) || 0
@@ -88,15 +108,19 @@ export default function Dashboard() {
   const totalFat = meals?.reduce((s: number, m: any) => s + m.fat, 0) || 0
   const totalBurned = (workouts?.length || 0) * 150
 
-  const [mealForm, setMealForm] = useState({ name: '', calories: '', protein: '', carbs: '', fat: '', time: '' })
-  const [editingMeal, setEditingMeal] = useState<string | null>(null)
+  const [mealForm, setMealForm] = useState({ description: '', mealType: 'breakfast', time: '' })
   const [mealLoading, setMealLoading] = useState(false)
   const [mealError, setMealError] = useState<string | null>(null)
 
-  const [workoutForm, setWorkoutForm] = useState({ name: '', sets: '', reps: '', weight: '', duration: '', intensity: 'HIGH' })
-  const [editingWorkout, setEditingWorkout] = useState<string | null>(null)
+  const [workoutForm, setWorkoutForm] = useState({ description: '', duration: '', intensity: 'HIGH' })
   const [workoutLoading, setWorkoutLoading] = useState(false)
   const [workoutError, setWorkoutError] = useState<string | null>(null)
+
+  const [profile, setProfile] = useState<any>(null)
+  const [profileForm, setProfileForm] = useState({ weight: '', height: '', age: '', activityLevel: 'moderate', calorieTarget: '', proteinTarget: '', carbTarget: '', fatTarget: '' })
+  const [profileLoading, setProfileLoading] = useState(false)
+  const [profileError, setProfileError] = useState<string | null>(null)
+  const [profileSuccess, setProfileSuccess] = useState(false)
 
   const [chatInput, setChatInput] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
@@ -111,70 +135,28 @@ export default function Dashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [chatMessages])
 
-  const handleEstimateMeal = async () => {
-    if (!mealForm.name.trim() || !token) return
-    setMealLoading(true)
-    setMealError(null)
-    try {
-      const result = await apiFetch('/api/ai/estimate-meal', {
-        method: 'POST',
-        body: JSON.stringify({ mealName: mealForm.name }),
-      }, token)
-      setMealForm(prev => ({
-        ...prev,
-        calories: String(result.calories),
-        protein: String(result.protein),
-        carbs: String(result.carbs),
-        fat: String(result.fat),
-      }))
-    } catch (err: any) {
-      setMealError(err.message || 'AI ESTIMATION FAILED')
-    } finally {
-      setMealLoading(false)
-    }
-  }
-
-  const handleSaveMeal = async () => {
+  const handleLogMeal = async () => {
     if (!token) return
-    if (!mealForm.name || !mealForm.calories) {
-      setMealError('NAME AND CALORIES REQUIRED')
+    if (!mealForm.description.trim()) {
+      setMealError('DESCRIPTION REQUIRED')
       return
     }
     setMealLoading(true)
     setMealError(null)
     try {
-      const time = mealForm.time || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
-      if (editingMeal) {
-        await apiFetch(`/api/meals/${editingMeal}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            name: mealForm.name,
-            calories: Number(mealForm.calories),
-            protein: Number(mealForm.protein) || 0,
-            carbs: Number(mealForm.carbs) || 0,
-            fat: Number(mealForm.fat) || 0,
-            time,
-          }),
-        }, token)
-        setEditingMeal(null)
-      } else {
-        await apiFetch('/api/meals', {
-          method: 'POST',
-          body: JSON.stringify({
-            name: mealForm.name,
-            calories: Number(mealForm.calories),
-            protein: Number(mealForm.protein) || 0,
-            carbs: Number(mealForm.carbs) || 0,
-            fat: Number(mealForm.fat) || 0,
-            time,
-          }),
-        }, token)
-      }
-      setMealForm({ name: '', calories: '', protein: '', carbs: '', fat: '', time: '' })
+      await apiFetch('/api/ai/log-meal', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: mealForm.description,
+          mealType: mealForm.mealType,
+          time: mealForm.time || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
+        }),
+      }, token)
+      setMealForm({ description: '', mealType: 'breakfast', time: '' })
       await fetchData()
       try { await apiFetch('/api/ai/daily-insights', { method: 'POST', body: JSON.stringify({ date: today }) }, token) } catch (e) {}
     } catch (err: any) {
-      setMealError(err.message || 'FAILED TO SAVE MEAL')
+      setMealError(err.message || 'FAILED TO LOG MEAL')
     } finally {
       setMealLoading(false)
     }
@@ -190,39 +172,27 @@ export default function Dashboard() {
     }
   }
 
-  const handleSaveWorkout = async () => {
+  const handleLogWorkout = async () => {
     if (!token) return
-    if (!workoutForm.name || !workoutForm.sets) {
-      setWorkoutError('NAME AND SETS REQUIRED')
+    if (!workoutForm.description.trim()) {
+      setWorkoutError('DESCRIPTION REQUIRED')
       return
     }
     setWorkoutLoading(true)
     setWorkoutError(null)
     try {
-      if (editingWorkout) {
-        await apiFetch(`/api/workouts/${editingWorkout}`, {
-          method: 'PUT',
-          body: JSON.stringify({
-            name: workoutForm.name, sets: workoutForm.sets,
-            reps: workoutForm.reps, weight: workoutForm.weight,
-            duration: workoutForm.duration, intensity: workoutForm.intensity,
-          }),
-        }, token)
-        setEditingWorkout(null)
-      } else {
-        await apiFetch('/api/workouts', {
-          method: 'POST',
-          body: JSON.stringify({
-            name: workoutForm.name, sets: workoutForm.sets,
-            reps: workoutForm.reps, weight: workoutForm.weight,
-            duration: workoutForm.duration, intensity: workoutForm.intensity,
-          }),
-        }, token)
-      }
-      setWorkoutForm({ name: '', sets: '', reps: '', weight: '', duration: '', intensity: 'HIGH' })
+      await apiFetch('/api/ai/log-workout', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: workoutForm.description,
+          duration: workoutForm.duration,
+          intensity: workoutForm.intensity,
+        }),
+      }, token)
+      setWorkoutForm({ description: '', duration: '', intensity: 'HIGH' })
       await fetchData()
     } catch (err: any) {
-      setWorkoutError(err.message || 'FAILED TO SAVE WORKOUT')
+      setWorkoutError(err.message || 'FAILED TO LOG WORKOUT')
     } finally {
       setWorkoutLoading(false)
     }
@@ -235,6 +205,35 @@ export default function Dashboard() {
       await fetchData()
     } catch (err: any) {
       setWorkoutError(err.message || 'FAILED TO DELETE')
+    }
+  }
+
+  const handleSaveProfile = async () => {
+    if (!token) return
+    setProfileLoading(true)
+    setProfileError(null)
+    setProfileSuccess(false)
+    try {
+      await apiFetch('/api/profile', {
+        method: 'POST',
+        body: JSON.stringify({
+          weight: profileForm.weight ? Number(profileForm.weight) : null,
+          height: profileForm.height ? Number(profileForm.height) : null,
+          age: profileForm.age ? Number(profileForm.age) : null,
+          activityLevel: profileForm.activityLevel,
+          calorieTarget: profileForm.calorieTarget ? Number(profileForm.calorieTarget) : null,
+          proteinTarget: profileForm.proteinTarget ? Number(profileForm.proteinTarget) : null,
+          carbTarget: profileForm.carbTarget ? Number(profileForm.carbTarget) : null,
+          fatTarget: profileForm.fatTarget ? Number(profileForm.fatTarget) : null,
+        }),
+      }, token)
+      setProfileSuccess(true)
+      await fetchProfile()
+      setTimeout(() => setProfileSuccess(false), 2000)
+    } catch (err: any) {
+      setProfileError(err.message || 'FAILED TO SAVE PROFILE')
+    } finally {
+      setProfileLoading(false)
     }
   }
 
@@ -305,39 +304,17 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950 text-black dark:text-gray-100 font-mono selection:bg-red-600 selection:text-white transition-colors">
       <nav className="sticky top-0 z-50 bg-white dark:bg-gray-950 border-b-4 border-black dark:border-gray-700 transition-colors">
-        <div className="flex items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-3">
-            <div className="text-xl font-black tracking-tighter">NUTRI_OS_v2.4</div>
-            {user && (
-              <div className="hidden lg:block text-xs font-bold text-neutral-500 dark:text-gray-400 border-l-2 border-black dark:border-gray-700 pl-3">
-                OP: {user.name.toUpperCase()}
-              </div>
-            )}
+        <div className="flex items-center px-4 py-3">
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="text-xl font-black tracking-tighter">STRIDE</div>
+            
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={toggleTheme}
-              className="hidden lg:flex items-center gap-2 px-3 py-2 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-black hover:text-white dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors"
-            >
-              {isDark ? <Sun size={14} /> : <Moon size={14} />}
-              {isDark ? 'LIGHT' : 'DARK'}
-            </button>
-            <button
-              onClick={logout}
-              className="hidden lg:flex items-center gap-2 px-3 py-2 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-red-600 hover:text-white transition-colors"
-            >
-              <LogOut size={14} /> LOGOUT
-            </button>
-            <button onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden p-2 border-2 border-black dark:border-gray-700 hover:bg-black hover:text-white dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors">
-              {menuOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
-          </div>
-          <div className="hidden lg:flex items-center gap-0">
+          <div className="hidden lg:flex items-center gap-0 mx-auto">
             {navItems.map((item) => (
               <button
                 key={item.label}
                 onClick={() => setActiveTab(item.label)}
-                className={`flex items-center gap-2 px-4 py-2 border-2 border-black dark:border-gray-700 -ml-[2px] first:ml-0 font-bold text-xs tracking-wider transition-all ${
+                className={`flex items-center gap-2 px-3 py-2 border-2 border-black dark:border-gray-700 -ml-[2px] first:ml-0 font-bold text-xs tracking-wider transition-all ${
                   activeTab === item.label
                     ? 'bg-black text-white dark:bg-gray-100 dark:text-gray-950'
                     : 'bg-white dark:bg-gray-950 text-black dark:text-gray-100 hover:bg-red-600 hover:text-white'
@@ -347,6 +324,23 @@ export default function Dashboard() {
                 {item.label}
               </button>
             ))}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={toggleTheme}
+              className="hidden lg:flex items-center gap-2 px-3 py-2 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-black hover:text-white dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors"
+            >
+              {isDark ? <Sun size={14} /> : <Moon size={14} />}
+            </button>
+            <button
+              onClick={logout}
+              className="hidden lg:flex items-center gap-2 px-3 py-2 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-red-600 hover:text-white transition-colors"
+            >
+              <LogOut size={14} />
+            </button>
+            <button onClick={() => setMenuOpen(!menuOpen)} className="lg:hidden p-2 border-2 border-black dark:border-gray-700 hover:bg-black hover:text-white dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors ml-auto">
+              {menuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
           </div>
         </div>
         {menuOpen && (
@@ -490,74 +484,43 @@ export default function Dashboard() {
               <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
                 <h2 className="text-3xl font-black tracking-tighter mb-6">MEAL LOG</h2>
                 <div className="border-2 border-black dark:border-gray-700 p-4 mb-6 bg-neutral-50 dark:bg-gray-900 transition-colors">
-                  <h3 className="text-sm font-bold mb-3">{editingMeal ? 'EDIT MEAL' : 'LOG NEW MEAL'}</h3>
-                  <div className="grid lg:grid-cols-2 gap-3">
-                    <input
-                      placeholder="MEAL NAME"
-                      value={mealForm.name}
-                      onChange={e => setMealForm({ ...mealForm, name: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <input
-                      placeholder="TIME (HH:MM)"
-                      value={mealForm.time}
-                      onChange={e => setMealForm({ ...mealForm, time: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <input
-                      placeholder="CALORIES"
-                      type="number"
-                      value={mealForm.calories}
-                      onChange={e => setMealForm({ ...mealForm, calories: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <input
-                      placeholder="PROTEIN (G)"
-                      type="number"
-                      value={mealForm.protein}
-                      onChange={e => setMealForm({ ...mealForm, protein: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <input
-                      placeholder="CARBS (G)"
-                      type="number"
-                      value={mealForm.carbs}
-                      onChange={e => setMealForm({ ...mealForm, carbs: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <input
-                      placeholder="FAT (G)"
-                      type="number"
-                      value={mealForm.fat}
-                      onChange={e => setMealForm({ ...mealForm, fat: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
+                  <h3 className="text-sm font-bold mb-3">LOG NEW MEAL — AI POWERED</h3>
+                  <div className="space-y-3">
+                    <div className="flex gap-3">
+                      <select
+                        value={mealForm.mealType}
+                        onChange={e => setMealForm({ ...mealForm, mealType: e.target.value })}
+                        className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                      >
+                        <option value="breakfast">BREAKFAST</option>
+                        <option value="lunch">LUNCH</option>
+                        <option value="snack">SNACK</option>
+                        <option value="dinner">DINNER</option>
+                      </select>
+                      <input
+                        placeholder="TIME (HH:MM)"
+                        value={mealForm.time}
+                        onChange={e => setMealForm({ ...mealForm, time: e.target.value })}
+                        className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600 flex-1"
+                      />
+                    </div>
+                    <textarea
+                      placeholder="DESCRIBE YOUR MEAL — what you ate, how it was prepared, portion size, ingredients... AI will estimate the macros for you."
+                      value={mealForm.description}
+                      onChange={e => setMealForm({ ...mealForm, description: e.target.value })}
+                      rows={3}
+                      className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600 resize-none"
                     />
                   </div>
                   <div className="flex gap-2 mt-3">
                     <button
-                      onClick={handleEstimateMeal}
-                      disabled={mealLoading || !mealForm.name}
-                      className="flex items-center gap-2 px-4 py-2 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-red-600 hover:text-white transition-colors disabled:opacity-50"
-                    >
-                      {mealLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                      AI ESTIMATE
-                    </button>
-                    <button
-                      onClick={handleSaveMeal}
-                      disabled={mealLoading}
+                      onClick={handleLogMeal}
+                      disabled={mealLoading || !mealForm.description.trim()}
                       className="flex items-center gap-2 px-4 py-2 bg-black dark:bg-gray-100 text-white dark:text-gray-950 text-xs font-bold border-2 border-black dark:border-gray-700 hover:bg-red-600 dark:hover:bg-red-600 dark:hover:text-white transition-colors disabled:opacity-50"
                     >
-                      {mealLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                      {editingMeal ? 'UPDATE' : 'LOG MEAL'}
+                      {mealLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                      AI LOG MEAL
                     </button>
-                    {editingMeal && (
-                      <button
-                        onClick={() => { setEditingMeal(null); setMealForm({ name: '', calories: '', protein: '', carbs: '', fat: '', time: '' }) }}
-                        className="flex items-center gap-2 px-4 py-2 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-neutral-200 dark:hover:bg-gray-700 transition-colors"
-                      >
-                        <XCircle size={14} /> CANCEL
-                      </button>
-                    )}
                   </div>
                   {mealError && (
                     <div className="mt-3 p-2 border-2 border-red-600 bg-red-50 dark:bg-red-950 text-xs font-bold text-red-700 dark:text-red-400">
@@ -569,7 +532,7 @@ export default function Dashboard() {
                 <div className="space-y-4">
                   {meals?.length === 0 && (
                     <div className="text-sm font-bold text-neutral-500 dark:text-gray-400 border-2 border-dashed border-neutral-300 dark:border-gray-600 p-8 text-center">
-                      NO MEALS LOGGED TODAY. ADD YOUR FIRST ENTRY ABOVE.
+                      NO MEALS LOGGED TODAY. DESCRIBE YOUR MEAL ABOVE AND LET AI HANDLE THE REST.
                     </div>
                   )}
                   {meals?.map((meal) => (
@@ -587,36 +550,18 @@ export default function Dashboard() {
                             <span>F: {meal.fat}G</span>
                           </div>
                         </div>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => {
-                              setEditingMeal(meal._id)
-                              setMealForm({
-                                name: meal.name,
-                                calories: String(meal.calories),
-                                protein: String(meal.protein),
-                                carbs: String(meal.carbs),
-                                fat: String(meal.fat),
-                                time: meal.time,
-                              })
-                            }}
-                            className="p-2 border-2 border-black dark:border-gray-700 hover:bg-black hover:text-white dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteMeal(meal._id)}
-                            className="p-2 border-2 border-black dark:border-gray-700 hover:bg-red-600 hover:text-white transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleDeleteMeal(meal._id)}
+                          className="p-2 border-2 border-black dark:border-gray-700 hover:bg-red-600 hover:text-white transition-colors"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                       {meal.aiSuggestion && (
                         <div className="mt-3 p-3 border-2 border-red-600 bg-red-50 dark:bg-red-950">
                           <div className="flex items-center gap-2 text-xs font-bold text-red-700 dark:text-red-400">
                             <Zap size={14} />
-                            <span>AI SUGGESTION: {meal.aiSuggestion}</span>
+                            <span>AI NOTE: {meal.aiSuggestion}</span>
                           </div>
                         </div>
                       )}
@@ -632,66 +577,43 @@ export default function Dashboard() {
               <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
                 <h2 className="text-3xl font-black tracking-tighter mb-6">TRAINING LOG</h2>
                 <div className="border-2 border-black dark:border-gray-700 p-4 mb-6 bg-neutral-50 dark:bg-gray-900 transition-colors">
-                  <h3 className="text-sm font-bold mb-3">{editingWorkout ? 'EDIT WORKOUT' : 'LOG NEW WORKOUT'}</h3>
-                  <div className="grid lg:grid-cols-3 gap-3">
-                    <input
-                      placeholder="EXERCISE NAME"
-                      value={workoutForm.name}
-                      onChange={e => setWorkoutForm({ ...workoutForm, name: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
+                  <h3 className="text-sm font-bold mb-3">LOG WORKOUT — AI POWERED</h3>
+                  <div className="space-y-3">
+                    <textarea
+                      placeholder="DESCRIBE YOUR WORKOUT — what exercises you did, how many sets/reps, what weights... AI will structure and log it for you."
+                      value={workoutForm.description}
+                      onChange={e => setWorkoutForm({ ...workoutForm, description: e.target.value })}
+                      rows={3}
+                      className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600 resize-none"
                     />
-                    <input
-                      placeholder="SETS (e.g. 4x8)"
-                      value={workoutForm.sets}
-                      onChange={e => setWorkoutForm({ ...workoutForm, sets: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <input
-                      placeholder="REPS"
-                      value={workoutForm.reps}
-                      onChange={e => setWorkoutForm({ ...workoutForm, reps: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <input
-                      placeholder="WEIGHT"
-                      value={workoutForm.weight}
-                      onChange={e => setWorkoutForm({ ...workoutForm, weight: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <input
-                      placeholder="DURATION"
-                      value={workoutForm.duration}
-                      onChange={e => setWorkoutForm({ ...workoutForm, duration: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
-                    />
-                    <select
-                      value={workoutForm.intensity}
-                      onChange={e => setWorkoutForm({ ...workoutForm, intensity: e.target.value })}
-                      className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
-                    >
-                      <option value="LOW">LOW</option>
-                      <option value="MEDIUM">MEDIUM</option>
-                      <option value="HIGH">HIGH</option>
-                      <option value="MAX">MAX</option>
-                    </select>
+                    <div className="flex gap-3">
+                      <input
+                        placeholder="DURATION (e.g. 45 min)"
+                        value={workoutForm.duration}
+                        onChange={e => setWorkoutForm({ ...workoutForm, duration: e.target.value })}
+                        className="flex-1 px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
+                      />
+                      <select
+                        value={workoutForm.intensity}
+                        onChange={e => setWorkoutForm({ ...workoutForm, intensity: e.target.value })}
+                        className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                      >
+                        <option value="LOW">LOW</option>
+                        <option value="MEDIUM">MEDIUM</option>
+                        <option value="HIGH">HIGH</option>
+                        <option value="MAX">MAX</option>
+                      </select>
+                    </div>
                   </div>
                   <div className="flex gap-2 mt-3">
                     <button
-                      onClick={handleSaveWorkout}
-                      disabled={workoutLoading}
+                      onClick={handleLogWorkout}
+                      disabled={workoutLoading || !workoutForm.description.trim()}
                       className="flex items-center gap-2 px-4 py-2 bg-black dark:bg-gray-100 text-white dark:text-gray-950 text-xs font-bold border-2 border-black dark:border-gray-700 hover:bg-red-600 dark:hover:bg-red-600 dark:hover:text-white transition-colors disabled:opacity-50"
                     >
-                      {workoutLoading ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                      {editingWorkout ? 'UPDATE' : 'LOG WORKOUT'}
+                      {workoutLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                      AI LOG WORKOUT
                     </button>
-                    {editingWorkout && (
-                      <button
-                        onClick={() => { setEditingWorkout(null); setWorkoutForm({ name: '', sets: '', reps: '', weight: '', duration: '', intensity: 'HIGH' }) }}
-                        className="flex items-center gap-2 px-4 py-2 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-neutral-200 dark:hover:bg-gray-700 transition-colors"
-                      >
-                        <XCircle size={14} /> CANCEL
-                      </button>
-                    )}
                   </div>
                   {workoutError && (
                     <div className="mt-3 p-2 border-2 border-red-600 bg-red-50 dark:bg-red-950 text-xs font-bold text-red-700 dark:text-red-400">
@@ -703,7 +625,7 @@ export default function Dashboard() {
                 <div className="space-y-4">
                   {workouts?.length === 0 && (
                     <div className="text-sm font-bold text-neutral-500 dark:text-gray-400 border-2 border-dashed border-neutral-300 dark:border-gray-600 p-8 text-center">
-                      NO WORKOUTS LOGGED TODAY. GET AFTER IT.
+                      NO WORKOUTS LOGGED TODAY. DESCRIBE YOUR SESSION ABOVE.
                     </div>
                   )}
                   {workouts?.map((w) => (
@@ -729,22 +651,6 @@ export default function Dashboard() {
                         <div className="text-xl font-black">{w.duration || '-'}</div>
                       </div>
                       <div className="flex gap-1 lg:justify-end">
-                        <button
-                          onClick={() => {
-                            setEditingWorkout(w._id)
-                            setWorkoutForm({
-                              name: w.name,
-                              sets: w.sets,
-                              reps: w.reps || '',
-                              weight: w.weight || '',
-                              duration: w.duration || '',
-                              intensity: w.intensity,
-                            })
-                          }}
-                          className="p-2 border-2 border-black dark:border-gray-700 hover:bg-black hover:text-white dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors"
-                        >
-                          <Edit2 size={14} />
-                        </button>
                         <button
                           onClick={() => handleDeleteWorkout(w._id)}
                           className="p-2 border-2 border-black dark:border-gray-700 hover:bg-red-600 hover:text-white transition-colors"
@@ -773,10 +679,7 @@ export default function Dashboard() {
                       <button
                         onClick={() => {
                           setWorkoutForm({
-                            name: workoutSuggestion.name,
-                            sets: workoutSuggestion.sets,
-                            reps: workoutSuggestion.reps,
-                            weight: workoutSuggestion.weight,
+                            description: `${workoutSuggestion.name} - ${workoutSuggestion.sets} ${workoutSuggestion.reps} ${workoutSuggestion.weight}`,
                             duration: workoutSuggestion.duration,
                             intensity: workoutSuggestion.intensity,
                           })
@@ -803,7 +706,7 @@ export default function Dashboard() {
                 <div className="border-4 border-black dark:border-gray-700 p-6 bg-red-600 dark:bg-red-800 text-white transition-colors">
                   <h3 className="text-xl font-black mb-4">AI COACH NOTES</h3>
                   <p className="text-sm font-bold leading-relaxed">
-                    YOUR VOLUME IS TRACKED AUTOMATICALLY. LOG CONSISTENTLY FOR BETTER AI RECOMMENDATIONS. REST PERIODS SHOULD NOT EXCEED 90 SECONDS FOR HYPERTROPHY.
+                    LOG YOUR WORKOUTS WITH NATURAL LANGUAGE. DESCRIBE WHAT YOU DID AND AI WILL STRUCTURE THE DATA, ESTIMATE VOLUME, AND TRACK YOUR PROGRESS AUTOMATICALLY.
                   </p>
                 </div>
               </div>
@@ -884,7 +787,7 @@ export default function Dashboard() {
                     <Bot size={20} />
                   </div>
                   <div>
-                    <h2 className="text-lg font-black">NUTRI_BOT_9000</h2>
+                    <h2 className="text-lg font-black">STRIDE COACH</h2>
                     <div className="flex items-center gap-1 text-xs font-bold text-red-600">
                       <span className="w-2 h-2 bg-red-600 rounded-full animate-pulse" /> ONLINE
                     </div>
@@ -946,12 +849,151 @@ export default function Dashboard() {
               </div>
             </motion.div>
           )}
+
+          {activeTab === 'PROFILE' && (
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-2xl mx-auto space-y-6">
+              <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+                <h2 className="text-3xl font-black tracking-tighter mb-6">OPERATOR PROFILE</h2>
+                <p className="text-sm font-bold text-neutral-500 dark:text-gray-400 mb-6">
+                  SET YOUR BODY METRICS AND TARGETS. AI WILL USE THIS DATA TO PERSONALIZE RECOMMENDATIONS.
+                </p>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold mb-1 text-neutral-500 dark:text-gray-400">WEIGHT (KG)</label>
+                      <input
+                        type="number"
+                        value={profileForm.weight}
+                        onChange={e => setProfileForm({ ...profileForm, weight: e.target.value })}
+                        placeholder="e.g. 75"
+                        className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold mb-1 text-neutral-500 dark:text-gray-400">HEIGHT (CM)</label>
+                      <input
+                        type="number"
+                        value={profileForm.height}
+                        onChange={e => setProfileForm({ ...profileForm, height: e.target.value })}
+                        placeholder="e.g. 175"
+                        className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold mb-1 text-neutral-500 dark:text-gray-400">AGE</label>
+                      <input
+                        type="number"
+                        value={profileForm.age}
+                        onChange={e => setProfileForm({ ...profileForm, age: e.target.value })}
+                        placeholder="e.g. 28"
+                        className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold mb-1 text-neutral-500 dark:text-gray-400">ACTIVITY LEVEL</label>
+                      <select
+                        value={profileForm.activityLevel}
+                        onChange={e => setProfileForm({ ...profileForm, activityLevel: e.target.value })}
+                        className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                      >
+                        <option value="sedentary">SEDENTARY</option>
+                        <option value="light">LIGHT</option>
+                        <option value="moderate">MODERATE</option>
+                        <option value="active">ACTIVE</option>
+                        <option value="intense">INTENSE</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="border-t-2 border-black dark:border-gray-700 pt-4">
+                    <h3 className="text-sm font-bold mb-3 text-red-600">DAILY MACRO TARGETS</h3>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold mb-1 text-neutral-500 dark:text-gray-400">CALORIES</label>
+                        <input
+                          type="number"
+                          value={profileForm.calorieTarget}
+                          onChange={e => setProfileForm({ ...profileForm, calorieTarget: e.target.value })}
+                          placeholder="2400"
+                          className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold mb-1 text-neutral-500 dark:text-gray-400">PROTEIN (G)</label>
+                        <input
+                          type="number"
+                          value={profileForm.proteinTarget}
+                          onChange={e => setProfileForm({ ...profileForm, proteinTarget: e.target.value })}
+                          placeholder="180"
+                          className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold mb-1 text-neutral-500 dark:text-gray-400">CARBS (G)</label>
+                        <input
+                          type="number"
+                          value={profileForm.carbTarget}
+                          onChange={e => setProfileForm({ ...profileForm, carbTarget: e.target.value })}
+                          placeholder="280"
+                          className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold mb-1 text-neutral-500 dark:text-gray-400">FAT (G)</label>
+                        <input
+                          type="number"
+                          value={profileForm.fatTarget}
+                          onChange={e => setProfileForm({ ...profileForm, fatTarget: e.target.value })}
+                          placeholder="80"
+                          className="w-full px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleSaveProfile}
+                    disabled={profileLoading}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white text-xs font-bold border-2 border-red-600 hover:bg-black dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors disabled:opacity-50"
+                  >
+                    {profileLoading ? <Loader2 size={14} className="animate-spin" /> : 'SAVE PROFILE'}
+                  </button>
+
+                  {profileError && (
+                    <div className="p-2 border-2 border-red-600 bg-red-50 dark:bg-red-950 text-xs font-bold text-red-700 dark:text-red-400">
+                      {profileError}
+                    </div>
+                  )}
+                  {profileSuccess && (
+                    <div className="p-2 border-2 border-green-600 bg-green-50 dark:bg-green-950 text-xs font-bold text-green-700 dark:text-green-400">
+                      PROFILE SAVED SUCCESSFULLY
+                    </div>
+                  )}
+
+                  {profile && (profile.weight || profile.height) && (
+                    <div className="border-2 border-black dark:border-gray-700 p-4 mt-4 bg-neutral-50 dark:bg-gray-900">
+                      <h3 className="text-sm font-bold mb-3">CURRENT PROFILE</h3>
+                      <div className="grid grid-cols-2 gap-2 text-xs font-bold">
+                        {profile.weight && <div>WEIGHT: <span className="text-red-600">{profile.weight} KG</span></div>}
+                        {profile.height && <div>HEIGHT: <span className="text-red-600">{profile.height} CM</span></div>}
+                        {profile.age && <div>AGE: <span className="text-red-600">{profile.age}</span></div>}
+                        <div>ACTIVITY: <span className="text-red-600">{profile.activityLevel?.toUpperCase()}</span></div>
+                        {profile.calorieTarget && <div>CAL TARGET: <span className="text-red-600">{profile.calorieTarget} KCAL</span></div>}
+                        {profile.proteinTarget && <div>PROTEIN: <span className="text-red-600">{profile.proteinTarget}G</span></div>}
+                        {profile.carbTarget && <div>CARBS: <span className="text-red-600">{profile.carbTarget}G</span></div>}
+                        {profile.fatTarget && <div>FAT: <span className="text-red-600">{profile.fatTarget}G</span></div>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
         </main>
       )}
 
-      <footer className="border-t-4 border-black dark:border-gray-700 p-4 text-center text-xs font-bold text-neutral-500 dark:text-gray-400 transition-colors">
-        NUTRI_OS_v2.4 // BUILT FOR RESULTS // NO EXCUSES // {user?.name.toUpperCase()}
-      </footer>
+
     </div>
   )
 }

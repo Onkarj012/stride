@@ -47,7 +47,7 @@ export default function Signup() {
       <div className="w-full max-w-md border-4 border-black dark:border-gray-700 p-8">
         <div className="flex items-center gap-3 mb-8">
           <Flame size={28} className="text-red-600" />
-          <h1 className="text-2xl font-black tracking-tighter">NUTRI_OS_v2.4</h1>
+          <h1 className="text-2xl font-black tracking-tighter">STRIDE</h1>
         </div>
         <h2 className="text-lg font-bold mb-6">AUTHENTICATION // REGISTER</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
