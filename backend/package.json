@@ -1,0 +1,14 @@
+{
+  "name": "ai-fitness-tracker-backend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "convex dev",
+    "deploy": "convex deploy",
+    "dashboard": "convex dashboard"
+  },
+  "dependencies": {
+    "convex": "^1.36.1"
+  }
+}
