@@ -19,7 +19,7 @@ export const estimateWithAI = action({
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost:5173",
-        "X-Title": "AI Fitness Tracker",
+        "X-Title": "Stride",
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",

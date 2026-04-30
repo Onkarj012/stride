@@ -38,7 +38,7 @@ Respond with ONLY a JSON array of strings. Example: ["Insight 1", "Insight 2", "
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost:5173",
-        "X-Title": "AI Fitness Tracker",
+        "X-Title": "Stride",
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",
@@ -115,7 +115,7 @@ Respond with ONLY a JSON object:
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost:5173",
-        "X-Title": "AI Fitness Tracker",
+        "X-Title": "Stride",
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",
@@ -207,7 +207,7 @@ Respond with a single paragraph of plain text. No JSON.`;
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": "http://localhost:5173",
-        "X-Title": "AI Fitness Tracker",
+        "X-Title": "Stride",
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",

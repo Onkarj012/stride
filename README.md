@@ -1,4 +1,4 @@
-# AI Fitness Tracker
+# Stride
 
 Track daily nutrition, workouts, and fitness progress with AI-powered insights.
 
