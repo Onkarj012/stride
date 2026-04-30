@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   Flame, Utensils, Dumbbell, TrendingUp, Bot, Menu, X,
@@ -7,8 +7,22 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../lib/auth'
 import { useTheme } from '../lib/theme'
-import { useQuery, useMutation, useAction } from 'convex/react'
-import { api } from '../../../backend/convex/_generated/api'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3210'
+
+async function apiFetch(path: string, options: RequestInit = {}, token?: string | null) {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string>),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Request failed')
+  return data
+}
 
 const navItems = [
   { icon: Flame, label: 'CALORIES' },
@@ -26,27 +40,47 @@ export default function Dashboard() {
 
   const today = new Date().toISOString().split('T')[0]
 
-  const meals = useQuery(api.meals.list, token ? { token, date: today } : 'skip')
-  const workouts = useQuery(api.workouts.list, token ? { token, date: today } : 'skip')
-  const goals = useQuery(api.dailyGoals.get, token ? { token, date: today } : 'skip')
-  const history = useQuery(api.progress.getHistory, token ? { token, days: 7 } : 'skip')
-  const dailyInsightsData = useQuery(api.insights.getDailyInsights, token ? { token, date: today } : 'skip')
-  const chatMessages = useQuery(api.chatMessages.list, token ? { token } : 'skip')
-  const weeklySummary = useQuery(api.insights.getWeeklySummary, token ? { token } : 'skip')
+  const [meals, setMeals] = useState<any[] | undefined>(undefined)
+  const [workouts, setWorkouts] = useState<any[] | undefined>(undefined)
+  const [goals, setGoals] = useState<any>(undefined)
+  const [history, setHistory] = useState<any[] | undefined>(undefined)
+  const [dailyInsightsData, setDailyInsightsData] = useState<any>(undefined)
+  const [chatMessages, setChatMessages] = useState<any[] | undefined>(undefined)
+  const [weeklySummary, setWeeklySummary] = useState<any>(undefined)
 
-  const createMeal = useMutation(api.meals.create)
-  const updateMeal = useMutation(api.meals.update)
-  const deleteMeal = useMutation(api.meals.remove)
-  const createWorkout = useMutation(api.workouts.create)
-  const updateWorkout = useMutation(api.workouts.update)
-  const deleteWorkout = useMutation(api.workouts.remove)
-  const sendChatMsg = useMutation(api.chatMessages.send)
+  const fetchData = useCallback(async () => {
+    if (!token) return
+    try {
+      const [m, w, g, h, dI, cM, wS] = await Promise.all([
+        apiFetch(`/api/meals?date=${today}`, {}, token),
+        apiFetch(`/api/workouts?date=${today}`, {}, token),
+        apiFetch(`/api/goals?date=${today}`, {}, token),
+        apiFetch(`/api/progress?days=7`, {}, token),
+        apiFetch(`/api/insights/daily?date=${today}`, {}, token),
+        apiFetch(`/api/chat`, {}, token),
+        apiFetch(`/api/insights/weekly`, {}, token),
+      ])
+      setMeals(m)
+      setWorkouts(w)
+      setGoals(g)
+      setHistory(h)
+      setDailyInsightsData(dI)
+      setChatMessages(cM)
+      setWeeklySummary(wS)
+    } catch (e) {
+      setMeals([])
+      setWorkouts([])
+      setGoals({ calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 })
+      setHistory([])
+      setDailyInsightsData({ insights: [] })
+      setChatMessages([])
+      setWeeklySummary(null)
+    }
+  }, [token, today])
 
-  const estimateMealAI = useAction(api.mealsAI.estimateWithAI)
-  const chatWithAI = useAction(api.chatAI.chatWithAI)
-  const generateInsights = useAction(api.insightsAI.generateDailyInsights)
-  const generateWorkoutSuggestion = useAction(api.insightsAI.generateWorkoutSuggestion)
-  const generateWeeklySummary = useAction(api.insightsAI.generateWeeklySummary)
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   const totalCals = meals?.reduce((s: number, m: any) => s + m.calories, 0) || 0
   const totalProtein = meals?.reduce((s: number, m: any) => s + m.protein, 0) || 0
@@ -82,7 +116,10 @@ export default function Dashboard() {
     setMealLoading(true)
     setMealError(null)
     try {
-      const result = await estimateMealAI({ token, mealName: mealForm.name })
+      const result = await apiFetch('/api/ai/estimate-meal', {
+        method: 'POST',
+        body: JSON.stringify({ mealName: mealForm.name }),
+      }, token)
       setMealForm(prev => ({
         ...prev,
         calories: String(result.calories),
@@ -108,29 +145,34 @@ export default function Dashboard() {
     try {
       const time = mealForm.time || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
       if (editingMeal) {
-        await updateMeal({
-          token, id: editingMeal as any,
-          name: mealForm.name,
-          calories: Number(mealForm.calories),
-          protein: Number(mealForm.protein) || 0,
-          carbs: Number(mealForm.carbs) || 0,
-          fat: Number(mealForm.fat) || 0,
-          time,
-        })
+        await apiFetch(`/api/meals/${editingMeal}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: mealForm.name,
+            calories: Number(mealForm.calories),
+            protein: Number(mealForm.protein) || 0,
+            carbs: Number(mealForm.carbs) || 0,
+            fat: Number(mealForm.fat) || 0,
+            time,
+          }),
+        }, token)
         setEditingMeal(null)
       } else {
-        await createMeal({
-          token,
-          name: mealForm.name,
-          calories: Number(mealForm.calories),
-          protein: Number(mealForm.protein) || 0,
-          carbs: Number(mealForm.carbs) || 0,
-          fat: Number(mealForm.fat) || 0,
-          time,
-        })
+        await apiFetch('/api/meals', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: mealForm.name,
+            calories: Number(mealForm.calories),
+            protein: Number(mealForm.protein) || 0,
+            carbs: Number(mealForm.carbs) || 0,
+            fat: Number(mealForm.fat) || 0,
+            time,
+          }),
+        }, token)
       }
       setMealForm({ name: '', calories: '', protein: '', carbs: '', fat: '', time: '' })
-      try { await generateInsights({ token, date: today }) } catch (e) {}
+      await fetchData()
+      try { await apiFetch('/api/ai/daily-insights', { method: 'POST', body: JSON.stringify({ date: today }) }, token) } catch (e) {}
     } catch (err: any) {
       setMealError(err.message || 'FAILED TO SAVE MEAL')
     } finally {
@@ -141,7 +183,8 @@ export default function Dashboard() {
   const handleDeleteMeal = async (id: string) => {
     if (!token) return
     try {
-      await deleteMeal({ token, id: id as any })
+      await apiFetch(`/api/meals/${id}`, { method: 'DELETE' }, token)
+      await fetchData()
     } catch (err: any) {
       setMealError(err.message || 'FAILED TO DELETE')
     }
@@ -157,28 +200,27 @@ export default function Dashboard() {
     setWorkoutError(null)
     try {
       if (editingWorkout) {
-        await updateWorkout({
-          token, id: editingWorkout as any,
-          name: workoutForm.name,
-          sets: workoutForm.sets,
-          reps: workoutForm.reps,
-          weight: workoutForm.weight,
-          duration: workoutForm.duration,
-          intensity: workoutForm.intensity,
-        })
+        await apiFetch(`/api/workouts/${editingWorkout}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: workoutForm.name, sets: workoutForm.sets,
+            reps: workoutForm.reps, weight: workoutForm.weight,
+            duration: workoutForm.duration, intensity: workoutForm.intensity,
+          }),
+        }, token)
         setEditingWorkout(null)
       } else {
-        await createWorkout({
-          token,
-          name: workoutForm.name,
-          sets: workoutForm.sets,
-          reps: workoutForm.reps,
-          weight: workoutForm.weight,
-          duration: workoutForm.duration,
-          intensity: workoutForm.intensity,
-        })
+        await apiFetch('/api/workouts', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: workoutForm.name, sets: workoutForm.sets,
+            reps: workoutForm.reps, weight: workoutForm.weight,
+            duration: workoutForm.duration, intensity: workoutForm.intensity,
+          }),
+        }, token)
       }
       setWorkoutForm({ name: '', sets: '', reps: '', weight: '', duration: '', intensity: 'HIGH' })
+      await fetchData()
     } catch (err: any) {
       setWorkoutError(err.message || 'FAILED TO SAVE WORKOUT')
     } finally {
@@ -189,7 +231,8 @@ export default function Dashboard() {
   const handleDeleteWorkout = async (id: string) => {
     if (!token) return
     try {
-      await deleteWorkout({ token, id: id as any })
+      await apiFetch(`/api/workouts/${id}`, { method: 'DELETE' }, token)
+      await fetchData()
     } catch (err: any) {
       setWorkoutError(err.message || 'FAILED TO DELETE')
     }
@@ -199,10 +242,23 @@ export default function Dashboard() {
     if (!chatInput.trim() || !token) return
     setChatLoading(true)
     try {
-      await chatWithAI({ token, message: chatInput })
+      await apiFetch('/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({ role: 'user', content: chatInput }),
+      }, token)
+      const reply = await apiFetch('/api/ai/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: chatInput }),
+      }, token)
       setChatInput('')
+      // Refresh chat messages
+      const msgs = await apiFetch('/api/chat', {}, token)
+      setChatMessages(msgs)
     } catch (err: any) {
-      await sendChatMsg({ token, role: 'ai', content: `ERROR: ${err.message || 'AI UNAVAILABLE'}` })
+      await apiFetch('/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({ role: 'ai', content: `ERROR: ${err.message || 'AI UNAVAILABLE'}` }),
+      }, token)
     } finally {
       setChatLoading(false)
     }
@@ -212,7 +268,7 @@ export default function Dashboard() {
     if (!token) return
     setSuggestionLoading(true)
     try {
-      const result = await generateWorkoutSuggestion({ token })
+      const result = await apiFetch('/api/ai/workout-suggestion', { method: 'POST', body: '{}' }, token)
       setWorkoutSuggestion(result)
     } catch (err: any) {
     } finally {
@@ -224,7 +280,8 @@ export default function Dashboard() {
     if (!token) return
     setWeeklyLoading(true)
     try {
-      await generateWeeklySummary({ token })
+      const result = await apiFetch('/api/ai/weekly-summary', { method: 'POST', body: '{}' }, token)
+      setWeeklySummary(result)
     } catch (err: any) {
     } finally {
       setWeeklyLoading(false)
@@ -235,7 +292,8 @@ export default function Dashboard() {
     if (!token) return
     setInsightsLoading(true)
     try {
-      await generateInsights({ token, date: today })
+      const result = await apiFetch('/api/ai/daily-insights', { method: 'POST', body: JSON.stringify({ date: today }) }, token)
+      setDailyInsightsData(result)
     } catch (err: any) {
     } finally {
       setInsightsLoading(false)
@@ -389,7 +447,7 @@ export default function Dashboard() {
                 </div>
                 <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
                   <h3 className="text-xl font-black mb-4">AI DAILY INSIGHTS</h3>
-                  {dailyInsightsData?.insights ? (
+                  {dailyInsightsData?.insights?.length > 0 ? (
                     <div className="space-y-3">
                       {dailyInsightsData.insights.map((insight, i) => (
                         <div key={i} className="flex items-start gap-2 text-sm font-bold">
@@ -783,7 +841,7 @@ export default function Dashboard() {
                 <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
                   <h3 className="text-sm font-bold text-neutral-500 dark:text-gray-400 mb-2">7-DAY AVG CALORIES</h3>
                   <div className="text-4xl font-black">
-                    {history ? Math.round(history.reduce((s, d) => s + d.calories, 0) / history.length) : 0}
+                    {history ? Math.round(history.reduce((s, d) => s + d.calories, 0) / Math.max(1, history.length)) : 0}
                     <span className="text-lg text-neutral-400 dark:text-gray-500">KCAL</span>
                   </div>
                   <div className="mt-4 flex items-end gap-1 h-24 border-b-2 border-black dark:border-gray-700 pb-1">
@@ -795,11 +853,11 @@ export default function Dashboard() {
                 <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
                   <h3 className="text-sm font-bold text-neutral-500 dark:text-gray-400 mb-2">7-DAY AVG PROTEIN</h3>
                   <div className="text-4xl font-black">
-                    {history ? Math.round(history.reduce((s, d) => s + d.protein, 0) / history.length) : 0}
+                    {history ? Math.round(history.reduce((s, d) => s + d.protein, 0) / Math.max(1, history.length)) : 0}
                     <span className="text-lg text-neutral-400 dark:text-gray-500">G</span>
                   </div>
                   <div className="mt-4 h-6 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-900">
-                    <div className="h-full bg-black dark:bg-gray-100" style={{ width: `${Math.min(100, history ? (history.reduce((s, d) => s + d.protein, 0) / history.length / (goals?.proteinGoal || 180)) * 100 : 0)}%` }} />
+                    <div className="h-full bg-black dark:bg-gray-100" style={{ width: `${Math.min(100, history ? (history.reduce((s, d) => s + d.protein, 0) / Math.max(1, history.length) / (goals?.proteinGoal || 180)) * 100 : 0)}%` }} />
                   </div>
                 </div>
                 <div className="border-4 border-black dark:border-gray-700 p-6 bg-black dark:bg-gray-100 text-white dark:text-gray-950 transition-colors">

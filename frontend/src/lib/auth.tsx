@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
-import { useQuery, useMutation, useAction } from 'convex/react'
-import { api } from '../../../backend/convex/_generated/api'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3210'
 
 interface AuthUser {
   userId: string
@@ -21,23 +21,46 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
+async function apiFetch(path: string, options: RequestInit = {}) {
+  const token = localStorage.getItem('auth_token')
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string>),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  const res = await fetch(`${API_URL}${path}`, { ...options, headers })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Request failed')
+  return data
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth_token'))
+  const [user, setUser] = useState<AuthUser | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-
-  const me = useQuery(api.auth.me, token ? { token } : 'skip')
-  const isAuthLoading = token !== null && me === undefined
-
-  const loginMutation = useAction(api.authActions.login)
-  const registerMutation = useAction(api.authActions.register)
-  const logoutMutation = useMutation(api.auth.logout)
+  const [isAuthLoading, setIsAuthLoading] = useState(!!token)
 
   useEffect(() => {
     if (token) {
       localStorage.setItem('auth_token', token)
+      setIsAuthLoading(true)
+      apiFetch('/api/auth/me')
+        .then((data) => {
+          setUser({ userId: data.userId, name: data.name, email: data.email })
+        })
+        .catch(() => {
+          localStorage.removeItem('auth_token')
+          setToken(null)
+          setUser(null)
+        })
+        .finally(() => setIsAuthLoading(false))
     } else {
       localStorage.removeItem('auth_token')
+      setUser(null)
+      setIsAuthLoading(false)
     }
   }, [token])
 
@@ -45,7 +68,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true)
     setError(null)
     try {
-      const result = await loginMutation({ email, password })
+      const result = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      })
       setToken(result.token)
     } catch (err: any) {
       setError(err.message || 'Login failed')
@@ -53,13 +79,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false)
     }
-  }, [loginMutation])
+  }, [])
 
   const signup = useCallback(async (name: string, email: string, password: string) => {
     setIsLoading(true)
     setError(null)
     try {
-      const result = await registerMutation({ email, password, name })
+      const result = await apiFetch('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ email, password, name }),
+      })
       setToken(result.token)
     } catch (err: any) {
       setError(err.message || 'Signup failed')
@@ -67,22 +96,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false)
     }
-  }, [registerMutation])
+  }, [])
 
   const logout = useCallback(async () => {
     if (token) {
       try {
-        await logoutMutation({ token })
+        await apiFetch('/api/auth/logout', { method: 'POST' })
       } catch (e) {
         // ignore
       }
     }
     setToken(null)
-  }, [token, logoutMutation])
-
-  const user = me
-    ? { userId: me.userId, name: me.name, email: me.email }
-    : null
+  }, [token])
 
   return (
     <AuthContext.Provider value={{ user, token, login, signup, logout, isLoading, isAuthLoading, error }}>
