@@ -102,4 +102,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id);
 `);
 
+// Migrations — ALTER TABLE fails silently if column already exists
+try { db.exec(`ALTER TABLE workouts ADD COLUMN exercises TEXT`); } catch {}
+try { db.exec(`ALTER TABLE meals ADD COLUMN meal_type TEXT DEFAULT 'unspecified'`); } catch {}
+
 export default db;

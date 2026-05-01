@@ -28,4 +28,13 @@ router.post("/", requireAuth, (req: Request, res: Response) => {
   }
 });
 
+router.delete("/", requireAuth, (req: Request, res: Response) => {
+  try {
+    db.prepare("DELETE FROM chat_messages WHERE user_id = ?").run(req.user.userId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 export default router;

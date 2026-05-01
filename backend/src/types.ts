@@ -15,6 +15,7 @@ export interface MealRow {
   fat: number;
   time: string;
   ai_suggestion: string | null;
+  meal_type?: string;
   created_at: string;
 }
 
@@ -28,6 +29,7 @@ export interface MealResponse {
   time: string;
   date: string;
   aiSuggestion: string | null;
+  mealType?: string;
 }
 
 export interface WorkoutRow {
@@ -40,7 +42,21 @@ export interface WorkoutRow {
   weight: string | null;
   duration: string | null;
   intensity: string;
+  exercises?: string | null;
   created_at: string;
+}
+
+export interface WorkoutExerciseSet {
+  weight: string;
+  reps: string;
+}
+
+export interface WorkoutExercise {
+  name: string;
+  /** New schema: array of per-set {weight, reps}. Legacy may use flat string. */
+  sets: WorkoutExerciseSet[] | string;
+  reps?: string;
+  weight?: string;
 }
 
 export interface WorkoutResponse {
@@ -52,6 +68,7 @@ export interface WorkoutResponse {
   duration: string | null;
   intensity: string;
   date: string;
+  exercises?: WorkoutExercise[] | null;
 }
 
 export interface GoalRow {

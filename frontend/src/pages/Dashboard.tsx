@@ -295,30 +295,39 @@ export default function Dashboard() {
     }
   }
 
-  const handleSendChat = async () => {
-    if (!chatInput.trim()) return
+  const sendChatMessage = useCallback(async (msg: string) => {
+    if (!msg.trim()) return
     setChatLoading(true)
+    // Optimistically add user message to UI
+    setChatMessages(prev => [...(prev || []), { role: 'user', content: msg }])
     try {
-      await apiFetch('/api/chat', {
+      await apiFetch('/api/ai/chat', {
         method: 'POST',
-        body: JSON.stringify({ role: 'user', content: chatInput }),
+        body: JSON.stringify({ message: msg }),
       }, getToken)
-      const reply = await apiFetch('/api/ai/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: chatInput }),
-      }, getToken)
-      setChatInput('')
-      // Refresh chat messages
+      // Refresh to get AI reply from server
       const msgs = await apiFetch('/api/chat', {}, getToken)
       setChatMessages(msgs)
     } catch (err: any) {
-      await apiFetch('/api/chat', {
-        method: 'POST',
-        body: JSON.stringify({ role: 'ai', content: `ERROR: ${err.message || 'AI UNAVAILABLE'}` }),
-      }, getToken)
+      // Show error in chat UI locally
+      setChatMessages(prev => [...(prev || []), { role: 'ai', content: `⚠ ${err.message || 'AI UNAVAILABLE'}` }])
     } finally {
       setChatLoading(false)
     }
+  }, [getToken])
+
+  const handleSendChat = async () => {
+    if (!chatInput.trim()) return
+    const msg = chatInput.trim()
+    setChatInput('')
+    await sendChatMessage(msg)
+  }
+
+  const handleClearChat = async () => {
+    try {
+      await apiFetch('/api/chat', { method: 'DELETE' }, getToken)
+      setChatMessages([])
+    } catch (err: any) {}
   }
 
   const handleGenerateWorkoutSuggestion = async () => {
@@ -361,7 +370,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-950 text-black dark:text-gray-100 font-mono selection:bg-red-600 selection:text-white transition-colors">
-      <nav className="sticky top-0 z-50 bg-white dark:bg-gray-950 border-b-4 border-black dark:border-gray-700 transition-colors">
+      <nav className="sticky top-0 z-50 bg-white dark:bg-gray-950 border-b-2 border-black dark:border-gray-700 transition-colors">
         <div className="flex items-center px-4 py-3">
           <div className="flex items-center gap-3 shrink-0">
             <div className="text-xl font-black tracking-tighter">STRIDE</div>
@@ -444,15 +453,15 @@ export default function Dashboard() {
                   <div className="border-2 border-black dark:border-gray-700 p-4">
                     <div className="text-xs font-bold text-neutral-500 dark:text-gray-400 mb-1">CALORIES</div>
                     <div className="text-3xl font-black">{totalCals}<span className="text-lg text-neutral-400 dark:text-gray-500">/{effectiveGoals.calorieGoal}</span></div>
-                    <div className="mt-2 h-2 border border-black dark:border-gray-700 bg-white dark:bg-gray-900">
-                      <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, (totalCals / effectiveGoals.calorieGoal) * 100)}%` }} transition={{ duration: 1 }} className="h-full bg-red-600" />
+                    <div className="mt-2 h-2 border border-black dark:border-gray-700 bg-white dark:bg-gray-900 rounded-full overflow-hidden">
+                      <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, (totalCals / effectiveGoals.calorieGoal) * 100)}%` }} transition={{ duration: 1 }} className="h-full bg-red-600 rounded-full" />
                     </div>
                   </div>
                   <div className="border-2 border-black dark:border-gray-700 p-4">
                     <div className="text-xs font-bold text-neutral-500 dark:text-gray-400 mb-1">PROTEIN</div>
                     <div className="text-3xl font-black">{totalProtein}<span className="text-lg text-neutral-400 dark:text-gray-500">/{effectiveGoals.proteinGoal}g</span></div>
-                    <div className="mt-2 h-2 border border-black dark:border-gray-700 bg-white dark:bg-gray-900">
-                      <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, (totalProtein / effectiveGoals.proteinGoal) * 100)}%` }} transition={{ duration: 1, delay: 0.2 }} className="h-full bg-black dark:bg-gray-100" />
+                    <div className="mt-2 h-2 border border-black dark:border-gray-700 bg-white dark:bg-gray-900 rounded-full overflow-hidden">
+                      <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, (totalProtein / effectiveGoals.proteinGoal) * 100)}%` }} transition={{ duration: 1, delay: 0.2 }} className="h-full bg-black dark:bg-gray-100 rounded-full" />
                     </div>
                   </div>
                   <div className="border-2 border-black dark:border-gray-700 p-4">
@@ -525,7 +534,7 @@ export default function Dashboard() {
 
           {activeTab === 'CALORIES' && (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-              <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+              <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                 <div className="flex items-center justify-between mb-6">
                   <h2 className="text-3xl font-black tracking-tighter">DAILY ENERGY BALANCE</h2>
                   <button
@@ -553,16 +562,16 @@ export default function Dashboard() {
                     <div className="text-4xl font-black">{totalBurned}</div>
                     <div className="text-xs font-bold mt-2 text-red-600">KCAL</div>
                   </div>
-                  <div className="border-2 border-black dark:border-gray-700 p-4 bg-black dark:bg-gray-100 text-white dark:text-gray-950">
+                  <div className="border-2 border-black dark:border-gray-700 p-4 bg-neutral-900 dark:bg-gray-200 text-white dark:text-gray-950">
                     <div className="text-xs font-bold text-neutral-400 dark:text-gray-500 mb-1">REMAINING</div>
                     <div className="text-4xl font-black">{Math.max(0, (effectiveGoals.calorieGoal) - totalCals)}</div>
-                    <div className="text-xs font-bold mt-2 text-red-500">KCAL</div>
+                    <div className="text-xs font-bold mt-2 text-red-400 dark:text-red-600">KCAL</div>
                   </div>
                 </div>
               </div>
 
               <div className="grid lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 border-4 border-black dark:border-gray-700 p-6 transition-colors">
+                <div className="lg:col-span-2 border-2 border-black dark:border-gray-700 p-6 transition-colors">
                   <h3 className="text-xl font-black mb-4">MACRONUTRIENT BREAKDOWN</h3>
                   <div className="space-y-4">
                     {[
@@ -575,19 +584,19 @@ export default function Dashboard() {
                           <span>{m.label}</span>
                           <span>{m.val}/{m.max}{m.unit}</span>
                         </div>
-                        <div className="h-6 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-900">
+                        <div className="h-6 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-900 rounded-full overflow-hidden">
                           <motion.div
                             initial={{ width: 0 }}
                             animate={{ width: `${Math.min(100, (m.val / m.max) * 100)}%` }}
                             transition={{ duration: 1, ease: 'easeOut' }}
-                            className={`h-full ${m.color}`}
+                            className={`h-full rounded-full ${m.color}`}
                           />
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
-                <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+                <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                   <h3 className="text-xl font-black mb-4">AI DAILY INSIGHTS</h3>
                   {dailyInsightsData?.insights?.length > 0 ? (
                     <div className="space-y-3">
@@ -606,7 +615,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+              <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-xl font-black">WEEKLY AI SUMMARY</h3>
                   <button
@@ -629,7 +638,7 @@ export default function Dashboard() {
 
           {activeTab === 'MEALS' && (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-              <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+              <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                 <h2 className="text-3xl font-black tracking-tighter mb-6">MEAL LOG</h2>
                 <div className="border-2 border-black dark:border-gray-700 p-4 mb-6 bg-neutral-50 dark:bg-gray-900 transition-colors">
                   <h3 className="text-sm font-bold mb-3">LOG NEW MEAL — AI POWERED</h3>
@@ -646,14 +655,14 @@ export default function Dashboard() {
                         <option value="dinner">DINNER</option>
                       </select>
                       <input
-                        placeholder="TIME (HH:MM)"
+                        placeholder="Time (HH:MM)"
                         value={mealForm.time}
                         onChange={e => setMealForm({ ...mealForm, time: e.target.value })}
                         className="px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600 flex-1"
                       />
                     </div>
                     <textarea
-                      placeholder="DESCRIBE YOUR MEAL — what you ate, how it was prepared, portion size, ingredients... AI will estimate the macros for you."
+                      placeholder="Describe your meal — what you ate, how it was prepared, portion size, ingredients... AI will estimate the macros for you."
                       value={mealForm.description}
                       onChange={e => setMealForm({ ...mealForm, description: e.target.value })}
                       rows={3}
@@ -687,8 +696,11 @@ export default function Dashboard() {
                     <div key={meal._id} className="border-2 border-black dark:border-gray-700 p-4 hover:bg-neutral-50 dark:hover:bg-gray-900 transition-colors">
                       <div className="flex items-start justify-between">
                         <div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3 flex-wrap">
                             <span className="text-xs font-bold bg-black dark:bg-gray-100 text-white dark:text-gray-950 px-2 py-1">{meal.time}</span>
+                            {meal.mealType && meal.mealType !== 'unspecified' && (
+                              <span className="text-xs font-bold border-2 border-black dark:border-gray-700 px-2 py-1 uppercase">{meal.mealType}</span>
+                            )}
                             <h3 className="text-lg font-black">{meal.name}</h3>
                           </div>
                           <div className="flex items-center gap-4 mt-2 text-sm font-bold text-neutral-600 dark:text-gray-400">
@@ -722,13 +734,13 @@ export default function Dashboard() {
 
           {activeTab === 'WORKOUT' && (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-              <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+              <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                 <h2 className="text-3xl font-black tracking-tighter mb-6">TRAINING LOG</h2>
                 <div className="border-2 border-black dark:border-gray-700 p-4 mb-6 bg-neutral-50 dark:bg-gray-900 transition-colors">
                   <h3 className="text-sm font-bold mb-3">LOG WORKOUT — AI POWERED</h3>
                   <div className="space-y-3">
                     <textarea
-                      placeholder="DESCRIBE YOUR WORKOUT — what exercises you did, how many sets/reps, what weights... AI will structure and log it for you."
+                      placeholder="Describe your workout — what exercises you did, how many sets/reps, what weights... AI will structure and log it for you."
                       value={workoutForm.description}
                       onChange={e => setWorkoutForm({ ...workoutForm, description: e.target.value })}
                       rows={3}
@@ -736,7 +748,7 @@ export default function Dashboard() {
                     />
                     <div className="flex gap-3">
                       <input
-                        placeholder="DURATION (e.g. 45 min)"
+                        placeholder="Duration (e.g. 45 min)"
                         value={workoutForm.duration}
                         onChange={e => setWorkoutForm({ ...workoutForm, duration: e.target.value })}
                         className="flex-1 px-3 py-2 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-800 text-black dark:text-gray-100 font-bold text-sm focus:outline-none placeholder:text-neutral-400 dark:placeholder:text-gray-600"
@@ -777,31 +789,59 @@ export default function Dashboard() {
                     </div>
                   )}
                   {workouts?.map((w) => (
-                    <div key={w._id} className="border-2 border-black dark:border-gray-700 p-4 grid lg:grid-cols-5 gap-4 items-center">
-                      <div className="lg:col-span-2">
-                        <h3 className="text-lg font-black">{w.name}</h3>
-                        <span className={`text-xs font-bold px-2 py-1 mt-1 inline-block border-2 border-black dark:border-gray-700 ${
-                          w.intensity === 'MAX' ? 'bg-red-600 text-white' : w.intensity === 'HIGH' ? 'bg-black dark:bg-gray-100 text-white dark:text-gray-950' : 'bg-white dark:bg-gray-900'
-                        }`}>
-                          {w.intensity}
-                        </span>
-                      </div>
-                      <div className="text-center border-2 border-black dark:border-gray-700 p-2">
-                        <div className="text-xs font-bold text-neutral-500 dark:text-gray-400">SETS</div>
-                        <div className="text-xl font-black">{w.sets}</div>
-                      </div>
-                      <div className="text-center border-2 border-black dark:border-gray-700 p-2">
-                        <div className="text-xs font-bold text-neutral-500 dark:text-gray-400">LOAD</div>
-                        <div className="text-xl font-black">{w.weight || 'BODY'}</div>
-                      </div>
-                      <div className="text-center border-2 border-black dark:border-gray-700 p-2">
-                        <div className="text-xs font-bold text-neutral-500 dark:text-gray-400">DURATION</div>
-                        <div className="text-xl font-black">{w.duration || '-'}</div>
-                      </div>
-                      <div className="flex gap-1 lg:justify-end">
+                    <div key={w._id} className="border-2 border-black dark:border-gray-700 p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <h3 className="text-lg font-black">{w.name}</h3>
+                            <span className={`text-xs font-bold px-2 py-1 border-2 border-black dark:border-gray-700 ${
+                              w.intensity === 'MAX' ? 'bg-red-600 text-white' : w.intensity === 'HIGH' ? 'bg-black dark:bg-gray-100 text-white dark:text-gray-950' : 'bg-white dark:bg-gray-900'
+                            }`}>
+                              {w.intensity}
+                            </span>
+                            {w.duration && (
+                              <span className="text-xs font-bold text-neutral-500 dark:text-gray-400 border-2 border-black dark:border-gray-700 px-2 py-1">{w.duration}</span>
+                            )}
+                          </div>
+                          {w.exercises && w.exercises.length > 0 ? (
+                            <div className="mt-3 space-y-3">
+                              {w.exercises.map((ex: any, ei: number) => (
+                                <div key={ei}>
+                                  <div className="text-xs font-bold text-black dark:text-gray-200 uppercase tracking-wide mb-1">
+                                    {ex.name}
+                                  </div>
+                                  {/* New schema: sets is an array of {weight, reps} */}
+                                  {Array.isArray(ex.sets) ? (
+                                    <div className="ml-2 flex flex-wrap gap-x-3 gap-y-0.5">
+                                      {ex.sets.map((s: any, si: number) => (
+                                        <span key={si} className="text-xs text-neutral-500 dark:text-gray-400 flex items-center gap-1">
+                                          <span className="w-1 h-1 bg-red-600 rounded-full shrink-0" />
+                                          {s.weight !== 'cardio'
+                                            ? <>{s.weight} × {s.reps}</>
+                                            : <>{s.reps}</>
+                                          }
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    /* Legacy flat schema fallback */
+                                    <div className="ml-2 text-xs text-neutral-500 dark:text-gray-400">
+                                      {ex.sets} sets · {ex.reps} reps @ {ex.weight}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="flex gap-3 mt-2 text-xs font-bold text-neutral-500 dark:text-gray-400">
+                              {w.sets && <span>SETS: {w.sets}</span>}
+                              {w.weight && <span>LOAD: {w.weight}</span>}
+                            </div>
+                          )}
+                        </div>
                         <button
                           onClick={() => handleDeleteWorkout(w._id)}
-                          className="p-2 border-2 border-black dark:border-gray-700 hover:bg-red-600 hover:text-white transition-colors"
+                          className="p-2 border-2 border-black dark:border-gray-700 hover:bg-red-600 hover:text-white transition-colors shrink-0"
                         >
                           <Trash2 size={14} />
                         </button>
@@ -812,7 +852,7 @@ export default function Dashboard() {
               </div>
 
               <div className="grid lg:grid-cols-2 gap-6">
-                <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+                <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                   <h3 className="text-xl font-black mb-4">AI WORKOUT SUGGESTION</h3>
                   {workoutSuggestion ? (
                     <div className="space-y-3">
@@ -851,9 +891,9 @@ export default function Dashboard() {
                     GENERATE SUGGESTION
                   </button>
                 </div>
-                <div className="border-4 border-black dark:border-gray-700 p-6 bg-red-600 dark:bg-red-800 text-white transition-colors">
-                  <h3 className="text-xl font-black mb-4">AI COACH NOTES</h3>
-                  <p className="text-sm font-bold leading-relaxed">
+                <div className="border-2 border-red-600 p-6 bg-red-50 dark:bg-red-950 transition-colors">
+                  <h3 className="text-xl font-black mb-4 text-red-700 dark:text-red-400">AI COACH NOTES</h3>
+                  <p className="text-sm font-bold leading-relaxed text-red-700 dark:text-red-400">
                     LOG YOUR WORKOUTS WITH NATURAL LANGUAGE. DESCRIBE WHAT YOU DID AND AI WILL STRUCTURE THE DATA, ESTIMATE VOLUME, AND TRACK YOUR PROGRESS AUTOMATICALLY.
                   </p>
                 </div>
@@ -863,7 +903,7 @@ export default function Dashboard() {
 
           {activeTab === 'STATS' && (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-              <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+              <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                 <h2 className="text-3xl font-black tracking-tighter mb-6">PERFORMANCE METRICS</h2>
                 {history && history.length > 0 ? (
                   <div className="grid lg:grid-cols-7 gap-2 mb-6">
@@ -889,7 +929,7 @@ export default function Dashboard() {
                 )}
               </div>
               <div className="grid lg:grid-cols-3 gap-6">
-                <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+                <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                   <h3 className="text-sm font-bold text-neutral-500 dark:text-gray-400 mb-2">7-DAY AVG CALORIES</h3>
                   <div className="text-4xl font-black">
                     {history ? Math.round(history.reduce((s, d) => s + d.calories, 0) / Math.max(1, history.length)) : 0}
@@ -901,7 +941,7 @@ export default function Dashboard() {
                     ))}
                   </div>
                 </div>
-                <div className="border-4 border-black dark:border-gray-700 p-6 transition-colors">
+                <div className="border-2 border-black dark:border-gray-700 p-6 transition-colors">
                   <h3 className="text-sm font-bold text-neutral-500 dark:text-gray-400 mb-2">7-DAY AVG PROTEIN</h3>
                   <div className="text-4xl font-black">
                     {history ? Math.round(history.reduce((s, d) => s + d.protein, 0) / Math.max(1, history.length)) : 0}
@@ -911,7 +951,7 @@ export default function Dashboard() {
                     <div className="h-full bg-black dark:bg-gray-100" style={{ width: `${Math.min(100, history ? (history.reduce((s, d) => s + d.protein, 0) / Math.max(1, history.length) / (effectiveGoals.proteinGoal)) * 100 : 0)}%` }} />
                   </div>
                 </div>
-                <div className="border-4 border-black dark:border-gray-700 p-6 bg-black dark:bg-gray-100 text-white dark:text-gray-950 transition-colors">
+                <div className="border-2 border-black dark:border-gray-700 p-6 bg-black dark:bg-gray-100 text-white dark:text-gray-950 transition-colors">
                   <h3 className="text-sm font-bold text-neutral-400 dark:text-gray-500 mb-2">WORKOUT DAYS</h3>
                   <div className="text-4xl font-black text-red-500">
                     {history?.filter(d => d.workouts > 0).length || 0}
@@ -929,17 +969,24 @@ export default function Dashboard() {
 
           {activeTab === 'AI COACH' && (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-3xl mx-auto">
-              <div className="border-4 border-black dark:border-gray-700 bg-white dark:bg-gray-950 transition-colors">
-                <div className="border-b-4 border-black dark:border-gray-700 p-4 flex items-center gap-3">
-                  <div className="w-10 h-10 bg-black dark:bg-gray-100 text-white dark:text-gray-950 flex items-center justify-center">
+              <div className="border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-950 transition-colors">
+                <div className="border-b-2 border-black dark:border-gray-700 p-4 flex items-center gap-3">
+                  <div className="w-10 h-10 bg-black dark:bg-gray-100 text-white dark:text-gray-950 flex items-center justify-center shrink-0">
                     <Bot size={20} />
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <h2 className="text-lg font-black">STRIDE COACH</h2>
                     <div className="flex items-center gap-1 text-xs font-bold text-red-600">
                       <span className="w-2 h-2 bg-red-600 rounded-full animate-pulse" /> ONLINE
                     </div>
                   </div>
+                  <button
+                    onClick={handleClearChat}
+                    className="px-3 py-2 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-red-600 hover:text-white transition-colors shrink-0"
+                    title="Clear conversation"
+                  >
+                    NEW CHAT
+                  </button>
                 </div>
                 <div className="h-96 overflow-y-auto p-4 space-y-4">
                   {chatMessages?.length === 0 && (
@@ -957,7 +1004,7 @@ export default function Dashboard() {
                       <div
                         className={`max-w-xs lg:max-w-md px-4 py-3 text-sm font-bold ${
                           msg.role === 'ai'
-                            ? 'bg-neutral-100 dark:bg-gray-800 border-2 border-black dark:border-gray-700 text-black dark:text-gray-100'
+                            ? 'bg-neutral-100 dark:bg-gray-800 border-2 border-black dark:border-gray-700 text-black dark:text-gray-100 rounded-sm'
                             : 'bg-black dark:bg-gray-100 text-white dark:text-gray-950 border-2 border-black dark:border-gray-700'
                         }`}
                       >
@@ -967,12 +1014,12 @@ export default function Dashboard() {
                   ))}
                   <div ref={chatEndRef} />
                 </div>
-                <div className="border-t-4 border-black dark:border-gray-700 p-4 flex gap-2">
+                <div className="border-t-2 border-black dark:border-gray-700 p-4 flex gap-2">
                   <input
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
-                    placeholder="TYPE QUERY..."
+                    placeholder="Type your message..."
                     className="flex-1 px-4 py-3 border-2 border-black dark:border-gray-700 bg-white dark:bg-gray-900 text-black dark:text-gray-100 font-bold text-sm placeholder:text-neutral-400 dark:placeholder:text-gray-600 focus:outline-none focus:bg-neutral-50 dark:focus:bg-gray-800"
                   />
                   <button
@@ -988,8 +1035,9 @@ export default function Dashboard() {
                 {['MACRO ANALYSIS', 'MEAL PLAN', 'WORKOUT SPLIT', 'SUPPLEMENTS'].map((q) => (
                   <button
                     key={q}
-                    onClick={() => { setChatInput(q); setTimeout(() => handleSendChat(), 50) }}
-                    className="p-3 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-black hover:text-white dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors text-left"
+                    onClick={() => sendChatMessage(q)}
+                    disabled={chatLoading}
+                    className="p-3 border-2 border-black dark:border-gray-700 text-xs font-bold hover:bg-black hover:text-white dark:hover:bg-gray-100 dark:hover:text-gray-950 transition-colors text-left rounded disabled:opacity-50"
                   >
                     {q} →
                   </button>
@@ -1000,7 +1048,7 @@ export default function Dashboard() {
 
           {activeTab === 'PROFILE' && (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-4xl mx-auto space-y-8">
-              <div className="border-4 border-black dark:border-gray-700 p-8 transition-colors">
+              <div className="border-2 border-black dark:border-gray-700 p-8 transition-colors">
                 <div className="flex items-center justify-between mb-8">
                   <h2 className="text-3xl font-black tracking-tighter">PROFILE</h2>
                   <button

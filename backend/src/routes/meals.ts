@@ -27,6 +27,7 @@ router.get("/", requireAuth, (req: Request, res: Response) => {
     time: m.time,
     date: m.date,
     aiSuggestion: m.ai_suggestion,
+    mealType: m.meal_type,
   }));
 
   res.json(result);

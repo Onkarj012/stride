@@ -6,7 +6,9 @@ import type { MealEstimate, WorkoutSuggestion } from "../types.js";
 
 const router = Router();
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+// NOTE: Do NOT read process.env here at module level — ESM hoists imports before
+// dotenv.config() runs in index.ts, so the key would always be undefined.
+// Read it lazily inside callAI() instead.
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
 interface AIMessage {
@@ -16,17 +18,23 @@ interface AIMessage {
 
 interface OpenAIResponse {
   choices?: { message?: { content?: string } }[];
+  error?: { message?: string };
 }
 
 async function callAI(
   messages: AIMessage[],
   maxTokens = 500,
 ): Promise<string> {
+  // Read the key lazily so dotenv has already run by the time this is called
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error("OPENROUTER_API_KEY is not set. Check backend/.env.local");
+  }
   const response = await fetch(OPENROUTER_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model: "openai/gpt-4o-mini",
@@ -34,8 +42,19 @@ async function callAI(
       max_tokens: maxTokens,
     }),
   });
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`OpenRouter error ${response.status}: ${errBody}`);
+  }
   const data = (await response.json()) as OpenAIResponse;
-  return data.choices?.[0]?.message?.content || "";
+  if (data.error) {
+    throw new Error(`OpenRouter API error: ${data.error.message}`);
+  }
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenRouter returned empty response");
+  }
+  return content;
 }
 
 router.post("/estimate-meal", requireAuth, async (req: Request, res: Response) => {
@@ -122,24 +141,33 @@ router.post("/chat", requireAuth, async (req: Request, res: Response) => {
     contextBlock += `\nRECENT 7-DAY TREND:\n`;
     contextBlock += recentDays.map((d: any) => `${d.date}: ${Math.round(d.cals || 0)}cal`).join(", ");
 
+    // 1. Read OLD history (before this new message)
     const history = db
       .prepare(
-        "SELECT role, content FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 20",
+        "SELECT role, content FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 40",
       )
       .all(req.user.userId) as { role: string; content: string }[];
 
+    // 2. Save the NEW user message to DB
+    db.prepare(
+      "INSERT INTO chat_messages (user_id, role, content) VALUES (?, ?, ?)",
+    ).run(req.user.userId, "user", message);
+
+    // 3. Build messages for LLM — map "ai" role to "assistant" for OpenRouter compatibility
     const messages: AIMessage[] = [
       {
         role: "system",
         content:
           `You are StrideCoach, an elite AI fitness and nutrition coach for Stride. You're direct, motivating, and use a bold, military-inspired tone. You have access to the user's profile, today's meals/workouts, and recent history. Give concise, actionable advice. Keep responses under 4 sentences. Address the user by their name when appropriate. Be specific - reference their actual data, targets, and progress. If they ask about nutrition, calculate macros from their targets. If they ask about workouts, suggest based on their recent activity. Use terms like 'OPERATOR' occasionally.\n\n${contextBlock}`,
       },
-      ...history.map((m) => ({ role: m.role, content: m.content })),
+      ...history.map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content })),
       { role: "user", content: message },
     ];
 
+    // 4. Call AI
     const reply = await callAI(messages, 300);
 
+    // 5. Save AI reply (stored as "ai" for frontend compatibility)
     db.prepare(
       "INSERT INTO chat_messages (user_id, role, content) VALUES (?, ?, ?)",
     ).run(req.user.userId, "ai", reply);
@@ -322,7 +350,7 @@ router.post("/log-meal", requireAuth, async (req: Request, res: Response) => {
       return;
     }
 
-    const prompt = `You are a professional nutritionist. Analyze this meal description carefully — it may be detailed with cooking methods, ingredients, portion sizes, and multiple items. Extract ALL nutrition information.
+    const prompt = `You are a professional nutritionist. Analyze this meal description carefully — it may be detailed with cooking methods, ingredients, portion sizes, and multiple items.
 
 Meal type: ${mealType || "unspecified"}
 User's description:
@@ -331,23 +359,24 @@ ${description}
 """
 
 Instructions:
-1. Read the FULL description. Identify every food item mentioned (main dish, sides, condiments, drinks, dessert, etc.)
-2. Estimate realistic macros for ALL items COMBINED. Consider:
-   - Actual portion sizes mentioned (grams, cups, pieces, etc.)
-   - Cooking method (fried vs grilled vs raw affects calories)
-   - Oils, ghee, butter, mayo, cheese — these add significant fat
-   - Homemade vs store-bought affects accuracy
-   - If specific macros are provided for any item, use those exact numbers
-3. Be conservative but accurate. Don't underestimate calories from fats/oils.
+1. Identify EVERY ingredient, condiment, and cooking addition (oils, butter, ghee, sauces, etc.).
+2. Estimate portion sizes from context clues (number of pieces, cups, grams, tablespoons, etc.).
+3. Sum macros for ALL ingredients combined into one total:
+   - Cooking method matters (fried vs grilled vs boiled affects fat/calories)
+   - Don't underestimate oils/condiments — even small amounts add up
+   - If the user explicitly states a macro value for any item, use it exactly
+4. In "breakdown", list the key ingredients with their estimated calories as a compact string, e.g. "Paneer 150g ~380kcal · Protein bread 3sl ~225kcal · Mayo ~110kcal · Veggies ~55kcal"
+5. Use the midpoint when you have a range (e.g. if 690–890 kcal, report 790).
 
 Return ONLY a JSON object (no other text, no markdown, no explanation):
 {
   "name": "short descriptive name (max 4 words)",
-  "calories": number,
-  "protein": number (grams),
-  "carbs": number (grams),
-  "fat": number (grams),
-  "suggestion": "one short nutrition tip about this meal (max 15 words)"
+  "calories": number (integer),
+  "protein": number (grams, integer),
+  "carbs": number (grams, integer),
+  "fat": number (grams, integer),
+  "breakdown": "compact ingredient summary string (max 80 chars)",
+  "suggestion": "one nutrition tip (max 15 words)"
 }`;
 
     const content = await callAI([{ role: "user", content: prompt }], 800);
@@ -356,16 +385,22 @@ Return ONLY a JSON object (no other text, no markdown, no explanation):
     try {
       result = JSON.parse(jsonMatch ? jsonMatch[0] : content);
     } catch {
-      result = { name: description.slice(0, 50), calories: 400, protein: 20, carbs: 35, fat: 15, suggestion: null };
+      result = { name: description.slice(0, 50), calories: 400, protein: 20, carbs: 35, fat: 15, breakdown: null, suggestion: null };
     }
 
     const id = uuidv4();
     const today = new Date().toISOString().split("T")[0];
     const mealTime = time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+    // Store breakdown in ai_suggestion field (prefixed) if suggestion is absent, otherwise combine
+    const aiNote = result.breakdown
+      ? result.suggestion
+        ? `${result.breakdown} — ${result.suggestion}`
+        : result.breakdown
+      : result.suggestion || null;
 
     db.prepare(
-      "INSERT INTO meals (id, user_id, date, name, calories, protein, carbs, fat, time, ai_suggestion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    ).run(id, req.user.userId, today, result.name || description.slice(0, 50), result.calories || 0, result.protein || 0, result.carbs || 0, result.fat || 0, mealTime, result.suggestion || null);
+      "INSERT INTO meals (id, user_id, date, name, calories, protein, carbs, fat, time, ai_suggestion, meal_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(id, req.user.userId, today, result.name || description.slice(0, 50), result.calories || 0, result.protein || 0, result.carbs || 0, result.fat || 0, mealTime, aiNote, mealType || "unspecified");
 
     res.json({
       _id: id,
@@ -375,7 +410,8 @@ Return ONLY a JSON object (no other text, no markdown, no explanation):
       carbs: result.carbs || 0,
       fat: result.fat || 0,
       time: mealTime,
-      suggestion: result.suggestion || null,
+      aiSuggestion: aiNote,
+      mealType: mealType || "unspecified",
     });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -394,7 +430,10 @@ router.post("/log-workout", requireAuth, async (req: Request, res: Response) => 
       return;
     }
 
-    const prompt = `You are a professional fitness trainer. Analyze this workout log — it may contain multiple exercises with specific weights, reps, and sets. Structure it into a single coherent entry.
+    const prompt = `You are a professional fitness trainer. Parse this workout log precisely. The user may list exercises in formats like:
+- "exercise name: w1, w2, w3 kg: r1, r2, r3" (each weight paired with its rep count)
+- "exercise: w1, w2 kg: N reps each" (same reps for all sets)
+- "cardio: duration, calories burned"
 
 User's workout:
 """
@@ -404,60 +443,93 @@ ${description}
 User-provided duration: ${duration || "not specified"}
 User-provided intensity: ${intensity || "not specified"}
 
-Instructions:
-1. Read ALL exercises mentioned. If there are multiple exercises, create ONE entry summarizing the session.
-2. For each exercise, note the weights, reps, and sets if given (e.g. "compound rod: 41, 41, 43 kg: 15 reps each" means 3 sets at 41/41/43 kg, 15 reps each)
-3. If the user mentions specific weights in kg/lbs, preserve them.
-4. Estimate total workout duration if not provided.
-5. Determine intensity based on volume and weights described.
-6. Include cardio (walking, running, etc.) as part of the session.
+Rules:
+1. Extract EVERY exercise. Each exercise gets its own entry in "exercises".
+2. For each exercise, create one entry in "sets" per set, preserving the exact weight and reps for that set.
+   - "41, 41, 43 kg: 15 reps each" → 3 sets: [{weight:"41kg",reps:"15"},{weight:"41kg",reps:"15"},{weight:"43kg",reps:"15"}]
+   - "25, 30, 30 kg: 15, 12, 12" → 3 sets: [{weight:"25kg",reps:"15"},{weight:"30kg",reps:"12"},{weight:"30kg",reps:"12"}]
+   - "7.5, 7.5, 10 kg dumbbells per hand: 15, 15, 5" → 3 sets, weight includes "per hand" note
+3. For cardio (walking, running, cycling), use a single set with duration and calories as the reps field (e.g. reps: "5 min · ~30 kcal").
+4. Estimate total session duration if not provided. Determine intensity from volume/load.
+5. Session name: max 3 words, describe the focus (e.g. "Back + Biceps", "Push Day", "Full Body").
 
-Return ONLY a JSON object (no other text, no markdown, no explanation):
+Return ONLY valid JSON (no markdown, no explanation):
 {
-  "name": "short session name (max 3 words, e.g. 'Pull Day' or 'Chest + Arms')",
-  "sets": "total sets in format like '3x12' or summarize as '18 total'",
-  "reps": "typical rep range",
-  "weight": "weight range used (e.g. '41-43 kg' or 'Bodyweight')",
-  "duration": "estimated duration (e.g. '45 min')",
-  "intensity": "LOW, MEDIUM, HIGH, or MAX",
-  "rationale": "one sentence coaching tip (max 15 words)"
+  "name": "session name (max 3 words)",
+  "exercises": [
+    {
+      "name": "exercise name",
+      "sets": [
+        {"weight": "41kg", "reps": "15"},
+        {"weight": "41kg", "reps": "15"},
+        {"weight": "43kg", "reps": "15"}
+      ]
+    },
+    {
+      "name": "Walking (Treadmill)",
+      "sets": [
+        {"weight": "cardio", "reps": "5 min · ~30 kcal"}
+      ]
+    }
+  ],
+  "duration": "estimated total duration",
+  "intensity": "LOW | MEDIUM | HIGH | MAX",
+  "rationale": "one coaching tip sentence (max 15 words)"
 }`;
 
-    const content = await callAI([{ role: "user", content: prompt }], 800);
+    const content = await callAI([{ role: "user", content: prompt }], 1200);
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     let result: any = {};
     try {
       result = JSON.parse(jsonMatch ? jsonMatch[0] : content);
     } catch {
-      result = { name: description.slice(0, 30), sets: "3x10", reps: "10", weight: "Bodyweight", duration: duration || "30 min", intensity: intensity || "HIGH", rationale: "" };
+      result = { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", rationale: "" };
     }
 
     const id = uuidv4();
     const today = new Date().toISOString().split("T")[0];
 
+    // New schema: exercises = [{name, sets: [{weight, reps}]}]
+    interface ExerciseSet { weight: string; reps: string }
+    interface Exercise { name: string; sets: ExerciseSet[] }
+    const exercises: Exercise[] = (result.exercises || []).map((ex: any) => ({
+      name: ex.name || "Exercise",
+      sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({
+        weight: String(s.weight || ""),
+        reps: String(s.reps || ""),
+      })) : [],
+    }));
+
+    const totalSets = exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
+    const setsVal = exercises.length > 0
+      ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets`
+      : "–";
+
     db.prepare(
-      "INSERT INTO workouts (id, user_id, date, name, sets, reps, weight, duration, intensity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO workouts (id, user_id, date, name, sets, reps, weight, duration, intensity, exercises) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       req.user.userId,
       today,
       result.name || description.slice(0, 30),
-      result.sets || "3x10",
-      result.reps || "10",
-      result.weight || "Bodyweight",
+      setsVal,
+      null,
+      null,
       result.duration || duration || "30 min",
       result.intensity || intensity || "HIGH",
+      exercises.length > 0 ? JSON.stringify(exercises) : null,
     );
 
     res.json({
       _id: id,
       name: result.name || description.slice(0, 30),
-      sets: result.sets || "3x10",
-      reps: result.reps || "10",
-      weight: result.weight || "Bodyweight",
+      sets: setsVal,
+      reps: null,
+      weight: null,
       duration: result.duration || duration || "30 min",
       intensity: result.intensity || intensity || "HIGH",
       rationale: result.rationale || "",
+      exercises: exercises.length > 0 ? exercises : null,
     });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

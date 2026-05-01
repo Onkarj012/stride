@@ -57,4 +57,10 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 
 app.listen(PORT, () => {
   console.log(`Stride backend running on http://localhost:${PORT}`);
+  const key = process.env.OPENROUTER_API_KEY;
+  if (key) {
+    console.log(`OpenRouter API key loaded: sk-or-...${key.slice(-6)}`);
+  } else {
+    console.error("⚠️  OPENROUTER_API_KEY is NOT set — AI features will fail!");
+  }
 });
