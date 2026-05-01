@@ -1,6 +1,15 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, "..", ".env.local") });
+dotenv.config();
+
 import express from "express";
 import cors from "cors";
+import { clerkMiddleware } from "@clerk/express";
+import { ensureUser } from "./middleware/auth.js";
 import authRoutes from "./routes/auth.js";
 import mealsRoutes from "./routes/meals.js";
 import workoutsRoutes from "./routes/workouts.js";
@@ -22,8 +31,10 @@ app.use(
     credentials: true,
   }),
 );
-app.options("*", cors());
 app.use(express.json());
+
+app.use(clerkMiddleware());
+app.use(ensureUser);
 
 app.use("/api/auth", authRoutes);
 app.use("/api/meals", mealsRoutes);
@@ -37,6 +48,11 @@ app.use("/api/profile", profileRoutes);
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: err.message || "Internal server error" });
 });
 
 app.listen(PORT, () => {

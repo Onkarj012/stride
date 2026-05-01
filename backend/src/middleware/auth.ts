@@ -1,10 +1,45 @@
 import type { Request, Response, NextFunction } from "express";
+import { getAuth, clerkClient } from "@clerk/express";
 import db from "../db.js";
 
-interface AuthRow {
-  id: string;
-  email: string;
-  name: string;
+declare global {
+  namespace Express {
+    interface Request {
+      user: { userId: string; name: string; email: string };
+    }
+  }
+}
+
+export async function ensureUser(req: Request, _res: Response, next: NextFunction) {
+  try {
+    const { userId } = getAuth(req);
+    if (!userId) {
+      next();
+      return;
+    }
+
+    let user = db
+      .prepare("SELECT id, email, name FROM users WHERE id = ?")
+      .get(userId) as { id: string; email: string; name: string } | undefined;
+
+    if (!user) {
+      try {
+        const clerkUser = await clerkClient.users.getUser(userId);
+        const email = clerkUser.emailAddresses[0]?.emailAddress || "";
+        const name = `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim() || "Operator";
+        db.prepare("INSERT INTO users (id, email, name) VALUES (?, ?, ?)").run(userId, email, name);
+        user = { id: userId, email, name };
+      } catch {
+        db.prepare("INSERT INTO users (id, email, name) VALUES (?, ?, ?)").run(userId, "", "Operator");
+        user = { id: userId, email: "", name: "Operator" };
+      }
+    }
+
+    req.user = { userId: user.id, name: user.name, email: user.email };
+  } catch (err) {
+    console.error("ensureUser error:", err);
+  }
+  next();
 }
 
 export function requireAuth(
@@ -12,25 +47,10 @@ export function requireAuth(
   res: Response,
   next: NextFunction,
 ): void {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    res.status(401).json({ error: "No token provided" });
+  const { userId } = getAuth(req);
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required" });
     return;
   }
-  const token = authHeader.split(" ")[1];
-
-  const row = db
-    .prepare(
-      "SELECT u.id, u.email, u.name FROM user_tokens t JOIN users u ON u.id = t.user_id WHERE t.token = ?",
-    )
-    .get(token) as AuthRow | undefined;
-
-  if (!row) {
-    res.status(401).json({ error: "Invalid token" });
-    return;
-  }
-
-  req.user = { userId: row.id, email: row.email, name: row.name };
-  req.token = token;
   next();
 }

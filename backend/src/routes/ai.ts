@@ -322,22 +322,42 @@ router.post("/log-meal", requireAuth, async (req: Request, res: Response) => {
       return;
     }
 
-    const prompt = `Analyze this meal and estimate ALL nutritional values based on the description. Be realistic and thorough.
+    const prompt = `You are a professional nutritionist. Analyze this meal description carefully — it may be detailed with cooking methods, ingredients, portion sizes, and multiple items. Extract ALL nutrition information.
 
-Meal type: ${mealType || "general"}
-Description: "${description}"
+Meal type: ${mealType || "unspecified"}
+User's description:
+"""
+${description}
+"""
 
-Return ONLY a JSON object with these exact keys (no other text):
-- name: a short name for the meal (max 4 words)
-- calories: total calories (number)
-- protein: grams of protein (number)
-- carbs: grams of carbs (number)
-- fat: grams of fat (number)
-- suggestion: a one-sentence tip about this meal (max 15 words)`;
+Instructions:
+1. Read the FULL description. Identify every food item mentioned (main dish, sides, condiments, drinks, dessert, etc.)
+2. Estimate realistic macros for ALL items COMBINED. Consider:
+   - Actual portion sizes mentioned (grams, cups, pieces, etc.)
+   - Cooking method (fried vs grilled vs raw affects calories)
+   - Oils, ghee, butter, mayo, cheese — these add significant fat
+   - Homemade vs store-bought affects accuracy
+   - If specific macros are provided for any item, use those exact numbers
+3. Be conservative but accurate. Don't underestimate calories from fats/oils.
 
-    const content = await callAI([{ role: "user", content: prompt }], 300);
+Return ONLY a JSON object (no other text, no markdown, no explanation):
+{
+  "name": "short descriptive name (max 4 words)",
+  "calories": number,
+  "protein": number (grams),
+  "carbs": number (grams),
+  "fat": number (grams),
+  "suggestion": "one short nutrition tip about this meal (max 15 words)"
+}`;
+
+    const content = await callAI([{ role: "user", content: prompt }], 800);
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    const result = JSON.parse(jsonMatch ? jsonMatch[0] : content) as any;
+    let result: any = {};
+    try {
+      result = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+    } catch {
+      result = { name: description.slice(0, 50), calories: 400, protein: 20, carbs: 35, fat: 15, suggestion: null };
+    }
 
     const id = uuidv4();
     const today = new Date().toISOString().split("T")[0];
@@ -374,24 +394,43 @@ router.post("/log-workout", requireAuth, async (req: Request, res: Response) => 
       return;
     }
 
-    const prompt = `Analyze this workout description and estimate the details. Be realistic.
+    const prompt = `You are a professional fitness trainer. Analyze this workout log — it may contain multiple exercises with specific weights, reps, and sets. Structure it into a single coherent entry.
 
-Description: "${description}"
-Duration: ${duration || "not specified"}
-Intensity: ${intensity || "not specified"}
+User's workout:
+"""
+${description}
+"""
 
-Return ONLY a JSON object with these exact keys (no other text):
-- name: a short exercise/workout name (max 3 words)
-- sets: estimated sets (string like "3x12" or "4x8")
-- reps: reps per set (string)
-- weight: estimated weight used (string like "135lbs" or "Bodyweight")
-- duration: formatted duration (string like "30 min")
-- intensity: one of LOW, MEDIUM, HIGH, MAX
-- rationale: one sentence why this is a good workout (max 15 words)`;
+User-provided duration: ${duration || "not specified"}
+User-provided intensity: ${intensity || "not specified"}
 
-    const content = await callAI([{ role: "user", content: prompt }], 300);
+Instructions:
+1. Read ALL exercises mentioned. If there are multiple exercises, create ONE entry summarizing the session.
+2. For each exercise, note the weights, reps, and sets if given (e.g. "compound rod: 41, 41, 43 kg: 15 reps each" means 3 sets at 41/41/43 kg, 15 reps each)
+3. If the user mentions specific weights in kg/lbs, preserve them.
+4. Estimate total workout duration if not provided.
+5. Determine intensity based on volume and weights described.
+6. Include cardio (walking, running, etc.) as part of the session.
+
+Return ONLY a JSON object (no other text, no markdown, no explanation):
+{
+  "name": "short session name (max 3 words, e.g. 'Pull Day' or 'Chest + Arms')",
+  "sets": "total sets in format like '3x12' or summarize as '18 total'",
+  "reps": "typical rep range",
+  "weight": "weight range used (e.g. '41-43 kg' or 'Bodyweight')",
+  "duration": "estimated duration (e.g. '45 min')",
+  "intensity": "LOW, MEDIUM, HIGH, or MAX",
+  "rationale": "one sentence coaching tip (max 15 words)"
+}`;
+
+    const content = await callAI([{ role: "user", content: prompt }], 800);
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    const result = JSON.parse(jsonMatch ? jsonMatch[0] : content) as any;
+    let result: any = {};
+    try {
+      result = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+    } catch {
+      result = { name: description.slice(0, 30), sets: "3x10", reps: "10", weight: "Bodyweight", duration: duration || "30 min", intensity: intensity || "HIGH", rationale: "" };
+    }
 
     const id = uuidv4();
     const today = new Date().toISOString().split("T")[0];
@@ -419,6 +458,56 @@ Return ONLY a JSON object with these exact keys (no other text):
       duration: result.duration || duration || "30 min",
       intensity: result.intensity || intensity || "HIGH",
       rationale: result.rationale || "",
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post("/profile-macros", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { weight, height, age, activityLevel } = req.body as {
+      weight?: number;
+      height?: number;
+      age?: number;
+      activityLevel?: string;
+    };
+    if (!weight || !height || !age) {
+      res.status(400).json({ error: "Weight, height, and age required" });
+      return;
+    }
+
+    const prompt = `Calculate optimal daily macronutrient targets for:
+- Weight: ${weight}kg
+- Height: ${height}cm
+- Age: ${age}
+- Activity Level: ${activityLevel || "moderate"}
+
+Return ONLY a JSON object with these keys (numbers only, no text):
+- calories: daily calorie target
+- protein: grams of protein
+- carbs: grams of carbs  
+- fat: grams of fat
+- explanation: one sentence explaining the reasoning (max 15 words)`;
+
+    const content = await callAI([{ role: "user", content: prompt }], 300);
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    let result: any = {};
+    try {
+      result = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+    } catch {
+      const bmr = 10 * weight + 6.25 * height - 5 * age + 5;
+      const multipliers: Record<string, number> = { sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725, intense: 1.9 };
+      const tdee = Math.round(bmr * (multipliers[activityLevel || "moderate"] || 1.55));
+      result = { calories: tdee, protein: Math.round(weight * 2), carbs: Math.round((tdee * 0.45) / 4), fat: Math.round((tdee * 0.25) / 9), explanation: "Calculated using Mifflin-St Jeor equation." };
+    }
+
+    res.json({
+      calories: result.calories || 2000,
+      protein: result.protein || Math.round(weight * 2),
+      carbs: result.carbs || 250,
+      fat: result.fat || 65,
+      explanation: result.explanation || "",
     });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
