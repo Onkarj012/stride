@@ -27,6 +27,7 @@ router.get("/", requireAuth, (req: Request, res: Response) => {
     intensity: w.intensity,
     date: w.date,
     exercises: w.exercises ? JSON.parse(w.exercises as unknown as string) : null,
+    rationale: (w as any).rationale || null,
   }));
 
   res.json(result);

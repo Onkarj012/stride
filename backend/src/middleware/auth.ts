@@ -26,11 +26,11 @@ export async function ensureUser(req: Request, _res: Response, next: NextFunctio
       try {
         const clerkUser = await clerkClient.users.getUser(userId);
         const email = clerkUser.emailAddresses[0]?.emailAddress || "";
-        const name = `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim() || "Operator";
+        const name = `${clerkUser.firstName || ""} ${clerkUser.lastName || ""}`.trim() || "Athlete";
         db.prepare("INSERT INTO users (id, email, name) VALUES (?, ?, ?)").run(userId, email, name);
         user = { id: userId, email, name };
       } catch {
-        db.prepare("INSERT INTO users (id, email, name) VALUES (?, ?, ?)").run(userId, "", "Operator");
+        db.prepare("INSERT INTO users (id, email, name) VALUES (?, ?, ?)").run(userId, "", "Athlete");
         user = { id: userId, email: "", name: "Operator" };
       }
     }

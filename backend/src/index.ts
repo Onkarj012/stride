@@ -19,6 +19,7 @@ import insightsRoutes from "./routes/insights.js";
 import chatRoutes from "./routes/chat.js";
 import aiRoutes from "./routes/ai.js";
 import profileRoutes from "./routes/profile.js";
+import historyRoutes from "./routes/history.js";
 
 const app = express();
 const PORT = process.env.PORT || 3210;
@@ -45,6 +46,7 @@ app.use("/api/insights", insightsRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/profile", profileRoutes);
+app.use("/api/history", historyRoutes);
 
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok" });

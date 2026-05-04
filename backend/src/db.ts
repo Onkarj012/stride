@@ -105,5 +105,20 @@ db.exec(`
 // Migrations — ALTER TABLE fails silently if column already exists
 try { db.exec(`ALTER TABLE workouts ADD COLUMN exercises TEXT`); } catch {}
 try { db.exec(`ALTER TABLE meals ADD COLUMN meal_type TEXT DEFAULT 'unspecified'`); } catch {}
+try { db.exec(`ALTER TABLE workouts ADD COLUMN rationale TEXT`); } catch {}
+
+// chat_sessions table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT 'New Chat',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_sessions_user ON chat_sessions(user_id);
+`);
+try { db.exec(`ALTER TABLE chat_messages ADD COLUMN session_id TEXT REFERENCES chat_sessions(id) ON DELETE CASCADE`); } catch {}
+try { db.exec(`CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id)`); } catch {}
 
 export default db;
