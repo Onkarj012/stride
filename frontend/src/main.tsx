@@ -13,10 +13,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn } = useAuth()
   if (!isLoaded) {
     return (
-      <div className="min-h-screen bg-white dark:bg-gray-950 text-black font-mono flex items-center justify-center transition-colors">
+      <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-primary)] font-body flex items-center justify-center transition-colors">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 size={32} className="animate-spin text-red-600" />
-          <div className="text-sm font-bold text-neutral-500 dark:text-gray-400">AUTHENTICATING...</div>
+          <Loader2 size={32} className="animate-spin text-accent" />
+          <div className="text-sm font-mono text-[var(--text-muted)]">AUTHENTICATING...</div>
         </div>
       </div>
     )
@@ -44,7 +44,7 @@ function ClerkProviderWithRoutes() {
           <Route
             path="/sign-in/*"
             element={
-              <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center transition-colors">
+              <div className="min-h-screen bg-[var(--bg-main)] flex items-center justify-center transition-colors">
                 <SignIn />
               </div>
             }
@@ -52,7 +52,7 @@ function ClerkProviderWithRoutes() {
           <Route
             path="/sign-up/*"
             element={
-              <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center transition-colors">
+              <div className="min-h-screen bg-[var(--bg-main)] flex items-center justify-center transition-colors">
                 <SignUp />
               </div>
             }

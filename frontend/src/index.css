@@ -1,20 +1,175 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600;700&family=Work+Sans:wght@400;500;600;700;800&display=swap');
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  --theme-primary: #CCFF00;
+  --theme-primary-text: #000000;
+  --bg-main: #050505;
+  --bg-card: #0F0F0F;
+  --bg-elevated: #1A1A1A;
+  --text-primary: #FFFFFF;
+  --text-secondary: #A3A3A3;
+  --text-muted: #737373;
+  --border-default: #262626;
+  --border-bold: #404040;
+}
+
 @theme {
-  --font-sans: system-ui, sans-serif;
-  --font-mono: ui-monospace, monospace;
+  --font-sans: 'Work Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-heading: 'Anton', sans-serif;
 }
 
 html, body {
   margin: 0;
   padding: 0;
-  background-color: white;
   min-height: 100%;
+}
+
+html {
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+}
+
+html.light {
+  --bg-main: #FFFFFF;
+  --bg-card: #F5F5F5;
+  --bg-elevated: #EBEBEB;
+  --text-primary: #000000;
+  --text-secondary: #525252;
+  --text-muted: #737373;
+  --border-default: #E5E5E5;
+  --border-bold: #D4D4D4;
+}
+
+html.light body {
+  background-color: #FFFFFF;
+  color: #000000;
 }
 
 html.dark,
 html.dark body {
-  background-color: #030712; /* Tailwind gray-950 */
+  background-color: var(--bg-main);
+}
+
+::selection {
+  background-color: var(--theme-primary);
+  color: var(--theme-primary-text);
+}
+
+.font-heading {
+  font-family: 'Anton', sans-serif;
+}
+
+.font-body {
+  font-family: 'Work Sans', sans-serif;
+}
+
+.font-mono {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* Brutalist hard shadows */
+.shadow-brutal {
+  box-shadow: 4px 4px 0px 0px var(--theme-primary);
+}
+
+.shadow-brutal-sm {
+  box-shadow: 2px 2px 0px 0px var(--theme-primary);
+}
+
+.shadow-brutal-white {
+  box-shadow: 4px 4px 0px 0px rgba(255,255,255,0.1);
+}
+
+/* Accent color classes that use CSS variable */
+.bg-accent {
+  background-color: var(--theme-primary);
+}
+
+.text-accent {
+  color: var(--theme-primary);
+}
+
+.border-accent {
+  border-color: var(--theme-primary);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-card);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-bold);
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--theme-primary);
+}
+
+/* Progress bar animations */
+@keyframes progress-fill {
+  from { width: 0; }
+}
+
+.animate-progress {
+  animation: progress-fill 1s ease-out forwards;
+}
+
+/* Pulse glow for active states */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 var(--theme-primary); }
+  50% { box-shadow: 0 0 20px 4px var(--theme-primary); }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s infinite;
+}
+
+/* Water fill animation */
+@keyframes water-wave {
+  0% { transform: translateX(0) translateY(0); }
+  50% { transform: translateX(-25%) translateY(-2px); }
+  100% { transform: translateX(-50%) translateY(0); }
+}
+
+.animate-water {
+  animation: water-wave 3s ease-in-out infinite;
+}
+
+/* Staggered entrance animations */
+.animate-stagger-1 { animation-delay: 0.1s; }
+.animate-stagger-2 { animation-delay: 0.2s; }
+.animate-stagger-3 { animation-delay: 0.3s; }
+.animate-stagger-4 { animation-delay: 0.4s; }
+.animate-stagger-5 { animation-delay: 0.5s; }
+
+/* Noise texture overlay */
+.noise-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+}
+
+/* Glass morphism effect */
+.glass {
+  background: rgba(15, 15, 15, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+html.light .glass {
+  background: rgba(255, 255, 255, 0.8);
 }
