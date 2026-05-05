@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { useAuth, useUser, useClerk } from "@clerk/react";
 import {
   Flame,
   Utensils,
@@ -52,7 +53,7 @@ import {
 } from "lucide-react";
 import { useTheme, colorSchemes } from "../lib/theme";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3210";
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 async function apiFetch(
   path: string,
@@ -121,52 +122,10 @@ const badges = [
   { id: 'iron-will', name: 'Iron Will', icon: Award, description: '30 day streak' },
 ];
 
-// Mock data for previous day
-const mockPreviousDayMeals = [
-  { _id: 'mock1', name: 'Oatmeal with Berries', time: '08:30', mealType: 'breakfast', calories: 350, protein: 12, carbs: 58, fat: 8 },
-  { _id: 'mock2', name: 'Grilled Chicken Salad', time: '13:00', mealType: 'lunch', calories: 480, protein: 42, carbs: 18, fat: 28 },
-  { _id: 'mock3', name: 'Protein Shake', time: '16:00', mealType: 'snack', calories: 220, protein: 30, carbs: 12, fat: 6 },
-  { _id: 'mock4', name: 'Salmon with Vegetables', time: '19:30', mealType: 'dinner', calories: 580, protein: 45, carbs: 25, fat: 32 },
-];
-
-const mockPreviousDayWorkouts = [
-  { _id: 'mockw1', name: 'Morning Run', duration: '35 min', intensity: 'MEDIUM', exercises: [{ name: 'Running', sets: [{ weight: 'cardio', reps: '5km' }] }] },
-  { _id: 'mockw2', name: 'Upper Body Strength', duration: '45 min', intensity: 'HIGH', exercises: [
-    { name: 'Bench Press', sets: [{ weight: '80kg', reps: '8' }, { weight: '85kg', reps: '6' }, { weight: '90kg', reps: '4' }] },
-    { name: 'Shoulder Press', sets: [{ weight: '40kg', reps: '10' }, { weight: '45kg', reps: '8' }] },
-    { name: 'Pull-ups', sets: [{ weight: 'BW', reps: '12' }, { weight: 'BW', reps: '10' }, { weight: 'BW', reps: '8' }] },
-  ]},
-];
-
-// Mock data for today (so the home dashboard isn't empty for demo)
-const mockTodayMeals = [
-  { _id: 'today1', name: 'Greek Yogurt & Granola', time: '08:00', mealType: 'breakfast', calories: 320, protein: 22, carbs: 42, fat: 8 },
-  { _id: 'today2', name: 'Chicken & Rice Bowl', time: '12:30', mealType: 'lunch', calories: 540, protein: 48, carbs: 62, fat: 14 },
-  { _id: 'today3', name: 'Almond Butter Toast', time: '16:00', mealType: 'snack', calories: 280, protein: 9, carbs: 28, fat: 16 },
-];
-
-const mockTodayWorkouts = [
-  { _id: 'todayw1', name: 'Lower Body Strength', duration: '50 min', intensity: 'HIGH', exercises: [
-    { name: 'Back Squat', sets: [{ weight: '100kg', reps: '8' }, { weight: '110kg', reps: '6' }, { weight: '120kg', reps: '4' }] },
-    { name: 'Romanian Deadlift', sets: [{ weight: '80kg', reps: '10' }, { weight: '90kg', reps: '8' }] },
-    { name: 'Bulgarian Split Squat', sets: [{ weight: '20kg', reps: '12' }, { weight: '20kg', reps: '12' }] },
-  ]},
-];
-
-// Mock AI chat messages
-const mockChatMessages = [
-  { role: 'human', content: 'I had a chicken breast with rice and broccoli for lunch, about 200g of chicken' },
-  { role: 'ai', content: "Great choice! I've logged your lunch:\n\n**Grilled Chicken with Rice & Broccoli**\n- Calories: ~450 kcal\n- Protein: 46g\n- Carbs: 35g\n- Fat: 12g\n\nYou're doing well on protein today! You've hit 68% of your daily protein goal. Keep it up! 💪" },
-  { role: 'human', content: 'What should I eat for dinner to hit my macros?' },
-  { role: 'ai', content: "Based on your remaining macros for today:\n\n**You still need:**\n- ~600 calories\n- 58g protein\n- 85g carbs\n- 28g fat\n\n**Suggested dinner:**\n\n🥗 **Salmon Bowl**\n- 150g grilled salmon (35g protein)\n- 1 cup quinoa (8g protein)\n- Mixed greens with olive oil\n- Avocado (half)\n\nThis would give you approximately 550 calories and help you hit your protein target perfectly!" },
-];
-
 export default function Dashboard() {
-  // Mock auth for UI testing
-  const getToken = async () => null;
-  const signOut = () => console.log('Sign out clicked');
-  const user = { firstName: 'Demo', fullName: 'Demo User', imageUrl: null, emailAddresses: [{ emailAddress: 'demo@stride.app' }], createdAt: new Date().toISOString() };
-  const openUserProfile = () => console.log('Open profile clicked');
+  const { getToken, signOut } = useAuth()
+  const { user } = useUser()
+  const { openUserProfile } = useClerk()
   const { isDark, toggleTheme, accentColor, setAccentColor } = useTheme();
   const [activeTab, setActiveTab] = useState("HOME");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -175,12 +134,11 @@ export default function Dashboard() {
   const today = new Date().toISOString().split("T")[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
 
-  // Use mock data instead of undefined to avoid loading state
-  const [meals, setMeals] = useState<any[]>(mockTodayMeals);
-  const [workouts, setWorkouts] = useState<any[]>(mockTodayWorkouts);
+  // Data state — start empty, fetch from backend
+  const [meals, setMeals] = useState<any[]>([]);
+  const [workouts, setWorkouts] = useState<any[]>([]);
   const [goals, setGoals] = useState<any>({ calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 });
-  const [history, setHistory] = useState<any[]>([]);
-  const [dailyInsightsData, setDailyInsightsData] = useState<any>({ insights: ['Start logging your meals to get personalized AI insights!', 'Track your workouts for progress analysis.'] });
+  const [dailyInsightsData, setDailyInsightsData] = useState<any>({ insights: [] });
   const [weeklySummary, setWeeklySummary] = useState<any>(null);
 
   // Water tracking with flexible input
@@ -217,17 +175,14 @@ export default function Dashboard() {
   // Badges
   const [unlockedBadges, setUnlockedBadges] = useState<string[]>(() => {
     const saved = localStorage.getItem('unlocked-badges');
-    return saved ? JSON.parse(saved) : ['first-meal', 'first-workout'];
+    return saved ? JSON.parse(saved) : [];
   });
 
-  // AI Coach state with mock messages
-  const [sessions, setSessions] = useState<any[]>([
-    { id: 'session1', title: 'Nutrition Chat', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-    { id: 'session2', title: 'Workout Planning', createdAt: new Date(Date.now() - 86400000).toISOString(), updatedAt: new Date(Date.now() - 86400000).toISOString() },
-  ]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>('session1');
+  // AI Coach state
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(true);
-  const [sessionMessages, setSessionMessages] = useState<any[]>(mockChatMessages);
+  const [sessionMessages, setSessionMessages] = useState<any[]>([]);
   const [chatLoggedItem, setChatLoggedItem] = useState<any>(null);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -235,9 +190,7 @@ export default function Dashboard() {
   // History state
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth() + 1);
-  const [calendarData, setCalendarData] = useState<Record<string, { meals: number; workouts: number; calories: number }>>({
-    [yesterday]: { meals: 4, workouts: 2, calories: 1630 },
-  });
+  const [calendarData, setCalendarData] = useState<Record<string, { meals: number; workouts: number; calories: number }>>({});
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [historyDayData, setHistoryDayData] = useState<{ meals: any[]; workouts: any[] } | null>(null);
   const [calendarPanelPct, setCalendarPanelPct] = useState(35);
@@ -310,10 +263,10 @@ export default function Dashboard() {
   const [workoutLoading, setWorkoutLoading] = useState(false);
   const [workoutError, setWorkoutError] = useState<string | null>(null);
 
-  const [profile, setProfile] = useState<any>({ weight: 75, height: 178, age: 28, activityLevel: 'moderate' });
+  const [profile, setProfile] = useState<any>(null);
   const [profileForm, setProfileForm] = useState({
-    weight: "75", height: "178", age: "28", activityLevel: "moderate",
-    calorieTarget: "2400", proteinTarget: "180", carbTarget: "280", fatTarget: "80",
+    weight: "", height: "", age: "", activityLevel: "moderate",
+    calorieTarget: "", proteinTarget: "", carbTarget: "", fatTarget: "",
   });
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -322,10 +275,10 @@ export default function Dashboard() {
   const [profileAIExplanation, setProfileAIExplanation] = useState<string | null>(null);
 
   const effectiveGoals = {
-    calorieGoal: parseInt(profileForm.calorieTarget) || 2400,
-    proteinGoal: parseInt(profileForm.proteinTarget) || 180,
-    carbGoal: parseInt(profileForm.carbTarget) || 280,
-    fatGoal: parseInt(profileForm.fatTarget) || 80,
+    calorieGoal: parseInt(profileForm.calorieTarget) || goals?.calorieGoal || 2400,
+    proteinGoal: parseInt(profileForm.proteinTarget) || goals?.proteinGoal || 180,
+    carbGoal: parseInt(profileForm.carbTarget) || goals?.carbGoal || 280,
+    fatGoal: parseInt(profileForm.fatTarget) || goals?.fatGoal || 80,
   };
 
   const [chatInput, setChatInput] = useState("");
@@ -343,12 +296,256 @@ export default function Dashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [sessionMessages]);
 
-  // Auto-resize chat input
-  const handleChatInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setChatInput(e.target.value);
-    if (chatInputRef.current) {
-      chatInputRef.current.style.height = 'auto';
-      chatInputRef.current.style.height = Math.min(chatInputRef.current.scrollHeight, 150) + 'px';
+  // ─── Data fetching ─────────────────────────────────────────────────────────
+
+  const fetchMeals = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/api/meals?date=${today}`, {}, getToken);
+      setMeals(Array.isArray(data) ? data : []);
+    } catch {
+      setMeals([]);
+    }
+  }, [getToken, today]);
+
+  const fetchWorkouts = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/api/workouts?date=${today}`, {}, getToken);
+      setWorkouts(Array.isArray(data) ? data : []);
+    } catch {
+      setWorkouts([]);
+    }
+  }, [getToken, today]);
+
+  const fetchGoals = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/api/goals?date=${today}`, {}, getToken);
+      setGoals(data || { calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 });
+    } catch {
+      setGoals({ calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 });
+    }
+  }, [getToken, today]);
+
+  const fetchProfile = useCallback(async () => {
+    try {
+      const p = await apiFetch('/api/profile', {}, getToken);
+      setProfile(p);
+      setProfileForm({
+        weight: p.weight ? String(p.weight) : '',
+        height: p.height ? String(p.height) : '',
+        age: p.age ? String(p.age) : '',
+        activityLevel: p.activityLevel || 'moderate',
+        calorieTarget: p.calorieTarget ? String(p.calorieTarget) : '',
+        proteinTarget: p.proteinTarget ? String(p.proteinTarget) : '',
+        carbTarget: p.carbTarget ? String(p.carbTarget) : '',
+        fatTarget: p.fatTarget ? String(p.fatTarget) : '',
+      });
+    } catch {
+      setProfile(null);
+    }
+  }, [getToken]);
+
+  const fetchInsights = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/api/insights/daily?date=${today}`, {}, getToken);
+      setDailyInsightsData(data || { insights: [] });
+    } catch {
+      setDailyInsightsData({ insights: [] });
+    }
+  }, [getToken, today]);
+
+  const fetchWeeklySummary = useCallback(async () => {
+    try {
+      const data = await apiFetch('/api/insights/weekly', {}, getToken);
+      setWeeklySummary(data);
+    } catch {
+      setWeeklySummary(null);
+    }
+  }, [getToken]);
+
+  const fetchSessions = useCallback(async () => {
+    try {
+      const data = await apiFetch('/api/chat/sessions', {}, getToken);
+      const list = Array.isArray(data) ? data : [];
+      setSessions(list);
+      if (list.length > 0 && !activeSessionId) {
+        setActiveSessionId(list[0].id);
+      }
+    } catch {
+      setSessions([]);
+    }
+  }, [getToken, activeSessionId]);
+
+  const fetchSessionMessages = useCallback(async (sessionId: string) => {
+    try {
+      const data = await apiFetch(`/api/chat/sessions/${sessionId}/messages`, {}, getToken);
+      const msgs = Array.isArray(data) ? data : [];
+      setSessionMessages(msgs.map((m: any) => ({
+        role: m.role === 'user' ? 'human' : m.role === 'ai' ? 'ai' : m.role,
+        content: m.content,
+      })));
+    } catch {
+      setSessionMessages([]);
+    }
+  }, [getToken]);
+
+  const fetchCalendar = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/api/history/calendar?year=${calendarYear}&month=${calendarMonth}`, {}, getToken);
+      setCalendarData(data || {});
+    } catch {
+      setCalendarData({});
+    }
+  }, [getToken, calendarYear, calendarMonth]);
+
+  // Initial load
+  useEffect(() => {
+    fetchMeals();
+    fetchWorkouts();
+    fetchGoals();
+    fetchProfile();
+    fetchInsights();
+    fetchWeeklySummary();
+    fetchSessions();
+    fetchCalendar();
+  }, []);
+
+  // Reload messages when active session changes
+  useEffect(() => {
+    if (activeSessionId) {
+      fetchSessionMessages(activeSessionId);
+    } else {
+      setSessionMessages([]);
+    }
+  }, [activeSessionId, fetchSessionMessages]);
+
+  // ─── Handlers ──────────────────────────────────────────────────────────────
+
+  const handleLogMeal = async () => {
+    if (!mealForm.description.trim()) {
+      setMealError('DESCRIPTION REQUIRED');
+      return;
+    }
+    setMealLoading(true);
+    setMealError(null);
+    try {
+      await apiFetch('/api/ai/log-meal', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: mealForm.description,
+          mealType: mealForm.mealType,
+          time: mealForm.time || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
+        }),
+      }, getToken);
+      setMealForm({ description: '', mealType: 'breakfast', time: '' });
+      fetchMeals();
+      fetchInsights();
+    } catch (err: any) {
+      setMealError(err.message || 'Failed to log meal');
+    } finally {
+      setMealLoading(false);
+    }
+  };
+
+  const handleLogWorkout = async () => {
+    if (!workoutForm.description.trim()) {
+      setWorkoutError('DESCRIPTION REQUIRED');
+      return;
+    }
+    setWorkoutLoading(true);
+    setWorkoutError(null);
+    try {
+      await apiFetch('/api/ai/log-workout', {
+        method: 'POST',
+        body: JSON.stringify({
+          description: workoutForm.description,
+          duration: workoutForm.duration,
+          intensity: workoutForm.intensity,
+        }),
+      }, getToken);
+      setWorkoutForm({ description: '', duration: '', intensity: 'HIGH' });
+      fetchWorkouts();
+      fetchInsights();
+    } catch (err: any) {
+      setWorkoutError(err.message || 'Failed to log workout');
+    } finally {
+      setWorkoutLoading(false);
+    }
+  };
+
+  const handleDeleteMeal = async (id: string) => {
+    try {
+      await apiFetch(`/api/meals/${id}`, { method: 'DELETE' }, getToken);
+      setMeals(prev => prev.filter(m => m._id !== id));
+      fetchInsights();
+    } catch {}
+  };
+
+  const handleDeleteWorkout = async (id: string) => {
+    try {
+      await apiFetch(`/api/workouts/${id}`, { method: 'DELETE' }, getToken);
+      setWorkouts(prev => prev.filter(w => w._id !== id));
+      fetchInsights();
+    } catch {}
+  };
+
+  const handleSaveProfile = async () => {
+    setProfileLoading(true);
+    setProfileError(null);
+    setProfileSuccess(false);
+    try {
+      await apiFetch('/api/profile', {
+        method: 'POST',
+        body: JSON.stringify({
+          weight: profileForm.weight ? Number(profileForm.weight) : null,
+          height: profileForm.height ? Number(profileForm.height) : null,
+          age: profileForm.age ? Number(profileForm.age) : null,
+          activityLevel: profileForm.activityLevel,
+          calorieTarget: profileForm.calorieTarget ? Number(profileForm.calorieTarget) : null,
+          proteinTarget: profileForm.proteinTarget ? Number(profileForm.proteinTarget) : null,
+          carbTarget: profileForm.carbTarget ? Number(profileForm.carbTarget) : null,
+          fatTarget: profileForm.fatTarget ? Number(profileForm.fatTarget) : null,
+        }),
+      }, getToken);
+      setProfileSuccess(true);
+      setTimeout(() => setProfileSuccess(false), 3000);
+      fetchProfile();
+    } catch (err: any) {
+      setProfileError(err.message || 'Failed to save profile');
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const handleAICalculateMacros = async () => {
+    if (!profileForm.weight || !profileForm.height || !profileForm.age) {
+      setProfileError('Weight, height, and age required for AI calculation');
+      return;
+    }
+    setProfileAILoading(true);
+    setProfileAIExplanation(null);
+    setProfileError(null);
+    try {
+      const data = await apiFetch('/api/ai/profile-macros', {
+        method: 'POST',
+        body: JSON.stringify({
+          weight: Number(profileForm.weight),
+          height: Number(profileForm.height),
+          age: Number(profileForm.age),
+          activityLevel: profileForm.activityLevel,
+        }),
+      }, getToken);
+      setProfileForm(prev => ({
+        ...prev,
+        calorieTarget: String(data.calories || ''),
+        proteinTarget: String(data.protein || ''),
+        carbTarget: String(data.carbs || ''),
+        fatTarget: String(data.fat || ''),
+      }));
+      setProfileAIExplanation(data.explanation || '');
+    } catch (err: any) {
+      setProfileError(err.message || 'Failed to calculate macros');
+    } finally {
+      setProfileAILoading(false);
     }
   };
 
@@ -359,25 +556,60 @@ export default function Dashboard() {
     if (chatInputRef.current) chatInputRef.current.style.height = 'auto';
     setSessionMessages((prev) => [...prev, { role: "human", content: userMsg }]);
     setChatLoading(true);
-    // Simulate AI response
-    setTimeout(() => {
-      setSessionMessages((prev) => [...prev, { role: "ai", content: "I've received your message! Since this is a demo, I'm showing a placeholder response. In the full app, I would analyze your input and provide personalized fitness advice." }]);
+    setChatError("");
+    try {
+      const data = await apiFetch('/api/ai/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: userMsg, sessionId: activeSessionId }),
+      }, getToken);
+      setSessionMessages((prev) => [...prev, { role: "ai", content: data.reply }]);
+      if (data.loggedItem) {
+        setChatLoggedItem(data.loggedItem);
+        fetchMeals();
+        fetchWorkouts();
+        fetchInsights();
+      }
+      // Refresh session list to update title if it changed
+      fetchSessions();
+    } catch (err: any) {
+      setChatError(err.message || "Failed to get response");
+    } finally {
       setChatLoading(false);
-    }, 1500);
+    }
   };
 
-  const handleNewSession = () => {
-    const newSession = { id: `session${Date.now()}`, title: 'New Chat', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-    setSessions((prev) => [newSession, ...prev]);
-    setActiveSessionId(newSession.id);
-    setSessionMessages([]);
+  const handleNewSession = async () => {
+    try {
+      const session = await apiFetch('/api/chat/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ title: 'New Chat' }),
+      }, getToken);
+      setSessions(prev => [session, ...prev]);
+      setActiveSessionId(session.id);
+      setSessionMessages([]);
+    } catch (err: any) {
+      setChatError(err.message || 'Failed to create session');
+    }
   };
 
-  const handleSelectDate = (dateStr: string) => {
+  const handleDeleteSession = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await apiFetch(`/api/chat/sessions/${id}`, { method: 'DELETE' }, getToken);
+      setSessions(prev => prev.filter(s => s.id !== id));
+      if (activeSessionId === id) {
+        setActiveSessionId(null);
+        setSessionMessages([]);
+      }
+    } catch {}
+  };
+
+  const handleSelectDate = async (dateStr: string) => {
     setSelectedDate(dateStr);
-    if (dateStr === yesterday) {
-      setHistoryDayData({ meals: mockPreviousDayMeals, workouts: mockPreviousDayWorkouts });
-    } else {
+    try {
+      const data = await apiFetch(`/api/history/day?date=${dateStr}`, {}, getToken);
+      setHistoryDayData(data || { meals: [], workouts: [] });
+    } catch {
       setHistoryDayData({ meals: [], workouts: [] });
     }
   };
@@ -428,6 +660,47 @@ export default function Dashboard() {
 
   const handleDeleteRecipe = (id: string) => {
     setRecipes(prev => prev.filter(r => r.id !== id));
+  };
+
+  const handleGenerateDailyInsights = async () => {
+    setInsightsLoading(true);
+    try {
+      await apiFetch('/api/ai/daily-insights', {
+        method: 'POST',
+        body: JSON.stringify({ date: today }),
+      }, getToken);
+      fetchInsights();
+    } catch {}
+    setInsightsLoading(false);
+  };
+
+  const handleGenerateWeeklySummary = async () => {
+    setWeeklyLoading(true);
+    try {
+      await apiFetch('/api/ai/weekly-summary', { method: 'POST' }, getToken);
+      fetchWeeklySummary();
+    } catch {}
+    setWeeklyLoading(false);
+  };
+
+  const handleGetWorkoutSuggestion = async () => {
+    setSuggestionLoading(true);
+    try {
+      const data = await apiFetch('/api/ai/workout-suggestion', { method: 'POST' }, getToken);
+      setWorkoutSuggestion(data);
+    } catch {
+      setWorkoutSuggestion(null);
+    }
+    setSuggestionLoading(false);
+  };
+
+  // Auto-resize chat input
+  const handleChatInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setChatInput(e.target.value);
+    if (chatInputRef.current) {
+      chatInputRef.current.style.height = 'auto';
+      chatInputRef.current.style.height = Math.min(chatInputRef.current.scrollHeight, 150) + 'px';
+    }
   };
 
   // Page Header component for consistency
@@ -484,8 +757,33 @@ export default function Dashboard() {
     );
   };
 
+  // Markdown renderers for AI Coach
+  const markdownComponents = {
+    h1: ({ children }: any) => <h1 className="text-lg font-bold mb-2 tracking-normal">{children}</h1>,
+    h2: ({ children }: any) => <h2 className="text-base font-bold mb-2 tracking-normal">{children}</h2>,
+    h3: ({ children }: any) => <h3 className="text-sm font-bold mb-1 tracking-normal">{children}</h3>,
+    p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
+    ul: ({ children }: any) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
+    ol: ({ children }: any) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
+    li: ({ children }: any) => <li>{children}</li>,
+    strong: ({ children }: any) => <strong className="font-bold text-accent">{children}</strong>,
+    code: ({ children }: any) => <code className="bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono">{children}</code>,
+    pre: ({ children }: any) => <pre className="bg-[var(--bg-elevated)] p-2 mb-2 overflow-x-auto text-xs font-mono">{children}</pre>,
+    blockquote: ({ children }: any) => <blockquote className="border-l-2 border-accent pl-3 mb-2 text-[var(--text-secondary)]">{children}</blockquote>,
+    a: ({ href, children }: any) => <a href={href} target="_blank" rel="noreferrer" className="text-accent underline">{children}</a>,
+    table: ({ children }: any) => <table className="w-full text-xs mb-2 border border-[var(--border-default)]">{children}</table>,
+    thead: ({ children }: any) => <thead className="bg-[var(--bg-elevated)]">{children}</thead>,
+    tbody: ({ children }: any) => <tbody>{children}</tbody>,
+    tr: ({ children }: any) => <tr className="border-b border-[var(--border-default)]">{children}</tr>,
+    th: ({ children }: any) => <th className="px-2 py-1 text-left font-mono text-[var(--text-muted)]">{children}</th>,
+    td: ({ children }: any) => <td className="px-2 py-1">{children}</td>,
+    hr: () => <hr className="border-[var(--border-default)] my-2" />,
+  };
+
   return (
-    <div className="min-h-screen flex flex-col bg-[var(--bg-main)] text-[var(--text-primary)] font-body transition-colors">
+    <div className={`flex flex-col bg-[var(--bg-main)] text-[var(--text-primary)] font-body transition-colors ${
+      activeTab === "AI COACH" ? "h-screen overflow-hidden" : "min-h-screen"
+    }`}>
       {/* Compact Navigation */}
       <nav className="sticky top-0 z-50 bg-[var(--bg-main)] border-b border-[var(--border-default)]" data-testid="main-nav">
         <div className="flex items-center px-4 py-2.5">
@@ -872,7 +1170,9 @@ export default function Dashboard() {
                   rows={3}
                   className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)] resize-none leading-relaxed"
                 />
+                {mealError && <div className="text-xs font-mono text-red-400 tracking-wide">{mealError}</div>}
                 <button
+                  onClick={handleLogMeal}
                   disabled={mealLoading || !mealForm.description.trim()}
                   className="flex items-center gap-2 px-6 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
                 >
@@ -903,7 +1203,7 @@ export default function Dashboard() {
                         <span>F: {meal.fat}g</span>
                       </div>
                     </div>
-                    <button className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
+                    <button onClick={() => handleDeleteMeal(meal._id)} className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -948,7 +1248,9 @@ export default function Dashboard() {
                     <option value="MAX">MAX</option>
                   </select>
                 </div>
+                {workoutError && <div className="text-xs font-mono text-red-400 tracking-wide">{workoutError}</div>}
                 <button
+                  onClick={handleLogWorkout}
                   disabled={workoutLoading || !workoutForm.description.trim()}
                   className="flex items-center gap-2 px-6 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
                 >
@@ -956,6 +1258,40 @@ export default function Dashboard() {
                   AI Log Workout
                 </button>
               </div>
+            </Card>
+
+            {/* Workout suggestion */}
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-mono text-sm uppercase tracking-wider text-[var(--text-muted)]">AI Workout Suggestion</h3>
+                <button
+                  onClick={handleGetWorkoutSuggestion}
+                  disabled={suggestionLoading}
+                  className="flex items-center gap-2 px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
+                >
+                  {suggestionLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  SUGGEST
+                </button>
+              </div>
+              {workoutSuggestion ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <span className={`text-[10px] font-mono px-2 py-1 ${workoutSuggestion.intensity === "MAX" ? "bg-red-600 text-white" : workoutSuggestion.intensity === "HIGH" ? "bg-accent text-[var(--theme-primary-text)]" : "border border-[var(--border-default)]"}`}>{workoutSuggestion.intensity}</span>
+                    <h4 className="font-heading text-lg uppercase tracking-normal">{workoutSuggestion.name}</h4>
+                  </div>
+                  <div className="text-sm font-mono text-[var(--text-secondary)] tracking-wide">
+                    {workoutSuggestion.sets && <span className="mr-4">{workoutSuggestion.sets}</span>}
+                    {workoutSuggestion.reps && <span className="mr-4">{workoutSuggestion.reps} reps</span>}
+                    {workoutSuggestion.weight && <span className="mr-4">{workoutSuggestion.weight}</span>}
+                    {workoutSuggestion.duration && <span>{workoutSuggestion.duration}</span>}
+                  </div>
+                  {workoutSuggestion.rationale && (
+                    <p className="text-xs text-[var(--text-muted)] tracking-wide">{workoutSuggestion.rationale}</p>
+                  )}
+                </div>
+              ) : (
+                <div className="text-sm font-mono text-[var(--text-muted)] tracking-wide">Click SUGGEST to get an AI-powered workout recommendation.</div>
+              )}
             </Card>
 
             <div className="space-y-3">
@@ -974,7 +1310,7 @@ export default function Dashboard() {
                         {w.duration && <span className="text-xs font-mono text-[var(--text-muted)] tracking-wide">{w.duration}</span>}
                       </div>
                     </div>
-                    <button className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
+                    <button onClick={() => handleDeleteWorkout(w._id)} className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
                       <Trash2 size={14} />
                     </button>
                   </div>
@@ -1114,7 +1450,7 @@ export default function Dashboard() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6" data-testid="insights-tab">
             <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
               <PageHeader title="Insights" subtitle="Your fitness analytics and AI-powered recommendations" />
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button onClick={() => setInsightView('overview')} className={`px-3 py-2 font-mono text-xs uppercase tracking-wide ${insightView === 'overview' ? 'bg-accent text-[var(--theme-primary-text)]' : 'border border-[var(--border-default)] hover:border-accent'}`}>
                   <BarChart2 size={14} className="inline mr-1" /> Overview
                 </button>
@@ -1132,8 +1468,8 @@ export default function Dashboard() {
 
             {/* Stats Row */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard label="CALORIES" value={totalCals || 1630} subValue={`${Math.round(((totalCals || 1630) / effectiveGoals.calorieGoal) * 100)}% of goal`} icon={Flame} accent />
-              <StatCard label="PROTEIN" value={`${totalProtein || 145}g`} subValue={`${Math.round(((totalProtein || 145) / effectiveGoals.proteinGoal) * 100)}% of goal`} icon={Target} />
+              <StatCard label="CALORIES" value={totalCals || 0} subValue={`${Math.round(((totalCals || 0) / effectiveGoals.calorieGoal) * 100)}% of goal`} icon={Flame} accent />
+              <StatCard label="PROTEIN" value={`${totalProtein || 0}g`} subValue={`${Math.round(((totalProtein || 0) / effectiveGoals.proteinGoal) * 100)}% of goal`} icon={Target} />
               <StatCard label="HYDRATION" value={`${waterIntake}/${waterGoal}`} subValue={waterUnit.toUpperCase()} icon={Droplets} />
               <StatCard label="SLEEP" value={`${sleepHours}h`} subValue={sleepHours >= sleepGoal ? "GOAL MET" : `${(sleepGoal - sleepHours).toFixed(1)}h short`} icon={BedDouble} />
             </div>
@@ -1143,44 +1479,31 @@ export default function Dashboard() {
               {insightView === 'overview' && (
                 <>
                   <h2 className="font-heading text-2xl uppercase tracking-normal mb-4">Weekly Overview</h2>
-                  <div className="grid grid-cols-7 gap-2 mb-4">
-                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, i) => (
-                      <div key={day} className="text-center">
-                        <div className="text-xs font-mono text-[var(--text-muted)] mb-2 tracking-wide">{day}</div>
-                        <div className={`h-24 border transition-all ${i === 4 ? 'border-accent bg-accent/20' : 'border-[var(--border-default)] bg-[var(--bg-elevated)]'}`}>
-                          <div className="h-full flex flex-col justify-end p-1">
-                            <div className="bg-accent" style={{ height: `${Math.random() * 60 + 40}%` }} />
-                          </div>
-                        </div>
-                        <div className="text-xs font-mono mt-1 tracking-wide">{Math.floor(Math.random() * 500 + 1500)}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="text-sm text-[var(--text-secondary)] leading-relaxed tracking-wide">
-                    You've been consistent this week! Average daily calories: 1,820 kcal. Protein intake is strong at 82% of goal on average.
-                  </p>
+                  {weeklySummary ? (
+                    <p className="text-sm text-[var(--text-secondary)] leading-relaxed tracking-wide mb-4">{weeklySummary.content}</p>
+                  ) : (
+                    <div className="text-sm font-mono text-[var(--text-muted)] mb-4 tracking-wide">
+                      No weekly summary yet. <button onClick={handleGenerateWeeklySummary} className="text-accent hover:underline">Generate one</button>
+                    </div>
+                  )}
+                  {weeklyLoading && <Loader2 size={16} className="animate-spin text-accent mb-4" />}
                 </>
               )}
               {insightView === 'calories' && (
                 <>
                   <h2 className="font-heading text-2xl uppercase tracking-normal mb-4">Calorie Tracking</h2>
-                  <div className="h-48 flex items-end gap-1 mb-4">
-                    {Array.from({ length: 14 }).map((_, i) => (
-                      <div key={i} className="flex-1 bg-accent" style={{ height: `${Math.random() * 80 + 20}%`, opacity: i > 10 ? 1 : 0.5 }} />
-                    ))}
-                  </div>
                   <div className="grid grid-cols-3 gap-4 text-center">
                     <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                      <div className="text-xs font-mono text-[var(--text-muted)] tracking-wide">AVG INTAKE</div>
-                      <div className="font-heading text-xl">1,820</div>
+                      <div className="text-xs font-mono text-[var(--text-muted)] tracking-wide">TODAY</div>
+                      <div className="font-heading text-xl">{totalCals}</div>
                     </div>
                     <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                       <div className="text-xs font-mono text-[var(--text-muted)] tracking-wide">GOAL</div>
                       <div className="font-heading text-xl">{effectiveGoals.calorieGoal}</div>
                     </div>
                     <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                      <div className="text-xs font-mono text-[var(--text-muted)] tracking-wide">DEFICIT</div>
-                      <div className="font-heading text-xl text-accent">-580</div>
+                      <div className="text-xs font-mono text-[var(--text-muted)] tracking-wide">REMAINING</div>
+                      <div className="font-heading text-xl text-accent">{effectiveGoals.calorieGoal - totalCals}</div>
                     </div>
                   </div>
                 </>
@@ -1198,7 +1521,7 @@ export default function Dashboard() {
                       </svg>
                       <div className="absolute inset-0 flex items-center justify-center">
                         <div className="text-center">
-                          <div className="font-heading text-2xl">1,630</div>
+                          <div className="font-heading text-2xl">{totalCals}</div>
                           <div className="text-xs font-mono text-[var(--text-muted)]">KCAL</div>
                         </div>
                       </div>
@@ -1209,21 +1532,21 @@ export default function Dashboard() {
                       <div className="w-4 h-4 bg-accent" />
                       <div>
                         <div className="text-xs font-mono text-[var(--text-muted)] tracking-wide">PROTEIN</div>
-                        <div className="font-heading">40%</div>
+                        <div className="font-heading">{totalProtein}g</div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 bg-[#FF3B30]" />
                       <div>
                         <div className="text-xs font-mono text-[var(--text-muted)] tracking-wide">CARBS</div>
-                        <div className="font-heading">35%</div>
+                        <div className="font-heading">{totalCarbs}g</div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-4 h-4 bg-[#00FFFF]" />
                       <div>
                         <div className="text-xs font-mono text-[var(--text-muted)] tracking-wide">FAT</div>
-                        <div className="font-heading">25%</div>
+                        <div className="font-heading">{totalFat}g</div>
                       </div>
                     </div>
                   </div>
@@ -1236,23 +1559,23 @@ export default function Dashboard() {
                     <div className="flex items-center justify-between p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                       <div className="flex items-center gap-3">
                         <TrendingUp size={20} className="text-green-500" />
-                        <span className="font-mono tracking-wide">Protein intake improved by 15% this week</span>
+                        <span className="font-mono tracking-wide">Meals logged today: {meals.length}</span>
                       </div>
-                      <span className="text-green-500 font-heading">+15%</span>
+                      <span className="text-green-500 font-heading">+{meals.length}</span>
                     </div>
                     <div className="flex items-center justify-between p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                       <div className="flex items-center gap-3">
                         <TrendingUp size={20} className="text-green-500" />
-                        <span className="font-mono tracking-wide">Workout frequency up from 3 to 5 days</span>
+                        <span className="font-mono tracking-wide">Workouts logged today: {workouts.length}</span>
                       </div>
-                      <span className="text-green-500 font-heading">+67%</span>
+                      <span className="text-green-500 font-heading">+{workouts.length}</span>
                     </div>
                     <div className="flex items-center justify-between p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                       <div className="flex items-center gap-3">
                         <Activity size={20} className="text-yellow-500" />
-                        <span className="font-mono tracking-wide">Sleep consistency needs attention</span>
+                        <span className="font-mono tracking-wide">Calorie progress: {Math.round((totalCals / effectiveGoals.calorieGoal) * 100)}%</span>
                       </div>
-                      <span className="text-yellow-500 font-heading">-5%</span>
+                      <span className="text-yellow-500 font-heading">{Math.round((totalCals / effectiveGoals.calorieGoal) * 100)}%</span>
                     </div>
                   </div>
                 </>
@@ -1261,19 +1584,33 @@ export default function Dashboard() {
 
             {/* AI Insights */}
             <Card className="p-6 border-l-4 border-l-accent">
-              <div className="flex items-center gap-2 mb-4">
-                <BrainCircuit size={24} className="text-accent" strokeWidth={2} />
-                <h2 className="font-heading text-2xl uppercase tracking-normal">AI Recommendations</h2>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <BrainCircuit size={24} className="text-accent" strokeWidth={2} />
+                  <h2 className="font-heading text-2xl uppercase tracking-normal">AI Recommendations</h2>
+                </div>
+                <button
+                  onClick={handleGenerateDailyInsights}
+                  disabled={insightsLoading}
+                  className="flex items-center gap-2 px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
+                >
+                  {insightsLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  GENERATE
+                </button>
               </div>
               <div className="space-y-3">
-                {dailyInsightsData?.insights?.map((insight: string, i: number) => (
+                {dailyInsightsData?.insights?.length > 0 ? dailyInsightsData.insights.map((insight: string, i: number) => (
                   <motion.div key={i} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }} className="flex items-start gap-3 p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                     <div className="w-6 h-6 bg-accent flex items-center justify-center shrink-0">
                       <span className="text-xs font-mono font-bold text-[var(--theme-primary-text)]">{i + 1}</span>
                     </div>
                     <p className="text-sm text-[var(--text-secondary)] leading-relaxed tracking-wide">{insight}</p>
                   </motion.div>
-                ))}
+                )) : (
+                  <div className="text-sm font-mono text-[var(--text-muted)] tracking-wide">
+                    No insights yet. Click GENERATE to get AI-powered recommendations based on today's data.
+                  </div>
+                )}
               </div>
             </Card>
           </motion.div>
@@ -1401,7 +1738,6 @@ export default function Dashboard() {
                     <div className="text-center">
                       <Calendar size={48} className="mx-auto mb-4 text-[var(--text-muted)]" />
                       <div className="text-sm font-mono text-[var(--text-muted)] tracking-wide">SELECT A DATE FROM THE CALENDAR</div>
-                      <p className="text-xs text-[var(--text-muted)] mt-2 tracking-wide">Yesterday has mock data to preview</p>
                     </div>
                   </div>
                 )}
@@ -1425,14 +1761,25 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto">
+                {sessions.length === 0 && (
+                  <div className="p-4 text-xs font-mono text-[var(--text-muted)] tracking-wide">No chats yet</div>
+                )}
                 {sessions.map((s) => (
                   <button
                     key={s.id}
-                    onClick={() => { setActiveSessionId(s.id); setSessionMessages(s.id === 'session1' ? mockChatMessages : []); }}
-                    className={`w-full text-left px-3 py-3 border-b border-[var(--border-default)] text-xs font-mono hover:bg-[var(--bg-elevated)] transition-colors ${activeSessionId === s.id ? "bg-[var(--bg-elevated)] border-l-2 border-l-accent" : ""}`}
+                    onClick={() => setActiveSessionId(s.id)}
+                    className={`w-full text-left px-3 py-3 border-b border-[var(--border-default)] text-xs font-mono hover:bg-[var(--bg-elevated)] transition-colors group ${activeSessionId === s.id ? "bg-[var(--bg-elevated)] border-l-2 border-l-accent" : ""}`}
                   >
-                    <div className="truncate tracking-wide">{s.title}</div>
-                    <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{new Date(s.updatedAt).toLocaleDateString()}</div>
+                    <div className="flex items-center justify-between">
+                      <div className="truncate tracking-wide flex-1">{s.title}</div>
+                      <span
+                        onClick={(e) => handleDeleteSession(s.id, e)}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity"
+                      >
+                        <Trash2 size={12} />
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{new Date(s.updated_at || s.updatedAt).toLocaleDateString()}</div>
                   </button>
                 ))}
               </div>
@@ -1502,15 +1849,7 @@ export default function Dashboard() {
                       {msg.role === "ai" ? (
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
-                          components={{
-                            h1: ({ children }) => <h1 className="text-lg font-bold mb-2 tracking-normal">{children}</h1>,
-                            h2: ({ children }) => <h2 className="text-base font-bold mb-2 tracking-normal">{children}</h2>,
-                            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                            ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
-                            li: ({ children }) => <li>{children}</li>,
-                            strong: ({ children }) => <strong className="font-bold text-accent">{children}</strong>,
-                            code: ({ children }) => <code className="bg-[var(--bg-elevated)] px-1.5 py-0.5 text-xs font-mono">{children}</code>,
-                          }}
+                          components={markdownComponents}
                         >
                           {msg.content}
                         </ReactMarkdown>
@@ -1546,6 +1885,12 @@ export default function Dashboard() {
               {/* Input Area - Expandable */}
               <div className="shrink-0 p-4 border-t border-[var(--border-default)] bg-[var(--bg-card)]">
                 {chatError && <div className="mb-2 text-xs font-mono text-red-400 tracking-wide">{chatError}</div>}
+                {chatLoggedItem && (
+                  <div className="mb-2 text-xs font-mono text-accent tracking-wide">
+                    Logged {chatLoggedItem.type}: {chatLoggedItem.data?.name}
+                    <button onClick={() => setChatLoggedItem(null)} className="ml-2 text-[var(--text-muted)] hover:text-[var(--text-primary)]">Dismiss</button>
+                  </div>
+                )}
                 <div className="flex items-end gap-3">
                   <textarea
                     ref={chatInputRef}
@@ -1561,7 +1906,7 @@ export default function Dashboard() {
                   <button
                     data-testid="send-chat-btn"
                     onClick={handleSendChat}
-                    disabled={chatLoading || !chatInput.trim()}
+                    disabled={chatLoading || !chatInput.trim() || !activeSessionId}
                     className="px-5 py-3 bg-accent text-[var(--theme-primary-text)] font-mono font-bold hover:opacity-90 transition-all disabled:opacity-50 h-[48px]"
                   >
                     {chatLoading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
@@ -1586,10 +1931,10 @@ export default function Dashboard() {
                   <User size={32} className="text-[var(--theme-primary-text)]" />
                 </div>
                 <div>
-                  <h3 className="font-heading text-2xl uppercase tracking-normal">{user?.fullName || "Demo User"}</h3>
+                  <h3 className="font-heading text-2xl uppercase tracking-normal">{user?.fullName || "Athlete"}</h3>
                   <p className="text-sm font-mono text-[var(--text-muted)] tracking-wide">{user?.emailAddresses?.[0]?.emailAddress}</p>
                 </div>
-                <button onClick={openUserProfile} className="ml-auto px-4 py-2 border border-[var(--border-default)] font-mono text-xs uppercase hover:border-accent transition-colors tracking-wide">
+                <button onClick={() => openUserProfile()} className="ml-auto px-4 py-2 border border-[var(--border-default)] font-mono text-xs uppercase hover:border-accent transition-colors tracking-wide">
                   Account Settings
                 </button>
               </div>
@@ -1632,10 +1977,20 @@ export default function Dashboard() {
             <Card className="p-6">
               <div className="flex items-center justify-between mb-6 pb-2 border-b border-[var(--border-default)]">
                 <h3 className="font-heading text-xl uppercase tracking-normal">Daily Macro Targets</h3>
-                <button className="flex items-center gap-2 px-4 py-2 border border-[var(--border-default)] font-mono text-xs uppercase hover:border-accent transition-colors tracking-wide">
-                  <Sparkles size={14} /> AI Calculate
+                <button
+                  onClick={handleAICalculateMacros}
+                  disabled={profileAILoading}
+                  className="flex items-center gap-2 px-4 py-2 border border-[var(--border-default)] font-mono text-xs uppercase hover:border-accent transition-colors tracking-wide"
+                >
+                  {profileAILoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} AI Calculate
                 </button>
               </div>
+              {profileAIExplanation && (
+                <div className="mb-4 text-xs font-mono text-accent tracking-wide">{profileAIExplanation}</div>
+              )}
+              {profileError && (
+                <div className="mb-4 text-xs font-mono text-red-400 tracking-wide">{profileError}</div>
+              )}
               <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Calories (kcal)</label>
@@ -1656,8 +2011,13 @@ export default function Dashboard() {
               </div>
             </Card>
 
-            <button className="w-full py-4 bg-accent text-[var(--theme-primary-text)] font-mono uppercase tracking-wider font-bold">
-              Save Profile
+            <button
+              onClick={handleSaveProfile}
+              disabled={profileLoading}
+              className="w-full py-4 bg-accent text-[var(--theme-primary-text)] font-mono uppercase tracking-wider font-bold disabled:opacity-50"
+            >
+              {profileLoading ? <Loader2 size={16} className="animate-spin inline mr-2" /> : null}
+              {profileSuccess ? 'SAVED!' : 'Save Profile'}
             </button>
           </motion.div>
         )}
