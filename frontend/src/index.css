@@ -33,6 +33,11 @@ html {
   color: var(--text-primary);
 }
 
+body {
+  letter-spacing: 0.012em;
+  line-height: 1.55;
+}
+
 html.light {
   --bg-main: #FFFFFF;
   --bg-card: #F5F5F5;
@@ -61,14 +66,17 @@ html.dark body {
 
 .font-heading {
   font-family: 'Anton', sans-serif;
+  letter-spacing: 0.04em;
 }
 
 .font-body {
   font-family: 'Work Sans', sans-serif;
+  letter-spacing: 0.012em;
 }
 
 .font-mono {
   font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.02em;
 }
 
 /* Brutalist hard shadows */

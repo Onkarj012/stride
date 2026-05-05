@@ -138,6 +138,21 @@ const mockPreviousDayWorkouts = [
   ]},
 ];
 
+// Mock data for today (so the home dashboard isn't empty for demo)
+const mockTodayMeals = [
+  { _id: 'today1', name: 'Greek Yogurt & Granola', time: '08:00', mealType: 'breakfast', calories: 320, protein: 22, carbs: 42, fat: 8 },
+  { _id: 'today2', name: 'Chicken & Rice Bowl', time: '12:30', mealType: 'lunch', calories: 540, protein: 48, carbs: 62, fat: 14 },
+  { _id: 'today3', name: 'Almond Butter Toast', time: '16:00', mealType: 'snack', calories: 280, protein: 9, carbs: 28, fat: 16 },
+];
+
+const mockTodayWorkouts = [
+  { _id: 'todayw1', name: 'Lower Body Strength', duration: '50 min', intensity: 'HIGH', exercises: [
+    { name: 'Back Squat', sets: [{ weight: '100kg', reps: '8' }, { weight: '110kg', reps: '6' }, { weight: '120kg', reps: '4' }] },
+    { name: 'Romanian Deadlift', sets: [{ weight: '80kg', reps: '10' }, { weight: '90kg', reps: '8' }] },
+    { name: 'Bulgarian Split Squat', sets: [{ weight: '20kg', reps: '12' }, { weight: '20kg', reps: '12' }] },
+  ]},
+];
+
 // Mock AI chat messages
 const mockChatMessages = [
   { role: 'human', content: 'I had a chicken breast with rice and broccoli for lunch, about 200g of chicken' },
@@ -161,8 +176,8 @@ export default function Dashboard() {
   const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
 
   // Use mock data instead of undefined to avoid loading state
-  const [meals, setMeals] = useState<any[]>([]);
-  const [workouts, setWorkouts] = useState<any[]>([]);
+  const [meals, setMeals] = useState<any[]>(mockTodayMeals);
+  const [workouts, setWorkouts] = useState<any[]>(mockTodayWorkouts);
   const [goals, setGoals] = useState<any>({ calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 });
   const [history, setHistory] = useState<any[]>([]);
   const [dailyInsightsData, setDailyInsightsData] = useState<any>({ insights: ['Start logging your meals to get personalized AI insights!', 'Track your workouts for progress analysis.'] });
@@ -418,7 +433,7 @@ export default function Dashboard() {
   // Page Header component for consistency
   const PageHeader = ({ title, subtitle }: { title: string; subtitle?: string }) => (
     <div className="mb-8">
-      <h1 className="text-4xl lg:text-5xl font-heading uppercase tracking-tight leading-none">{title}</h1>
+      <h1 className="text-4xl lg:text-5xl font-heading uppercase tracking-normal leading-none">{title}</h1>
       {subtitle && <p className="text-sm font-mono text-[var(--text-muted)] mt-2 tracking-wide">{subtitle}</p>}
     </div>
   );
@@ -436,7 +451,7 @@ export default function Dashboard() {
       <div className="flex items-start justify-between">
         <div>
           <div className="text-[11px] uppercase tracking-[0.15em] font-mono text-[var(--text-muted)] mb-1">{label}</div>
-          <div className="text-3xl font-heading tracking-tight">{value}</div>
+          <div className="text-3xl font-heading tracking-normal">{value}</div>
           {subValue && <div className="text-xs font-mono text-[var(--text-secondary)] mt-1 tracking-wide">{subValue}</div>}
         </div>
         <div className={`p-2.5 ${accent ? 'bg-accent' : 'bg-[var(--bg-elevated)]'}`}>
@@ -475,7 +490,7 @@ export default function Dashboard() {
       <nav className="sticky top-0 z-50 bg-[var(--bg-main)] border-b border-[var(--border-default)]" data-testid="main-nav">
         <div className="flex items-center px-4 py-2.5">
           {/* Logo */}
-          <div className="text-xl font-heading tracking-tight text-accent mr-6" data-testid="app-logo">STRIDE</div>
+          <div className="text-xl font-heading tracking-normal text-accent mr-6" data-testid="app-logo">STRIDE</div>
           
           {/* Compact Nav - Icons with tooltip-like labels */}
           <div className="hidden lg:flex items-center gap-1 flex-1">
@@ -748,7 +763,7 @@ export default function Dashboard() {
 
             {/* Macro Progress */}
             <Card className="p-5">
-              <h3 className="font-heading text-xl uppercase tracking-tight mb-4">Macro Breakdown</h3>
+              <h3 className="font-heading text-xl uppercase tracking-normal mb-4">Macro Breakdown</h3>
               <div className="grid lg:grid-cols-3 gap-6">
                 <div>
                   <div className="flex justify-between text-xs font-mono mb-1.5 tracking-wide">
@@ -778,7 +793,7 @@ export default function Dashboard() {
             <div className="grid lg:grid-cols-3 gap-4">
               <Card className="p-5 lg:col-span-2">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-heading text-xl uppercase tracking-tight">Today's Meals</h3>
+                  <h3 className="font-heading text-xl uppercase tracking-normal">Today's Meals</h3>
                   <button onClick={() => setActiveTab("MEALS")} className="text-xs font-mono text-accent hover:underline tracking-wide">VIEW ALL</button>
                 </div>
                 {meals.length > 0 ? (
@@ -799,7 +814,7 @@ export default function Dashboard() {
               </Card>
 
               <Card className="p-5" data-testid="badges-widget">
-                <h3 className="font-heading text-xl uppercase tracking-tight mb-4">Badges</h3>
+                <h3 className="font-heading text-xl uppercase tracking-normal mb-4">Badges</h3>
                 <div className="grid grid-cols-4 gap-2">
                   {badges.slice(0, 8).map((badge) => {
                     const isUnlocked = unlockedBadges.includes(badge.id);
@@ -879,7 +894,7 @@ export default function Dashboard() {
                     <div>
                       <div className="flex items-center gap-3 flex-wrap mb-2">
                         <span className="text-xs font-mono bg-accent text-[var(--theme-primary-text)] px-2 py-1">{meal.time}</span>
-                        <h3 className="text-lg font-heading uppercase tracking-tight">{meal.name}</h3>
+                        <h3 className="text-lg font-heading uppercase tracking-normal">{meal.name}</h3>
                       </div>
                       <div className="flex items-center gap-4 text-sm font-mono text-[var(--text-secondary)] tracking-wide">
                         <span><Flame size={14} className="inline mr-1" />{meal.calories} KCAL</span>
@@ -949,6 +964,32 @@ export default function Dashboard() {
                   <div className="font-mono text-sm text-[var(--text-muted)] tracking-wide">NO WORKOUTS LOGGED TODAY</div>
                 </Card>
               )}
+              {workouts.map((w: any) => (
+                <Card key={w._id} className="p-5 hover:border-accent transition-colors" data-testid={`workout-${w._id}`}>
+                  <div className="flex items-start justify-between mb-3">
+                    <div>
+                      <div className="flex items-center gap-3 mb-1.5 flex-wrap">
+                        <span className={`text-[10px] font-mono px-2 py-1 ${w.intensity === "MAX" ? "bg-red-600 text-white" : w.intensity === "HIGH" ? "bg-accent text-[var(--theme-primary-text)]" : "border border-[var(--border-default)]"}`}>{w.intensity}</span>
+                        <h3 className="text-lg font-heading uppercase tracking-normal">{w.name}</h3>
+                        {w.duration && <span className="text-xs font-mono text-[var(--text-muted)] tracking-wide">{w.duration}</span>}
+                      </div>
+                    </div>
+                    <button className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  {w.exercises && w.exercises.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {w.exercises.map((ex: any, ei: number) => (
+                        <div key={ei} className="flex items-center justify-between p-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                          <span className="font-mono text-sm tracking-wide">{ex.name}</span>
+                          <span className="font-mono text-xs text-[var(--text-muted)] tracking-wide">{ex.sets.map((s: any) => `${s.weight}×${s.reps}`).join('  ·  ')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              ))}
             </div>
           </motion.div>
         )}
@@ -987,7 +1028,7 @@ export default function Dashboard() {
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="p-6 border-b border-[var(--border-default)] flex items-center justify-between">
-                      <h2 className="font-heading text-2xl uppercase tracking-tight">Add Recipe</h2>
+                      <h2 className="font-heading text-2xl uppercase tracking-normal">Add Recipe</h2>
                       <button onClick={() => setShowRecipeForm(false)} className="p-2 hover:bg-[var(--bg-elevated)]"><X size={20} /></button>
                     </div>
                     <div className="p-6 space-y-4">
@@ -1039,7 +1080,7 @@ export default function Dashboard() {
             {recipes.length === 0 ? (
               <Card className="p-12 text-center border-dashed">
                 <ChefHat size={48} className="mx-auto mb-4 text-[var(--text-muted)]" />
-                <h3 className="font-heading text-xl uppercase mb-2 tracking-tight">No Recipes Yet</h3>
+                <h3 className="font-heading text-xl uppercase mb-2 tracking-normal">No Recipes Yet</h3>
                 <p className="text-sm font-mono text-[var(--text-muted)] mb-4 tracking-wide">Add your favorite healthy recipes for the AI coach to analyze.</p>
                 <button onClick={() => setShowRecipeForm(true)} className="px-6 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wide">
                   Add First Recipe
@@ -1050,7 +1091,7 @@ export default function Dashboard() {
                 {recipes.map((recipe) => (
                   <Card key={recipe.id} className="p-5">
                     <div className="flex items-start justify-between mb-3">
-                      <h3 className="font-heading text-xl uppercase tracking-tight">{recipe.name}</h3>
+                      <h3 className="font-heading text-xl uppercase tracking-normal">{recipe.name}</h3>
                       <button onClick={() => handleDeleteRecipe(recipe.id)} className="p-2 hover:bg-red-600 hover:text-white transition-colors"><Trash2 size={14} /></button>
                     </div>
                     <div className="flex gap-4 text-xs font-mono text-[var(--text-muted)] mb-3 tracking-wide">
@@ -1101,7 +1142,7 @@ export default function Dashboard() {
             <Card className="p-6">
               {insightView === 'overview' && (
                 <>
-                  <h2 className="font-heading text-2xl uppercase tracking-tight mb-4">Weekly Overview</h2>
+                  <h2 className="font-heading text-2xl uppercase tracking-normal mb-4">Weekly Overview</h2>
                   <div className="grid grid-cols-7 gap-2 mb-4">
                     {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, i) => (
                       <div key={day} className="text-center">
@@ -1122,7 +1163,7 @@ export default function Dashboard() {
               )}
               {insightView === 'calories' && (
                 <>
-                  <h2 className="font-heading text-2xl uppercase tracking-tight mb-4">Calorie Tracking</h2>
+                  <h2 className="font-heading text-2xl uppercase tracking-normal mb-4">Calorie Tracking</h2>
                   <div className="h-48 flex items-end gap-1 mb-4">
                     {Array.from({ length: 14 }).map((_, i) => (
                       <div key={i} className="flex-1 bg-accent" style={{ height: `${Math.random() * 80 + 20}%`, opacity: i > 10 ? 1 : 0.5 }} />
@@ -1146,7 +1187,7 @@ export default function Dashboard() {
               )}
               {insightView === 'macros' && (
                 <>
-                  <h2 className="font-heading text-2xl uppercase tracking-tight mb-4">Macro Distribution</h2>
+                  <h2 className="font-heading text-2xl uppercase tracking-normal mb-4">Macro Distribution</h2>
                   <div className="flex items-center justify-center mb-6">
                     <div className="relative w-48 h-48">
                       <svg className="w-full h-full" viewBox="0 0 100 100">
@@ -1190,7 +1231,7 @@ export default function Dashboard() {
               )}
               {insightView === 'trends' && (
                 <>
-                  <h2 className="font-heading text-2xl uppercase tracking-tight mb-4">Progress Trends</h2>
+                  <h2 className="font-heading text-2xl uppercase tracking-normal mb-4">Progress Trends</h2>
                   <div className="space-y-4">
                     <div className="flex items-center justify-between p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                       <div className="flex items-center gap-3">
@@ -1222,7 +1263,7 @@ export default function Dashboard() {
             <Card className="p-6 border-l-4 border-l-accent">
               <div className="flex items-center gap-2 mb-4">
                 <BrainCircuit size={24} className="text-accent" strokeWidth={2} />
-                <h2 className="font-heading text-2xl uppercase tracking-tight">AI Recommendations</h2>
+                <h2 className="font-heading text-2xl uppercase tracking-normal">AI Recommendations</h2>
               </div>
               <div className="space-y-3">
                 {dailyInsightsData?.insights?.map((insight: string, i: number) => (
@@ -1251,7 +1292,7 @@ export default function Dashboard() {
                 <div className="h-full border-r border-[var(--border-default)] p-4 flex flex-col overflow-y-auto">
                   <div className="flex items-center justify-between mb-4">
                     <button onClick={handlePrevMonth} className="p-2 border border-[var(--border-default)] hover:bg-accent hover:text-[var(--theme-primary-text)] transition-colors"><ChevronLeft size={14} /></button>
-                    <h2 className="font-heading text-lg tracking-tight">{monthNames[calendarMonth - 1]} {calendarYear}</h2>
+                    <h2 className="font-heading text-lg tracking-normal">{monthNames[calendarMonth - 1]} {calendarYear}</h2>
                     <button onClick={handleNextMonth} className="p-2 border border-[var(--border-default)] hover:bg-accent hover:text-[var(--theme-primary-text)] transition-colors"><ChevronRight size={14} /></button>
                   </div>
 
@@ -1303,7 +1344,7 @@ export default function Dashboard() {
               <div className="flex-1 min-w-0 overflow-y-auto p-4">
                 {selectedDate && historyDayData ? (
                   <>
-                    <h3 className="font-heading text-xl uppercase mb-4 tracking-tight">
+                    <h3 className="font-heading text-xl uppercase mb-4 tracking-normal">
                       {new Date(selectedDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
                     </h3>
 
@@ -1416,7 +1457,7 @@ export default function Dashboard() {
                   <Bot size={24} className="text-[var(--theme-primary-text)]" strokeWidth={2} />
                 </div>
                 <div className="flex-1">
-                  <div className="font-heading text-xl uppercase tracking-tight">Stride Coach</div>
+                  <div className="font-heading text-xl uppercase tracking-normal">Stride Coach</div>
                   <div className="flex items-center gap-1.5 text-xs font-mono text-accent">
                     <span className="w-2 h-2 bg-accent rounded-full animate-pulse" /> ONLINE • Ready to help
                   </div>
@@ -1428,7 +1469,7 @@ export default function Dashboard() {
                 {sessionMessages.length === 0 && (
                   <div className="text-center py-16">
                     <Bot size={64} className="mx-auto mb-4 text-accent opacity-50" />
-                    <div className="font-heading text-2xl uppercase mb-2 tracking-tight">How can I help?</div>
+                    <div className="font-heading text-2xl uppercase mb-2 tracking-normal">How can I help?</div>
                     <p className="text-sm text-[var(--text-muted)] max-w-md mx-auto leading-relaxed tracking-wide">
                       Describe your meals or workouts and I'll log them for you. Ask me about nutrition, fitness advice, or your progress!
                     </p>
@@ -1462,8 +1503,8 @@ export default function Dashboard() {
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
-                            h1: ({ children }) => <h1 className="text-lg font-bold mb-2 tracking-tight">{children}</h1>,
-                            h2: ({ children }) => <h2 className="text-base font-bold mb-2 tracking-tight">{children}</h2>,
+                            h1: ({ children }) => <h1 className="text-lg font-bold mb-2 tracking-normal">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-base font-bold mb-2 tracking-normal">{children}</h2>,
                             p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
                             ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
                             li: ({ children }) => <li>{children}</li>,
@@ -1545,7 +1586,7 @@ export default function Dashboard() {
                   <User size={32} className="text-[var(--theme-primary-text)]" />
                 </div>
                 <div>
-                  <h3 className="font-heading text-2xl uppercase tracking-tight">{user?.fullName || "Demo User"}</h3>
+                  <h3 className="font-heading text-2xl uppercase tracking-normal">{user?.fullName || "Demo User"}</h3>
                   <p className="text-sm font-mono text-[var(--text-muted)] tracking-wide">{user?.emailAddresses?.[0]?.emailAddress}</p>
                 </div>
                 <button onClick={openUserProfile} className="ml-auto px-4 py-2 border border-[var(--border-default)] font-mono text-xs uppercase hover:border-accent transition-colors tracking-wide">
@@ -1555,7 +1596,7 @@ export default function Dashboard() {
             </Card>
 
             <Card className="p-6">
-              <h3 className="font-heading text-xl uppercase mb-6 pb-2 border-b border-[var(--border-default)] tracking-tight">Body Metrics</h3>
+              <h3 className="font-heading text-xl uppercase mb-6 pb-2 border-b border-[var(--border-default)] tracking-normal">Body Metrics</h3>
               <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 <div>
                   <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Weight (kg)</label>
@@ -1590,7 +1631,7 @@ export default function Dashboard() {
 
             <Card className="p-6">
               <div className="flex items-center justify-between mb-6 pb-2 border-b border-[var(--border-default)]">
-                <h3 className="font-heading text-xl uppercase tracking-tight">Daily Macro Targets</h3>
+                <h3 className="font-heading text-xl uppercase tracking-normal">Daily Macro Targets</h3>
                 <button className="flex items-center gap-2 px-4 py-2 border border-[var(--border-default)] font-mono text-xs uppercase hover:border-accent transition-colors tracking-wide">
                   <Sparkles size={14} /> AI Calculate
                 </button>
