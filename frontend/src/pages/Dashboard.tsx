@@ -45,7 +45,7 @@ import {
   Star,
   Palette,
 } from "lucide-react";
-import { useAuth, useUser, useClerk } from "@clerk/react";
+// Auth removed for UI testing
 import { useTheme, colorSchemes } from "../lib/theme";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3210";
@@ -120,9 +120,11 @@ const badges = [
 ];
 
 export default function Dashboard() {
-  const { getToken, signOut } = useAuth();
-  const { user } = useUser();
-  const { openUserProfile } = useClerk();
+  // Mock auth for UI testing
+  const getToken = async () => null;
+  const signOut = () => console.log('Sign out clicked');
+  const user = { firstName: 'Demo', fullName: 'Demo User', imageUrl: null, emailAddresses: [{ emailAddress: 'demo@stride.app' }], createdAt: new Date().toISOString() };
+  const openUserProfile = () => console.log('Open profile clicked');
   const { isDark, toggleTheme, accentColor, setAccentColor } = useTheme();
   const [activeTab, setActiveTab] = useState("HOME");
   const [menuOpen, setMenuOpen] = useState(false);
