@@ -35,29 +35,34 @@ router.get("/", requireAuth, (req: Request, res: Response) => {
 
 router.post("/", requireAuth, (req: Request, res: Response) => {
   try {
-    const { name, calories, protein, carbs, fat, time } = req.body as {
+    const { name, calories, protein, carbs, fat, time, date, mealType, aiSuggestion } = req.body as {
       name: string;
       calories: number;
       protein: number;
       carbs: number;
       fat: number;
       time: string;
+      date?: string;
+      mealType?: string;
+      aiSuggestion?: string;
     };
     const id = uuidv4();
-    const today = new Date().toISOString().split("T")[0];
+    const targetDate = date || new Date().toISOString().split("T")[0];
 
     db.prepare(
-      "INSERT INTO meals (id, user_id, date, name, calories, protein, carbs, fat, time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO meals (id, user_id, date, name, calories, protein, carbs, fat, time, ai_suggestion, meal_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       req.user.userId,
-      today,
+      targetDate,
       name,
       calories,
       protein || 0,
       carbs || 0,
       fat || 0,
       time,
+      aiSuggestion || null,
+      mealType || "unspecified",
     );
 
     res.json({ _id: id });

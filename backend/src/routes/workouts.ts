@@ -35,29 +35,34 @@ router.get("/", requireAuth, (req: Request, res: Response) => {
 
 router.post("/", requireAuth, (req: Request, res: Response) => {
   try {
-    const { name, sets, reps, weight, duration, intensity } = req.body as {
+    const { name, sets, reps, weight, duration, intensity, date, exercises, rationale } = req.body as {
       name: string;
       sets: string;
       reps: string | null;
       weight: string | null;
       duration: string | null;
       intensity: string;
+      date?: string;
+      exercises?: any[];
+      rationale?: string;
     };
     const id = uuidv4();
-    const today = new Date().toISOString().split("T")[0];
+    const targetDate = date || new Date().toISOString().split("T")[0];
 
     db.prepare(
-      "INSERT INTO workouts (id, user_id, date, name, sets, reps, weight, duration, intensity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO workouts (id, user_id, date, name, sets, reps, weight, duration, intensity, exercises, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(
       id,
       req.user.userId,
-      today,
+      targetDate,
       name,
       sets,
       reps ?? null,
       weight ?? null,
       duration ?? null,
       intensity || "HIGH",
+      exercises && exercises.length > 0 ? JSON.stringify(exercises) : null,
+      rationale || null,
     );
 
     res.json({ _id: id });
