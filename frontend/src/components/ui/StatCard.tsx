@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card } from "./Card";
 
 export function StatCard({
@@ -6,15 +7,21 @@ export function StatCard({
   subValue,
   icon: Icon,
   accent = false,
+  tooltipContent,
 }: {
   label: string;
   value: string | number;
   subValue?: string;
   icon: any;
   accent?: boolean;
+  tooltipContent?: React.ReactNode;
 }) {
+  const [showTooltip, setShowTooltip] = useState(false);
   return (
-    <Card className={`p-5 ${accent ? "border-accent border-2" : ""}`}>
+    <Card
+      className={`p-5 ${accent ? "border-accent border-2" : ""} ${tooltipContent ? "cursor-pointer" : ""}`}
+      onClick={tooltipContent ? () => setShowTooltip(!showTooltip) : undefined}
+    >
       <div className="flex items-start justify-between">
         <div>
           <div className="text-[11px] uppercase tracking-[0.15em] font-mono text-[var(--text-muted)] mb-1">
@@ -43,6 +50,11 @@ export function StatCard({
           />
         </div>
       </div>
+      {showTooltip && tooltipContent && (
+        <div className="mt-3 pt-3 border-t border-[var(--border-default)] overflow-hidden">
+          {tooltipContent}
+        </div>
+      )}
     </Card>
   );
 }

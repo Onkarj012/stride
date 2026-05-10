@@ -73,13 +73,15 @@ router.post("/", requireAuth, (req: Request, res: Response) => {
 
 router.put("/:id", requireAuth, (req: Request, res: Response) => {
   try {
-    const { name, calories, protein, carbs, fat, time } = req.body as {
+    const { name, calories, protein, carbs, fat, time, mealType, aiSuggestion } = req.body as {
       name: string;
       calories: number;
       protein: number;
       carbs: number;
       fat: number;
       time: string;
+      mealType?: string;
+      aiSuggestion?: string | null;
     };
 
     const meal = db
@@ -91,8 +93,8 @@ router.put("/:id", requireAuth, (req: Request, res: Response) => {
     }
 
     db.prepare(
-      "UPDATE meals SET name=?, calories=?, protein=?, carbs=?, fat=?, time=? WHERE id=?",
-    ).run(name, calories, protein || 0, carbs || 0, fat || 0, time, req.params.id);
+      "UPDATE meals SET name=?, calories=?, protein=?, carbs=?, fat=?, time=?, meal_type=?, ai_suggestion=? WHERE id=?",
+    ).run(name, calories, protein || 0, carbs || 0, fat || 0, time, mealType || "unspecified", aiSuggestion ?? null, req.params.id);
 
     res.json({ _id: req.params.id });
   } catch (err) {

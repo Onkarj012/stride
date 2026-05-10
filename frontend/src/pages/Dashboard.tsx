@@ -51,7 +51,26 @@ import {
   BarChart2,
   Calendar,
   Repeat,
+  Pencil,
+  Save,
+  Play,
+  Square,
+  ArrowLeft,
 } from "lucide-react";
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+  LineChart as ReLineChart,
+  Line as ReLine,
+} from "recharts";
 import { useTheme, colorSchemes } from "../lib/theme";
 import { apiFetch } from "../lib/api";
 import { useToast } from "../hooks/useToast";
@@ -127,6 +146,7 @@ export default function Dashboard() {
     return (localStorage.getItem('water-unit') as 'glasses' | 'litres') || 'glasses';
   });
   const [customWaterInput, setCustomWaterInput] = useState('');
+  const [waterExpanded, setWaterExpanded] = useState(false);
   const waterGoalGlasses = 8;
   const waterGoalLitres = 2;
   const waterGoal = waterUnit === 'glasses' ? waterGoalGlasses : waterGoalLitres;
@@ -148,6 +168,37 @@ export default function Dashboard() {
   const [recipeForm, setRecipeForm] = useState({
     name: '', servings: '1', prepTime: '', cookTime: '', ingredients: '', instructions: '', notes: '',
   });
+  const [selectedRecipeId, setSelectedRecipeId] = useState<string | null>(null);
+  const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null);
+  const [editRecipeForm, setEditRecipeForm] = useState<any>(null);
+  const [recipeAiNote, setRecipeAiNote] = useState<string | null>(null);
+  const [recipeAiLoading, setRecipeAiLoading] = useState(false);
+
+  // Meal / Workout expand & edit
+  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
+  const [editingMealId, setEditingMealId] = useState<string | null>(null);
+  const [editMealForm, setEditMealForm] = useState<any>(null);
+  const [expandedWorkoutId, setExpandedWorkoutId] = useState<string | null>(null);
+  const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null);
+  const [editWorkoutForm, setEditWorkoutForm] = useState<any>(null);
+
+  // Live Workout state
+  const [liveWorkoutMode, setLiveWorkoutMode] = useState(false);
+  const [liveWorkoutName, setLiveWorkoutName] = useState("");
+  const [liveWorkoutIntensity, setLiveWorkoutIntensity] = useState("HIGH");
+  const [liveExercises, setLiveExercises] = useState<{ name: string; sets: { weight: string; reps: string }[] }[]>([]);
+  const [liveCurrentExercise, setLiveCurrentExercise] = useState("");
+  const [liveCurrentWeight, setLiveCurrentWeight] = useState("");
+  const [liveCurrentReps, setLiveCurrentReps] = useState("");
+
+  // AI Coaches
+  const [coaches, setCoaches] = useState<any[]>([]);
+  const [selectedCoach, setSelectedCoach] = useState<string>("overall");
+
+  // History insights
+  const [historyInsights, setHistoryInsights] = useState<any>(null);
+  const [historyInsightDays, setHistoryInsightDays] = useState(30);
+  const [historyView, setHistoryView] = useState<'day' | 'insights'>('day');
 
   // Badges
   const [unlockedBadges, setUnlockedBadges] = useState<string[]>(() => {
@@ -170,8 +221,17 @@ export default function Dashboard() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [historyDayData, setHistoryDayData] = useState<{ meals: any[]; workouts: any[] } | null>(null);
   const [calendarPanelPct, setCalendarPanelPct] = useState(35);
+  const [calendarHidden, setCalendarHidden] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(false);
   const resizeRef = useRef<{ startX: number; startPct: number } | null>(null);
   const historyContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const check = () => setIsDesktop(window.innerWidth >= 1024);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   // Insights visualization mode
   const [insightView, setInsightView] = useState<'overview' | 'calories' | 'macros' | 'trends'>('overview');
@@ -232,11 +292,9 @@ export default function Dashboard() {
   const totalFat = meals.reduce((s, m) => s + m.fat, 0);
 
   const [mealForm, setMealForm] = useState({ description: "", mealType: "breakfast", time: "" });
-  const [mealLoading, setMealLoading] = useState(false);
   const [mealError, setMealError] = useState<string | null>(null);
 
   const [workoutForm, setWorkoutForm] = useState({ description: "", duration: "", intensity: "HIGH" });
-  const [workoutLoading, setWorkoutLoading] = useState(false);
   const [workoutError, setWorkoutError] = useState<string | null>(null);
 
   const [profile, setProfile] = useState<any>(null);
@@ -373,6 +431,24 @@ export default function Dashboard() {
     }
   }, [getToken, calendarYear, calendarMonth]);
 
+  const fetchCoaches = useCallback(async () => {
+    try {
+      const data = await apiFetch('/api/ai/coaches', {}, getToken);
+      setCoaches(Array.isArray(data) ? data : []);
+    } catch {
+      setCoaches([]);
+    }
+  }, [getToken]);
+
+  const fetchHistoryInsights = useCallback(async () => {
+    try {
+      const data = await apiFetch(`/api/history/insights?days=${historyInsightDays}`, {}, getToken);
+      setHistoryInsights(data || null);
+    } catch {
+      setHistoryInsights(null);
+    }
+  }, [getToken, historyInsightDays]);
+
   // Initial load
   useEffect(() => {
     fetchMeals();
@@ -383,7 +459,25 @@ export default function Dashboard() {
     fetchWeeklySummary();
     fetchSessions();
     fetchCalendar();
+    fetchCoaches();
+    fetchHistoryInsights();
   }, []);
+
+  // Auto-select today when entering HISTORY tab
+  useEffect(() => {
+    if (activeTab === "HISTORY" && !selectedDate) {
+      handleSelectDate(today);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Refetch history insights when days change
+  useEffect(() => {
+    if (activeTab === "HISTORY") {
+      fetchHistoryInsights();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyInsightDays, activeTab]);
 
   // Reload messages when active session changes
   useEffect(() => {
@@ -395,58 +489,6 @@ export default function Dashboard() {
   }, [activeSessionId, fetchSessionMessages]);
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
-
-  const handleLogMeal = async () => {
-    if (!mealForm.description.trim()) {
-      setMealError('DESCRIPTION REQUIRED');
-      return;
-    }
-    setMealLoading(true);
-    setMealError(null);
-    try {
-      await apiFetch('/api/ai/log-meal', {
-        method: 'POST',
-        body: JSON.stringify({
-          description: mealForm.description,
-          mealType: mealForm.mealType,
-          time: mealForm.time || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
-        }),
-      }, getToken);
-      setMealForm({ description: '', mealType: 'breakfast', time: '' });
-      fetchMeals();
-      fetchInsights();
-    } catch (err: any) {
-      setMealError(err.message || 'Failed to log meal');
-    } finally {
-      setMealLoading(false);
-    }
-  };
-
-  const handleLogWorkout = async () => {
-    if (!workoutForm.description.trim()) {
-      setWorkoutError('DESCRIPTION REQUIRED');
-      return;
-    }
-    setWorkoutLoading(true);
-    setWorkoutError(null);
-    try {
-      await apiFetch('/api/ai/log-workout', {
-        method: 'POST',
-        body: JSON.stringify({
-          description: workoutForm.description,
-          duration: workoutForm.duration,
-          intensity: workoutForm.intensity,
-        }),
-      }, getToken);
-      setWorkoutForm({ description: '', duration: '', intensity: 'HIGH' });
-      fetchWorkouts();
-      fetchInsights();
-    } catch (err: any) {
-      setWorkoutError(err.message || 'Failed to log workout');
-    } finally {
-      setWorkoutLoading(false);
-    }
-  };
 
   const handleDeleteMeal = async (id: string) => {
     try {
@@ -536,7 +578,7 @@ export default function Dashboard() {
     try {
       const data = await apiFetch('/api/ai/chat', {
         method: 'POST',
-        body: JSON.stringify({ message: userMsg, sessionId: activeSessionId }),
+        body: JSON.stringify({ message: userMsg, sessionId: activeSessionId, coachType: selectedCoach }),
       }, getToken);
       setSessionMessages((prev) => [...prev, { role: "ai", content: data.reply }]);
       if (data.loggedItem) {
@@ -679,6 +721,111 @@ export default function Dashboard() {
       setWorkoutSuggestion(null);
     }
     setSuggestionLoading(false);
+  };
+
+  // ─── Edit handlers ─────────────────────────────────────────────────────────
+
+  const handleUpdateMeal = async (id: string) => {
+    if (!editMealForm) return;
+    try {
+      await apiFetch(`/api/meals/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(editMealForm),
+      }, getToken);
+      setEditingMealId(null);
+      setEditMealForm(null);
+      fetchMeals();
+      fetchInsights();
+    } catch {}
+  };
+
+  const handleUpdateWorkout = async (id: string) => {
+    if (!editWorkoutForm) return;
+    try {
+      await apiFetch(`/api/workouts/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(editWorkoutForm),
+      }, getToken);
+      setEditingWorkoutId(null);
+      setEditWorkoutForm(null);
+      fetchWorkouts();
+      fetchInsights();
+    } catch {}
+  };
+
+  const handleSaveEditRecipe = () => {
+    if (!editRecipeForm || !editRecipeForm.name.trim()) return;
+    setRecipes(prev => prev.map(r => r.id === editingRecipeId ? { ...r, ...editRecipeForm } : r));
+    setEditingRecipeId(null);
+    setEditRecipeForm(null);
+  };
+
+  const handleGenerateRecipeNote = async (recipe: any) => {
+    setRecipeAiLoading(true);
+    setRecipeAiNote(null);
+    try {
+      const prompt = `Analyze this recipe from a nutrition and fitness perspective and give a brief, actionable note (max 2 sentences):
+
+Name: ${recipe.name}
+Servings: ${recipe.servings}
+Ingredients: ${recipe.ingredients}
+Notes: ${recipe.notes || 'None'}
+
+Return ONLY the note text, no quotes or markdown.`;
+      const data = await apiFetch('/api/ai/chat', {
+        method: 'POST',
+        body: JSON.stringify({ message: prompt, sessionId: activeSessionId, coachType: 'diet' }),
+      }, getToken);
+      setRecipeAiNote(data.reply || 'No note generated.');
+    } catch {
+      setRecipeAiNote('Unable to generate AI note.');
+    }
+    setRecipeAiLoading(false);
+  };
+
+  // ─── Live Workout handlers ─────────────────────────────────────────────────
+
+  const startLiveWorkout = () => {
+    setLiveWorkoutMode(true);
+    setLiveWorkoutName("");
+    setLiveWorkoutIntensity("HIGH");
+    setLiveExercises([]);
+    setLiveCurrentExercise("");
+    setLiveCurrentWeight("");
+    setLiveCurrentReps("");
+  };
+
+  const addLiveExerciseSet = () => {
+    if (!liveCurrentExercise.trim() || !liveCurrentReps.trim()) return;
+    setLiveExercises(prev => {
+      const existing = prev.find(e => e.name.toLowerCase() === liveCurrentExercise.trim().toLowerCase());
+      if (existing) {
+        return prev.map(e =>
+          e.name.toLowerCase() === liveCurrentExercise.trim().toLowerCase()
+            ? { ...e, sets: [...e.sets, { weight: liveCurrentWeight, reps: liveCurrentReps }] }
+            : e
+        );
+      }
+      return [...prev, { name: liveCurrentExercise.trim(), sets: [{ weight: liveCurrentWeight, reps: liveCurrentReps }] }];
+    });
+    setLiveCurrentWeight("");
+    setLiveCurrentReps("");
+  };
+
+  const finishLiveWorkout = async () => {
+    if (liveExercises.length === 0) return;
+    const totalSets = liveExercises.reduce((sum, ex) => sum + ex.sets.length, 0);
+    const name = liveWorkoutName.trim() || `${liveExercises.length} Exercise Session`;
+    const setsStr = `${liveExercises.length} exercise${liveExercises.length !== 1 ? 's' : ''} · ${totalSets} set${totalSets !== 1 ? 's' : ''}`;
+    await commitWorkout({
+      name,
+      sets: setsStr,
+      duration: "",
+      intensity: liveWorkoutIntensity,
+      exercises: liveExercises,
+      rationale: "",
+    });
+    setLiveWorkoutMode(false);
   };
 
   // Auto-resize chat input
@@ -1042,8 +1189,47 @@ export default function Dashboard() {
 
             {/* Stats Grid */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard label="CALORIES" value={totalCals || 0} subValue={`/ ${effectiveGoals.calorieGoal} KCAL`} icon={Flame} accent />
-              <StatCard label="PROTEIN" value={`${totalProtein || 0}g`} subValue={`/ ${effectiveGoals.proteinGoal}g`} icon={Target} />
+              <StatCard
+                label="CALORIES"
+                value={totalCals || 0}
+                subValue={`/ ${effectiveGoals.calorieGoal} KCAL`}
+                icon={Flame}
+                accent
+                tooltipContent={
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-mono tracking-wide">
+                      <span className="text-[var(--text-muted)]">REMAINING</span>
+                      <span className="text-accent font-bold">{Math.max(0, effectiveGoals.calorieGoal - totalCals)} KCAL</span>
+                    </div>
+                    <div className="h-1.5 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                      <div
+                        className="h-full bg-accent transition-all"
+                        style={{ width: `${Math.min(100, (totalCals / effectiveGoals.calorieGoal) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                }
+              />
+              <StatCard
+                label="PROTEIN"
+                value={`${totalProtein || 0}g`}
+                subValue={`/ ${effectiveGoals.proteinGoal}g`}
+                icon={Target}
+                tooltipContent={
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs font-mono tracking-wide">
+                      <span className="text-[var(--text-muted)]">REMAINING</span>
+                      <span className="text-accent font-bold">{Math.max(0, effectiveGoals.proteinGoal - totalProtein)}g</span>
+                    </div>
+                    <div className="h-1.5 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                      <div
+                        className="h-full bg-accent transition-all"
+                        style={{ width: `${Math.min(100, (totalProtein / effectiveGoals.proteinGoal) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                }
+              />
               <StatCard label="WORKOUTS" value={workouts.length} subValue="TODAY" icon={Dumbbell} />
               <StatCard label="BURNED" value={(workouts.length || 0) * 150} subValue="KCAL" icon={Zap} />
             </div>
@@ -1052,59 +1238,81 @@ export default function Dashboard() {
             <div className="grid lg:grid-cols-2 gap-4">
               {/* Water Tracker */}
               <Card className="p-5" data-testid="water-tracker">
-                <div className="flex items-center justify-between mb-4">
+                <div
+                  className="flex items-center justify-between mb-4 cursor-pointer"
+                  onClick={() => setWaterExpanded(!waterExpanded)}
+                >
                   <div className="flex items-center gap-2">
                     <Droplets size={18} className="text-accent" strokeWidth={2.5} />
                     <span className="font-mono text-sm uppercase tracking-wider">Hydration</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <select
-                      value={waterUnit}
-                      onChange={(e) => setWaterUnit(e.target.value as 'glasses' | 'litres')}
-                      className="bg-[var(--bg-elevated)] border border-[var(--border-default)] px-2 py-1 text-xs font-mono"
-                    >
-                      <option value="glasses">Glasses</option>
-                      <option value="litres">Litres</option>
-                    </select>
                     <span className="font-heading text-2xl">{waterIntake.toFixed(1)}/{waterGoal}</span>
+                    <span className="text-[10px] font-mono uppercase text-[var(--text-muted)] tracking-wide">{waterUnit === 'glasses' ? 'GLS' : 'L'}</span>
+                    {waterExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </div>
                 </div>
-                
-                {/* Visual glasses */}
-                {waterUnit === 'glasses' && (
-                  <div className="flex gap-1.5 mb-3">
-                    {Array.from({ length: waterGoalGlasses }).map((_, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setWaterIntake(i + 1)}
-                        className={`flex-1 h-10 border transition-all ${
-                          i < Math.floor(waterIntake) ? 'bg-accent border-accent' : 'bg-[var(--bg-elevated)] border-[var(--border-default)] hover:border-accent'
-                        }`}
-                      />
-                    ))}
-                  </div>
-                )}
-                
-                {/* Quick buttons + custom input */}
-                <div className="flex gap-2">
-                  <button onClick={() => setWaterIntake(Math.max(0, waterIntake - (waterUnit === 'glasses' ? 1 : 0.25)))} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:border-accent transition-colors">
-                    <Minus size={14} />
-                  </button>
-                  <button onClick={() => setWaterIntake(waterIntake + (waterUnit === 'glasses' ? 1 : 0.25))} className="px-3 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs">
-                    <Plus size={14} />
-                  </button>
-                  <input
-                    type="number"
-                    step={waterUnit === 'glasses' ? 1 : 0.1}
-                    value={customWaterInput}
-                    onChange={(e) => setCustomWaterInput(e.target.value)}
-                    placeholder={waterUnit === 'glasses' ? 'Add...' : 'Litres...'}
-                    className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-xs focus:outline-none focus:border-accent"
-                  />
-                  <button onClick={handleAddCustomWater} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:bg-accent hover:text-[var(--theme-primary-text)] transition-colors">
-                    ADD
-                  </button>
-                </div>
+
+                <AnimatePresence>
+                  {waterExpanded && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                    >
+                      {/* Visual glasses */}
+                      {waterUnit === 'glasses' && (
+                        <div className="flex gap-1.5 mb-3">
+                          {Array.from({ length: waterGoalGlasses }).map((_, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setWaterIntake(i + 1)}
+                              className={`flex-1 h-10 border transition-all ${
+                                i < Math.floor(waterIntake) ? 'bg-accent border-accent' : 'bg-[var(--bg-elevated)] border-[var(--border-default)] hover:border-accent'
+                              }`}
+                            />
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Quick buttons + custom input */}
+                      <div className="flex gap-2">
+                        <button onClick={() => setWaterIntake(Math.max(0, waterIntake - (waterUnit === 'glasses' ? 1 : 0.25)))} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:border-accent transition-colors">
+                          <Minus size={14} />
+                        </button>
+                        <button onClick={() => setWaterIntake(waterIntake + (waterUnit === 'glasses' ? 1 : 0.25))} className="px-3 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs">
+                          <Plus size={14} />
+                        </button>
+                        <input
+                          type="number"
+                          step={waterUnit === 'glasses' ? 1 : 0.1}
+                          value={customWaterInput}
+                          onChange={(e) => setCustomWaterInput(e.target.value)}
+                          placeholder={waterUnit === 'glasses' ? 'Add...' : 'Litres...'}
+                          className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-xs focus:outline-none focus:border-accent"
+                        />
+                        <button onClick={handleAddCustomWater} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:bg-accent hover:text-[var(--theme-primary-text)] transition-colors">
+                          ADD
+                        </button>
+                      </div>
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          onClick={() => setWaterUnit('glasses')}
+                          className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border ${waterUnit === 'glasses' ? 'bg-accent text-[var(--theme-primary-text)] border-accent' : 'border-[var(--border-default)] hover:border-accent'}`}
+                        >
+                          Glasses
+                        </button>
+                        <button
+                          onClick={() => setWaterUnit('litres')}
+                          className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border ${waterUnit === 'litres' ? 'bg-accent text-[var(--theme-primary-text)] border-accent' : 'border-[var(--border-default)] hover:border-accent'}`}
+                        >
+                          Litres
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </Card>
 
               {/* Sleep Tracker */}
@@ -1337,10 +1545,10 @@ export default function Dashboard() {
                         },
                       });
                     }}
-                    disabled={mealLoading || !mealForm.description.trim()}
+                    disabled={!mealForm.description.trim()}
                     className="flex items-center gap-2 px-6 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
                   >
-                    {mealLoading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                    <Sparkles size={16} />
                     AI Log Meal
                   </button>
                 </div>
@@ -1355,33 +1563,123 @@ export default function Dashboard() {
               )}
               {meals.map((meal) => (
                 <Card key={meal._id} className="p-4 hover:border-accent transition-colors group">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-3 flex-wrap mb-2">
-                        <span className="text-[10px] font-mono bg-[var(--bg-main)] border border-[var(--border-default)] px-1.5 py-0.5 uppercase tracking-wider">{meal.mealType}</span>
-                        <span className="text-xs font-mono bg-accent text-[var(--theme-primary-text)] px-2 py-1">{meal.time}</span>
-                        <h3 className="text-lg font-heading uppercase tracking-normal">{meal.name}</h3>
+                  {editingMealId === meal._id && editMealForm ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-xs uppercase text-accent tracking-wider">EDIT MEAL</span>
+                        <button onClick={() => { setEditingMealId(null); setEditMealForm(null); }} className="p-1 hover:text-red-400"><X size={14} /></button>
                       </div>
-                      <div className="flex items-center gap-4 text-sm font-mono text-[var(--text-secondary)] tracking-wide">
-                        <span><Flame size={14} className="inline mr-1" />{meal.calories} KCAL</span>
-                        <span>P: {meal.protein}g</span>
-                        <span>C: {meal.carbs}g</span>
-                        <span>F: {meal.fat}g</span>
+                      <div className="grid grid-cols-4 gap-3">
+                        <input type="number" value={editMealForm.calories} onChange={(e) => setEditMealForm({ ...editMealForm, calories: Number(e.target.value) })} className="px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="KCAL" />
+                        <input type="number" value={editMealForm.protein} onChange={(e) => setEditMealForm({ ...editMealForm, protein: Number(e.target.value) })} className="px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="P" />
+                        <input type="number" value={editMealForm.carbs} onChange={(e) => setEditMealForm({ ...editMealForm, carbs: Number(e.target.value) })} className="px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="C" />
+                        <input type="number" value={editMealForm.fat} onChange={(e) => setEditMealForm({ ...editMealForm, fat: Number(e.target.value) })} className="px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="F" />
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setLogAgainMeal(meal)}
-                        className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
-                        title="Log again"
-                      >
-                        <Repeat size={14} />
+                      <div className="flex gap-3">
+                        <input value={editMealForm.name} onChange={(e) => setEditMealForm({ ...editMealForm, name: e.target.value })} className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="Name" />
+                        <input value={editMealForm.time} onChange={(e) => setEditMealForm({ ...editMealForm, time: e.target.value })} className="w-24 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="Time" />
+                        <select value={editMealForm.mealType} onChange={(e) => setEditMealForm({ ...editMealForm, mealType: e.target.value })} className="px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent">
+                          <option value="breakfast">BREAKFAST</option>
+                          <option value="lunch">LUNCH</option>
+                          <option value="snack">SNACK</option>
+                          <option value="dinner">DINNER</option>
+                        </select>
+                      </div>
+                      <button onClick={() => handleUpdateMeal(meal._id)} className="flex items-center gap-2 px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold">
+                        <Save size={12} /> SAVE
                       </button>
-                      <button onClick={() => handleDeleteMeal(meal._id)} className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
-                        <Trash2 size={14} />
-                      </button>
                     </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 flex-wrap mb-2">
+                            <span className="text-[10px] font-mono bg-[var(--bg-main)] border border-[var(--border-default)] px-1.5 py-0.5 uppercase tracking-wider">{meal.mealType}</span>
+                            <span className="text-xs font-mono bg-accent text-[var(--theme-primary-text)] px-2 py-1">{meal.time}</span>
+                            <h3 className="text-lg font-heading uppercase tracking-normal">{meal.name}</h3>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm font-mono text-[var(--text-secondary)] tracking-wide">
+                            <span><Flame size={14} className="inline mr-1" />{meal.calories} KCAL</span>
+                            <span>P: {meal.protein}g</span>
+                            <span>C: {meal.carbs}g</span>
+                            <span>F: {meal.fat}g</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 ml-2">
+                          <button
+                            onClick={() => {
+                              setEditingMealId(meal._id);
+                              setEditMealForm({
+                                name: meal.name,
+                                calories: meal.calories,
+                                protein: meal.protein,
+                                carbs: meal.carbs,
+                                fat: meal.fat,
+                                time: meal.time,
+                                mealType: meal.mealType || 'unspecified',
+                                aiSuggestion: meal.aiSuggestion || null,
+                              });
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                            title="Edit"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => setLogAgainMeal(meal)}
+                            className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                            title="Log again"
+                          >
+                            <Repeat size={14} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setExpandedMealId(expandedMealId === meal._id ? null : meal._id);
+                            }}
+                            className="p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                            title="Details"
+                          >
+                            {expandedMealId === meal._id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </button>
+                          <button onClick={() => handleDeleteMeal(meal._id)} className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <AnimatePresence>
+                        {expandedMealId === meal._id && (
+                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                            <div className="mt-3 pt-3 border-t border-[var(--border-default)] space-y-2">
+                              {meal.aiSuggestion && (
+                                <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                  <div className="text-[10px] font-mono uppercase text-accent tracking-wider mb-1">AI Note</div>
+                                  <p className="text-sm text-[var(--text-secondary)] tracking-wide">{meal.aiSuggestion}</p>
+                                </div>
+                              )}
+                              <div className="grid grid-cols-4 gap-2 text-center">
+                                <div className="p-2 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                  <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">CALORIES</div>
+                                  <div className="font-heading">{meal.calories}</div>
+                                </div>
+                                <div className="p-2 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                  <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">PROTEIN</div>
+                                  <div className="font-heading">{meal.protein}g</div>
+                                </div>
+                                <div className="p-2 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                  <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">CARBS</div>
+                                  <div className="font-heading">{meal.carbs}g</div>
+                                </div>
+                                <div className="p-2 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                  <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">FAT</div>
+                                  <div className="font-heading">{meal.fat}g</div>
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </>
+                  )}
                 </Card>
               ))}
             </div>
@@ -1452,10 +1750,10 @@ export default function Dashboard() {
                         },
                       });
                     }}
-                    disabled={workoutLoading || !workoutForm.description.trim()}
+                    disabled={!workoutForm.description.trim()}
                     className="flex items-center gap-2 px-6 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
                   >
-                    {workoutLoading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                    <Sparkles size={16} />
                     AI Log Workout
                   </button>
                 </div>
@@ -1523,6 +1821,103 @@ export default function Dashboard() {
               </Card>
             )}
 
+            {/* Live Workout Mode */}
+            {liveWorkoutMode && (
+              <Card className="p-6 border-2 border-accent">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Play size={16} className="text-accent" />
+                    <span className="font-mono text-sm uppercase text-accent tracking-wider">LIVE WORKOUT</span>
+                  </div>
+                  <button onClick={() => setLiveWorkoutMode(false)} className="p-1.5 hover:text-red-400"><X size={14} /></button>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex gap-3">
+                    <input
+                      placeholder="Workout name (optional)"
+                      value={liveWorkoutName}
+                      onChange={(e) => setLiveWorkoutName(e.target.value)}
+                      className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
+                    />
+                    <select
+                      value={liveWorkoutIntensity}
+                      onChange={(e) => setLiveWorkoutIntensity(e.target.value)}
+                      className="px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
+                    >
+                      <option value="LOW">LOW</option>
+                      <option value="MEDIUM">MEDIUM</option>
+                      <option value="HIGH">HIGH</option>
+                      <option value="MAX">MAX</option>
+                    </select>
+                  </div>
+
+                  {liveExercises.length > 0 && (
+                    <div className="space-y-2">
+                      {liveExercises.map((ex, ei) => (
+                        <div key={ei} className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                          <div className="font-mono text-sm tracking-wide mb-1">{ex.name}</div>
+                          <div className="flex flex-wrap gap-2">
+                            {ex.sets.map((s, si) => (
+                              <span key={si} className="text-xs font-mono bg-[var(--bg-main)] border border-[var(--border-default)] px-2 py-1">{s.weight ? `${s.weight} × ` : ''}{s.reps}</span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="p-3 bg-[var(--bg-main)] border border-[var(--border-default)]">
+                    <div className="flex gap-2 mb-2">
+                      <input
+                        placeholder="Exercise name"
+                        value={liveCurrentExercise}
+                        onChange={(e) => setLiveCurrentExercise(e.target.value)}
+                        className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        placeholder="Weight"
+                        value={liveCurrentWeight}
+                        onChange={(e) => setLiveCurrentWeight(e.target.value)}
+                        className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
+                      />
+                      <input
+                        placeholder="Reps"
+                        value={liveCurrentReps}
+                        onChange={(e) => setLiveCurrentReps(e.target.value)}
+                        className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
+                      />
+                      <button
+                        onClick={addLiveExerciseSet}
+                        disabled={!liveCurrentExercise.trim() || !liveCurrentReps.trim()}
+                        className="px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold disabled:opacity-50"
+                      >
+                        <Plus size={12} /> ADD SET
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={finishLiveWorkout}
+                    disabled={liveExercises.length === 0}
+                    className="w-full py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold disabled:opacity-50"
+                  >
+                    <Square size={12} className="inline mr-1" /> FINISH WORKOUT
+                  </button>
+                </div>
+              </Card>
+            )}
+
+            {!liveWorkoutMode && (
+              <button
+                onClick={startLiveWorkout}
+                className="w-full py-3 border-2 border-dashed border-accent text-accent font-mono text-xs uppercase tracking-wider font-bold hover:bg-accent hover:text-[var(--theme-primary-text)] transition-all"
+              >
+                <Play size={14} className="inline mr-2" /> START LIVE WORKOUT
+              </button>
+            )}
+
             <div className="space-y-3">
               {workouts.length === 0 && (
                 <Card className="p-8 text-center border-dashed">
@@ -1531,36 +1926,107 @@ export default function Dashboard() {
               )}
               {workouts.map((w: any) => (
                 <Card key={w._id} className="p-5 hover:border-accent transition-colors group" data-testid={`workout-${w._id}`}>
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <div className="flex items-center gap-3 mb-1.5 flex-wrap">
-                        <span className={`text-[10px] font-mono px-2 py-1 ${w.intensity === "MAX" ? "bg-red-600 text-white" : w.intensity === "HIGH" ? "bg-accent text-[var(--theme-primary-text)]" : "border border-[var(--border-default)]"}`}>{w.intensity}</span>
-                        <h3 className="text-lg font-heading uppercase tracking-normal">{w.name}</h3>
-                        {w.duration && <span className="text-xs font-mono text-[var(--text-muted)] tracking-wide">{w.duration}</span>}
+                  {editingWorkoutId === w._id && editWorkoutForm ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-xs uppercase text-accent tracking-wider">EDIT WORKOUT</span>
+                        <button onClick={() => { setEditingWorkoutId(null); setEditWorkoutForm(null); }} className="p-1 hover:text-red-400"><X size={14} /></button>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => setLogAgainWorkout(w)}
-                        className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
-                        title="Log again"
-                      >
-                        <Repeat size={14} />
+                      <div className="flex gap-3">
+                        <input value={editWorkoutForm.name} onChange={(e) => setEditWorkoutForm({ ...editWorkoutForm, name: e.target.value })} className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="Name" />
+                        <input value={editWorkoutForm.duration} onChange={(e) => setEditWorkoutForm({ ...editWorkoutForm, duration: e.target.value })} className="w-28 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="Duration" />
+                        <select value={editWorkoutForm.intensity} onChange={(e) => setEditWorkoutForm({ ...editWorkoutForm, intensity: e.target.value })} className="px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent">
+                          <option value="LOW">LOW</option>
+                          <option value="MEDIUM">MEDIUM</option>
+                          <option value="HIGH">HIGH</option>
+                          <option value="MAX">MAX</option>
+                        </select>
+                      </div>
+                      <button onClick={() => handleUpdateWorkout(w._id)} className="flex items-center gap-2 px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold">
+                        <Save size={12} /> SAVE
                       </button>
-                      <button onClick={() => handleDeleteWorkout(w._id)} className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
-                        <Trash2 size={14} />
-                      </button>
                     </div>
-                  </div>
-                  {w.exercises && w.exercises.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {w.exercises.map((ex: any, ei: number) => (
-                        <div key={ei} className="flex items-center justify-between p-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                          <span className="font-mono text-sm tracking-wide">{ex.name}</span>
-                          <span className="font-mono text-xs text-[var(--text-muted)] tracking-wide">{ex.sets.map((s: any) => `${s.weight}×${s.reps}`).join('  ·  ')}</span>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-3 mb-1.5 flex-wrap">
+                            <span className={`text-[10px] font-mono px-2 py-1 ${w.intensity === "MAX" ? "bg-red-600 text-white" : w.intensity === "HIGH" ? "bg-accent text-[var(--theme-primary-text)]" : "border border-[var(--border-default)]"}`}>{w.intensity}</span>
+                            <h3 className="text-lg font-heading uppercase tracking-normal">{w.name}</h3>
+                            {w.duration && <span className="text-xs font-mono text-[var(--text-muted)] tracking-wide">{w.duration}</span>}
+                          </div>
                         </div>
-                      ))}
-                    </div>
+                        <div className="flex items-center gap-1 ml-2">
+                          <button
+                            onClick={() => {
+                              setEditingWorkoutId(w._id);
+                              setEditWorkoutForm({
+                                name: w.name,
+                                sets: w.sets,
+                                duration: w.duration || '',
+                                intensity: w.intensity,
+                                exercises: w.exercises || null,
+                                rationale: w.rationale || null,
+                              });
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                            title="Edit"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => setLogAgainWorkout(w)}
+                            className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                            title="Log again"
+                          >
+                            <Repeat size={14} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setExpandedWorkoutId(expandedWorkoutId === w._id ? null : w._id);
+                            }}
+                            className="p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                            title="Details"
+                          >
+                            {expandedWorkoutId === w._id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </button>
+                          <button onClick={() => handleDeleteWorkout(w._id)} className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <AnimatePresence>
+                        {expandedWorkoutId === w._id && (
+                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                            <div className="mt-3 pt-3 border-t border-[var(--border-default)] space-y-2">
+                              {w.rationale && (
+                                <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                  <div className="text-[10px] font-mono uppercase text-accent tracking-wider mb-1">AI Note</div>
+                                  <p className="text-sm text-[var(--text-secondary)] tracking-wide">{w.rationale}</p>
+                                </div>
+                              )}
+                              {w.exercises && w.exercises.length > 0 && (
+                                <div className="space-y-2">
+                                  {w.exercises.map((ex: any, ei: number) => (
+                                    <div key={ei} className="p-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                      <div className="font-mono text-sm tracking-wide mb-1">{ex.name}</div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {ex.sets.map((s: any, si: number) => (
+                                          <span key={si} className="text-xs font-mono bg-[var(--bg-main)] border border-[var(--border-default)] px-2 py-1">{s.weight ? `${s.weight} × ` : ''}{s.reps}</span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {!w.rationale && (!w.exercises || w.exercises.length === 0) && (
+                                <div className="text-sm font-mono text-[var(--text-muted)] tracking-wide">No detailed breakdown available.</div>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </>
                   )}
                 </Card>
               ))}
@@ -1569,7 +2035,7 @@ export default function Dashboard() {
         )}
 
         {/* ═══════════════════════════════════════════════════════════════════
-            RECIPES TAB
+            RECIPES TAB — 2-Panel System
         ═══════════════════════════════════════════════════════════════════ */}
         {activeTab === "RECIPES" && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6" data-testid="recipes-tab">
@@ -1660,7 +2126,167 @@ export default function Dashboard() {
                   Add First Recipe
                 </button>
               </Card>
+            ) : selectedRecipeId ? (
+              /* ═══ 2-PANEL VIEW ═══ */
+              <div className="flex gap-0 border border-[var(--border-default)] overflow-hidden min-h-[500px]">
+                {/* Left Panel — Recipe List */}
+                <div className="w-80 shrink-0 border-r border-[var(--border-default)] overflow-y-auto bg-[var(--bg-card)]">
+                  <div className="p-3 border-b border-[var(--border-default)] flex items-center justify-between">
+                    <span className="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)]">{recipes.length} RECIPES</span>
+                    <button onClick={() => { setSelectedRecipeId(null); setRecipeAiNote(null); }} className="p-1.5 hover:text-accent transition-colors" title="Close panel">
+                      <ArrowLeft size={14} />
+                    </button>
+                  </div>
+                  {recipes.map((recipe) => (
+                    <button
+                      key={recipe.id}
+                      onClick={() => { setSelectedRecipeId(recipe.id); setEditingRecipeId(null); setRecipeAiNote(null); }}
+                      className={`w-full text-left px-4 py-3 border-b border-[var(--border-default)] hover:bg-[var(--bg-elevated)] transition-colors ${selectedRecipeId === recipe.id ? 'bg-[var(--bg-elevated)] border-l-2 border-l-accent' : ''}`}
+                    >
+                      <div className="font-mono text-sm tracking-wide truncate">{recipe.name}</div>
+                      <div className="flex gap-3 mt-1 text-[10px] font-mono text-[var(--text-muted)] tracking-wide">
+                        {recipe.servings && <span>{recipe.servings} srv</span>}
+                        {recipe.prepTime && <span>prep {recipe.prepTime}</span>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Right Panel — Recipe Detail */}
+                <div className="flex-1 min-w-0 overflow-y-auto p-6">
+                  {(() => {
+                    const recipe = recipes.find(r => r.id === selectedRecipeId);
+                    if (!recipe) return null;
+                    return (
+                      <div className="space-y-6">
+                        {editingRecipeId === recipe.id ? (
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                              <span className="font-mono text-xs uppercase text-accent tracking-wider">EDIT RECIPE</span>
+                              <button onClick={() => { setEditingRecipeId(null); setEditRecipeForm(null); }} className="p-1 hover:text-red-400"><X size={14} /></button>
+                            </div>
+                            <input value={editRecipeForm.name} onChange={(e) => setEditRecipeForm({ ...editRecipeForm, name: e.target.value })} className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" placeholder="Recipe Name" />
+                            <div className="grid grid-cols-3 gap-4">
+                              <input value={editRecipeForm.servings} onChange={(e) => setEditRecipeForm({ ...editRecipeForm, servings: e.target.value })} placeholder="Servings" className="px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                              <input value={editRecipeForm.prepTime} onChange={(e) => setEditRecipeForm({ ...editRecipeForm, prepTime: e.target.value })} placeholder="Prep Time" className="px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                              <input value={editRecipeForm.cookTime} onChange={(e) => setEditRecipeForm({ ...editRecipeForm, cookTime: e.target.value })} placeholder="Cook Time" className="px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                            </div>
+                            <textarea value={editRecipeForm.ingredients} onChange={(e) => setEditRecipeForm({ ...editRecipeForm, ingredients: e.target.value })} rows={4} placeholder="Ingredients" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                            <textarea value={editRecipeForm.instructions} onChange={(e) => setEditRecipeForm({ ...editRecipeForm, instructions: e.target.value })} rows={4} placeholder="Instructions" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                            <textarea value={editRecipeForm.notes} onChange={(e) => setEditRecipeForm({ ...editRecipeForm, notes: e.target.value })} rows={2} placeholder="Notes" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                            <button onClick={handleSaveEditRecipe} className="flex items-center gap-2 px-6 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold">
+                              <Save size={14} /> SAVE CHANGES
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <h2 className="font-heading text-3xl uppercase tracking-normal mb-2">{recipe.name}</h2>
+                                <div className="flex gap-4 text-xs font-mono text-[var(--text-muted)] tracking-wide">
+                                  {recipe.servings && <span>{recipe.servings} SERVINGS</span>}
+                                  {recipe.prepTime && <span>PREP: {recipe.prepTime}</span>}
+                                  {recipe.cookTime && <span>COOK: {recipe.cookTime}</span>}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => {
+                                    setEditingRecipeId(recipe.id);
+                                    setEditRecipeForm({ ...recipe });
+                                  }}
+                                  className="flex items-center gap-2 px-3 py-2 border border-[var(--border-default)] font-mono text-xs uppercase tracking-wider hover:border-accent transition-colors"
+                                >
+                                  <Pencil size={12} /> EDIT
+                                </button>
+                                <button onClick={() => handleDeleteRecipe(recipe.id)} className="p-2 border border-[var(--border-default)] hover:bg-red-600 hover:border-red-600 hover:text-white transition-colors">
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {recipe.ingredients && (
+                              <div>
+                                <h3 className="font-mono text-xs uppercase text-[var(--text-muted)] mb-3 tracking-wider">Ingredients</h3>
+                                <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)] whitespace-pre-line text-sm text-[var(--text-secondary)] leading-relaxed">{recipe.ingredients}</div>
+                              </div>
+                            )}
+
+                            {recipe.instructions && (
+                              <div>
+                                <h3 className="font-mono text-xs uppercase text-[var(--text-muted)] mb-3 tracking-wider">Instructions</h3>
+                                <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)] whitespace-pre-line text-sm text-[var(--text-secondary)] leading-relaxed">{recipe.instructions}</div>
+                              </div>
+                            )}
+
+                            {recipe.notes && (
+                              <div>
+                                <h3 className="font-mono text-xs uppercase text-[var(--text-muted)] mb-3 tracking-wider">Notes</h3>
+                                <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)] text-sm text-[var(--text-secondary)] leading-relaxed">{recipe.notes}</div>
+                              </div>
+                            )}
+
+                            {/* AI Note Section */}
+                            <div className="border border-[var(--border-default)] p-4">
+                              <div className="flex items-center justify-between mb-3">
+                                <h3 className="font-mono text-xs uppercase text-accent tracking-wider flex items-center gap-2">
+                                  <Sparkles size={12} /> AI NUTRITION NOTE
+                                </h3>
+                                {!recipeAiNote && (
+                                  <button
+                                    onClick={() => handleGenerateRecipeNote(recipe)}
+                                    disabled={recipeAiLoading}
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-accent text-[var(--theme-primary-text)] font-mono text-[10px] uppercase tracking-wider font-bold disabled:opacity-50"
+                                  >
+                                    {recipeAiLoading ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                                    GENERATE
+                                  </button>
+                                )}
+                              </div>
+                              {recipeAiLoading ? (
+                                <div className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
+                                  <Loader2 size={14} className="animate-spin text-accent" />
+                                  <span className="font-mono tracking-wide">Analyzing recipe...</span>
+                                </div>
+                              ) : recipeAiNote ? (
+                                <p className="text-sm text-[var(--text-secondary)] leading-relaxed tracking-wide">{recipeAiNote}</p>
+                              ) : (
+                                <p className="text-sm text-[var(--text-muted)] tracking-wide">Click GENERATE to get an AI-powered nutrition analysis of this recipe.</p>
+                              )}
+                            </div>
+
+                            {recipeLogConfirm?.id === recipe.id ? (
+                              <ConfirmLogCard
+                                mode="meal"
+                                initialData={{
+                                  description: `${recipe.name}. Ingredients: ${recipe.ingredients}`,
+                                  mealType: "unspecified",
+                                  time: "",
+                                }}
+                                getToken={getToken}
+                                onConfirm={(data) => {
+                                  commitMeal(data);
+                                  setRecipeLogConfirm(null);
+                                }}
+                                onDiscard={() => setRecipeLogConfirm(null)}
+                              />
+                            ) : (
+                              <button
+                                onClick={() => setRecipeLogConfirm(recipe)}
+                                className="flex items-center gap-2 px-4 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 transition-opacity"
+                              >
+                                <Utensils size={12} /> LOG AS MEAL
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
             ) : (
+              /* ═══ GRID VIEW ═══ */
               <div className="grid lg:grid-cols-2 gap-4">
                 {recipes.map((recipe) => (
                   <div key={recipe.id}>
@@ -1680,10 +2306,18 @@ export default function Dashboard() {
                         onDiscard={() => setRecipeLogConfirm(null)}
                       />
                     ) : (
-                      <Card className="p-5">
+                      <Card
+                        className="p-5 cursor-pointer hover:border-accent transition-colors"
+                        onClick={() => setSelectedRecipeId(recipe.id)}
+                      >
                         <div className="flex items-start justify-between mb-3">
                           <h3 className="font-heading text-xl uppercase tracking-normal">{recipe.name}</h3>
-                          <button onClick={() => handleDeleteRecipe(recipe.id)} className="p-2 hover:bg-red-600 hover:text-white transition-colors"><Trash2 size={14} /></button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteRecipe(recipe.id); }}
+                            className="p-2 hover:bg-red-600 hover:text-white transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                         <div className="flex gap-4 text-xs font-mono text-[var(--text-muted)] mb-3 tracking-wide">
                           {recipe.servings && <span>{recipe.servings} SERVINGS</span>}
@@ -1691,12 +2325,9 @@ export default function Dashboard() {
                           {recipe.cookTime && <span>COOK: {recipe.cookTime}</span>}
                         </div>
                         {recipe.ingredients && <p className="text-sm text-[var(--text-secondary)] whitespace-pre-line line-clamp-3 leading-relaxed">{recipe.ingredients}</p>}
-                        <button
-                          onClick={() => setRecipeLogConfirm(recipe)}
-                          className="mt-3 flex items-center gap-2 px-3 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-[10px] uppercase tracking-wider font-bold hover:opacity-90 transition-opacity"
-                        >
-                          <Utensils size={10} /> LOG AS MEAL
-                        </button>
+                        <div className="mt-3 flex items-center gap-2 text-xs font-mono text-accent tracking-wide">
+                          <ChevronDown size={10} /> CLICK TO OPEN
+                        </div>
                       </Card>
                     )}
                   </div>
@@ -1884,12 +2515,160 @@ export default function Dashboard() {
         ═══════════════════════════════════════════════════════════════════ */}
         {activeTab === "HISTORY" && (
           <motion.div ref={historyContainerRef} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col flex-1 min-h-0" data-testid="history-tab">
-            <PageHeader title="History" subtitle="Review your past meals and workouts" />
-            
-            <div className="flex gap-0 border border-[var(--border-default)] overflow-hidden flex-1 min-h-0 bg-[var(--bg-card)]">
+            <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-4">
+              <PageHeader title="History" subtitle="Review your past meals and workouts" />
+              <div className="flex gap-2">
+                <button onClick={() => setHistoryView('day')} className={`px-3 py-2 font-mono text-xs uppercase tracking-wide ${historyView === 'day' ? 'bg-accent text-[var(--theme-primary-text)]' : 'border border-[var(--border-default)] hover:border-accent'}`}>
+                  <Calendar size={14} className="inline mr-1" /> Day View
+                </button>
+                <button onClick={() => setHistoryView('insights')} className={`px-3 py-2 font-mono text-xs uppercase tracking-wide ${historyView === 'insights' ? 'bg-accent text-[var(--theme-primary-text)]' : 'border border-[var(--border-default)] hover:border-accent'}`}>
+                  <BarChart2 size={14} className="inline mr-1" /> Insights
+                </button>
+              </div>
+            </div>
+
+            {historyView === 'insights' && (
+              <div className="space-y-6 overflow-y-auto">
+                <Card className="p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-heading text-xl uppercase tracking-normal">Trends</h3>
+                    <div className="flex gap-2">
+                      {[7, 14, 30].map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => setHistoryInsightDays(d)}
+                          className={`px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider ${historyInsightDays === d ? 'bg-accent text-[var(--theme-primary-text)]' : 'border border-[var(--border-default)] hover:border-accent'}`}
+                        >
+                          {d}D
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {historyInsights?.daily ? (
+                    <div className="space-y-8">
+                      {/* Calories Chart */}
+                      <div>
+                        <div className="text-xs font-mono uppercase text-[var(--text-muted)] mb-3 tracking-wider">Calories vs Goal</div>
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={historyInsights.daily}>
+                              <defs>
+                                <linearGradient id="calsGradient" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="var(--theme-primary)" stopOpacity={0.3} />
+                                  <stop offset="95%" stopColor="var(--theme-primary)" stopOpacity={0} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+                              <XAxis dataKey="date" tickFormatter={(d) => d.slice(5)} stroke="var(--text-muted)" fontSize={10} fontFamily="monospace" />
+                              <YAxis stroke="var(--text-muted)" fontSize={10} fontFamily="monospace" />
+                              <Tooltip
+                                contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-default)', fontFamily: 'monospace', fontSize: 12 }}
+                                itemStyle={{ color: 'var(--text-primary)' }}
+                              />
+                              <ReferenceLine y={historyInsights.goals.calories} stroke="var(--theme-primary)" strokeDasharray="4 4" />
+                              <Area type="monotone" dataKey="calories" stroke="var(--theme-primary)" fill="url(#calsGradient)" strokeWidth={2} />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+
+                      {/* Macros Chart */}
+                      <div>
+                        <div className="text-xs font-mono uppercase text-[var(--text-muted)] mb-3 tracking-wider">Macros Over Time</div>
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <ReLineChart data={historyInsights.daily}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+                              <XAxis dataKey="date" tickFormatter={(d) => d.slice(5)} stroke="var(--text-muted)" fontSize={10} fontFamily="monospace" />
+                              <YAxis stroke="var(--text-muted)" fontSize={10} fontFamily="monospace" />
+                              <Tooltip
+                                contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-default)', fontFamily: 'monospace', fontSize: 12 }}
+                                itemStyle={{ color: 'var(--text-primary)' }}
+                              />
+                              <ReferenceLine y={historyInsights.goals.protein} stroke="#FF3B30" strokeDasharray="4 4" />
+                              <ReLine type="monotone" dataKey="protein" stroke="#FF3B30" strokeWidth={2} dot={false} />
+                              <ReLine type="monotone" dataKey="carbs" stroke="#00FFFF" strokeWidth={2} dot={false} />
+                              <ReLine type="monotone" dataKey="fat" stroke="#FFD700" strokeWidth={2} dot={false} />
+                            </ReLineChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="flex gap-4 mt-2">
+                          <div className="flex items-center gap-1.5 text-xs font-mono"><div className="w-3 h-1 bg-[#FF3B30]" /> Protein</div>
+                          <div className="flex items-center gap-1.5 text-xs font-mono"><div className="w-3 h-1 bg-[#00FFFF]" /> Carbs</div>
+                          <div className="flex items-center gap-1.5 text-xs font-mono"><div className="w-3 h-1 bg-[#FFD700]" /> Fat</div>
+                        </div>
+                      </div>
+
+                      {/* Workouts Chart */}
+                      <div>
+                        <div className="text-xs font-mono uppercase text-[var(--text-muted)] mb-3 tracking-wider">Workouts</div>
+                        <div className="h-48">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={historyInsights.daily}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+                              <XAxis dataKey="date" tickFormatter={(d) => d.slice(5)} stroke="var(--text-muted)" fontSize={10} fontFamily="monospace" />
+                              <YAxis stroke="var(--text-muted)" fontSize={10} fontFamily="monospace" allowDecimals={false} />
+                              <Tooltip
+                                contentStyle={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-default)', fontFamily: 'monospace', fontSize: 12 }}
+                                itemStyle={{ color: 'var(--text-primary)' }}
+                              />
+                              <Bar dataKey="workouts" fill="var(--theme-primary)" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+
+                      {/* Summary Stats */}
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        {(() => {
+                          const days = historyInsights.daily;
+                          const avgCals = Math.round(days.reduce((s: number, d: any) => s + d.calories, 0) / days.length);
+                          const avgProtein = Math.round(days.reduce((s: number, d: any) => s + d.protein, 0) / days.length);
+                          const totalWorkouts = days.reduce((s: number, d: any) => s + d.workouts, 0);
+                          const streakDays = days.reduce((max: number, d: any, i: number, arr: any[]) => {
+                            let count = 0;
+                            for (let j = i; j >= 0 && (arr[j].meals > 0 || arr[j].workouts > 0); j--) count++;
+                            return Math.max(max, count);
+                          }, 0);
+                          return (
+                            <>
+                              <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">AVG CALORIES</div>
+                                <div className="font-heading text-xl">{avgCals}</div>
+                              </div>
+                              <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">AVG PROTEIN</div>
+                                <div className="font-heading text-xl">{avgProtein}g</div>
+                              </div>
+                              <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">TOTAL WORKOUTS</div>
+                                <div className="font-heading text-xl">{totalWorkouts}</div>
+                              </div>
+                              <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">LOGGING STREAK</div>
+                                <div className="font-heading text-xl">{streakDays}d</div>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm font-mono text-[var(--text-muted)] tracking-wide">No insights data available.</div>
+                  )}
+                </Card>
+              </div>
+            )}
+
+            {historyView === 'day' && (
+            <div className="flex flex-col lg:flex-row gap-0 border border-[var(--border-default)] overflow-hidden flex-1 min-h-0 bg-[var(--bg-card)]">
               {/* Calendar */}
-              <div style={{ width: `${calendarPanelPct}%` }} className="shrink-0 overflow-hidden">
-                <div className="h-full border-r border-[var(--border-default)] p-4 flex flex-col overflow-y-auto">
+              <div
+                style={{ width: isDesktop ? `${calendarPanelPct}%` : undefined }}
+                className={`shrink-0 overflow-hidden ${calendarHidden ? 'hidden lg:block' : 'block'} ${isDesktop ? '' : 'w-full'}`}
+              >
+                <div className="h-full lg:border-r border-[var(--border-default)] p-4 flex flex-col overflow-y-auto">
                   <div className="flex items-center justify-between mb-4">
                     <button onClick={handlePrevMonth} className="p-2 border border-[var(--border-default)] hover:bg-accent hover:text-[var(--theme-primary-text)] transition-colors"><ChevronLeft size={14} /></button>
                     <h2 className="font-heading text-lg tracking-normal">{monthNames[calendarMonth - 1]} {calendarYear}</h2>
@@ -1913,7 +2692,7 @@ export default function Dashboard() {
                       return (
                         <button
                           key={day}
-                          onClick={() => handleSelectDate(dateStr)}
+                          onClick={() => { handleSelectDate(dateStr); if (!isDesktop) setCalendarHidden(true); }}
                           className={`aspect-square p-1 border transition-colors text-xs font-mono flex flex-col items-center justify-center ${
                             isSelected ? "bg-accent text-[var(--theme-primary-text)] border-accent" :
                             isToday ? "border-accent text-accent" :
@@ -1936,12 +2715,18 @@ export default function Dashboard() {
 
               {/* Resize Handle */}
               <div
-                className="w-1 shrink-0 cursor-col-resize hover:bg-accent transition-colors bg-[var(--border-default)]"
+                className="hidden lg:block w-1 shrink-0 cursor-col-resize hover:bg-accent transition-colors bg-[var(--border-default)]"
                 onMouseDown={(e) => { resizeRef.current = { startX: e.clientX, startPct: calendarPanelPct }; document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none"; }}
               />
 
               {/* Day Detail */}
               <div className="flex-1 min-w-0 overflow-y-auto p-4">
+                <button
+                  onClick={() => setCalendarHidden(!calendarHidden)}
+                  className="lg:hidden flex items-center gap-2 px-3 py-2 mb-4 border border-[var(--border-default)] font-mono text-xs uppercase tracking-wide hover:border-accent transition-colors"
+                >
+                  <Calendar size={14} /> {calendarHidden ? 'Show Calendar' : 'Hide Calendar'}
+                </button>
                 {historyAddMealDate && (
                   <ConfirmLogCard
                     mode="meal"
@@ -2047,6 +2832,7 @@ export default function Dashboard() {
                 ) : null}
               </div>
             </div>
+            )}
           </motion.div>
         )}
 
@@ -2107,12 +2893,31 @@ export default function Dashboard() {
                 <div className="w-12 h-12 bg-accent flex items-center justify-center">
                   <Bot size={24} className="text-[var(--theme-primary-text)]" strokeWidth={2} />
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <div className="font-heading text-xl uppercase tracking-normal">Stride Coach</div>
                   <div className="flex items-center gap-1.5 text-xs font-mono text-accent">
                     <span className="w-2 h-2 bg-accent rounded-full animate-pulse" /> ONLINE • Ready to help
                   </div>
                 </div>
+                {/* Coach Selector */}
+                {coaches.length > 0 && (
+                  <div className="hidden sm:flex items-center gap-1">
+                    {coaches.map((coach: any) => (
+                      <button
+                        key={coach.id}
+                        onClick={() => setSelectedCoach(coach.id)}
+                        className={`px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-wider transition-all ${
+                          selectedCoach === coach.id
+                            ? 'bg-accent text-[var(--theme-primary-text)]'
+                            : 'border border-[var(--border-default)] hover:border-accent text-[var(--text-secondary)]'
+                        }`}
+                        title={coach.tagline}
+                      >
+                        {coach.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Messages */}
@@ -2227,9 +3032,17 @@ export default function Dashboard() {
 
             <Card className="p-6">
               <div className="flex items-center gap-5">
-                <div className="w-20 h-20 bg-accent flex items-center justify-center">
-                  <User size={32} className="text-[var(--theme-primary-text)]" />
-                </div>
+                {user?.imageUrl ? (
+                  <img
+                    src={user.imageUrl}
+                    alt="Profile"
+                    className="w-20 h-20 object-cover border-2 border-accent"
+                  />
+                ) : (
+                  <div className="w-20 h-20 bg-accent flex items-center justify-center">
+                    <User size={32} className="text-[var(--theme-primary-text)]" />
+                  </div>
+                )}
                 <div>
                   <h3 className="font-heading text-2xl uppercase tracking-normal">{user?.fullName || "Athlete"}</h3>
                   <p className="text-sm font-mono text-[var(--text-muted)] tracking-wide">{user?.emailAddresses?.[0]?.emailAddress}</p>
@@ -2330,8 +3143,8 @@ export default function Dashboard() {
         onClose={() => setCommandBarOpen(false)}
         recentMeals={meals.slice(0, 5)}
         recentWorkouts={workouts.slice(0, 5)}
-        onLogMeal={() => { setCommandBarOpen(false); setActiveTab("MEALS"); }}
-        onLogWorkout={() => { setCommandBarOpen(false); setActiveTab("WORKOUT"); }}
+        onLogMeal={() => { setCommandBarOpen(false); setActiveTab("HOME"); setShowQuickMealPanel(true); setShowQuickWorkoutPanel(false); }}
+        onLogWorkout={() => { setCommandBarOpen(false); setActiveTab("HOME"); setShowQuickWorkoutPanel(true); setShowQuickMealPanel(false); }}
         onAddWater={() => {
           setCommandBarOpen(false);
           setWaterIntake((prev) => prev + (waterUnit === "glasses" ? 1 : 0.25));
