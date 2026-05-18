@@ -10,17 +10,31 @@ interface AIMessage { role: string; content: string }
 async function callAI(messages: AIMessage[], maxTokens = 500): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
-  const res = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: "openai/gpt-4o-mini", messages, max_tokens: maxTokens }),
-  });
-  if (!res.ok) throw new Error(`OpenRouter error ${res.status}: ${await res.text()}`);
-  const data = await res.json() as any;
-  if (data.error) throw new Error(`OpenRouter API error: ${data.error.message}`);
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error("OpenRouter returned empty response");
-  return content;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: "openai/gpt-4o-mini", messages, max_tokens: maxTokens }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`OpenRouter error ${res.status}: ${await res.text()}`);
+    const data = await res.json() as any;
+    if (data.error) throw new Error(`OpenRouter API error: ${data.error.message}`);
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error("OpenRouter returned empty response");
+    return content;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("OpenRouter request timed out after 60s");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function parseJSON<T>(text: string, fallback: T): T {

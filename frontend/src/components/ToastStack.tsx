@@ -73,6 +73,7 @@ function ToastItem({
           <p className="text-sm tracking-wide leading-relaxed">{toast.message}</p>
           {toast.undoAction && (
             <button
+              type="button"
               onClick={() => {
                 toast.undoAction?.();
                 onRemove(toast.id);
@@ -84,6 +85,8 @@ function ToastItem({
           )}
         </div>
         <button
+          type="button"
+          aria-label="Dismiss notification"
           onClick={() => onRemove(toast.id)}
           className="p-1 hover:text-[var(--text-muted)] transition-colors shrink-0"
         >

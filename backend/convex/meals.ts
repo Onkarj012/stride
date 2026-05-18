@@ -32,6 +32,9 @@ export const addMeal = mutation({
     mealType: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    if (args.calories < 0 || args.protein < 0 || args.carbs < 0 || args.fat < 0) {
+      throw new Error("Calories and macros must be non-negative");
+    }
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
     return ctx.db.insert("meals", {
@@ -62,6 +65,9 @@ export const updateMeal = mutation({
     aiSuggestion: v.optional(v.string()),
   },
   handler: async (ctx, { id, ...fields }) => {
+    if (fields.calories < 0 || fields.protein < 0 || fields.carbs < 0 || fields.fat < 0) {
+      throw new Error("Calories and macros must be non-negative");
+    }
     const userId = await requireUserId(ctx);
     const meal = await ctx.db.get(id);
     if (!meal || meal.userId !== userId) throw new Error("Not found");

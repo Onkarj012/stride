@@ -30,6 +30,11 @@ export const upsertDailyGoal = mutation({
     fatGoal: v.optional(v.number()),
   },
   handler: async (ctx, { date, ...goals }) => {
+    for (const [k, v] of Object.entries(goals)) {
+      if (v !== undefined && v <= 0) {
+        throw new Error(`Invalid ${k}: must be > 0`);
+      }
+    }
     const userId = await requireUserId(ctx);
     const existing = await ctx.db
       .query("daily_goals")

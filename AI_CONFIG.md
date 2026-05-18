@@ -66,7 +66,7 @@ async function callAI(messages: AIMessage[], maxTokens = 500): Promise<string> {
 
 ### Chat History
 - **Yes, previous chat history is sent to the LLM.**
-- Up to **40 messages** from the current `sessionId` are loaded from SQLite (`chat_messages` table).
+- Up to **40 messages** from the current `sessionId` are loaded from Convex.
 - History is prepended to the messages array before the new user message, giving the LLM full conversational context.
 
 ### Additional Context

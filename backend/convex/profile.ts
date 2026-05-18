@@ -41,6 +41,13 @@ export const upsertProfile = mutation({
     fatTarget: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const numericFields = ["weight", "height", "age", "calorieTarget", "proteinTarget", "carbTarget", "fatTarget"] as const;
+    for (const field of numericFields) {
+      const val = args[field as keyof typeof args];
+      if (val !== undefined && val <= 0) {
+        throw new Error(`Invalid ${field}: must be > 0`);
+      }
+    }
     const userId = await requireUserId(ctx);
     const existing = await ctx.db
       .query("user_profiles")

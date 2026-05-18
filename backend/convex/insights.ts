@@ -25,7 +25,11 @@ export const getDailyInsights = query({
       .first();
     if (!row) return { insights: [] };
     try {
-      return { insights: JSON.parse(row.content) as string[] };
+      const parsed = JSON.parse(row.content);
+      if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
+        return { insights: parsed };
+      }
+      return { insights: [row.content] };
     } catch {
       return { insights: [row.content] };
     }
