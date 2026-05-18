@@ -309,7 +309,9 @@ Rules:
         const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "");
         const mealId = await ctx.runMutation(internal.meals.addMealFromAI, { userId, date: today, ...parsed });
         loggedItem = { type: "meal", data: { _id: mealId, ...parsed } };
-      } catch {}
+      } catch (err) {
+        console.error("Failed to log meal from AI:", err);
+      }
     } else if (workoutMatch) {
       cleanReply = reply.replace(/⟦LOG_WORKOUT⟧[\s\S]*?⟦\/LOG_WORKOUT⟧/, "").trim();
       try {
@@ -317,7 +319,9 @@ Rules:
         const parsed = await parseWorkoutDescription(logData.description || message);
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, { userId, date: today, ...parsed });
         loggedItem = { type: "workout", data: { _id: workoutId, ...parsed } };
-      } catch {}
+      } catch (err) {
+        console.error("Failed to log workout from AI:", err);
+      }
     }
 
     // Save AI reply
@@ -373,8 +377,14 @@ export const generateDailyInsights = action({
 Give 3 short, punchy insights (one sentence each) about their day. Be motivating but direct. Use military/cyberpunk tone. Return ONLY a JSON array of 3 strings. Example: ["Protein intake on target. Stay locked in.", "Caloric deficit detected. Fuel up, soldier.", "Zero training logged. The iron doesn't lift itself."]`;
 
     const content = await callAI([{ role: "user", content: prompt }], 300);
-    const match = content.match(/\[[\s\S]*\]/);
-    const insights = JSON.parse(match ? match[0] : content) as string[];
+    let insights: string[] = [];
+    try {
+      const match = content.match(/\[[\s\S]*\]/);
+      insights = JSON.parse(match ? match[0] : content) as string[];
+      if (!Array.isArray(insights)) insights = [];
+    } catch {
+      insights = [content.slice(0, 100), "Keep pushing forward.", "Data logged successfully."];
+    }
 
     await ctx.runMutation(internal.insights.saveInsights, { userId, date, insights });
     return { insights };

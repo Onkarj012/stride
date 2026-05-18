@@ -95,7 +95,7 @@ export const getHistoryInsights = query({
     const endDate = new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - dayCount * 86400000).toISOString().split("T")[0];
 
-    const [mealRows, workoutRows, goalRow] = await Promise.all([
+    const [mealRows, workoutRows, goalRows] = await Promise.all([
       ctx.db
         .query("meals")
         .withIndex("by_user_date", (q: any) => q.eq("userId", userId).gte("date", startDate))
@@ -108,10 +108,12 @@ export const getHistoryInsights = query({
         .collect(),
       ctx.db
         .query("daily_goals")
-        .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+        .withIndex("by_user_date", (q: any) => q.eq("userId", userId).gte("date", startDate))
+        .filter((q: any) => q.lte(q.field("date"), endDate))
         .order("desc")
-        .first(),
+        .collect(),
     ]);
+    const goalRow = goalRows[0];
 
     const mealMap = new Map<string, { cals: number; prot: number; carbs: number; fat: number; count: number }>();
     for (const m of mealRows) {

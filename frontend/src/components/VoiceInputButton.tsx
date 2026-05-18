@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Mic, MicOff } from "lucide-react";
 
 interface VoiceInputButtonProps {
@@ -69,6 +69,14 @@ export function VoiceInputButton({ value, onChange, className = "" }: VoiceInput
       startListening();
     }
   }, [isListening, startListening, stopListening]);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+    };
+  }, []);
 
   return (
     <button
