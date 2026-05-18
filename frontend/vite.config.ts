@@ -1,26 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-
-// Plugin to prevent bundling server-side convex code
-const preventServerBundling = {
-  name: 'prevent-server-bundling',
-  resolveId(id) {
-    // Intercept convex/server imports and mark as external
-    if (id === 'convex/server' || id.includes('backend/convex/_generated')) {
-      return { id, external: true }
-    }
-  },
-}
+import path from 'path'
 
 export default defineConfig({
-  plugins: [preventServerBundling, react(), tailwindcss()],
-  build: {
-    rollupOptions: {
-      external: [
-        'convex/server',
-        /backend\/convex\/_generated/,
-      ],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      // Replace server-only convex module with a browser-safe stub
+      'convex/server': path.resolve(__dirname, 'src/lib/convex-server-stub.js'),
     },
   },
   server: {
