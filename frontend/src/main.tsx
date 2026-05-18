@@ -2,21 +2,24 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route, useNavigate, Navigate } from 'react-router-dom'
 import { ClerkProvider, SignIn, SignUp, useAuth } from '@clerk/react'
+import { ConvexProviderWithClerk } from 'convex/react-clerk'
+import { ConvexReactClient } from 'convex/react'
 import { ThemeProvider } from './lib/theme'
 import Dashboard from './pages/Dashboard'
 import { Loader2 } from 'lucide-react'
 import './index.css'
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
+const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string)
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isLoaded, isSignedIn } = useAuth()
   if (!isLoaded) {
     return (
-      <div className="min-h-screen bg-white dark:bg-gray-950 text-black font-mono flex items-center justify-center transition-colors">
+      <div className="min-h-screen flex items-center justify-center bg-[var(--bg-main)] text-[var(--text-primary)]">
         <div className="flex flex-col items-center gap-4">
-          <Loader2 size={32} className="animate-spin text-red-600" />
-          <div className="text-sm font-bold text-neutral-500 dark:text-gray-400">AUTHENTICATING...</div>
+          <Loader2 size={32} className="animate-spin text-accent" />
+          <div className="text-sm font-mono text-[var(--text-muted)] tracking-wider">AUTHENTICATING...</div>
         </div>
       </div>
     )
@@ -39,35 +42,37 @@ function ClerkProviderWithRoutes() {
       signUpFallbackRedirectUrl="/"
       afterSignOutUrl="/sign-in"
     >
-      <ThemeProvider>
-        <Routes>
-          <Route
-            path="/sign-in/*"
-            element={
-              <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center transition-colors">
-                <SignIn />
-              </div>
-            }
-          />
-          <Route
-            path="/sign-up/*"
-            element={
-              <div className="min-h-screen bg-white dark:bg-gray-950 flex items-center justify-center transition-colors">
-                <SignUp />
-              </div>
-            }
-          />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </ThemeProvider>
+      <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+        <ThemeProvider>
+          <Routes>
+            <Route
+              path="/sign-in/*"
+              element={
+                <div className="min-h-screen flex items-center justify-center bg-[var(--bg-main)] text-[var(--text-primary)]">
+                  <SignIn />
+                </div>
+              }
+            />
+            <Route
+              path="/sign-up/*"
+              element={
+                <div className="min-h-screen flex items-center justify-center bg-[var(--bg-main)] text-[var(--text-primary)]">
+                  <SignUp />
+                </div>
+              }
+            />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </ThemeProvider>
+      </ConvexProviderWithClerk>
     </ClerkProvider>
   )
 }

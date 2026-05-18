@@ -66,3 +66,8 @@ graphify-out/cache/
 # Convex local config
 .convex/local/
 
+# Environment and credential files
+credentials.json
+*.pem
+*.key
+.credentials

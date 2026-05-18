@@ -1,0 +1,151 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 2 (Performance Pro) mixed with Archetype 4 (Swiss & High-Contrast Brutalism)",
+  "brand": {
+    "name": "Stride",
+    "vibe": "Raw, energetic, disciplined, uncompromising",
+    "description": "A brutalist dark mode fitness tracking dashboard that empowers users with high-contrast, no-nonsense data visualization, AI coaching, and deep health tracking."
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Anton",
+      "body": "Work Sans",
+      "mono": "IBM Plex Mono",
+      "install_url": "https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Mono:wght@400;500;600&family=Work+Sans:wght@400;500;600;700&display=swap"
+    },
+    "scale": {
+      "h1": "text-5xl sm:text-6xl uppercase tracking-tighter leading-none font-heading",
+      "h2": "text-3xl sm:text-4xl uppercase tracking-tight leading-tight font-heading",
+      "h3": "text-xl sm:text-2xl uppercase tracking-tight font-heading",
+      "h4": "text-lg uppercase tracking-wide font-heading",
+      "body": "text-base font-body text-neutral-300",
+      "small": "text-sm font-body text-neutral-400",
+      "data": "text-xl sm:text-3xl font-mono font-medium tracking-tight",
+      "label": "text-xs uppercase tracking-[0.2em] font-mono text-neutral-500"
+    }
+  },
+  "colors": {
+    "background": {
+      "main": "#050505",
+      "card": "#0F0F0F",
+      "elevated": "#1A1A1A"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A3A3A3",
+      "muted": "#737373",
+      "inverse": "#000000"
+    },
+    "border": {
+      "default": "#262626",
+      "active": "var(--theme-primary)",
+      "bold": "#404040"
+    },
+    "color_scheme_options": [
+      {
+        "name": "Volt",
+        "value": "#CCFF00",
+        "tailwind_class": "bg-[#CCFF00] text-black"
+      },
+      {
+        "name": "Blaze",
+        "value": "#FF3B30",
+        "tailwind_class": "bg-[#FF3B30] text-white"
+      },
+      {
+        "name": "Cyan",
+        "value": "#00FFFF",
+        "tailwind_class": "bg-[#00FFFF] text-black"
+      },
+      {
+        "name": "Magenta",
+        "value": "#FF00FF",
+        "tailwind_class": "bg-[#FF00FF] text-white"
+      }
+    ],
+    "default_primary": "var(--theme-primary, #CCFF00)"
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "Tailwind default (p-4, p-6, p-8) but applied densely. Internal padding inside cards is typically p-6.",
+    "grid_strategy": "Mode B (Control Room Grid): grid-cols-1 md:grid-cols-3 lg:grid-cols-4 or 12-col bento. gap-4 or gap-6. Every pixel utilized.",
+    "borders": "Brutalist aesthetics: use 1px or 2px solid borders (border-border or border-white/20). Sharp edges (rounded-none).",
+    "shadows": "Hard shadows: shadow-[4px_4px_0px_0px_rgba(255,255,255,0.1)] or solid color shadows for primary accents."
+  },
+  "components": {
+    "cards": {
+      "style": "Flat background (bg-[#0F0F0F]), sharp corners (rounded-none), 1px solid border (border-[#262626]).",
+      "hover": "Hover state can involve a slight offset translation (-translate-y-1 -translate-x-1) and a hard shadow (shadow-[4px_4px_0px_0px_var(--theme-primary)])."
+    },
+    "buttons": {
+      "primary": "bg-[var(--theme-primary)] text-black font-mono uppercase tracking-wider font-bold px-6 py-3 rounded-none hover:opacity-90 active:scale-95 transition-all border-2 border-transparent",
+      "secondary": "bg-transparent text-white border-2 border-[#262626] font-mono uppercase tracking-wider px-6 py-3 rounded-none hover:border-white transition-all",
+      "ghost": "text-neutral-400 hover:text-white font-mono uppercase tracking-wider transition-all"
+    },
+    "badges": {
+      "style": "bg-[#1A1A1A] border border-[#404040] text-white px-3 py-1 text-xs font-mono uppercase tracking-widest rounded-none"
+    },
+    "ai_coach_chat": {
+      "user_bubble": "bg-[#1A1A1A] border border-[#262626] p-4 rounded-none ml-8 text-neutral-200",
+      "ai_bubble": "bg-[var(--theme-primary)] text-black p-4 rounded-none mr-8 font-medium",
+      "container": "border-2 border-[#262626] bg-[#050505] h-[500px] flex flex-col"
+    }
+  },
+  "specific_features": {
+    "color_scheme_chooser": "A brutalist row of square color swatches. Clicking one updates the `--theme-primary` CSS variable globally. Add active state (border-2 border-white p-1) to the selected color.",
+    "user_recipes": "List format with massive typography for calorie/macro count. AI coach section embedded directly into the recipe detail view with a distinctive 'AI Analysis' block (border-l-4 border-[var(--theme-primary)]).",
+    "sleep_water_trackers": "Water: visual bar or block grid filling up. Sleep: monospaced timeline or minimalist bar chart. Both should fit in tight dashboard widgets.",
+    "badges_system": "Use Lucide React icons (e.g., Zap, Flame, Trophy, Star) sized large (w-12 h-12) wrapped in sharp square containers. When unlocked, border turns to var(--theme-primary).",
+    "quick_action_widgets": "Massive icons or bold text blocks (e.g. '+ LOG WORKOUT') inside square grid items. Brutalist hit areas."
+  },
+  "media": {
+    "portraits": [
+      {
+        "url": "https://images.unsplash.com/photo-1623010759866-91c6c657141e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwxfHxmaXRuZXNzJTIwcG9ydHJhaXR8ZW58MHx8fHwxNzc3OTc4NTYzfDA&ixlib=rb-4.1.0&q=85",
+        "category": "user_avatar_1",
+        "description": "Woman in pink outfit posing"
+      },
+      {
+        "url": "https://images.pexels.com/photos/5937765/pexels-photo-5937765.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "category": "user_avatar_2",
+        "description": "Dramatic B&W portrait of muscular man"
+      },
+      {
+        "url": "https://images.pexels.com/photos/31500884/pexels-photo-31500884.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "category": "user_avatar_3",
+        "description": "Young woman resting after workout"
+      }
+    ],
+    "food": [
+      {
+        "url": "https://images.unsplash.com/photo-1543352632-5a4b24e4d2a6?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTF8MHwxfHNlYXJjaHwxfHxoZWFsdGh5JTIwbWVhbCUyMHByZXB8ZW58MHx8fHwxNzc3Nzk3MTcxfDA&ixlib=rb-4.1.0&q=85",
+        "category": "recipe_thumbnail_1",
+        "description": "Fruit salads"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1609915437515-9d0f0166b537?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTF8MHwxfHNlYXJjaHwzfHxoZWFsdGh5JTIwbWVhbCUyMHByZXB8ZW58MHx8fHwxNzc3Nzk3MTcxfDA&ixlib=rb-4.1.0&q=85",
+        "category": "recipe_thumbnail_2",
+        "description": "Meal prep container"
+      }
+    ],
+    "water": [
+      {
+        "url": "https://images.unsplash.com/photo-1643114451704-8f44b1d1a681?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNDR8MHwxfHNlYXJjaHwyfHxnbGFzcyUyMG9mJTIwd2F0ZXJ8ZW58MHx8fHwxNzc3OTc4NTc2fDA&ixlib=rb-4.1.0&q=85",
+        "category": "water_tracker_bg",
+        "description": "Glass of water on reflective surface"
+      }
+    ]
+  },
+  "icons": {
+    "library": "lucide-react",
+    "usage": "Use bold stroke widths (strokeWidth={2.5}) for a harsher, brutalist feel. Do not use rounded icons."
+  },
+  "instructions_to_main_agent": [
+    "1. Setup CSS Variables: Add `--theme-primary: #CCFF00;` to the :root or .dark scope in index.css. All primary accents must reference this.",
+    "2. Strict Brutalism: No rounded corners on any cards or buttons (use `rounded-none`). Rely on border weights (border, border-2) and hard dropshadows.",
+    "3. Dashboard Grid: Build a tight grid layout utilizing all available screen space. Include separate widgets for Workout Log, Meal Log, Sleep Tracker, Water Intake, Insights, and Badges.",
+    "4. Color Picker: Add a small floating or header-based widget that sets the `--theme-primary` variable dynamically in React (document.documentElement.style.setProperty).",
+    "5. Testing: Add `data-testid` to all interactive components.",
+    "6. AI Coach: Ensure the AI chat has clear brutalist contrast (e.g., User messages are bordered black/grey, AI messages have solid primary backgrounds).",
+    "7. Typography: Include the Google Fonts import in index.css and extend the Tailwind theme to use `font-heading`, `font-body`, and `font-mono` as defined."
+  ]
+}

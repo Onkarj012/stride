@@ -101,4 +101,60 @@ router.get("/day", requireAuth, (req: Request, res: Response) => {
   res.json({ meals, workouts });
 });
 
+// GET /api/history/insights?days=30
+router.get("/insights", requireAuth, (req: Request, res: Response) => {
+  const { days } = req.query as { days?: string };
+  const dayCount = Math.min(90, Math.max(7, parseInt(days || "30", 10)));
+
+  const endDate = new Date().toISOString().split("T")[0];
+  const startDate = new Date(Date.now() - dayCount * 86400000).toISOString().split("T")[0];
+
+  const mealRows = db
+    .prepare(
+      `SELECT date, SUM(calories) as total_calories, SUM(protein) as total_protein, SUM(carbs) as total_carbs, SUM(fat) as total_fat, COUNT(*) as meal_count
+       FROM meals WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY date ORDER BY date`
+    )
+    .all(req.user.userId, startDate, endDate) as any[];
+
+  const workoutRows = db
+    .prepare(
+      `SELECT date, COUNT(*) as workout_count FROM workouts WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY date ORDER BY date`
+    )
+    .all(req.user.userId, startDate, endDate) as any[];
+
+  const goalRow = db
+    .prepare("SELECT calorie_goal, protein_goal, carb_goal, fat_goal FROM daily_goals WHERE user_id = ? ORDER BY date DESC LIMIT 1")
+    .get(req.user.userId) as any;
+
+  const result: any[] = [];
+  const mealMap = new Map(mealRows.map((r: any) => [r.date, r]));
+  const workoutMap = new Map(workoutRows.map((r: any) => [r.date, r]));
+
+  for (let i = 0; i < dayCount; i++) {
+    const d = new Date(Date.now() - i * 86400000);
+    const dateStr = d.toISOString().split("T")[0];
+    const m = mealMap.get(dateStr);
+    const w = workoutMap.get(dateStr);
+    result.unshift({
+      date: dateStr,
+      calories: Math.round(m?.total_calories || 0),
+      protein: Math.round(m?.total_protein || 0),
+      carbs: Math.round(m?.total_carbs || 0),
+      fat: Math.round(m?.total_fat || 0),
+      meals: m?.meal_count || 0,
+      workouts: w?.workout_count || 0,
+    });
+  }
+
+  res.json({
+    daily: result,
+    goals: {
+      calories: goalRow?.calorie_goal || 2400,
+      protein: goalRow?.protein_goal || 180,
+      carbs: goalRow?.carb_goal || 280,
+      fat: goalRow?.fat_goal || 80,
+    },
+  });
+});
+
 export default router;

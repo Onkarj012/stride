@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx --watch src/index.ts",
     "start": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "convex": "npx convex dev"
   },
   "dependencies": {
     "@clerk/express": "^2.1.10",

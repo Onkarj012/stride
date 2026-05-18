@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import db from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { MealEstimate, WorkoutSuggestion } from "../types.js";
+import { getCoach, COACHES, classifyCoachType, type CoachType } from "../coaches.js";
 
 const router = Router();
 
@@ -57,10 +58,9 @@ async function callAI(
   return content;
 }
 
-// ─── Shared logging helpers ───────────────────────────────────────────────────
+// ─── Shared parse helpers ─────────────────────────────────────────────────────
 
-async function logMealFromDescription(
-  userId: string,
+async function parseMealFromDescription(
   description: string,
   mealType: string,
   time: string,
@@ -103,8 +103,6 @@ Return ONLY a JSON object (no other text, no markdown, no explanation):
     result = { name: description.slice(0, 50), calories: 400, protein: 20, carbs: 35, fat: 15, breakdown: null, suggestion: null };
   }
 
-  const id = uuidv4();
-  const today = new Date().toISOString().split("T")[0];
   const mealTime = time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
   const aiNote = result.breakdown
     ? result.suggestion
@@ -112,12 +110,7 @@ Return ONLY a JSON object (no other text, no markdown, no explanation):
       : result.breakdown
     : result.suggestion || null;
 
-  db.prepare(
-    "INSERT INTO meals (id, user_id, date, name, calories, protein, carbs, fat, time, ai_suggestion, meal_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(id, userId, today, result.name || description.slice(0, 50), result.calories || 0, result.protein || 0, result.carbs || 0, result.fat || 0, mealTime, aiNote, mealType || "unspecified");
-
   return {
-    _id: id,
     name: result.name || description.slice(0, 50),
     calories: result.calories || 0,
     protein: result.protein || 0,
@@ -126,11 +119,31 @@ Return ONLY a JSON object (no other text, no markdown, no explanation):
     time: mealTime,
     aiSuggestion: aiNote,
     mealType: mealType || "unspecified",
+    description,
   };
 }
 
-async function logWorkoutFromDescription(
+async function logMealFromDescription(
   userId: string,
+  description: string,
+  mealType: string,
+  time: string,
+): Promise<any> {
+  const parsed = await parseMealFromDescription(description, mealType, time);
+  const id = uuidv4();
+  const today = new Date().toISOString().split("T")[0];
+
+  db.prepare(
+    "INSERT INTO meals (id, user_id, date, name, calories, protein, carbs, fat, time, ai_suggestion, meal_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(id, userId, today, parsed.name, parsed.calories, parsed.protein, parsed.carbs, parsed.fat, parsed.time, parsed.aiSuggestion, parsed.mealType);
+
+  return {
+    _id: id,
+    ...parsed,
+  };
+}
+
+async function parseWorkoutFromDescription(
   description: string,
   duration?: string,
   intensity?: string,
@@ -191,9 +204,6 @@ Return ONLY valid JSON (no markdown, no explanation):
     result = { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", rationale: "" };
   }
 
-  const id = uuidv4();
-  const today = new Date().toISOString().split("T")[0];
-
   interface ExerciseSet { weight: string; reps: string }
   interface Exercise { name: string; sets: ExerciseSet[] }
   const exercises: Exercise[] = (result.exercises || []).map((ex: any) => ({
@@ -209,24 +219,7 @@ Return ONLY valid JSON (no markdown, no explanation):
     ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets`
     : "–";
 
-  db.prepare(
-    "INSERT INTO workouts (id, user_id, date, name, sets, reps, weight, duration, intensity, exercises, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    id,
-    userId,
-    today,
-    result.name || description.slice(0, 30),
-    setsVal,
-    null,
-    null,
-    result.duration || duration || "30 min",
-    result.intensity || intensity || "HIGH",
-    exercises.length > 0 ? JSON.stringify(exercises) : null,
-    result.rationale || null,
-  );
-
   return {
-    _id: id,
     name: result.name || description.slice(0, 30),
     sets: setsVal,
     reps: null,
@@ -235,6 +228,39 @@ Return ONLY valid JSON (no markdown, no explanation):
     intensity: result.intensity || intensity || "HIGH",
     rationale: result.rationale || "",
     exercises: exercises.length > 0 ? exercises : null,
+    description,
+  };
+}
+
+async function logWorkoutFromDescription(
+  userId: string,
+  description: string,
+  duration?: string,
+  intensity?: string,
+): Promise<any> {
+  const parsed = await parseWorkoutFromDescription(description, duration, intensity);
+  const id = uuidv4();
+  const today = new Date().toISOString().split("T")[0];
+
+  db.prepare(
+    "INSERT INTO workouts (id, user_id, date, name, sets, reps, weight, duration, intensity, exercises, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).run(
+    id,
+    userId,
+    today,
+    parsed.name,
+    parsed.sets,
+    null,
+    null,
+    parsed.duration,
+    parsed.intensity,
+    parsed.exercises ? JSON.stringify(parsed.exercises) : null,
+    parsed.rationale || null,
+  );
+
+  return {
+    _id: id,
+    ...parsed,
   };
 }
 
@@ -267,9 +293,15 @@ router.post("/estimate-meal", requireAuth, async (req: Request, res: Response) =
   }
 });
 
+router.get("/coaches", requireAuth, (_req: Request, res: Response) => {
+  const list: { id: string; name: string; tagline: string }[] = Object.values(COACHES).map(({ id, name, tagline }) => ({ id, name, tagline }));
+  list.unshift({ id: "auto", name: "Auto", tagline: "Automatically route to the right coach" });
+  res.json(list);
+});
+
 router.post("/chat", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { message, sessionId } = req.body as { message?: string; sessionId?: string };
+    const { message, sessionId, coachType } = req.body as { message?: string; sessionId?: string; coachType?: string };
     if (!message) {
       res.status(400).json({ error: "Message required" });
       return;
@@ -361,12 +393,17 @@ Rules:
       "INSERT INTO chat_messages (user_id, role, content, session_id) VALUES (?, ?, ?, ?)",
     ).run(req.user.userId, "user", message, sessionId || null);
 
-    // Build messages for LLM
+    // Auto-detect coach if not explicitly chosen or set to auto
+    let detectedCoachType: CoachType = (coachType as CoachType) ?? "overall";
+    if (!coachType || coachType === "auto") {
+      detectedCoachType = classifyCoachType(message);
+    }
+    const coach = getCoach(detectedCoachType);
+
     const messages: AIMessage[] = [
       {
         role: "system",
-        content:
-          `You are StrideCoach, an elite AI fitness and nutrition coach for Stride. You're direct, motivating, and use a bold, military-inspired tone. You have access to the user's profile, today's meals/workouts, and recent history. Give concise, actionable advice. Keep responses under 4 sentences. Address the user by their name when appropriate. Be specific - reference their actual data, targets, and progress. If they ask about nutrition, calculate macros from their targets. If they ask about workouts, suggest based on their recent activity.\n\n${contextBlock}${loggingPrompt}`,
+        content: `${coach.systemPrompt}\n\n${contextBlock}${loggingPrompt}`,
       },
       ...history.map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content })),
       { role: "user", content: message },
@@ -438,7 +475,7 @@ Rules:
       ).run(sessionId, req.user.userId);
     }
 
-    res.json({ reply: cleanReply, loggedItem });
+    res.json({ reply: cleanReply, loggedItem, coachType: detectedCoachType });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -604,7 +641,9 @@ Give a brief (2-3 sentences) weekly summary and recommendation. Military/cyberpu
   },
 );
 
-router.post("/log-meal", requireAuth, async (req: Request, res: Response) => {
+// ─── Parse endpoints (no DB write) ───────────────────────────────────────────
+
+router.post("/parse-meal", requireAuth, async (req: Request, res: Response) => {
   try {
     const { description, mealType, time } = req.body as {
       description?: string;
@@ -616,8 +655,7 @@ router.post("/log-meal", requireAuth, async (req: Request, res: Response) => {
       return;
     }
 
-    const result = await logMealFromDescription(
-      req.user.userId,
+    const result = await parseMealFromDescription(
       description,
       mealType || "unspecified",
       time || "",
@@ -628,7 +666,7 @@ router.post("/log-meal", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-router.post("/log-workout", requireAuth, async (req: Request, res: Response) => {
+router.post("/parse-workout", requireAuth, async (req: Request, res: Response) => {
   try {
     const { description, duration, intensity } = req.body as {
       description?: string;
@@ -640,13 +678,89 @@ router.post("/log-workout", requireAuth, async (req: Request, res: Response) => 
       return;
     }
 
-    const result = await logWorkoutFromDescription(
-      req.user.userId,
+    const result = await parseWorkoutFromDescription(
       description,
       duration,
       intensity,
     );
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+// ─── Log endpoints (accept pre-parsed data or parse + commit) ─────────────────
+
+router.post("/log-meal", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { description, mealType, time, parsedData } = req.body as {
+      description?: string;
+      mealType?: string;
+      time?: string;
+      parsedData?: any;
+    };
+
+    let data: any;
+    if (parsedData) {
+      // Commit pre-parsed data directly
+      const id = uuidv4();
+      const today = new Date().toISOString().split("T")[0];
+      const mealTime = parsedData.time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+      db.prepare(
+        "INSERT INTO meals (id, user_id, date, name, calories, protein, carbs, fat, time, ai_suggestion, meal_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(id, req.user.userId, today, parsedData.name || "Meal", parsedData.calories || 0, parsedData.protein || 0, parsedData.carbs || 0, parsedData.fat || 0, mealTime, parsedData.aiSuggestion || null, parsedData.mealType || mealType || "unspecified");
+      data = { _id: id, ...parsedData, time: mealTime, mealType: parsedData.mealType || mealType || "unspecified" };
+    } else if (description) {
+      data = await logMealFromDescription(req.user.userId, description, mealType || "unspecified", time || "");
+    } else {
+      res.status(400).json({ error: "Meal description or parsedData required" });
+      return;
+    }
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.post("/log-workout", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { description, duration, intensity, parsedData } = req.body as {
+      description?: string;
+      duration?: string;
+      intensity?: string;
+      parsedData?: any;
+    };
+
+    let data: any;
+    if (parsedData) {
+      // Commit pre-parsed data directly
+      const id = uuidv4();
+      const today = new Date().toISOString().split("T")[0];
+      db.prepare(
+        "INSERT INTO workouts (id, user_id, date, name, sets, reps, weight, duration, intensity, exercises, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        id,
+        req.user.userId,
+        today,
+        parsedData.name || "Workout",
+        parsedData.sets || "–",
+        null,
+        null,
+        parsedData.duration || duration || "30 min",
+        parsedData.intensity || intensity || "HIGH",
+        parsedData.exercises ? JSON.stringify(parsedData.exercises) : null,
+        parsedData.rationale || null,
+      );
+      data = { _id: id, ...parsedData, duration: parsedData.duration || duration || "30 min", intensity: parsedData.intensity || intensity || "HIGH" };
+    } else if (description) {
+      data = await logWorkoutFromDescription(req.user.userId, description, duration, intensity);
+    } else {
+      res.status(400).json({ error: "Workout description or parsedData required" });
+      return;
+    }
+
+    res.json(data);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
