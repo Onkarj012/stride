@@ -9,7 +9,6 @@ interface InlineLogPanelProps {
   mode: "meal" | "workout";
   open: boolean;
   onClose: () => void;
-  getToken: () => Promise<string | null>;
   onConfirm: (data: any) => void;
   totalCals: number;
   totalProtein: number;
@@ -27,7 +26,6 @@ export function InlineLogPanel({
   mode,
   open,
   onClose,
-  getToken,
   onConfirm,
   totalCals,
   totalProtein,
@@ -86,7 +84,6 @@ export function InlineLogPanel({
                   key="confirm"
                   mode={mode}
                   initialData={initialConfirmData}
-                  getToken={getToken}
                   onConfirm={handleConfirm}
                   onDiscard={handleDiscard}
                 />

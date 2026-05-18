@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -72,8 +72,10 @@ import {
   Line as ReLine,
 } from "recharts";
 import { useTheme, colorSchemes } from "../lib/theme";
-import { apiFetch } from "../lib/api";
 import { useToast } from "../hooks/useToast";
+import { useQuery, useMutation, useAction } from "convex/react";
+import { api } from "../../../backend/convex/_generated/api";
+import type { Id } from "../../../backend/convex/_generated/dataModel";
 import { Card } from "../components/ui/Card";
 import { StatCard } from "../components/ui/StatCard";
 import { ProgressBar } from "../components/ui/ProgressBar";
@@ -83,6 +85,7 @@ import { InlineLogPanel } from "../components/InlineLogPanel";
 import { ToastStack } from "../components/ToastStack";
 import { CommandBar } from "../components/CommandBar";
 import { RemainingBudget } from "../components/RemainingBudget";
+import { VoiceInputButton } from "../components/VoiceInputButton";
 
 // Simplified nav items with icons only on desktop
 const navItems = [
@@ -119,7 +122,7 @@ const badges = [
 ];
 
 export default function Dashboard() {
-  const { getToken, signOut } = useAuth()
+  const { signOut } = useAuth()
   const { user } = useUser()
   const { openUserProfile } = useClerk()
   const { isDark, toggleTheme, accentColor, setAccentColor } = useTheme();
@@ -130,12 +133,46 @@ export default function Dashboard() {
   const today = new Date().toISOString().split("T")[0];
   const yesterday = new Date(Date.now() - 86400000).toISOString().split("T")[0];
 
-  // Data state — start empty, fetch from backend
-  const [meals, setMeals] = useState<any[]>([]);
-  const [workouts, setWorkouts] = useState<any[]>([]);
-  const [goals, setGoals] = useState<any>({ calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 });
-  const [dailyInsightsData, setDailyInsightsData] = useState<any>({ insights: [] });
-  const [weeklySummary, setWeeklySummary] = useState<any>(null);
+  // ─── Convex mutations / actions ────────────────────────────────────────────
+  const ensureUserMutation = useMutation(api.users.ensureUser);
+  const addMealMutation = useMutation(api.meals.addMeal);
+  const updateMealMutation = useMutation(api.meals.updateMeal);
+  const deleteMealMutation = useMutation(api.meals.deleteMeal);
+  const addWorkoutMutation = useMutation(api.workouts.addWorkout);
+  const updateWorkoutMutation = useMutation(api.workouts.updateWorkout);
+  const deleteWorkoutMutation = useMutation(api.workouts.deleteWorkout);
+  const upsertProfileMutation = useMutation(api.profile.upsertProfile);
+  const createSessionMutation = useMutation(api.chat.createSession);
+  const deleteSessionMutation = useMutation(api.chat.deleteSession);
+  const updateSessionTitleMutation = useMutation(api.chat.updateSessionTitle);
+  const chatAction = useAction(api.ai.chat);
+  const parseMealAction = useAction(api.ai.parseMeal);
+  const parseWorkoutAction = useAction(api.ai.parseWorkout);
+  const logMealAction = useAction(api.ai.logMeal);
+  const logWorkoutAction = useAction(api.ai.logWorkout);
+  const calculateMacrosAction = useAction(api.ai.calculateProfileMacros);
+  const dailyInsightsAction = useAction(api.ai.generateDailyInsights);
+  const weeklySummaryAction = useAction(api.ai.generateWeeklySummary);
+  const suggestWorkoutAction = useAction(api.ai.suggestWorkout);
+
+  // ─── Convex reactive queries ────────────────────────────────────────────────
+  const meals = useQuery(api.meals.getMeals, { date: today }) ?? [];
+  const workouts = useQuery(api.workouts.getWorkouts, { date: today }) ?? [];
+  const goalsData = useQuery(api.goals.getDailyGoal, { date: today });
+  const goals = goalsData ?? { calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 };
+  const dailyInsightsData = useQuery(api.insights.getDailyInsights, { date: today }) ?? { insights: [] };
+  const weeklySummary = useQuery(api.insights.getWeeklySummary) ?? null;
+
+  // Ensure user record exists on first load
+  useEffect(() => {
+    if (user) {
+      ensureUserMutation({
+        name: user.fullName || "Athlete",
+        email: user.emailAddresses[0]?.emailAddress || "",
+      }).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   // Water tracking with flexible input
   const [waterIntake, setWaterIntake] = useState(() => {
@@ -146,7 +183,6 @@ export default function Dashboard() {
     return (localStorage.getItem('water-unit') as 'glasses' | 'litres') || 'glasses';
   });
   const [customWaterInput, setCustomWaterInput] = useState('');
-  const [waterExpanded, setWaterExpanded] = useState(false);
   const waterGoalGlasses = 8;
   const waterGoalLitres = 2;
   const waterGoal = waterUnit === 'glasses' ? waterGoalGlasses : waterGoalLitres;
@@ -191,13 +227,24 @@ export default function Dashboard() {
   const [liveCurrentWeight, setLiveCurrentWeight] = useState("");
   const [liveCurrentReps, setLiveCurrentReps] = useState("");
 
+  const profile = useQuery(api.profile.getProfile) ?? null;
+  const [profileForm, setProfileForm] = useState({
+    weight: "", height: "", age: "", activityLevel: "moderate",
+    calorieTarget: "", proteinTarget: "", carbTarget: "", fatTarget: "",
+  });
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileSuccess, setProfileSuccess] = useState(false);
+  const [profileAILoading, setProfileAILoading] = useState(false);
+  const [profileAIExplanation, setProfileAIExplanation] = useState<string | null>(null);
+
   // AI Coaches
-  const [coaches, setCoaches] = useState<any[]>([]);
-  const [selectedCoach, setSelectedCoach] = useState<string>("overall");
+  const coaches = useQuery(api.ai.getCoaches) ?? [];
+  const [selectedCoach, setSelectedCoach] = useState<string>("auto");
 
   // History insights
-  const [historyInsights, setHistoryInsights] = useState<any>(null);
   const [historyInsightDays, setHistoryInsightDays] = useState(30);
+  const historyInsights = useQuery(api.history.getHistoryInsights, { days: historyInsightDays }) ?? null;
   const [historyView, setHistoryView] = useState<'day' | 'insights'>('day');
 
   // Badges
@@ -207,22 +254,27 @@ export default function Dashboard() {
   });
 
   // AI Coach state
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<Id<"chat_sessions"> | null>(null);
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(true);
-  const [sessionMessages, setSessionMessages] = useState<any[]>([]);
   const [sidebarWidth, setSidebarWidth] = useState(260);
+  const sessions = useQuery(api.chat.getSessions) ?? [];
+  const rawMessages = useQuery(api.chat.getMessages, activeSessionId ? { sessionId: activeSessionId } : "skip") ?? [];
+  const sessionMessages = rawMessages.map((m: any) => ({
+    role: m.role === "user" ? "human" : m.role,
+    content: m.content,
+  }));
   const sidebarResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   // History state
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth() + 1);
-  const [calendarData, setCalendarData] = useState<Record<string, { meals: number; workouts: number; calories: number }>>({});
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [historyDayData, setHistoryDayData] = useState<{ meals: any[]; workouts: any[] } | null>(null);
+  const calendarData = useQuery(api.history.getCalendar, { year: calendarYear, month: calendarMonth }) ?? {};
+  const historyDayData = useQuery(api.history.getDayHistory, selectedDate ? { date: selectedDate } : "skip") ?? null;
   const [calendarPanelPct, setCalendarPanelPct] = useState(35);
   const [calendarHidden, setCalendarHidden] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
+  const [profileImgError, setProfileImgError] = useState(false);
   const resizeRef = useRef<{ startX: number; startPct: number } | null>(null);
   const historyContainerRef = useRef<HTMLDivElement>(null);
 
@@ -256,6 +308,22 @@ export default function Dashboard() {
   useEffect(() => {
     localStorage.setItem('unlocked-badges', JSON.stringify(unlockedBadges));
   }, [unlockedBadges]);
+
+  // Sync profile form when profile loads from Convex
+  useEffect(() => {
+    if (profile) {
+      setProfileForm({
+        weight: profile.weight ? String(profile.weight) : '',
+        height: profile.height ? String(profile.height) : '',
+        age: profile.age ? String(profile.age) : '',
+        activityLevel: profile.activityLevel || 'moderate',
+        calorieTarget: profile.calorieTarget ? String(profile.calorieTarget) : '',
+        proteinTarget: profile.proteinTarget ? String(profile.proteinTarget) : '',
+        carbTarget: profile.carbTarget ? String(profile.carbTarget) : '',
+        fatTarget: profile.fatTarget ? String(profile.fatTarget) : '',
+      });
+    }
+  }, [profile]);
 
   // Resize handlers
   useEffect(() => {
@@ -297,17 +365,6 @@ export default function Dashboard() {
   const [workoutForm, setWorkoutForm] = useState({ description: "", duration: "", intensity: "HIGH" });
   const [workoutError, setWorkoutError] = useState<string | null>(null);
 
-  const [profile, setProfile] = useState<any>(null);
-  const [profileForm, setProfileForm] = useState({
-    weight: "", height: "", age: "", activityLevel: "moderate",
-    calorieTarget: "", proteinTarget: "", carbTarget: "", fatTarget: "",
-  });
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [profileError, setProfileError] = useState<string | null>(null);
-  const [profileSuccess, setProfileSuccess] = useState(false);
-  const [profileAILoading, setProfileAILoading] = useState(false);
-  const [profileAIExplanation, setProfileAIExplanation] = useState<string | null>(null);
-
   const effectiveGoals = {
     calorieGoal: parseInt(profileForm.calorieTarget) || goals?.calorieGoal || 2400,
     proteinGoal: parseInt(profileForm.proteinTarget) || goals?.proteinGoal || 180,
@@ -330,180 +387,30 @@ export default function Dashboard() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [sessionMessages]);
 
-  // ─── Data fetching ─────────────────────────────────────────────────────────
-
-  const fetchMeals = useCallback(async () => {
-    try {
-      const data = await apiFetch(`/api/meals?date=${today}`, {}, getToken);
-      setMeals(Array.isArray(data) ? data : []);
-    } catch {
-      setMeals([]);
-    }
-  }, [getToken, today]);
-
-  const fetchWorkouts = useCallback(async () => {
-    try {
-      const data = await apiFetch(`/api/workouts?date=${today}`, {}, getToken);
-      setWorkouts(Array.isArray(data) ? data : []);
-    } catch {
-      setWorkouts([]);
-    }
-  }, [getToken, today]);
-
-  const fetchGoals = useCallback(async () => {
-    try {
-      const data = await apiFetch(`/api/goals?date=${today}`, {}, getToken);
-      setGoals(data || { calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 });
-    } catch {
-      setGoals({ calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 });
-    }
-  }, [getToken, today]);
-
-  const fetchProfile = useCallback(async () => {
-    try {
-      const p = await apiFetch('/api/profile', {}, getToken);
-      setProfile(p);
-      setProfileForm({
-        weight: p.weight ? String(p.weight) : '',
-        height: p.height ? String(p.height) : '',
-        age: p.age ? String(p.age) : '',
-        activityLevel: p.activityLevel || 'moderate',
-        calorieTarget: p.calorieTarget ? String(p.calorieTarget) : '',
-        proteinTarget: p.proteinTarget ? String(p.proteinTarget) : '',
-        carbTarget: p.carbTarget ? String(p.carbTarget) : '',
-        fatTarget: p.fatTarget ? String(p.fatTarget) : '',
-      });
-    } catch {
-      setProfile(null);
-    }
-  }, [getToken]);
-
-  const fetchInsights = useCallback(async () => {
-    try {
-      const data = await apiFetch(`/api/insights/daily?date=${today}`, {}, getToken);
-      setDailyInsightsData(data || { insights: [] });
-    } catch {
-      setDailyInsightsData({ insights: [] });
-    }
-  }, [getToken, today]);
-
-  const fetchWeeklySummary = useCallback(async () => {
-    try {
-      const data = await apiFetch('/api/insights/weekly', {}, getToken);
-      setWeeklySummary(data);
-    } catch {
-      setWeeklySummary(null);
-    }
-  }, [getToken]);
-
-  const fetchSessions = useCallback(async () => {
-    try {
-      const data = await apiFetch('/api/chat/sessions', {}, getToken);
-      const list = Array.isArray(data) ? data : [];
-      setSessions(list);
-      if (list.length > 0 && !activeSessionId) {
-        setActiveSessionId(list[0].id);
-      }
-    } catch {
-      setSessions([]);
-    }
-  }, [getToken, activeSessionId]);
-
-  const fetchSessionMessages = useCallback(async (sessionId: string) => {
-    try {
-      const data = await apiFetch(`/api/chat/sessions/${sessionId}/messages`, {}, getToken);
-      const msgs = Array.isArray(data) ? data : [];
-      setSessionMessages(msgs.map((m: any) => ({
-        role: m.role === 'user' ? 'human' : m.role === 'ai' ? 'ai' : m.role,
-        content: m.content,
-      })));
-    } catch {
-      setSessionMessages([]);
-    }
-  }, [getToken]);
-
-  const fetchCalendar = useCallback(async () => {
-    try {
-      const data = await apiFetch(`/api/history/calendar?year=${calendarYear}&month=${calendarMonth}`, {}, getToken);
-      setCalendarData(data || {});
-    } catch {
-      setCalendarData({});
-    }
-  }, [getToken, calendarYear, calendarMonth]);
-
-  const fetchCoaches = useCallback(async () => {
-    try {
-      const data = await apiFetch('/api/ai/coaches', {}, getToken);
-      setCoaches(Array.isArray(data) ? data : []);
-    } catch {
-      setCoaches([]);
-    }
-  }, [getToken]);
-
-  const fetchHistoryInsights = useCallback(async () => {
-    try {
-      const data = await apiFetch(`/api/history/insights?days=${historyInsightDays}`, {}, getToken);
-      setHistoryInsights(data || null);
-    } catch {
-      setHistoryInsights(null);
-    }
-  }, [getToken, historyInsightDays]);
-
-  // Initial load
-  useEffect(() => {
-    fetchMeals();
-    fetchWorkouts();
-    fetchGoals();
-    fetchProfile();
-    fetchInsights();
-    fetchWeeklySummary();
-    fetchSessions();
-    fetchCalendar();
-    fetchCoaches();
-    fetchHistoryInsights();
-  }, []);
-
   // Auto-select today when entering HISTORY tab
   useEffect(() => {
     if (activeTab === "HISTORY" && !selectedDate) {
-      handleSelectDate(today);
+      setSelectedDate(today);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
-  // Refetch history insights when days change
+  // Auto-select first session when sessions load
   useEffect(() => {
-    if (activeTab === "HISTORY") {
-      fetchHistoryInsights();
+    if (sessions.length > 0 && !activeSessionId) {
+      setActiveSessionId(sessions[0].id as Id<"chat_sessions">);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyInsightDays, activeTab]);
-
-  // Reload messages when active session changes
-  useEffect(() => {
-    if (activeSessionId) {
-      fetchSessionMessages(activeSessionId);
-    } else {
-      setSessionMessages([]);
-    }
-  }, [activeSessionId, fetchSessionMessages]);
+  }, [sessions.length]);
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
 
-  const handleDeleteMeal = async (id: string) => {
-    try {
-      await apiFetch(`/api/meals/${id}`, { method: 'DELETE' }, getToken);
-      setMeals(prev => prev.filter(m => m._id !== id));
-      fetchInsights();
-    } catch {}
+  const handleDeleteMeal = async (id: Id<"meals">) => {
+    try { await deleteMealMutation({ id }); } catch {}
   };
 
-  const handleDeleteWorkout = async (id: string) => {
-    try {
-      await apiFetch(`/api/workouts/${id}`, { method: 'DELETE' }, getToken);
-      setWorkouts(prev => prev.filter(w => w._id !== id));
-      fetchInsights();
-    } catch {}
+  const handleDeleteWorkout = async (id: Id<"workouts">) => {
+    try { await deleteWorkoutMutation({ id }); } catch {}
   };
 
   const handleSaveProfile = async () => {
@@ -511,22 +418,18 @@ export default function Dashboard() {
     setProfileError(null);
     setProfileSuccess(false);
     try {
-      await apiFetch('/api/profile', {
-        method: 'POST',
-        body: JSON.stringify({
-          weight: profileForm.weight ? Number(profileForm.weight) : null,
-          height: profileForm.height ? Number(profileForm.height) : null,
-          age: profileForm.age ? Number(profileForm.age) : null,
-          activityLevel: profileForm.activityLevel,
-          calorieTarget: profileForm.calorieTarget ? Number(profileForm.calorieTarget) : null,
-          proteinTarget: profileForm.proteinTarget ? Number(profileForm.proteinTarget) : null,
-          carbTarget: profileForm.carbTarget ? Number(profileForm.carbTarget) : null,
-          fatTarget: profileForm.fatTarget ? Number(profileForm.fatTarget) : null,
-        }),
-      }, getToken);
+      await upsertProfileMutation({
+        weight: profileForm.weight ? Number(profileForm.weight) : undefined,
+        height: profileForm.height ? Number(profileForm.height) : undefined,
+        age: profileForm.age ? Number(profileForm.age) : undefined,
+        activityLevel: profileForm.activityLevel,
+        calorieTarget: profileForm.calorieTarget ? Number(profileForm.calorieTarget) : undefined,
+        proteinTarget: profileForm.proteinTarget ? Number(profileForm.proteinTarget) : undefined,
+        carbTarget: profileForm.carbTarget ? Number(profileForm.carbTarget) : undefined,
+        fatTarget: profileForm.fatTarget ? Number(profileForm.fatTarget) : undefined,
+      });
       setProfileSuccess(true);
       setTimeout(() => setProfileSuccess(false), 3000);
-      fetchProfile();
     } catch (err: any) {
       setProfileError(err.message || 'Failed to save profile');
     } finally {
@@ -543,15 +446,12 @@ export default function Dashboard() {
     setProfileAIExplanation(null);
     setProfileError(null);
     try {
-      const data = await apiFetch('/api/ai/profile-macros', {
-        method: 'POST',
-        body: JSON.stringify({
-          weight: Number(profileForm.weight),
-          height: Number(profileForm.height),
-          age: Number(profileForm.age),
-          activityLevel: profileForm.activityLevel,
-        }),
-      }, getToken);
+      const data = await calculateMacrosAction({
+        weight: Number(profileForm.weight),
+        height: Number(profileForm.height),
+        age: Number(profileForm.age),
+        activityLevel: profileForm.activityLevel,
+      });
       setProfileForm(prev => ({
         ...prev,
         calorieTarget: String(data.calories || ''),
@@ -559,7 +459,7 @@ export default function Dashboard() {
         carbTarget: String(data.carbs || ''),
         fatTarget: String(data.fat || ''),
       }));
-      setProfileAIExplanation(data.explanation || '');
+      setProfileAIExplanation((data as any).explanation || '');
     } catch (err: any) {
       setProfileError(err.message || 'Failed to calculate macros');
     } finally {
@@ -572,34 +472,23 @@ export default function Dashboard() {
     const userMsg = chatInput.trim();
     setChatInput("");
     if (chatInputRef.current) chatInputRef.current.style.height = 'auto';
-    setSessionMessages((prev) => [...prev, { role: "human", content: userMsg }]);
     setChatLoading(true);
     setChatError("");
     try {
-      const data = await apiFetch('/api/ai/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: userMsg, sessionId: activeSessionId, coachType: selectedCoach }),
-      }, getToken);
-      setSessionMessages((prev) => [...prev, { role: "ai", content: data.reply }]);
+      const data = await chatAction({ message: userMsg, sessionId: activeSessionId, coachType: selectedCoach });
       if (data.loggedItem) {
         const item = data.loggedItem;
         toastSuccess(
           `Logged ${item.type}: ${item.data?.name || ""}`,
           async () => {
-            const endpoint = item.type === "meal" ? `/api/meals/${item.data._id}` : `/api/workouts/${item.data._id}`;
-            await apiFetch(endpoint, { method: "DELETE" }, getToken);
-            fetchMeals();
-            fetchWorkouts();
-            fetchInsights();
+            try {
+              if (item.type === "meal") await deleteMealMutation({ id: item.data._id });
+              else await deleteWorkoutMutation({ id: item.data._id });
+            } catch {}
           },
           "UNDO",
         );
-        fetchMeals();
-        fetchWorkouts();
-        fetchInsights();
       }
-      // Refresh session list to update title if it changed
-      fetchSessions();
     } catch (err: any) {
       setChatError(err.message || "Failed to get response");
     } finally {
@@ -609,38 +498,23 @@ export default function Dashboard() {
 
   const handleNewSession = async () => {
     try {
-      const session = await apiFetch('/api/chat/sessions', {
-        method: 'POST',
-        body: JSON.stringify({ title: 'New Chat' }),
-      }, getToken);
-      setSessions(prev => [session, ...prev]);
-      setActiveSessionId(session.id);
-      setSessionMessages([]);
+      const session = await createSessionMutation({ title: 'New Chat' });
+      setActiveSessionId(session.id as Id<"chat_sessions">);
     } catch (err: any) {
       setChatError(err.message || 'Failed to create session');
     }
   };
 
-  const handleDeleteSession = async (id: string, e: React.MouseEvent) => {
+  const handleDeleteSession = async (id: Id<"chat_sessions">, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await apiFetch(`/api/chat/sessions/${id}`, { method: 'DELETE' }, getToken);
-      setSessions(prev => prev.filter(s => s.id !== id));
-      if (activeSessionId === id) {
-        setActiveSessionId(null);
-        setSessionMessages([]);
-      }
+      await deleteSessionMutation({ id });
+      if (activeSessionId === id) setActiveSessionId(null);
     } catch {}
   };
 
-  const handleSelectDate = async (dateStr: string) => {
+  const handleSelectDate = (dateStr: string) => {
     setSelectedDate(dateStr);
-    try {
-      const data = await apiFetch(`/api/history/day?date=${dateStr}`, {}, getToken);
-      setHistoryDayData(data || { meals: [], workouts: [] });
-    } catch {
-      setHistoryDayData({ meals: [], workouts: [] });
-    }
   };
 
   const handlePrevMonth = () => {
@@ -650,7 +524,6 @@ export default function Dashboard() {
     setCalendarMonth(newMonth);
     setCalendarYear(newYear);
     setSelectedDate(null);
-    setHistoryDayData(null);
   };
 
   const handleNextMonth = () => {
@@ -660,7 +533,6 @@ export default function Dashboard() {
     setCalendarMonth(newMonth);
     setCalendarYear(newYear);
     setSelectedDate(null);
-    setHistoryDayData(null);
   };
 
   const handleAddCustomWater = () => {
@@ -693,29 +565,20 @@ export default function Dashboard() {
 
   const handleGenerateDailyInsights = async () => {
     setInsightsLoading(true);
-    try {
-      await apiFetch('/api/ai/daily-insights', {
-        method: 'POST',
-        body: JSON.stringify({ date: today }),
-      }, getToken);
-      fetchInsights();
-    } catch {}
+    try { await dailyInsightsAction({ date: today }); } catch {}
     setInsightsLoading(false);
   };
 
   const handleGenerateWeeklySummary = async () => {
     setWeeklyLoading(true);
-    try {
-      await apiFetch('/api/ai/weekly-summary', { method: 'POST' }, getToken);
-      fetchWeeklySummary();
-    } catch {}
+    try { await weeklySummaryAction({}); } catch {}
     setWeeklyLoading(false);
   };
 
   const handleGetWorkoutSuggestion = async () => {
     setSuggestionLoading(true);
     try {
-      const data = await apiFetch('/api/ai/workout-suggestion', { method: 'POST' }, getToken);
+      const data = await suggestWorkoutAction({});
       setWorkoutSuggestion(data);
     } catch {
       setWorkoutSuggestion(null);
@@ -725,31 +588,21 @@ export default function Dashboard() {
 
   // ─── Edit handlers ─────────────────────────────────────────────────────────
 
-  const handleUpdateMeal = async (id: string) => {
+  const handleUpdateMeal = async (id: Id<"meals">) => {
     if (!editMealForm) return;
     try {
-      await apiFetch(`/api/meals/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(editMealForm),
-      }, getToken);
+      await updateMealMutation({ id, ...editMealForm });
       setEditingMealId(null);
       setEditMealForm(null);
-      fetchMeals();
-      fetchInsights();
     } catch {}
   };
 
-  const handleUpdateWorkout = async (id: string) => {
+  const handleUpdateWorkout = async (id: Id<"workouts">) => {
     if (!editWorkoutForm) return;
     try {
-      await apiFetch(`/api/workouts/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(editWorkoutForm),
-      }, getToken);
+      await updateWorkoutMutation({ id, ...editWorkoutForm });
       setEditingWorkoutId(null);
       setEditWorkoutForm(null);
-      fetchWorkouts();
-      fetchInsights();
     } catch {}
   };
 
@@ -764,18 +617,8 @@ export default function Dashboard() {
     setRecipeAiLoading(true);
     setRecipeAiNote(null);
     try {
-      const prompt = `Analyze this recipe from a nutrition and fitness perspective and give a brief, actionable note (max 2 sentences):
-
-Name: ${recipe.name}
-Servings: ${recipe.servings}
-Ingredients: ${recipe.ingredients}
-Notes: ${recipe.notes || 'None'}
-
-Return ONLY the note text, no quotes or markdown.`;
-      const data = await apiFetch('/api/ai/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: prompt, sessionId: activeSessionId, coachType: 'diet' }),
-      }, getToken);
+      const prompt = `Analyze this recipe from a nutrition and fitness perspective and give a brief, actionable note (max 2 sentences):\n\nName: ${recipe.name}\nServings: ${recipe.servings}\nIngredients: ${recipe.ingredients}\nNotes: ${recipe.notes || 'None'}\n\nReturn ONLY the note text, no quotes or markdown.`;
+      const data = await chatAction({ message: prompt, sessionId: activeSessionId ?? undefined, coachType: 'diet' });
       setRecipeAiNote(data.reply || 'No note generated.');
     } catch {
       setRecipeAiNote('Unable to generate AI note.');
@@ -871,65 +714,39 @@ Return ONLY the note text, no quotes or markdown.`;
 
   // Commit helpers
   const commitMeal = async (data: any, targetDate?: string) => {
-    const res = await apiFetch(
-      "/api/meals",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          name: data.name,
-          calories: data.calories,
-          protein: data.protein,
-          carbs: data.carbs,
-          fat: data.fat,
-          time: data.time,
-          date: targetDate,
-          mealType: data.mealType,
-          aiSuggestion: data.aiSuggestion,
-        }),
-      },
-      getToken,
-    );
+    const id = await addMealMutation({
+      name: data.name,
+      calories: data.calories,
+      protein: data.protein,
+      carbs: data.carbs,
+      fat: data.fat,
+      time: data.time,
+      date: targetDate,
+      mealType: data.mealType,
+      aiSuggestion: data.aiSuggestion,
+    });
     toastSuccess(
       `Logged: ${data.name}`,
-      async () => {
-        await apiFetch(`/api/meals/${res._id}`, { method: "DELETE" }, getToken);
-        fetchMeals();
-        fetchInsights();
-      },
+      async () => { try { await deleteMealMutation({ id: id as Id<"meals"> }); } catch {} },
       "UNDO",
     );
-    fetchMeals();
-    fetchInsights();
   };
 
   const commitWorkout = async (data: any, targetDate?: string) => {
-    const res = await apiFetch(
-      "/api/workouts",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          name: data.name,
-          sets: data.sets,
-          duration: data.duration,
-          intensity: data.intensity,
-          date: targetDate,
-          exercises: data.exercises,
-          rationale: data.rationale,
-        }),
-      },
-      getToken,
-    );
+    const id = await addWorkoutMutation({
+      name: data.name,
+      sets: data.sets,
+      duration: data.duration,
+      intensity: data.intensity,
+      date: targetDate,
+      exercises: data.exercises,
+      rationale: data.rationale,
+    });
     toastSuccess(
       `Logged: ${data.name}`,
-      async () => {
-        await apiFetch(`/api/workouts/${res._id}`, { method: "DELETE" }, getToken);
-        fetchWorkouts();
-        fetchInsights();
-      },
+      async () => { try { await deleteWorkoutMutation({ id: id as Id<"workouts"> }); } catch {} },
       "UNDO",
     );
-    fetchWorkouts();
-    fetchInsights();
   };
 
   // Context-aware AI coach prompts
@@ -1166,7 +983,7 @@ Return ONLY the note text, no quotes or markdown.`;
               mode="meal"
               open={showQuickMealPanel}
               onClose={() => setShowQuickMealPanel(false)}
-              getToken={getToken}
+
               onConfirm={(data) => commitMeal(data)}
               totalCals={totalCals}
               totalProtein={totalProtein}
@@ -1178,7 +995,7 @@ Return ONLY the note text, no quotes or markdown.`;
               mode="workout"
               open={showQuickWorkoutPanel}
               onClose={() => setShowQuickWorkoutPanel(false)}
-              getToken={getToken}
+
               onConfirm={(data) => commitWorkout(data)}
               totalCals={totalCals}
               totalProtein={totalProtein}
@@ -1238,10 +1055,7 @@ Return ONLY the note text, no quotes or markdown.`;
             <div className="grid lg:grid-cols-2 gap-4">
               {/* Water Tracker */}
               <Card className="p-5" data-testid="water-tracker">
-                <div
-                  className="flex items-center justify-between mb-4 cursor-pointer"
-                  onClick={() => setWaterExpanded(!waterExpanded)}
-                >
+                <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Droplets size={18} className="text-accent" strokeWidth={2.5} />
                     <span className="font-mono text-sm uppercase tracking-wider">Hydration</span>
@@ -1249,70 +1063,60 @@ Return ONLY the note text, no quotes or markdown.`;
                   <div className="flex items-center gap-2">
                     <span className="font-heading text-2xl">{waterIntake.toFixed(1)}/{waterGoal}</span>
                     <span className="text-[10px] font-mono uppercase text-[var(--text-muted)] tracking-wide">{waterUnit === 'glasses' ? 'GLS' : 'L'}</span>
-                    {waterExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </div>
                 </div>
 
-                <AnimatePresence>
-                  {waterExpanded && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      {/* Visual glasses */}
-                      {waterUnit === 'glasses' && (
-                        <div className="flex gap-1.5 mb-3">
-                          {Array.from({ length: waterGoalGlasses }).map((_, i) => (
-                            <button
-                              key={i}
-                              onClick={() => setWaterIntake(i + 1)}
-                              className={`flex-1 h-10 border transition-all ${
-                                i < Math.floor(waterIntake) ? 'bg-accent border-accent' : 'bg-[var(--bg-elevated)] border-[var(--border-default)] hover:border-accent'
-                              }`}
-                            />
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Quick buttons + custom input */}
-                      <div className="flex gap-2">
-                        <button onClick={() => setWaterIntake(Math.max(0, waterIntake - (waterUnit === 'glasses' ? 1 : 0.25)))} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:border-accent transition-colors">
-                          <Minus size={14} />
-                        </button>
-                        <button onClick={() => setWaterIntake(waterIntake + (waterUnit === 'glasses' ? 1 : 0.25))} className="px-3 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs">
-                          <Plus size={14} />
-                        </button>
-                        <input
-                          type="number"
-                          step={waterUnit === 'glasses' ? 1 : 0.1}
-                          value={customWaterInput}
-                          onChange={(e) => setCustomWaterInput(e.target.value)}
-                          placeholder={waterUnit === 'glasses' ? 'Add...' : 'Litres...'}
-                          className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-xs focus:outline-none focus:border-accent"
+                <div>
+                  {/* Visual glasses */}
+                  {waterUnit === 'glasses' && (
+                    <div className="flex gap-1.5 mb-3">
+                      {Array.from({ length: waterGoalGlasses }).map((_, i) => (
+                        <button
+                          key={i}
+                          onClick={() => setWaterIntake(i + 1)}
+                          className={`flex-1 h-10 border transition-all ${
+                            i < Math.floor(waterIntake) ? 'bg-accent border-accent' : 'bg-[var(--bg-elevated)] border-[var(--border-default)] hover:border-accent'
+                          }`}
                         />
-                        <button onClick={handleAddCustomWater} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:bg-accent hover:text-[var(--theme-primary-text)] transition-colors">
-                          ADD
-                        </button>
-                      </div>
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          onClick={() => setWaterUnit('glasses')}
-                          className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border ${waterUnit === 'glasses' ? 'bg-accent text-[var(--theme-primary-text)] border-accent' : 'border-[var(--border-default)] hover:border-accent'}`}
-                        >
-                          Glasses
-                        </button>
-                        <button
-                          onClick={() => setWaterUnit('litres')}
-                          className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border ${waterUnit === 'litres' ? 'bg-accent text-[var(--theme-primary-text)] border-accent' : 'border-[var(--border-default)] hover:border-accent'}`}
-                        >
-                          Litres
-                        </button>
-                      </div>
-                    </motion.div>
+                      ))}
+                    </div>
                   )}
-                </AnimatePresence>
+
+                  {/* Quick buttons + custom input */}
+                  <div className="flex gap-2">
+                    <button onClick={() => setWaterIntake(Math.max(0, waterIntake - (waterUnit === 'glasses' ? 1 : 0.25)))} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:border-accent transition-colors">
+                      <Minus size={14} />
+                    </button>
+                    <button onClick={() => setWaterIntake(waterIntake + (waterUnit === 'glasses' ? 1 : 0.25))} className="px-3 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs">
+                      <Plus size={14} />
+                    </button>
+                    <input
+                      type="number"
+                      step={waterUnit === 'glasses' ? 1 : 0.1}
+                      value={customWaterInput}
+                      onChange={(e) => setCustomWaterInput(e.target.value)}
+                      placeholder={waterUnit === 'glasses' ? 'Add...' : 'Litres...'}
+                      className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-xs focus:outline-none focus:border-accent"
+                    />
+                    <button onClick={handleAddCustomWater} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:bg-accent hover:text-[var(--theme-primary-text)] transition-colors">
+                      ADD
+                    </button>
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => setWaterUnit('glasses')}
+                      className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border ${waterUnit === 'glasses' ? 'bg-accent text-[var(--theme-primary-text)] border-accent' : 'border-[var(--border-default)] hover:border-accent'}`}
+                    >
+                      Glasses
+                    </button>
+                    <button
+                      onClick={() => setWaterUnit('litres')}
+                      className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border ${waterUnit === 'litres' ? 'bg-accent text-[var(--theme-primary-text)] border-accent' : 'border-[var(--border-default)] hover:border-accent'}`}
+                    >
+                      Litres
+                    </button>
+                  </div>
+                </div>
               </Card>
 
               {/* Sleep Tracker */}
@@ -1438,7 +1242,7 @@ Return ONLY the note text, no quotes or markdown.`;
               <ConfirmLogCard
                 mode="meal"
                 initialData={{ description: logAgainMeal.name }}
-                getToken={getToken}
+  
                 preParsed={{
                   name: logAgainMeal.name,
                   calories: logAgainMeal.calories,
@@ -1457,7 +1261,7 @@ Return ONLY the note text, no quotes or markdown.`;
               <ConfirmLogCard
                 mode="workout"
                 initialData={{ description: logAgainWorkout.name }}
-                getToken={getToken}
+  
                 preParsed={{
                   name: logAgainWorkout.name,
                   sets: logAgainWorkout.sets,
@@ -1492,7 +1296,7 @@ Return ONLY the note text, no quotes or markdown.`;
               <ConfirmLogCard
                 mode="meal"
                 initialData={mealConfirm.initialData}
-                getToken={getToken}
+  
                 onConfirm={(data) => {
                   commitMeal(data);
                   setMealConfirm(null);
@@ -1522,13 +1326,20 @@ Return ONLY the note text, no quotes or markdown.`;
                       className="flex-1 px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)]"
                     />
                   </div>
-                  <textarea
-                    placeholder="Describe your meal — what you ate, portion sizes, ingredients... AI will estimate macros."
-                    value={mealForm.description}
-                    onChange={(e) => setMealForm({ ...mealForm, description: e.target.value })}
-                    rows={3}
-                    className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)] resize-none leading-relaxed"
-                  />
+                  <div className="relative">
+                    <textarea
+                      placeholder="Describe your meal — what you ate, portion sizes, ingredients... AI will estimate macros."
+                      value={mealForm.description}
+                      onChange={(e) => setMealForm({ ...mealForm, description: e.target.value })}
+                      rows={3}
+                      className="w-full px-4 py-3 pr-12 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)] resize-none leading-relaxed"
+                    />
+                    <VoiceInputButton
+                      value={mealForm.description}
+                      onChange={(text) => setMealForm({ ...mealForm, description: text })}
+                      className="absolute bottom-3 right-3"
+                    />
+                  </div>
                   {mealError && <div className="text-xs font-mono text-red-400 tracking-wide">{mealError}</div>}
                   <button
                     onClick={() => {
@@ -1606,32 +1417,34 @@ Return ONLY the note text, no quotes or markdown.`;
                           </div>
                         </div>
                         <div className="flex items-center gap-1 ml-2">
-                          <button
-                            onClick={() => {
-                              setEditingMealId(meal._id);
-                              setEditMealForm({
-                                name: meal.name,
-                                calories: meal.calories,
-                                protein: meal.protein,
-                                carbs: meal.carbs,
-                                fat: meal.fat,
-                                time: meal.time,
-                                mealType: meal.mealType || 'unspecified',
-                                aiSuggestion: meal.aiSuggestion || null,
-                              });
-                            }}
-                            className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
-                            title="Edit"
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            onClick={() => setLogAgainMeal(meal)}
-                            className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
-                            title="Log again"
-                          >
-                            <Repeat size={14} />
-                          </button>
+                          <div className="flex items-center gap-1 overflow-hidden transition-all duration-200 max-w-0 group-hover:max-w-[100px]">
+                            <button
+                              onClick={() => {
+                                setEditingMealId(meal._id);
+                                setEditMealForm({
+                                  name: meal.name,
+                                  calories: meal.calories,
+                                  protein: meal.protein,
+                                  carbs: meal.carbs,
+                                  fat: meal.fat,
+                                  time: meal.time,
+                                  mealType: meal.mealType || 'unspecified',
+                                  aiSuggestion: meal.aiSuggestion || null,
+                                });
+                              }}
+                              className="shrink-0 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                              title="Edit"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              onClick={() => setLogAgainMeal(meal)}
+                              className="shrink-0 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                              title="Log again"
+                            >
+                              <Repeat size={14} />
+                            </button>
+                          </div>
                           <button
                             onClick={() => {
                               setExpandedMealId(expandedMealId === meal._id ? null : meal._id);
@@ -1697,7 +1510,7 @@ Return ONLY the note text, no quotes or markdown.`;
               <ConfirmLogCard
                 mode="workout"
                 initialData={workoutConfirm.initialData}
-                getToken={getToken}
+  
                 onConfirm={(data) => {
                   commitWorkout(data);
                   setWorkoutConfirm(null);
@@ -1709,13 +1522,20 @@ Return ONLY the note text, no quotes or markdown.`;
               <Card className="p-6">
                 <h3 className="font-mono text-sm uppercase tracking-wider text-[var(--text-muted)] mb-4">Log Workout — AI Powered</h3>
                 <div className="space-y-4">
-                  <textarea
-                    placeholder="Describe your workout — exercises, sets, reps, weights..."
-                    value={workoutForm.description}
-                    onChange={(e) => setWorkoutForm({ ...workoutForm, description: e.target.value })}
-                    rows={3}
-                    className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)] resize-none leading-relaxed"
-                  />
+                  <div className="relative">
+                    <textarea
+                      placeholder="Describe your workout — exercises, sets, reps, weights..."
+                      value={workoutForm.description}
+                      onChange={(e) => setWorkoutForm({ ...workoutForm, description: e.target.value })}
+                      rows={3}
+                      className="w-full px-4 py-3 pr-12 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)] resize-none leading-relaxed"
+                    />
+                    <VoiceInputButton
+                      value={workoutForm.description}
+                      onChange={(text) => setWorkoutForm({ ...workoutForm, description: text })}
+                      className="absolute bottom-3 right-3"
+                    />
+                  </div>
                   <div className="flex gap-3">
                     <input
                       placeholder="Duration (e.g. 45 min)"
@@ -1765,7 +1585,7 @@ Return ONLY the note text, no quotes or markdown.`;
               <ConfirmLogCard
                 mode="workout"
                 initialData={{ description: workoutSuggestion?.name || "" }}
-                getToken={getToken}
+  
                 preParsed={{
                   name: workoutSuggestion.name,
                   sets: workoutSuggestion.sets,
@@ -1957,30 +1777,32 @@ Return ONLY the note text, no quotes or markdown.`;
                           </div>
                         </div>
                         <div className="flex items-center gap-1 ml-2">
-                          <button
-                            onClick={() => {
-                              setEditingWorkoutId(w._id);
-                              setEditWorkoutForm({
-                                name: w.name,
-                                sets: w.sets,
-                                duration: w.duration || '',
-                                intensity: w.intensity,
-                                exercises: w.exercises || null,
-                                rationale: w.rationale || null,
-                              });
-                            }}
-                            className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
-                            title="Edit"
-                          >
-                            <Pencil size={14} />
-                          </button>
-                          <button
-                            onClick={() => setLogAgainWorkout(w)}
-                            className="opacity-0 group-hover:opacity-100 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
-                            title="Log again"
-                          >
-                            <Repeat size={14} />
-                          </button>
+                          <div className="flex items-center gap-1 overflow-hidden transition-all duration-200 max-w-0 group-hover:max-w-[100px]">
+                            <button
+                              onClick={() => {
+                                setEditingWorkoutId(w._id);
+                                setEditWorkoutForm({
+                                  name: w.name,
+                                  sets: w.sets,
+                                  duration: w.duration || '',
+                                  intensity: w.intensity,
+                                  exercises: w.exercises || null,
+                                  rationale: w.rationale || null,
+                                });
+                              }}
+                              className="shrink-0 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                              title="Edit"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                            <button
+                              onClick={() => setLogAgainWorkout(w)}
+                              className="shrink-0 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
+                              title="Log again"
+                            >
+                              <Repeat size={14} />
+                            </button>
+                          </div>
                           <button
                             onClick={() => {
                               setExpandedWorkoutId(expandedWorkoutId === w._id ? null : w._id);
@@ -2128,9 +1950,9 @@ Return ONLY the note text, no quotes or markdown.`;
               </Card>
             ) : selectedRecipeId ? (
               /* ═══ 2-PANEL VIEW ═══ */
-              <div className="flex gap-0 border border-[var(--border-default)] overflow-hidden min-h-[500px]">
+              <div className="flex flex-col lg:flex-row gap-0 border border-[var(--border-default)] overflow-hidden min-h-[500px]">
                 {/* Left Panel — Recipe List */}
-                <div className="w-80 shrink-0 border-r border-[var(--border-default)] overflow-y-auto bg-[var(--bg-card)]">
+                <div className="w-full lg:w-80 shrink-0 border-b lg:border-b-0 lg:border-r border-[var(--border-default)] overflow-y-auto bg-[var(--bg-card)] max-h-[40vh] lg:max-h-none">
                   <div className="p-3 border-b border-[var(--border-default)] flex items-center justify-between">
                     <span className="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)]">{recipes.length} RECIPES</span>
                     <button onClick={() => { setSelectedRecipeId(null); setRecipeAiNote(null); }} className="p-1.5 hover:text-accent transition-colors" title="Close panel">
@@ -2263,7 +2085,7 @@ Return ONLY the note text, no quotes or markdown.`;
                                   mealType: "unspecified",
                                   time: "",
                                 }}
-                                getToken={getToken}
+                  
                                 onConfirm={(data) => {
                                   commitMeal(data);
                                   setRecipeLogConfirm(null);
@@ -2298,7 +2120,7 @@ Return ONLY the note text, no quotes or markdown.`;
                           mealType: "unspecified",
                           time: "",
                         }}
-                        getToken={getToken}
+          
                         onConfirm={(data) => {
                           commitMeal(data);
                           setRecipeLogConfirm(null);
@@ -2517,7 +2339,15 @@ Return ONLY the note text, no quotes or markdown.`;
           <motion.div ref={historyContainerRef} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col flex-1 min-h-0" data-testid="history-tab">
             <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-4">
               <PageHeader title="History" subtitle="Review your past meals and workouts" />
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
+                {historyView === 'day' && (
+                  <button
+                    onClick={() => setCalendarHidden(!calendarHidden)}
+                    className="lg:hidden flex items-center gap-2 px-3 py-2 border border-[var(--border-default)] font-mono text-xs uppercase tracking-wide hover:border-accent transition-colors"
+                  >
+                    <Calendar size={14} /> {calendarHidden ? 'Show Calendar' : 'Hide Calendar'}
+                  </button>
+                )}
                 <button onClick={() => setHistoryView('day')} className={`px-3 py-2 font-mono text-xs uppercase tracking-wide ${historyView === 'day' ? 'bg-accent text-[var(--theme-primary-text)]' : 'border border-[var(--border-default)] hover:border-accent'}`}>
                   <Calendar size={14} className="inline mr-1" /> Day View
                 </button>
@@ -2668,7 +2498,7 @@ Return ONLY the note text, no quotes or markdown.`;
                 style={{ width: isDesktop ? `${calendarPanelPct}%` : undefined }}
                 className={`shrink-0 overflow-hidden ${calendarHidden ? 'hidden lg:block' : 'block'} ${isDesktop ? '' : 'w-full'}`}
               >
-                <div className="h-full lg:border-r border-[var(--border-default)] p-4 flex flex-col overflow-y-auto">
+                <div className="lg:h-full lg:border-r border-[var(--border-default)] p-4 flex flex-col overflow-y-auto max-h-[45vh] lg:max-h-none">
                   <div className="flex items-center justify-between mb-4">
                     <button onClick={handlePrevMonth} className="p-2 border border-[var(--border-default)] hover:bg-accent hover:text-[var(--theme-primary-text)] transition-colors"><ChevronLeft size={14} /></button>
                     <h2 className="font-heading text-lg tracking-normal">{monthNames[calendarMonth - 1]} {calendarYear}</h2>
@@ -2721,17 +2551,11 @@ Return ONLY the note text, no quotes or markdown.`;
 
               {/* Day Detail */}
               <div className="flex-1 min-w-0 overflow-y-auto p-4">
-                <button
-                  onClick={() => setCalendarHidden(!calendarHidden)}
-                  className="lg:hidden flex items-center gap-2 px-3 py-2 mb-4 border border-[var(--border-default)] font-mono text-xs uppercase tracking-wide hover:border-accent transition-colors"
-                >
-                  <Calendar size={14} /> {calendarHidden ? 'Show Calendar' : 'Hide Calendar'}
-                </button>
                 {historyAddMealDate && (
                   <ConfirmLogCard
                     mode="meal"
                     initialData={{ description: "", mealType: "unspecified", time: "" }}
-                    getToken={getToken}
+      
                     onConfirm={(data) => {
                       commitMeal(data, historyAddMealDate);
                       setHistoryAddMealDate(null);
@@ -2744,7 +2568,7 @@ Return ONLY the note text, no quotes or markdown.`;
                   <ConfirmLogCard
                     mode="workout"
                     initialData={{ description: "", duration: "", intensity: "HIGH" }}
-                    getToken={getToken}
+      
                     onConfirm={(data) => {
                       commitWorkout(data, historyAddWorkoutDate);
                       setHistoryAddWorkoutDate(null);
@@ -2896,7 +2720,10 @@ Return ONLY the note text, no quotes or markdown.`;
                 <div className="flex-1 min-w-0">
                   <div className="font-heading text-xl uppercase tracking-normal">Stride Coach</div>
                   <div className="flex items-center gap-1.5 text-xs font-mono text-accent">
-                    <span className="w-2 h-2 bg-accent rounded-full animate-pulse" /> ONLINE • Ready to help
+                    <span className="w-2 h-2 bg-accent rounded-full animate-pulse" />
+                    {selectedCoach === "auto"
+                      ? "AUTO • Routing to the best coach"
+                      : coaches.find((c: any) => c.id === selectedCoach)?.tagline || "ONLINE • Ready to help"}
                   </div>
                 </div>
                 {/* Coach Selector */}
@@ -2950,23 +2777,30 @@ Return ONLY the note text, no quotes or markdown.`;
                         <Bot size={16} className="text-[var(--theme-primary-text)]" />
                       </div>
                     )}
-                    <div className={`max-w-[70%] px-4 py-3 text-sm leading-relaxed tracking-wide ${
-                      msg.role === "ai"
-                        ? "bg-[var(--bg-card)] border border-[var(--border-default)]"
-                        : "bg-accent text-[var(--theme-primary-text)]"
-                    }`}>
-                      {msg.role === "ai" ? (
-                        <ReactMarkdown
-                          remarkPlugins={[remarkGfm]}
-                          components={markdownComponents}
-                        >
-                          {msg.content}
-                        </ReactMarkdown>
-                      ) : (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                          {msg.content}
-                        </ReactMarkdown>
+                    <div className={`max-w-[70%] ${msg.role === "ai" ? "space-y-1" : ""}`}>
+                      {msg.role === "ai" && msg.coachType && msg.coachType !== "overall" && (
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-accent">
+                          {coaches.find((c: any) => c.id === msg.coachType)?.name || msg.coachType}
+                        </div>
                       )}
+                      <div className={`px-4 py-3 text-sm leading-relaxed tracking-wide ${
+                        msg.role === "ai"
+                          ? "bg-[var(--bg-card)] border border-[var(--border-default)]"
+                          : "bg-accent text-[var(--theme-primary-text)]"
+                      }`}>
+                        {msg.role === "ai" ? (
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={markdownComponents}
+                          >
+                            {msg.content}
+                          </ReactMarkdown>
+                        ) : (
+                          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                            {msg.content}
+                          </ReactMarkdown>
+                        )}
+                      </div>
                     </div>
                     {msg.role === "human" && (
                       <div className="w-8 h-8 bg-[var(--bg-elevated)] border border-[var(--border-default)] flex items-center justify-center shrink-0 ml-3 mt-1">
@@ -3008,6 +2842,11 @@ Return ONLY the note text, no quotes or markdown.`;
                     className="flex-1 px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)] resize-none min-h-[48px] max-h-[150px] leading-relaxed tracking-wide"
                     style={{ height: 'auto' }}
                   />
+                  <VoiceInputButton
+                    value={chatInput}
+                    onChange={setChatInput}
+                    className="h-[48px]"
+                  />
                   <button
                     data-testid="send-chat-btn"
                     onClick={handleSendChat}
@@ -3032,11 +2871,12 @@ Return ONLY the note text, no quotes or markdown.`;
 
             <Card className="p-6">
               <div className="flex items-center gap-5">
-                {user?.imageUrl ? (
+                {user?.imageUrl && !profileImgError ? (
                   <img
                     src={user.imageUrl}
                     alt="Profile"
                     className="w-20 h-20 object-cover border-2 border-accent"
+                    onError={() => setProfileImgError(true)}
                   />
                 ) : (
                   <div className="w-20 h-20 bg-accent flex items-center justify-center">

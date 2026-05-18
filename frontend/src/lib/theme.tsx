@@ -44,13 +44,13 @@ function darkenColor(hex: string, factor: number = 0.55): string {
 
 function getLightModeAccent(hex: string): string {
   const known: Record<string, string> = {
-    '#CCFF00': '#7A9900',
-    '#00FFFF': '#009999',
-    '#FF00FF': '#990099',
+    '#CCFF00': '#4D6600',
+    '#00FFFF': '#005C5C',
+    '#FF00FF': '#800080',
   }
   if (known[hex.toUpperCase()]) return known[hex.toUpperCase()]
   if (perceivedBrightness(hex) > 180) {
-    return darkenColor(hex, 0.5)
+    return darkenColor(hex, 0.35)
   }
   return hex
 }

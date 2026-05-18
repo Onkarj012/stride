@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import db from "../db.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { MealEstimate, WorkoutSuggestion } from "../types.js";
-import { getCoach, COACHES } from "../coaches.js";
+import { getCoach, COACHES, classifyCoachType, type CoachType } from "../coaches.js";
 
 const router = Router();
 
@@ -294,7 +294,9 @@ router.post("/estimate-meal", requireAuth, async (req: Request, res: Response) =
 });
 
 router.get("/coaches", requireAuth, (_req: Request, res: Response) => {
-  res.json(Object.values(COACHES).map(({ id, name, tagline }) => ({ id, name, tagline })));
+  const list: { id: string; name: string; tagline: string }[] = Object.values(COACHES).map(({ id, name, tagline }) => ({ id, name, tagline }));
+  list.unshift({ id: "auto", name: "Auto", tagline: "Automatically route to the right coach" });
+  res.json(list);
 });
 
 router.post("/chat", requireAuth, async (req: Request, res: Response) => {
@@ -391,8 +393,13 @@ Rules:
       "INSERT INTO chat_messages (user_id, role, content, session_id) VALUES (?, ?, ?, ?)",
     ).run(req.user.userId, "user", message, sessionId || null);
 
-    // Build messages for LLM
-    const coach = getCoach(coachType);
+    // Auto-detect coach if not explicitly chosen or set to auto
+    let detectedCoachType: CoachType = (coachType as CoachType) ?? "overall";
+    if (!coachType || coachType === "auto") {
+      detectedCoachType = classifyCoachType(message);
+    }
+    const coach = getCoach(detectedCoachType);
+
     const messages: AIMessage[] = [
       {
         role: "system",
@@ -468,7 +475,7 @@ Rules:
       ).run(sessionId, req.user.userId);
     }
 
-    res.json({ reply: cleanReply, loggedItem });
+    res.json({ reply: cleanReply, loggedItem, coachType: detectedCoachType });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }

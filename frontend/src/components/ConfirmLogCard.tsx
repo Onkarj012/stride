@@ -10,7 +10,8 @@ import {
   Minus,
 } from "lucide-react";
 import { Card } from "./ui/Card";
-import { apiFetch } from "../lib/api";
+import { useAction } from "convex/react";
+import { api } from "../../../backend/convex/_generated/api";
 
 interface ParsedMeal {
   name: string;
@@ -46,7 +47,6 @@ export interface ConfirmLogCardProps {
     intensity?: string;
     date?: string;
   };
-  getToken: () => Promise<string | null>;
   onConfirm: (data: ParsedMeal | ParsedWorkout) => void;
   onDiscard: () => void;
   preParsed?: ParsedMeal | ParsedWorkout | null;
@@ -55,7 +55,6 @@ export interface ConfirmLogCardProps {
 export function ConfirmLogCard({
   mode,
   initialData,
-  getToken,
   onConfirm,
   onDiscard,
   preParsed,
@@ -63,6 +62,8 @@ export function ConfirmLogCard({
   const [parsed, setParsed] = useState<ParsedMeal | ParsedWorkout | null>(preParsed || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const parseMeal = useAction(api.ai.parseMeal);
+  const parseWorkout = useAction(api.ai.parseWorkout);
 
   // Auto-parse on mount if we have a description and no pre-parsed data
   useEffect(() => {
@@ -78,32 +79,18 @@ export function ConfirmLogCard({
     setError(null);
     try {
       if (mode === "meal") {
-        const data = await apiFetch(
-          "/api/ai/parse-meal",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              description: initialData.description,
-              mealType: initialData.mealType || "unspecified",
-              time: initialData.time || "",
-            }),
-          },
-          getToken,
-        );
+        const data = await parseMeal({
+          description: initialData.description,
+          mealType: initialData.mealType || "unspecified",
+          time: initialData.time || "",
+        });
         setParsed(data as ParsedMeal);
       } else {
-        const data = await apiFetch(
-          "/api/ai/parse-workout",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              description: initialData.description,
-              duration: initialData.duration || "",
-              intensity: initialData.intensity || "HIGH",
-            }),
-          },
-          getToken,
-        );
+        const data = await parseWorkout({
+          description: initialData.description,
+          duration: initialData.duration || "",
+          intensity: initialData.intensity || "HIGH",
+        });
         setParsed(data as ParsedWorkout);
       }
     } catch (err: any) {
