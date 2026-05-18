@@ -197,8 +197,12 @@ export default function Dashboard() {
 
   // Recipes state
   const [recipes, setRecipes] = useState<any[]>(() => {
-    const saved = localStorage.getItem('user-recipes');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('user-recipes');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
   const [showRecipeForm, setShowRecipeForm] = useState(false);
   const [recipeForm, setRecipeForm] = useState({
