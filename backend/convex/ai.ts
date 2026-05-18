@@ -185,8 +185,8 @@ export const logMeal = action({
       });
       data = { _id: id, ...parsedData, time: mealTime };
     } else if (description) {
-      const parsed = await parseMealDescription(description, mealType || "unspecified", time || "");
-      const id = await ctx.runMutation(internal.meals.addMealFromAI, { userId, date: today, ...parsed });
+      const { description: _desc, ...parsedFields } = await parseMealDescription(description, mealType || "unspecified", time || "");
+      const id = await ctx.runMutation(internal.meals.addMealFromAI, { userId, date: today, ...parsedFields });
       data = { _id: id, ...parsed };
     } else {
       throw new Error("description or parsedData required");
