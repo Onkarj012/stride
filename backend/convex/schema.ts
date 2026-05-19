@@ -32,6 +32,7 @@ export default defineSchema({
     intensity: v.string(),
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
+    caloriesBurned: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
   daily_goals: defineTable({
@@ -60,11 +61,27 @@ export default defineSchema({
     weight: v.optional(v.number()),
     height: v.optional(v.number()),
     age: v.optional(v.number()),
+    sex: v.optional(v.string()),
     activityLevel: v.string(),
     calorieTarget: v.optional(v.number()),
     proteinTarget: v.optional(v.number()),
     carbTarget: v.optional(v.number()),
     fatTarget: v.optional(v.number()),
+    bodyFat: v.optional(v.number()),
+    leanMass: v.optional(v.number()),
+    dailySteps: v.optional(v.number()),
+    trainingDays: v.optional(v.number()),
+    cardioMinutes: v.optional(v.number()),
+    jobType: v.optional(v.string()),
+    goal: v.optional(v.string()),
+    trainingStyle: v.optional(v.string()),
+    onboardingComplete: v.optional(v.boolean()),
+  }).index("by_user", ["userId"]),
+
+  user_settings: defineTable({
+    userId: v.string(),
+    openRouterKey: v.optional(v.string()),
+    openRouterModel: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 
   chat_sessions: defineTable({

@@ -74,11 +74,14 @@ export function InlineLogPanel({
           initial={{ height: 0, opacity: 0 }}
           animate={{ height: "auto", opacity: 1 }}
           exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: 0.25, ease: "easeInOut" }}
-          className="overflow-hidden"
+          transition={{
+            height: { type: "spring", stiffness: 400, damping: 35 },
+            opacity: { duration: 0.2 }
+          }}
+          className="overflow-hidden will-change-transform"
         >
           <div className="pt-4">
-            <AnimatePresence mode="wait">
+            <AnimatePresence mode="wait" initial={false}>
               {showConfirm && initialConfirmData ? (
                 <ConfirmLogCard
                   key="confirm"
@@ -90,9 +93,10 @@ export function InlineLogPanel({
               ) : (
                 <motion.div
                   key="form"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
                 >
                   <Card className="p-5 border-accent border-2">
                     <div className="flex items-center justify-between mb-4">

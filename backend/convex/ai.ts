@@ -4,12 +4,13 @@ import { v } from "convex/values";
 import { getCoach, classifyCoachType, COACHES, type CoachType } from "./coaches";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_MODEL = "openai/gpt-4o-mini";
 
 interface AIMessage { role: string; content: string }
 
-async function callAI(messages: AIMessage[], maxTokens = 500): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
+async function callAI(messages: AIMessage[], maxTokens = 500, model?: string, apiKey?: string): Promise<string> {
+  const key = apiKey || process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60000);
@@ -17,8 +18,8 @@ async function callAI(messages: AIMessage[], maxTokens = 500): Promise<string> {
   try {
     const res = await fetch(OPENROUTER_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: "openai/gpt-4o-mini", messages, max_tokens: maxTokens }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model: model || DEFAULT_MODEL, messages, max_tokens: maxTokens }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`OpenRouter error ${res.status}: ${await res.text()}`);
@@ -42,7 +43,7 @@ function parseJSON<T>(text: string, fallback: T): T {
   try { return JSON.parse(match ? match[0] : text) as T; } catch { return fallback; }
 }
 
-async function parseMealDescription(description: string, mealType: string, time: string) {
+async function parseMealDescription(description: string, mealType: string, time: string, model?: string, apiKey?: string) {
   const prompt = `You are a professional nutritionist. Analyze this meal description carefully — it may be detailed with cooking methods, ingredients, portion sizes, and multiple items.
 
 Meal type: ${mealType || "unspecified"}
@@ -61,7 +62,7 @@ Instructions:
 Return ONLY a JSON object (no other text, no markdown):
 {"name":"short descriptive name (max 4 words)","calories":number,"protein":number,"carbs":number,"fat":number,"breakdown":"compact ingredient summary (max 80 chars)","suggestion":"one nutrition tip (max 15 words)"}`;
 
-  const content = await callAI([{ role: "user", content: prompt }], 800);
+  const content = await callAI([{ role: "user", content: prompt }], 800, model, apiKey);
   const result = parseJSON<any>(content, { name: description.slice(0, 50), calories: 400, protein: 20, carbs: 35, fat: 15 });
   const mealTime = time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
   const aiNote = result.breakdown
@@ -80,7 +81,18 @@ Return ONLY a JSON object (no other text, no markdown):
   };
 }
 
-async function parseWorkoutDescription(description: string, duration?: string, intensity?: string) {
+interface UserPhysique {
+  weight?: number; // kg
+  height?: number; // cm
+  age?: number;
+  sex?: string;
+}
+
+async function parseWorkoutDescription(description: string, duration?: string, intensity?: string, model?: string, apiKey?: string, userPhysique?: UserPhysique) {
+  const physiqueInfo = userPhysique?.weight
+    ? `\nUser physique: ${userPhysique.weight}kg${userPhysique.height ? `, ${userPhysique.height}cm` : ""}${userPhysique.age ? `, ${userPhysique.age}yo` : ""}${userPhysique.sex ? `, ${userPhysique.sex}` : ""}`
+    : "";
+
   const prompt = `You are a professional fitness trainer. Parse this workout log precisely.
 
 User's workout:
@@ -89,20 +101,21 @@ ${description}
 """
 
 User-provided duration: ${duration || "not specified"}
-User-provided intensity: ${intensity || "not specified"}
+User-provided intensity: ${intensity || "not specified"}${physiqueInfo}
 
 Rules:
 1. Extract EVERY exercise. Each exercise gets its own entry in "exercises".
 2. For each exercise, create one entry in "sets" per set with exact weight and reps.
 3. For cardio, use a single set with duration and calories as the reps field.
 4. Estimate total session duration if not provided. Determine intensity from volume/load.
-5. Session name: max 3 words.
+5. Estimate total calories burned using MET values and user weight (if provided). Formula: Calories = MET × weight(kg) × duration(hours). Typical METs: walking 3.5, jogging 7, running 10, weightlifting 3-6, HIIT 8-12. If no weight provided, assume 70kg.
+6. Session name: max 3 words.
 
 Return ONLY valid JSON:
-{"name":"session name","exercises":[{"name":"exercise name","sets":[{"weight":"41kg","reps":"15"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","rationale":"one coaching tip (max 15 words)"}`;
+{"name":"session name","exercises":[{"name":"exercise name","sets":[{"weight":"41kg","reps":"15"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":number,"rationale":"one coaching tip (max 15 words)"}`;
 
-  const content = await callAI([{ role: "user", content: prompt }], 1200);
-  const result = parseJSON<any>(content, { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", rationale: "" });
+  const content = await callAI([{ role: "user", content: prompt }], 1200, model, apiKey);
+  const result = parseJSON<any>(content, { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", caloriesBurned: 0, rationale: "" });
 
   const exercises = (result.exercises || []).map((ex: any) => ({
     name: ex.name || "Exercise",
@@ -115,6 +128,7 @@ Return ONLY valid JSON:
     sets: setsVal,
     duration: result.duration || duration || "30 min",
     intensity: result.intensity || intensity || "HIGH",
+    caloriesBurned: typeof result.caloriesBurned === "number" ? result.caloriesBurned : 0,
     rationale: result.rationale || "",
     exercises: exercises.length > 0 ? exercises : null,
     description,
@@ -125,9 +139,18 @@ Return ONLY valid JSON:
 
 export const estimateMeal = action({
   args: { mealName: v.string() },
-  handler: async (_ctx, { mealName }) => {
+  handler: async (ctx, { mealName }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const userId = identity?.subject;
+    let model: string | undefined;
+    let apiKey: string | undefined;
+    if (userId) {
+      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+      model = settings?.openRouterModel ?? undefined;
+      apiKey = settings?.openRouterKey ?? undefined;
+    }
     const prompt = `Estimate the nutritional values for this meal: "${mealName}". Return ONLY a JSON object with keys: calories (number), protein (number in grams), carbs (number in grams), fat (number in grams). No explanation.`;
-    const content = await callAI([{ role: "user", content: prompt }], 200);
+    const content = await callAI([{ role: "user", content: prompt }], 200, model, apiKey);
     const result = parseJSON<any>(content, { calories: 0, protein: 0, carbs: 0, fat: 0 });
     return { calories: result.calories || 0, protein: result.protein || 0, carbs: result.carbs || 0, fat: result.fat || 0 };
   },
@@ -139,8 +162,17 @@ export const parseMeal = action({
     mealType: v.optional(v.string()),
     time: v.optional(v.string()),
   },
-  handler: async (_ctx, { description, mealType, time }) => {
-    return parseMealDescription(description, mealType || "unspecified", time || "");
+  handler: async (ctx, { description, mealType, time }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const userId = identity?.subject;
+    let model: string | undefined;
+    let apiKey: string | undefined;
+    if (userId) {
+      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+      model = settings?.openRouterModel ?? undefined;
+      apiKey = settings?.openRouterKey ?? undefined;
+    }
+    return parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
   },
 });
 
@@ -150,8 +182,27 @@ export const parseWorkout = action({
     duration: v.optional(v.string()),
     intensity: v.optional(v.string()),
   },
-  handler: async (_ctx, { description, duration, intensity }) => {
-    return parseWorkoutDescription(description, duration, intensity);
+  handler: async (ctx, { description, duration, intensity }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const userId = identity?.subject;
+    let model: string | undefined;
+    let apiKey: string | undefined;
+    let userPhysique: UserPhysique | undefined;
+    if (userId) {
+      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+      model = settings?.openRouterModel ?? undefined;
+      apiKey = settings?.openRouterKey ?? undefined;
+      const profile = await ctx.runQuery(internal.profile.getProfileForContext, { userId });
+      if (profile) {
+        userPhysique = {
+          weight: profile.weight,
+          height: profile.height,
+          age: profile.age,
+          sex: profile.sex,
+        };
+      }
+    }
+    return parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
   },
 });
 
@@ -169,6 +220,10 @@ export const logMeal = action({
     const userId = identity.subject;
     const today = date ?? new Date().toISOString().split("T")[0];
 
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    const model = settings?.openRouterModel ?? undefined;
+    const apiKey = settings?.openRouterKey ?? undefined;
+
     let data: any;
     if (parsedData) {
       const mealTime = parsedData.time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -185,9 +240,9 @@ export const logMeal = action({
       });
       data = { _id: id, ...parsedData, time: mealTime };
     } else if (description) {
-      const { description: _desc, ...parsedFields } = await parseMealDescription(description, mealType || "unspecified", time || "");
+      const { description: _desc, ...parsedFields } = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
       const id = await ctx.runMutation(internal.meals.addMealFromAI, { userId, date: today, ...parsedFields });
-      data = { _id: id, ...parsed };
+      data = { _id: id, ...parsedFields };
     } else {
       throw new Error("description or parsedData required");
     }
@@ -209,6 +264,19 @@ export const logWorkout = action({
     const userId = identity.subject;
     const today = date ?? new Date().toISOString().split("T")[0];
 
+    const [settings, profile] = await Promise.all([
+      ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
+      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+    ]);
+    const model = settings?.openRouterModel ?? undefined;
+    const apiKey = settings?.openRouterKey ?? undefined;
+    const userPhysique: UserPhysique | undefined = profile ? {
+      weight: profile.weight,
+      height: profile.height,
+      age: profile.age,
+      sex: profile.sex,
+    } : undefined;
+
     let data: any;
     if (parsedData) {
       const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
@@ -219,10 +287,11 @@ export const logWorkout = action({
         intensity: parsedData.intensity || intensity || "HIGH",
         exercises: parsedData.exercises,
         rationale: parsedData.rationale,
+        caloriesBurned: parsedData.caloriesBurned,
       });
       data = { _id: id, ...parsedData };
     } else if (description) {
-      const parsed = await parseWorkoutDescription(description, duration, intensity);
+      const parsed = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
       const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, { userId, date: today, ...parsed });
       data = { _id: id, ...parsed };
     } else {
@@ -246,27 +315,31 @@ export const chat = action({
     const today = new Date().toISOString().split("T")[0];
 
     // Gather context
-    const [profile, todayMeals, todayWorkouts, recentCals] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, recentCals, settings] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
       ctx.runQuery(internal.meals.getRecentCalories, { userId }),
+      ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
     ]);
 
     const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
     const totalProtein = todayMeals.reduce((s: number, m: any) => s + m.protein, 0);
+    const totalBurned = todayWorkouts.reduce((s: number, w: any) => s + (w.caloriesBurned ?? 0), 0);
 
     let contextBlock = `USER PROFILE:\nName: ${userName}\n`;
     if (profile?.weight) contextBlock += `Weight: ${profile.weight}kg\n`;
     if (profile?.height) contextBlock += `Height: ${profile.height}cm\n`;
     if (profile?.age) contextBlock += `Age: ${profile.age}\n`;
+    if (profile?.sex) contextBlock += `Sex: ${profile.sex}\n`;
     contextBlock += `Activity Level: ${profile?.activityLevel || "moderate"}\n`;
+    if (profile?.goal) contextBlock += `Goal: ${profile.goal}\n`;
     if (profile?.calorieTarget) contextBlock += `Daily Calorie Target: ${profile.calorieTarget}\n`;
     if (profile?.proteinTarget) contextBlock += `Daily Protein Target: ${profile.proteinTarget}g\n`;
-    contextBlock += `\nTODAY'S LOG (${today}):\nCalories consumed: ${totalCals}\nProtein: ${totalProtein}g\nMeals logged: ${todayMeals.length}\n`;
+    contextBlock += `\nTODAY'S LOG (${today}):\nCalories consumed: ${totalCals}\nCalories burned: ${totalBurned}\nNet calories: ${totalCals - totalBurned}\nProtein: ${totalProtein}g\nMeals logged: ${todayMeals.length}\n`;
     if (todayMeals.length > 0) contextBlock += `Meals: ${todayMeals.map((m: any) => `${m.name} (${m.calories}cal, ${m.time})`).join(", ")}\n`;
     contextBlock += `Workouts logged: ${todayWorkouts.length}\n`;
-    if (todayWorkouts.length > 0) contextBlock += `Workouts: ${todayWorkouts.map((w: any) => `${w.name} (${w.duration}, ${w.intensity})`).join(", ")}\n`;
+    if (todayWorkouts.length > 0) contextBlock += `Workouts: ${todayWorkouts.map((w: any) => `${w.name} (${w.duration}, ${w.intensity}, ${w.caloriesBurned ?? 0}kcal burned)`).join(", ")}\n`;
     contextBlock += `\nRECENT 7-DAY TREND:\n${recentCals.map((d: any) => `${d.date}: ${d.cals}cal`).join(", ")}`;
 
     const loggingPrompt = `\n\nDIRECT LOGGING CAPABILITY:
@@ -307,7 +380,9 @@ Rules:
       { role: "user", content: message },
     ];
 
-    const reply = await callAI(messages, 800);
+    const model = settings?.openRouterModel ?? undefined;
+    const apiKey = settings?.openRouterKey ?? undefined;
+    const reply = await callAI(messages, 800, model, apiKey);
 
     // Parse log blocks
     let cleanReply = reply;
@@ -320,7 +395,7 @@ Rules:
       cleanReply = reply.replace(/⟦LOG_MEAL⟧[\s\S]*?⟦\/LOG_MEAL⟧/, "").trim();
       try {
         const logData = JSON.parse(mealMatch[1].trim());
-        const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "");
+        const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", model, apiKey);
         const mealId = await ctx.runMutation(internal.meals.addMealFromAI, { userId, date: today, ...parsed });
         loggedItem = { type: "meal", data: { _id: mealId, ...parsed } };
       } catch (err) {
@@ -330,7 +405,13 @@ Rules:
       cleanReply = reply.replace(/⟦LOG_WORKOUT⟧[\s\S]*?⟦\/LOG_WORKOUT⟧/, "").trim();
       try {
         const logData = JSON.parse(workoutMatch[1].trim());
-        const parsed = await parseWorkoutDescription(logData.description || message);
+        const userPhysique: UserPhysique | undefined = profile ? {
+          weight: profile.weight,
+          height: profile.height,
+          age: profile.age,
+          sex: profile.sex,
+        } : undefined;
+        const parsed = await parseWorkoutDescription(logData.description || message, undefined, undefined, model, apiKey, userPhysique);
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, { userId, date: today, ...parsed });
         loggedItem = { type: "workout", data: { _id: workoutId, ...parsed } };
       } catch (err) {
@@ -351,6 +432,8 @@ Rules:
               { role: "user", content: message },
             ],
             40,
+            model,
+            apiKey,
           );
           const cleanTitle = title.replace(/^["']|["']$/g, "").trim().slice(0, 60);
           await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { sessionId, title: cleanTitle || message.slice(0, 50) });
@@ -373,24 +456,30 @@ export const generateDailyInsights = action({
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
 
-    const [meals, workouts, goal] = await Promise.all([
+    const [meals, workouts, goal, settings] = await Promise.all([
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date }),
       ctx.runQuery(internal.goals.getDailyGoalForContext, { userId, date }),
+      ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
     ]);
 
     const totalCals = meals.reduce((s: number, m: any) => s + m.calories, 0);
     const totalProtein = meals.reduce((s: number, m: any) => s + m.protein, 0);
+    const totalBurned = workouts.reduce((s: number, w: any) => s + (w.caloriesBurned ?? 0), 0);
 
     const prompt = `Today's nutrition & workout data for user:
 - Calories consumed: ${totalCals} (goal: ${goal?.calorieGoal || 2400})
+- Calories burned: ${totalBurned}
+- Net calories: ${totalCals - totalBurned}
 - Protein: ${totalProtein}g (goal: ${goal?.proteinGoal || 180}g)
 - Meals logged: ${meals.length}
 - Workouts logged: ${workouts.length}
 
 Give 3 short, punchy insights (one sentence each) about their day. Be motivating but direct. Use military/cyberpunk tone. Return ONLY a JSON array of 3 strings. Example: ["Protein intake on target. Stay locked in.", "Caloric deficit detected. Fuel up, soldier.", "Zero training logged. The iron doesn't lift itself."]`;
 
-    const content = await callAI([{ role: "user", content: prompt }], 300);
+    const model = settings?.openRouterModel ?? undefined;
+    const apiKey = settings?.openRouterKey ?? undefined;
+    const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
     let insights: string[] = [];
     try {
       const match = content.match(/\[[\s\S]*\]/);
@@ -427,21 +516,26 @@ export const generateWeeklySummary = action({
         ctx.runQuery(internal.meals.getMealsForContext, { userId, date }),
         ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date }),
       ]);
-      history.push({ date, calories: Math.round(meals.reduce((s: number, m: any) => s + m.calories, 0)), workouts: workouts.length });
+      history.push({ date, calories: Math.round(meals.reduce((s: number, m: any) => s + m.calories, 0)), burned: Math.round(workouts.reduce((s: number, w: any) => s + (w.caloriesBurned ?? 0), 0)), workouts: workouts.length });
     }
 
     const avgCals = Math.round(history.reduce((s, d) => s + d.calories, 0) / 7);
+    const avgBurned = Math.round(history.reduce((s, d) => s + d.burned, 0) / 7);
     const totalWorkouts = history.reduce((s, d) => s + d.workouts, 0);
-    const dailyBreakdown = history.map((d) => `${d.date.split("-")[2]}: ${d.calories}cal/${d.workouts}wkt`).join(", ");
+    const dailyBreakdown = history.map((d) => `${d.date.split("-")[2]}: ${d.calories}cal/${d.burned}burned/${d.workouts}wkt`).join(", ");
 
     const prompt = `Weekly fitness summary for user:
 - Average daily calories: ${avgCals}
+- Average daily burned: ${avgBurned}
 - Total workouts: ${totalWorkouts}/7 days
 - Daily breakdown: ${dailyBreakdown}
 
 Give a brief (2-3 sentences) weekly summary and recommendation. Military/cyberpunk tone. Be direct.`;
 
-    const content = await callAI([{ role: "user", content: prompt }], 300);
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    const model = settings?.openRouterModel ?? undefined;
+    const apiKey = settings?.openRouterKey ?? undefined;
+    const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
     await ctx.runMutation(internal.insights.saveWeeklySummary, { userId, weekStart, content });
     return { content };
   },
@@ -456,9 +550,12 @@ export const suggestWorkout = action({
 
     const recentNames = await ctx.runQuery(internal.workouts.getRecentWorkoutNames, { userId });
     const prompt = `Suggest a workout for today. Recent workouts: ${recentNames.join(", ") || "none"}.
-Return ONLY a JSON object with: name (exercise name), sets (string like "4x10"), reps (string), weight (string like "135lbs or Bodyweight"), duration (string like "45 min"), intensity (one of: LOW, MEDIUM, HIGH, MAX), rationale (one sentence why). No explanation.`;
+Return ONLY a JSON object with: name (exercise name), sets (string like "4x10"), reps (string), weight (string like "135lbs or Bodyweight"), duration (string like "45 min"), intensity (one of: LOW, MEDIUM, HIGH, MAX), caloriesBurned (estimated number), rationale (one sentence why). No explanation.`;
 
-    const content = await callAI([{ role: "user", content: prompt }], 300);
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    const model = settings?.openRouterModel ?? undefined;
+    const apiKey = settings?.openRouterKey ?? undefined;
+    const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
     return parseJSON<any>(content, {});
   },
 });
@@ -470,7 +567,17 @@ export const calculateProfileMacros = action({
     age: v.number(),
     activityLevel: v.optional(v.string()),
   },
-  handler: async (_ctx, { weight, height, age, activityLevel }) => {
+  handler: async (ctx, { weight, height, age, activityLevel }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const userId = identity?.subject;
+    let model: string | undefined;
+    let apiKey: string | undefined;
+    if (userId) {
+      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+      model = settings?.openRouterModel ?? undefined;
+      apiKey = settings?.openRouterKey ?? undefined;
+    }
+
     const prompt = `Calculate optimal daily macronutrient targets for:
 - Weight: ${weight}kg
 - Height: ${height}cm
@@ -484,7 +591,7 @@ Return ONLY a JSON object with these keys (numbers only, no text):
 - fat: grams of fat
 - explanation: one sentence explaining the reasoning (max 15 words)`;
 
-    const content = await callAI([{ role: "user", content: prompt }], 300);
+    const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
     const result = parseJSON<any>(content, {});
     if (!result.calories) {
       const bmr = 10 * weight + 6.25 * height - 5 * age + 5;
@@ -501,5 +608,35 @@ export const getCoaches = query({
   handler: async () => {
     const list = Object.values(COACHES).map(({ id, name, tagline }) => ({ id, name, tagline }));
     return [{ id: "auto", name: "Auto", tagline: "Automatically route to the right coach" }, ...list];
+  },
+});
+
+export const transcribe = action({
+  args: { audio: v.string(), mimeType: v.optional(v.string()) },
+  handler: async (_ctx, { audio, mimeType }) => {
+    const apiKey = process.env.GROQ_API_KEY || process.env.OPENROUTER_API_KEY;
+    if (!apiKey) throw new Error("GROQ_API_KEY is not set in Convex environment");
+
+    const mime = mimeType || "audio/webm";
+    const ext = mime === "audio/mp4" ? "mp4" : mime === "audio/wav" ? "wav" : "webm";
+
+    const binary = atob(audio);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const formData = new FormData();
+    formData.append("file", new Blob([bytes], { type: mime }), `audio.${ext}`);
+    formData.append("model", "whisper-large-v3-turbo");
+
+    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: formData,
+    });
+
+    if (!res.ok) throw new Error(`Groq transcription error ${res.status}: ${await res.text()}`);
+    const data = await res.json() as { text?: string; error?: { message?: string } };
+    if (data.error) throw new Error(`Groq error: ${data.error.message}`);
+    if (!data.text) throw new Error("Groq returned empty transcription");
+    return { transcript: data.text.trim() };
   },
 });

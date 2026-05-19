@@ -18,12 +18,12 @@ export function ProgressBar({
           <span className="text-[var(--text-muted)]">/ {max}</span>
         </div>
       )}
-      <div className="h-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+      <div className="h-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
-          transition={{ duration: 1, ease: "easeOut" }}
-          className="h-full bg-accent"
+          transition={{ type: "spring", stiffness: 100, damping: 20, mass: 0.5 }}
+          className="h-full bg-accent will-change-transform"
         />
       </div>
     </div>

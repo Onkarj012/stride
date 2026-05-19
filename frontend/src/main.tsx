@@ -5,7 +5,9 @@ import { ClerkProvider, SignIn, SignUp, useAuth } from '@clerk/react'
 import { ConvexProviderWithClerk } from 'convex/react-clerk'
 import { ConvexReactClient } from 'convex/react'
 import { ThemeProvider } from './lib/theme'
+import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
+import Settings from './pages/Settings'
 import { Loader2 } from 'lucide-react'
 import './index.css'
 
@@ -61,14 +63,14 @@ function ClerkProviderWithRoutes() {
                 </div>
               }
             />
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <Dashboard />
-                </ProtectedRoute>
-              }
-            />
+            <Route element={
+              <ProtectedRoute>
+                <Layout />
+              </ProtectedRoute>
+            }>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/settings" element={<Settings />} />
+            </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </ThemeProvider>

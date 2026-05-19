@@ -28,18 +28,19 @@ export const getCalendar = query({
         .collect(),
     ]);
 
-    const result: Record<string, { meals: number; workouts: number; calories: number }> = {};
+    const result: Record<string, { meals: number; workouts: number; calories: number; burned: number }> = {};
     for (const m of mealRows) {
-      const r = result[m.date] ?? { meals: 0, workouts: 0, calories: 0 };
+      const r = result[m.date] ?? { meals: 0, workouts: 0, calories: 0, burned: 0 };
       result[m.date] = { ...r, meals: r.meals + 1, calories: r.calories + m.calories };
     }
     for (const w of workoutRows) {
-      const r = result[w.date] ?? { meals: 0, workouts: 0, calories: 0 };
-      result[w.date] = { ...r, workouts: r.workouts + 1 };
+      const r = result[w.date] ?? { meals: 0, workouts: 0, calories: 0, burned: 0 };
+      result[w.date] = { ...r, workouts: r.workouts + 1, burned: r.burned + (w.caloriesBurned ?? 0) };
     }
     // Round calories
     for (const k of Object.keys(result)) {
       result[k].calories = Math.round(result[k].calories);
+      result[k].burned = Math.round(result[k].burned);
     }
     return result;
   },
@@ -80,6 +81,7 @@ export const getDayHistory = query({
         duration: w.duration,
         sets: w.sets,
         exercises: w.exercises ?? null,
+        caloriesBurned: w.caloriesBurned ?? null,
         date: w.date,
         rationale: w.rationale ?? null,
       })),
@@ -120,9 +122,10 @@ export const getHistoryInsights = query({
       const e = mealMap.get(m.date) ?? { cals: 0, prot: 0, carbs: 0, fat: 0, count: 0 };
       mealMap.set(m.date, { cals: e.cals + m.calories, prot: e.prot + m.protein, carbs: e.carbs + m.carbs, fat: e.fat + m.fat, count: e.count + 1 });
     }
-    const workoutMap = new Map<string, number>();
+    const workoutMap = new Map<string, { count: number; burned: number }>();
     for (const w of workoutRows) {
-      workoutMap.set(w.date, (workoutMap.get(w.date) ?? 0) + 1);
+      const e = workoutMap.get(w.date) ?? { count: 0, burned: 0 };
+      workoutMap.set(w.date, { count: e.count + 1, burned: e.burned + (w.caloriesBurned ?? 0) });
     }
 
     const daily = [];
@@ -130,6 +133,7 @@ export const getHistoryInsights = query({
       const d = new Date(Date.now() - i * 86400000);
       const dateStr = d.toISOString().split("T")[0];
       const m = mealMap.get(dateStr);
+      const w = workoutMap.get(dateStr);
       daily.unshift({
         date: dateStr,
         calories: Math.round(m?.cals ?? 0),
@@ -137,7 +141,8 @@ export const getHistoryInsights = query({
         carbs: Math.round(m?.carbs ?? 0),
         fat: Math.round(m?.fat ?? 0),
         meals: m?.count ?? 0,
-        workouts: workoutMap.get(dateStr) ?? 0,
+        workouts: w?.count ?? 0,
+        burned: Math.round(w?.burned ?? 0),
       });
     }
 

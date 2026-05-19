@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Card } from "./Card";
 
 export function StatCard({
@@ -50,11 +51,21 @@ export function StatCard({
           />
         </div>
       </div>
-      {showTooltip && tooltipContent && (
-        <div className="mt-3 pt-3 border-t border-[var(--border-default)] overflow-hidden">
-          {tooltipContent}
-        </div>
-      )}
+      <AnimatePresence>
+        {showTooltip && tooltipContent && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-3 pt-3 border-t border-[var(--border-default)]">
+              {tooltipContent}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Card>
   );
 }
