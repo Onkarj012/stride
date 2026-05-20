@@ -20,6 +20,11 @@ export default defineSchema({
     aiSuggestion: v.optional(v.string()),
     mealType: v.optional(v.string()),
     components: v.optional(v.string()),
+    // NEW: Nutrition engine fields
+    confidence: v.optional(v.number()),
+    nutritionSource: v.optional(v.string()),
+    structuredItems: v.optional(v.string()),
+    ingredientBreakdown: v.optional(v.string()),
   }).index("by_user_date", ["userId", "date"]),
 
   workouts: defineTable({
@@ -34,6 +39,12 @@ export default defineSchema({
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
     caloriesBurned: v.optional(v.number()),
+    // NEW: Calorie engine fields
+    calorieConfidence: v.optional(v.number()),
+    calorieRangeLow: v.optional(v.number()),
+    calorieRangeHigh: v.optional(v.number()),
+    calorieBreakdown: v.optional(v.string()),
+    calculationVersion: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
   daily_goals: defineTable({
@@ -79,6 +90,8 @@ export default defineSchema({
     onboardingComplete: v.optional(v.boolean()),
     dietaryPreference: v.optional(v.string()),
     allergies: v.optional(v.string()),
+    // NEW
+    fitnessLevel: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 
   user_settings: defineTable({
@@ -138,5 +151,23 @@ export default defineSchema({
     totalMealsLogged: v.number(),
     totalWorkoutsLogged: v.number(),
     missionsCompleted: v.optional(v.array(v.string())),
+  }).index("by_user", ["userId"]),
+
+  // ─── Calorie Engine ────────────────────────────────────────────────────────
+
+  user_metabolic_profiles: defineTable({
+    userId: v.string(),
+    metabolicFactor: v.number(),
+    fitnessLevel: v.string(),
+    totalWorkoutsTracked: v.number(),
+    lastCalibrationDate: v.optional(v.string()),
+  }).index("by_user", ["userId"]),
+
+  calorie_feedback: defineTable({
+    userId: v.string(),
+    workoutId: v.id("workouts"),
+    feedback: v.string(),
+    date: v.string(),
+    metabolicFactorSnapshot: v.number(),
   }).index("by_user", ["userId"]),
 });
