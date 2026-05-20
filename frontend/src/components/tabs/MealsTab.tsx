@@ -254,6 +254,16 @@ export default function MealsTab({
                       <span>P: {meal.protein}g</span>
                       <span>C: {Number(meal.carbs ?? 0).toFixed(2)}g</span>
                       <span>F: {meal.fat}g</span>
+                      {meal.nutritionSource && (
+                        <span className={`text-[10px] px-1.5 py-0.5 ${
+                          meal.nutritionSource === "database" ? "bg-green-900 text-green-300 border border-green-700" :
+                          meal.nutritionSource === "mixed" ? "bg-amber-900 text-amber-300 border border-amber-700" :
+                          "bg-slate-700 text-slate-300 border border-slate-600"
+                        }`}>
+                          {meal.nutritionSource === "database" ? "DB" :
+                           meal.nutritionSource === "mixed" ? "MIX" : "AI"}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 ml-2">
@@ -301,6 +311,47 @@ export default function MealsTab({
                   {expandedMealId === meal._id && (
                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                       <div className="mt-3 pt-3 border-t border-[var(--border-default)] space-y-2">
+                        {meal.ingredientBreakdown && (() => {
+                          try {
+                            const bd = typeof meal.ingredientBreakdown === "string"
+                              ? JSON.parse(meal.ingredientBreakdown)
+                              : meal.ingredientBreakdown;
+                            return bd.items && bd.items.length > 0 ? (
+                              <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                                <div className="text-[10px] font-mono uppercase text-accent mb-2 tracking-wider">Ingredients</div>
+                                <div className="space-y-1.5">
+                                  {bd.items.map((item: any, i: number) => (
+                                    <div key={i} className="flex items-center justify-between text-xs font-mono">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-[var(--text-secondary)]">{item.matched_food_name}</span>
+                                        <span className="text-[10px] text-[var(--text-muted)]">({item.grams}g)</span>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[var(--text-secondary)]">{item.calories_kcal} kcal</span>
+                                        <span className={`text-[10px] px-1 py-0.5 ${
+                                          item.source === "usda" ? "bg-green-900 text-green-300" :
+                                          item.source === "off" ? "bg-blue-900 text-blue-300" :
+                                          item.source === "cache" ? "bg-slate-700 text-slate-300" :
+                                          "bg-amber-900 text-amber-300"
+                                        }`}>
+                                          {item.source === "usda" ? "USDA" :
+                                           item.source === "off" ? "OFF" :
+                                           item.source === "estimated" ? "EST" :
+                                           item.source?.toUpperCase() || "UNK"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                {bd.unresolved && bd.unresolved.length > 0 && (
+                                  <div className="mt-2 text-[10px] font-mono text-amber-400 tracking-wide">
+                                    Unresolved: {bd.unresolved.join(", ")}
+                                  </div>
+                                )}
+                              </div>
+                            ) : null;
+                          } catch { return null; }
+                        })()}
                         {meal.components && (
                           <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                             <div className="text-[10px] font-mono uppercase text-accent tracking-wider mb-1">Components</div>

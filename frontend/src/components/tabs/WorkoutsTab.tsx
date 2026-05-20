@@ -280,7 +280,12 @@ export default function WorkoutsTab({
                       <h3 className="text-lg font-heading uppercase tracking-normal">{w.name}</h3>
                       {w.duration && <span className="text-xs font-mono text-[var(--text-muted)] tracking-wide">{w.duration}</span>}
                       {w.caloriesBurned !== undefined && w.caloriesBurned !== null && (
-                        <span className="text-xs font-mono text-accent tracking-wide">{w.caloriesBurned} KCAL</span>
+                        <span className="text-xs font-mono text-accent tracking-wide">
+                          ~{w.caloriesBurned} KCAL
+                          {w.calorieRangeLow != null && w.calorieRangeHigh != null && (
+                            <span className="text-[var(--text-muted)]"> ± {w.calorieRangeHigh - w.caloriesBurned}</span>
+                          )}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -327,6 +332,45 @@ export default function WorkoutsTab({
                   {expandedWorkoutId === w._id && (
                     <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                       <div className="mt-3 pt-3 border-t border-[var(--border-default)] space-y-2">
+                        {/* Calorie breakdown */}
+                        {w.calorieBreakdown && (() => {
+                          try {
+                            const bd = JSON.parse(w.calorieBreakdown);
+                            return (
+                              <div className="p-3 bg-[var(--bg-elevated)] border border-accent/30">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-[10px] font-mono uppercase text-accent tracking-wider">Calorie Breakdown</span>
+                                  {w.calorieConfidence != null && (
+                                    <span className="text-[10px] font-mono text-[var(--text-muted)]">
+                                      Confidence: {Math.round(w.calorieConfidence * 100)}%
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="space-y-0.5 text-[10px] font-mono text-[var(--text-muted)]">
+                                  <div className="flex justify-between">
+                                    <span>MET Used</span>
+                                    <span>{bd.met_used}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Base</span>
+                                    <span>{bd.base_kcal} kcal</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Intensity ×{bd.intensity_mult} · Density ×{bd.density_mult} · Compound ×{bd.compound_mult}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>EPOC ({Math.round(bd.epoc_pct * 100)}%)</span>
+                                    <span>+{bd.epoc_kcal} kcal</span>
+                                  </div>
+                                  <div className="flex justify-between text-accent">
+                                    <span>Personal ×{bd.metabolic_factor}</span>
+                                    <span>= {(bd.base_kcal * bd.intensity_mult * bd.density_mult * bd.compound_mult * bd.metabolic_factor + bd.epoc_kcal).toFixed(0)} kcal</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          } catch { return null; }
+                        })()}
                         {w.rationale && (
                           <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                             <div className="text-[10px] font-mono uppercase text-accent tracking-wider mb-1">AI Note</div>

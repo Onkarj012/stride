@@ -24,6 +24,27 @@ interface ParsedMeal {
   aiSuggestion?: string | null;
   components?: string | null;
   description?: string;
+  confidence?: number;
+  nutritionSource?: string;
+  ingredientBreakdown?: {
+    calories_kcal: number;
+    protein_g: number;
+    carbs_g: number;
+    fat_g: number;
+    confidence: number;
+    items: Array<{
+      food_text: string;
+      matched_food_name: string;
+      grams: number;
+      calories_kcal: number;
+      protein_g: number;
+      carbs_g: number;
+      fat_g: number;
+      source: string;
+      confidence: number;
+    }>;
+    unresolved: string[];
+  } | null;
 }
 
 interface ParsedWorkout {
@@ -34,6 +55,23 @@ interface ParsedWorkout {
   rationale?: string;
   exercises?: { name: string; sets: { weight: string; reps: string }[] }[] | null;
   description?: string;
+  caloriesBurned?: number;
+  calorieResult?: {
+    total_kcal: number;
+    confidence: number;
+    range_low: number;
+    range_high: number;
+    breakdown: {
+      base_kcal: number;
+      met_used: number;
+      intensity_mult: number;
+      density_mult: number;
+      compound_mult: number;
+      metabolic_factor: number;
+      epoc_pct: number;
+      epoc_kcal: number;
+    };
+  } | null;
 }
 
 type ConfirmMode = "meal" | "workout";
@@ -278,6 +316,8 @@ function MealEditor({
   data: ParsedMeal;
   onChange: (updates: Partial<ParsedMeal>) => void;
 }) {
+  const breakdown = data.ingredientBreakdown;
+
   return (
     <div className="space-y-4">
       <div>
@@ -291,11 +331,66 @@ function MealEditor({
         />
       </div>
 
+      {/* Nutrition Source Badge */}
+      {data.nutritionSource && (
+        <div className="flex items-center gap-2">
+          <span className={`text-[10px] font-mono px-2 py-1 uppercase ${
+            data.nutritionSource === "database" ? "bg-green-900 text-green-300 border border-green-700" :
+            data.nutritionSource === "mixed" ? "bg-amber-900 text-amber-300 border border-amber-700" :
+            "bg-slate-700 text-slate-300 border border-slate-600"
+          }`}>
+            {data.nutritionSource === "database" ? "Database Matched" :
+             data.nutritionSource === "mixed" ? "Partially Matched" : "AI Estimated"}
+          </span>
+          {data.confidence != null && (
+            <span className="text-[10px] font-mono text-[var(--text-muted)]">
+              Confidence: {Math.round(data.confidence * 100)}%
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Components */}
       {data.components && (
         <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
           <div className="text-[10px] font-mono uppercase text-accent mb-1 tracking-wider">Detected Components</div>
           <div className="text-sm text-[var(--text-secondary)] tracking-wide">{data.components}</div>
+        </div>
+      )}
+
+      {/* Ingredient Breakdown */}
+      {breakdown && breakdown.items.length > 0 && (
+        <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+          <div className="text-[10px] font-mono uppercase text-accent mb-2 tracking-wider">Ingredient Breakdown</div>
+          <div className="space-y-1.5">
+            {breakdown.items.map((item, i) => (
+              <div key={i} className="flex items-center justify-between text-xs font-mono">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[var(--text-secondary)]">{item.food_text}</span>
+                  <span className="text-[10px] text-[var(--text-muted)]">({item.grams}g)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[var(--text-secondary)]">{item.calories_kcal} kcal</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 ${
+                    item.source === "usda" ? "bg-green-900 text-green-300" :
+                    item.source === "off" ? "bg-blue-900 text-blue-300" :
+                    item.source === "cache" ? "bg-slate-700 text-slate-300" :
+                    "bg-amber-900 text-amber-300"
+                  }`}>
+                    {item.source === "usda" ? "USDA" :
+                     item.source === "off" ? "OFF" :
+                     item.source === "estimated" ? "EST" :
+                     item.source.toUpperCase()}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+          {breakdown.unresolved.length > 0 && (
+            <div className="mt-2 text-[10px] font-mono text-amber-400 tracking-wide">
+              Unresolved: {breakdown.unresolved.join(", ")}
+            </div>
+          )}
         </div>
       )}
 
@@ -381,6 +476,8 @@ function WorkoutEditor({
   onAddSet: (exIndex: number) => void;
   onRemoveSet: (exIndex: number, setIndex: number) => void;
 }) {
+  const cal = data.calorieResult;
+
   return (
     <div className="space-y-4">
       <div>
@@ -393,6 +490,49 @@ function WorkoutEditor({
           className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
         />
       </div>
+
+      {/* Calorie range display */}
+      {cal && (
+        <div className="p-3 bg-[var(--bg-elevated)] border border-accent/30">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-mono uppercase text-accent tracking-wider">Calories Burned</span>
+            <span className="text-xs font-mono text-[var(--text-muted)]">
+              Confidence: {Math.round(cal.confidence * 100)}%
+            </span>
+          </div>
+          <div className="flex items-baseline gap-2 mb-2">
+            <span className="font-heading text-2xl text-accent">~{cal.total_kcal}</span>
+            <span className="text-sm font-mono text-[var(--text-muted)]">kcal</span>
+            <span className="text-xs font-mono text-[var(--text-muted)]">± {(cal.range_high - cal.total_kcal)}</span>
+          </div>
+          {/* Confidence progress bar */}
+          <div className="h-1.5 bg-[var(--bg-main)] border border-[var(--border-default)] mb-2">
+            <div
+              className="h-full bg-accent transition-all"
+              style={{ width: `${Math.round(cal.confidence * 100)}%` }}
+            />
+          </div>
+          {/* Breakdown details */}
+          <div className="space-y-0.5 text-[10px] font-mono text-[var(--text-muted)]">
+            <div className="flex justify-between">
+              <span>Base ({cal.breakdown.met_used} MET)</span>
+              <span>{cal.breakdown.base_kcal} kcal</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Intensity ×{cal.breakdown.intensity_mult}</span>
+              <span>Density ×{cal.breakdown.density_mult}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Compound ×{cal.breakdown.compound_mult}</span>
+              <span>EPOC +{cal.breakdown.epoc_kcal} kcal</span>
+            </div>
+            <div className="flex justify-between text-accent">
+              <span>Personal factor</span>
+              <span>×{cal.breakdown.metabolic_factor}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-3">
         <div className="flex-1">

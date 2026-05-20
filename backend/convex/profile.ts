@@ -37,6 +37,7 @@ export const getProfile = query({
       onboardingComplete: p.onboardingComplete ?? false,
       dietaryPreference: p.dietaryPreference ?? null,
       allergies: p.allergies ?? null,
+      fitnessLevel: p.fitnessLevel ?? null,
     };
   },
 });
@@ -63,6 +64,7 @@ export const upsertProfile = mutation({
     onboardingComplete: v.optional(v.boolean()),
     dietaryPreference: v.optional(v.string()),
     allergies: v.optional(v.string()),
+    fitnessLevel: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const numericFields = ["weight", "height", "age", "calorieTarget", "proteinTarget", "carbTarget", "fatTarget", "bodyFat", "leanMass", "dailySteps", "trainingDays", "cardioMinutes"] as const;
@@ -85,7 +87,7 @@ export const upsertProfile = mutation({
       "weight", "height", "age", "sex", "calorieTarget", "proteinTarget",
       "carbTarget", "fatTarget", "bodyFat", "leanMass", "dailySteps",
       "trainingDays", "cardioMinutes", "jobType", "goal", "trainingStyle", "onboardingComplete",
-      "dietaryPreference", "allergies",
+      "dietaryPreference", "allergies", "fitnessLevel",
     ] as const;
     for (const field of optionalFields) {
       const val = args[field as keyof typeof args];

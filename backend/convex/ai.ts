@@ -2,6 +2,37 @@ import { action, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { getCoach, classifyCoachType, COACHES, type CoachType } from "./coaches";
+import {
+  calculateWorkoutCalories,
+  scoreDensity,
+  scoreCompoundRatio,
+  parseDurationMinutes,
+  type CalorieResult,
+} from "./calorie-engine";
+import {
+  lookupExercise,
+  matchExercises,
+  getWeightedMET,
+  getDominantCategory,
+} from "./exercise-db";
+import {
+  mapAIIntensity,
+  inferDensity,
+  countCompoundRatio,
+  generateSetsSummary,
+} from "./workout-scorer";
+import {
+  toGrams,
+} from "./unit-converter";
+import {
+  matchBestFood,
+  computeNutrition,
+  cookingMethodAdjustment,
+  buildNutritionResult,
+  scaleResult,
+  type ItemBreakdown,
+  type NutritionResult,
+} from "./nutrition-engine";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
@@ -52,7 +83,7 @@ function parseJSON<T>(text: string, fallback: T): T {
 }
 
 async function parseMealDescription(description: string, mealType: string, time: string, model?: string, apiKey?: string) {
-  const prompt = `You are a professional nutritionist. Analyze this meal description carefully — it may be detailed with cooking methods, ingredients, portion sizes, and multiple items.
+  const prompt = `You are a professional nutritionist. Extract structured ingredients from this meal description.
 
 Meal type: ${mealType || "unspecified"}
 User's description:
@@ -62,17 +93,32 @@ ${description}
 
 Instructions:
 1. Identify EVERY ingredient, condiment, and cooking addition (oils, butter, ghee, sauces, etc.).
-2. Estimate portion sizes from context clues.
-3. Sum macros for ALL ingredients combined.
-4. In "components", list the key ingredients or food items detected (e.g. "oats, milk, banana, honey"). Be specific.
-5. In "suggestion", give ONE forward-looking sentence about what the user should focus on in their NEXT meal (not criticism of this meal). Example: "Your next meal could use more leafy greens to balance the carbs." or "Great protein hit — aim for similar protein in your next meal."
-6. Use the midpoint when you have a range.
+2. For each ingredient, extract: food_text (the ingredient name), amount (number), unit ("g", "ml", "tbsp", "cup", "piece", etc.), and flag is_oil_or_fat (true for oils, butter, ghee, etc.).
+3. Deduce the cooking_method from description: "raw", "boiled", "steamed", "grilled", "baked", "roasted", "fried", "sautéed", "stir-fried", "curry", "tadka", or "unknown".
+4. Estimate portion_scale (0.0-1.0) — what fraction of the total recipe did the user eat? Default 1.0.
+5. Estimate total_recipe_servings if mentioned.
+6. In "components", list the key ingredients detected (e.g. "paneer, rice, ghee"). Be specific.
+7. In "suggestion", give ONE forward-looking sentence about what the user should focus on in their NEXT meal (not criticism of this meal).
+8. Do NOT estimate calories, protein, carbs, or fat. Set them all to 0.
 
 Return ONLY a JSON object (no other text, no markdown):
-{"name":"short descriptive name (max 4 words)","calories":number,"protein":number,"carbs":number,"fat":number,"components":"comma-separated ingredient list","suggestion":"one forward-looking next-meal tip (max 20 words)"}`;
+{"name":"short descriptive name (max 4 words)","calories":0,"protein":0,"carbs":0,"fat":0,"components":"comma-separated ingredient list","suggestion":"one forward-looking next-meal tip (max 20 words)","ingredients":[{"food_text":"paneer","amount":150,"unit":"g","is_oil_or_fat":false,"confidence":0.9}],"cooking_method":"fried","portion_scale":1.0,"total_recipe_servings":2,"missing_fields":["oil_amount"]}`;
 
-  const content = await callAI([{ role: "user", content: prompt }], 800, model, apiKey);
-  const result = parseJSON<any>(content, { name: description.slice(0, 50), calories: 400, protein: 20, carbs: 35, fat: 15, components: "", suggestion: "" });
+  const content = await callAI([{ role: "user", content: prompt }], 1000, model, apiKey);
+  const result = parseJSON<any>(content, {
+    name: description.slice(0, 50),
+    calories: 0,
+    protein: 0,
+    carbs: 0,
+    fat: 0,
+    components: "",
+    suggestion: "",
+    ingredients: [],
+    cooking_method: "unknown",
+    portion_scale: 1.0,
+    total_recipe_servings: 1,
+    missing_fields: [],
+  });
   const mealTime = time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
   return {
     name: result.name || description.slice(0, 50),
@@ -85,6 +131,12 @@ Return ONLY a JSON object (no other text, no markdown):
     components: result.components || undefined,
     mealType: mealType || "unspecified",
     description,
+    // Structured data for deterministic nutrition engine
+    ingredients: Array.isArray(result.ingredients) ? result.ingredients : [],
+    cooking_method: result.cooking_method || "unknown",
+    portion_scale: typeof result.portion_scale === "number" ? result.portion_scale : 1.0,
+    total_recipe_servings: typeof result.total_recipe_servings === "number" ? result.total_recipe_servings : 1,
+    missing_fields: Array.isArray(result.missing_fields) ? result.missing_fields : [],
   };
 }
 
@@ -93,14 +145,35 @@ interface UserPhysique {
   height?: number; // cm
   age?: number;
   sex?: string;
+  fitnessLevel?: string;
+  metabolicFactor?: number;
 }
 
-async function parseWorkoutDescription(description: string, duration?: string, intensity?: string, model?: string, apiKey?: string, userPhysique?: UserPhysique) {
+interface ParsedWorkoutResult {
+  name: string;
+  sets: string;
+  duration: string;
+  intensity: string;
+  caloriesBurned: number;
+  rationale: string;
+  exercises: Array<{ name: string; sets: Array<{ weight: string; reps: string }> }> | null;
+  description: string;
+  // Calorie engine results
+  calorieResult?: {
+    total_kcal: number;
+    confidence: number;
+    range_low: number;
+    range_high: number;
+    breakdown: Record<string, number>;
+  } | null;
+}
+
+async function parseWorkoutDescription(description: string, duration?: string, intensity?: string, model?: string, apiKey?: string, userPhysique?: UserPhysique): Promise<ParsedWorkoutResult> {
   const physiqueInfo = userPhysique?.weight
-    ? `\nUser physique: ${userPhysique.weight}kg${userPhysique.height ? `, ${userPhysique.height}cm` : ""}${userPhysique.age ? `, ${userPhysique.age}yo` : ""}${userPhysique.sex ? `, ${userPhysique.sex}` : ""}`
+    ? `\nUser physique: ${userPhysique.weight}kg${userPhysique.height ? `, ${userPhysique.height}cm` : ""}${userPhysique.age ? `, ${userPhysique.age}yo` : ""}${userPhysique.sex ? `, ${userPhysique.sex}` : ""}${userPhysique.fitnessLevel ? `, fitness: ${userPhysique.fitnessLevel}` : ""}`
     : "";
 
-  const prompt = `You are a professional fitness trainer. Parse this workout log precisely.
+  const prompt = `You are a professional fitness trainer. Parse this workout log precisely. Do NOT estimate calories.
 
 User's workout:
 """
@@ -112,17 +185,19 @@ User-provided intensity: ${intensity || "not specified"}${physiqueInfo}
 
 Rules:
 1. Extract EVERY exercise. Each exercise gets its own entry in "exercises".
-2. For each exercise, create one entry in "sets" per set with exact weight and reps.
+2. For each exercise, create one entry in "sets" per set with exact weight and reps. Use the specific weight/reps the user provided.
 3. For cardio, use a single set with duration and calories as the reps field.
 4. Estimate total session duration if not provided. Determine intensity from volume/load.
-5. Estimate total calories burned using MET values and user weight (if provided). Formula: Calories = MET × weight(kg) × duration(hours). Typical METs: walking 3.5, jogging 7, running 10, weightlifting 3-6, HIIT 8-12. If no weight provided, assume 70kg.
-6. Session name: max 3 words.
+5. Do NOT estimate calories burned. Set caloriesBurned to 0.
+6. Use the exact exercise names the user typed (preserve capitalization and spelling).
+7. Session name: max 3 words.
+8. Look for rest pattern clues: "giant set", "superset", "circuit", "minimal rest", "heavy rest", "EMOM", "AMRAP".
 
 Return ONLY valid JSON:
-{"name":"session name","exercises":[{"name":"exercise name","sets":[{"weight":"41kg","reps":"15"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":number,"rationale":"one coaching tip (max 15 words)"}`;
+{"name":"session name","exercises":[{"name":"exercise name","sets":[{"weight":"41kg","reps":"15"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":0,"rationale":"one coaching tip (max 15 words)","restClues":"any rest pattern info from description"}`;
 
   const content = await callAI([{ role: "user", content: prompt }], 1200, model, apiKey);
-  const result = parseJSON<any>(content, { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", caloriesBurned: 0, rationale: "" });
+  const result = parseJSON<any>(content, { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", caloriesBurned: 0, rationale: "", restClues: "" });
 
   const exercises = (result.exercises || []).map((ex: any) => ({
     name: ex.name || "Exercise",
@@ -130,15 +205,58 @@ Return ONLY valid JSON:
   }));
   const totalSets = exercises.reduce((sum: number, ex: any) => sum + ex.sets.length, 0);
   const setsVal = exercises.length > 0 ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets` : "–";
+
+  // Deterministic calorie calculation
+  let calorieResult: ParsedWorkoutResult["calorieResult"] = null;
+  if (userPhysique?.weight && exercises.length > 0) {
+    try {
+      const durationMin = parseDurationMinutes(result.duration || duration || "30 min");
+      const engineIntensity = mapAIIntensity(result.intensity || intensity || "HIGH");
+      const engineDensity = inferDensity(exercises, durationMin);
+      const exerciseMetas = matchExercises(exercises);
+      const compoundRatio = countCompoundRatio(exerciseMetas);
+      const weightedMet = getWeightedMET(exercises);
+
+      const calcResult = calculateWorkoutCalories(
+        {
+          duration_min: durationMin,
+          intensity: engineIntensity,
+          density: engineDensity,
+          compound_ratio: compoundRatio,
+          exercises,
+          weighted_met: weightedMet,
+        },
+        {
+          weight_kg: userPhysique.weight ?? 70,
+          age: userPhysique.age ?? 30,
+          sex: (userPhysique.sex === "female" ? "female" : "male"),
+          fitness_level: (userPhysique.fitnessLevel as "beginner" | "intermediate" | "advanced") || "beginner",
+          metabolic_factor: userPhysique.metabolicFactor ?? 1.0,
+        },
+      );
+
+      calorieResult = {
+        total_kcal: calcResult.total_kcal,
+        confidence: calcResult.confidence,
+        range_low: calcResult.range_low,
+        range_high: calcResult.range_high,
+        breakdown: calcResult.breakdown as unknown as Record<string, number>,
+      };
+    } catch {
+      // Fall back to AI estimate if engine fails
+    }
+  }
+
   return {
     name: result.name || description.slice(0, 30),
     sets: setsVal,
     duration: result.duration || duration || "30 min",
     intensity: result.intensity || intensity || "HIGH",
-    caloriesBurned: typeof result.caloriesBurned === "number" ? result.caloriesBurned : 0,
+    caloriesBurned: calorieResult?.total_kcal ?? 0,
     rationale: result.rationale || "",
     exercises: exercises.length > 0 ? exercises : null,
     description,
+    calorieResult,
   };
 }
 
@@ -196,20 +314,26 @@ export const parseWorkout = action({
     let apiKey: string | undefined;
     let userPhysique: UserPhysique | undefined;
     if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+      const [settings, profile, metabolicProfile] = await Promise.all([
+        ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
+        ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+        ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {}),
+      ]);
       model = settings?.openRouterModel ?? undefined;
       apiKey = settings?.openRouterKey ?? undefined;
-      const profile = await ctx.runQuery(internal.profile.getProfileForContext, { userId });
       if (profile) {
         userPhysique = {
           weight: profile.weight,
           height: profile.height,
           age: profile.age,
           sex: profile.sex,
+          fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
+          metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
         };
       }
     }
-    return parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
+    const result = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
+    return result;
   },
 });
 
@@ -232,28 +356,154 @@ export const logMeal = action({
     const apiKey = settings?.openRouterKey ?? undefined;
 
     let data: any;
+    let parsedMeal: any;
     if (parsedData) {
-      const mealTime = parsedData.time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-      const id = await ctx.runMutation(internal.meals.addMealFromAI, {
-        userId, date: today,
-        name: parsedData.name || "Meal",
-        calories: parsedData.calories || 0,
-        protein: parsedData.protein || 0,
-        carbs: parsedData.carbs || 0,
-        fat: parsedData.fat || 0,
-        time: mealTime,
-        aiSuggestion: parsedData.aiSuggestion,
+      parsedMeal = {
+        ...parsedData,
         mealType: parsedData.mealType || mealType || "unspecified",
-        components: parsedData.components,
-      });
-      data = { _id: id, ...parsedData, time: mealTime };
+        time: parsedData.time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
+        ingredients: parsedData.ingredients || [],
+        cooking_method: parsedData.cooking_method || "unknown",
+        portion_scale: parsedData.portion_scale ?? 1.0,
+        missing_fields: parsedData.missing_fields || [],
+      };
     } else if (description) {
-      const { description: _desc, ...parsedFields } = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
-      const id = await ctx.runMutation(internal.meals.addMealFromAI, { userId, date: today, ...parsedFields });
-      data = { _id: id, ...parsedFields };
+      parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
     } else {
       throw new Error("description or parsedData required");
     }
+
+    // Run deterministic nutrition calculation from structured ingredients
+    let nutritionResult: NutritionResult | null = null;
+    const ingredients = parsedMeal.ingredients || [];
+    if (ingredients.length > 0) {
+      try {
+        const breakdownItems: ItemBreakdown[] = [];
+        const unresolved: string[] = [];
+
+        for (const ingredient of ingredients) {
+          const foodText: string = ingredient.food_text || "";
+          const amount: number = ingredient.amount || 0;
+          const unit: string = ingredient.unit || "g";
+
+          if (!foodText || amount <= 0) continue;
+
+          // Convert to grams
+          const conversion = toGrams(amount, unit, foodText);
+          const grams = conversion.grams;
+
+          // Search food cache
+          const cachedResults: any[] = await ctx.runQuery(internal.foods.searchFoodsInCache, { query: foodText });
+          const bestMatch = matchBestFood(foodText, cachedResults);
+
+          if (bestMatch) {
+            const nutrition = computeNutrition(bestMatch, grams);
+            breakdownItems.push({
+              food_text: foodText,
+              matched_food_name: bestMatch.name,
+              grams,
+              calories_kcal: nutrition.calories_kcal,
+              protein_g: nutrition.protein_g,
+              carbs_g: nutrition.carbs_g,
+              fat_g: nutrition.fat_g,
+              source: bestMatch.source || "cache",
+              confidence: conversion.confidence,
+            });
+            // Bump search count asynchronously
+            ctx.runMutation(internal.foods.bumpSearchCount, { id: bestMatch._id }).catch(() => {});
+          } else if (ingredient.is_oil_or_fat) {
+            // For oils/fats, use standard values
+            const oilCals = Math.round(grams * 8.84);
+            breakdownItems.push({
+              food_text: foodText,
+              matched_food_name: foodText,
+              grams,
+              calories_kcal: oilCals,
+              protein_g: 0,
+              carbs_g: 0,
+              fat_g: grams,
+              source: "standard",
+              confidence: 0.85,
+            });
+          } else {
+            unresolved.push(foodText);
+          }
+        }
+
+        // Apply cooking method adjustment if we have ingredients but no explicit oil
+        const hasOil = ingredients.some((i: any) => i.is_oil_or_fat);
+        if (!hasOil && breakdownItems.length > 0) {
+          const oilAdjustment = cookingMethodAdjustment(parsedMeal.cooking_method || "unknown");
+          if (oilAdjustment.oil_calories > 0) {
+            const method = parsedMeal.cooking_method || "unknown";
+            breakdownItems.push({
+              food_text: `cooking oil (${method})`,
+              matched_food_name: `cooking oil (${method})`,
+              grams: 0,
+              calories_kcal: oilAdjustment.oil_calories,
+              protein_g: 0,
+              carbs_g: 0,
+              fat_g: oilAdjustment.oil_fat_g,
+              source: "estimated",
+              confidence: 0.5,
+            });
+          }
+        }
+
+        nutritionResult = buildNutritionResult(breakdownItems, unresolved);
+
+        // Apply portion scaling
+        if (parsedMeal.portion_scale < 1.0) {
+          nutritionResult = scaleResult(nutritionResult, parsedMeal.portion_scale);
+        }
+      } catch {
+        // Fall back to AI-estimated values on error
+      }
+    }
+
+    // Determine final values
+    const finalCalories = nutritionResult?.calories_kcal ?? parsedMeal.calories ?? 400;
+    const finalProtein = nutritionResult?.protein_g ?? parsedMeal.protein ?? 20;
+    const finalCarbs = nutritionResult?.carbs_g ?? parsedMeal.carbs ?? 35;
+    const finalFat = nutritionResult?.fat_g ?? parsedMeal.fat ?? 15;
+    const finalConfidence = nutritionResult?.confidence ?? 0.3;
+    const finalSource = nutritionResult && nutritionResult.items.length > 0
+      ? (nutritionResult.unresolved.length > 0 ? "mixed" : "database")
+      : "ai";
+    const structuredItems = nutritionResult ? JSON.stringify(nutritionResult.items) : undefined;
+    const ingredientBreakdown = nutritionResult ? JSON.stringify(nutritionResult) : undefined;
+
+    const id = await ctx.runMutation(internal.meals.addMealFromAI, {
+      userId, date: today,
+      name: parsedMeal.name || "Meal",
+      calories: finalCalories,
+      protein: finalProtein,
+      carbs: finalCarbs,
+      fat: finalFat,
+      time: parsedMeal.time,
+      aiSuggestion: parsedMeal.aiSuggestion,
+      mealType: parsedMeal.mealType || mealType || "unspecified",
+      components: parsedMeal.components,
+      confidence: finalConfidence,
+      nutritionSource: finalSource,
+      structuredItems,
+      ingredientBreakdown,
+    });
+    data = {
+      _id: id,
+      name: parsedMeal.name,
+      calories: finalCalories,
+      protein: finalProtein,
+      carbs: finalCarbs,
+      fat: finalFat,
+      time: parsedMeal.time,
+      aiSuggestion: parsedMeal.aiSuggestion,
+      mealType: parsedMeal.mealType || mealType || "unspecified",
+      components: parsedMeal.components,
+      confidence: finalConfidence,
+      nutritionSource: finalSource,
+      ingredientBreakdown: nutritionResult,
+    };
     return data;
   },
 });
@@ -272,9 +522,10 @@ export const logWorkout = action({
     const userId = identity.subject;
     const today = date ?? new Date().toISOString().split("T")[0];
 
-    const [settings, profile] = await Promise.all([
+    const [settings, profile, metabolicProfile] = await Promise.all([
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+      ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {}),
     ]);
     const model = settings?.openRouterModel ?? undefined;
     const apiKey = settings?.openRouterKey ?? undefined;
@@ -283,10 +534,23 @@ export const logWorkout = action({
       height: profile.height,
       age: profile.age,
       sex: profile.sex,
+      fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
+      metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
     } : undefined;
 
     let data: any;
     if (parsedData) {
+      // If passed parsed data, run through calorie engine if it has exercises
+      let calorieFields: any = {};
+      if (parsedData.calorieResult) {
+        calorieFields = {
+          calorieConfidence: parsedData.calorieResult.confidence,
+          calorieRangeLow: parsedData.calorieResult.range_low,
+          calorieRangeHigh: parsedData.calorieResult.range_high,
+          calorieBreakdown: JSON.stringify(parsedData.calorieResult.breakdown),
+          calculationVersion: 1,
+        };
+      }
       const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
         userId, date: today,
         name: parsedData.name || "Workout",
@@ -295,16 +559,40 @@ export const logWorkout = action({
         intensity: parsedData.intensity || intensity || "HIGH",
         exercises: parsedData.exercises,
         rationale: parsedData.rationale,
-        caloriesBurned: parsedData.caloriesBurned,
+        caloriesBurned: parsedData.caloriesBurned ?? (parsedData.calorieResult?.total_kcal ?? 0),
+        ...calorieFields,
       });
       data = { _id: id, ...parsedData };
     } else if (description) {
       const parsed = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
-      const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, { userId, date: today, ...parsed });
+      const calorieFields = parsed.calorieResult ? {
+        calorieConfidence: parsed.calorieResult.confidence,
+        calorieRangeLow: parsed.calorieResult.range_low,
+        calorieRangeHigh: parsed.calorieResult.range_high,
+        calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown),
+        calculationVersion: 1,
+      } : {};
+      const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
+        userId, date: today,
+        name: parsed.name,
+        sets: parsed.sets,
+        duration: parsed.duration,
+        intensity: parsed.intensity,
+        exercises: parsed.exercises,
+        rationale: parsed.rationale,
+        caloriesBurned: parsed.caloriesBurned,
+        ...calorieFields,
+      });
       data = { _id: id, ...parsed };
     } else {
       throw new Error("description or parsedData required");
     }
+
+    // Increment workout count for calibration
+    try {
+      await ctx.runMutation(internal.calibration.incrementWorkoutCount, { userId });
+    } catch { /* ignore */ }
+
     return data;
   },
 });
@@ -377,8 +665,8 @@ export const chat = action({
     const loggingPrompt = `\n\nDIRECT LOGGING CAPABILITY:
 You can log meals and workouts directly when the user describes them. When a user tells you what they ate or what workout they did, append ONE action block at the very end of your response:
 
-For meals: ⟦LOG_MEAL⟧{"description":"full meal description","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string"}⟦/LOG_MEAL⟧
-For workouts: ⟦LOG_WORKOUT⟧{"description":"full workout description"}⟦/LOG_WORKOUT⟧
+For meals: ⟦LOG_MEAL⟧{"description":"full meal description with ingredients and amounts","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string"}⟦/LOG_MEAL⟧
+For workouts: ⟦LOG_WORKOUT⟧{"description":"full workout description with exercises, sets, reps, weights"}⟦/LOG_WORKOUT⟧
 
 Rules:
 - ONLY append a log block when the user is clearly reporting what they ate/did
@@ -428,8 +716,100 @@ Rules:
       try {
         const logData = JSON.parse(mealMatch[1].trim());
         const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", model, apiKey);
-        const mealId = await ctx.runMutation(internal.meals.addMealFromAI, { userId, date: today, ...parsed });
-        loggedItem = { type: "meal", data: { _id: mealId, ...parsed } };
+
+        // Run deterministic nutrition calculation
+        let finalCalories = parsed.calories;
+        let finalProtein = parsed.protein;
+        let finalCarbs = parsed.carbs;
+        let finalFat = parsed.fat;
+        let finalConfidence: number | undefined;
+        let finalSource: string | undefined;
+        let finalStructuredItems: string | undefined;
+        let finalIngredientBreakdown: string | undefined;
+
+        const ingredients = parsed.ingredients || [];
+        if (ingredients.length > 0) {
+          try {
+            const breakdownItems: ItemBreakdown[] = [];
+            const unresolved: string[] = [];
+            for (const ingredient of ingredients) {
+              const foodText: string = ingredient.food_text || "";
+              const amount: number = ingredient.amount || 0;
+              const unit: string = ingredient.unit || "g";
+              if (!foodText || amount <= 0) continue;
+              const conversion = toGrams(amount, unit, foodText);
+              const grams = conversion.grams;
+              const cachedResults: any[] = await ctx.runQuery(internal.foods.searchFoodsInCache, { query: foodText });
+              const bestMatch = matchBestFood(foodText, cachedResults);
+              if (bestMatch) {
+                const nutrition = computeNutrition(bestMatch, grams);
+                breakdownItems.push({
+                  food_text: foodText, matched_food_name: bestMatch.name, grams,
+                  calories_kcal: nutrition.calories_kcal, protein_g: nutrition.protein_g,
+                  carbs_g: nutrition.carbs_g, fat_g: nutrition.fat_g,
+                  source: bestMatch.source || "cache", confidence: conversion.confidence,
+                });
+                ctx.runMutation(internal.foods.bumpSearchCount, { id: bestMatch._id }).catch(() => {});
+              } else if (ingredient.is_oil_or_fat) {
+                const oilCals = Math.round(grams * 8.84);
+                breakdownItems.push({
+                  food_text: foodText, matched_food_name: foodText, grams,
+                  calories_kcal: oilCals, protein_g: 0, carbs_g: 0, fat_g: grams,
+                  source: "standard", confidence: 0.85,
+                });
+              } else {
+                unresolved.push(foodText);
+              }
+            }
+            const hasOil = ingredients.some((i: any) => i.is_oil_or_fat);
+            if (!hasOil && breakdownItems.length > 0) {
+              const oilAdj = cookingMethodAdjustment(parsed.cooking_method || "unknown");
+              if (oilAdj.oil_calories > 0) {
+                breakdownItems.push({
+                  food_text: `cooking oil (${parsed.cooking_method || "unknown"})`,
+                  matched_food_name: `cooking oil (${parsed.cooking_method || "unknown"})`,
+                  grams: 0, calories_kcal: oilAdj.oil_calories, protein_g: 0, carbs_g: 0, fat_g: oilAdj.oil_fat_g,
+                  source: "estimated", confidence: 0.5,
+                });
+              }
+            }
+            const nutResult = buildNutritionResult(breakdownItems, unresolved);
+            if (parsed.portion_scale < 1.0) {
+              const scaled = scaleResult(nutResult, parsed.portion_scale);
+              finalCalories = scaled.calories_kcal;
+              finalProtein = scaled.protein_g;
+              finalCarbs = scaled.carbs_g;
+              finalFat = scaled.fat_g;
+            } else {
+              finalCalories = nutResult.calories_kcal;
+              finalProtein = nutResult.protein_g;
+              finalCarbs = nutResult.carbs_g;
+              finalFat = nutResult.fat_g;
+            }
+            finalConfidence = nutResult.confidence;
+            finalSource = nutResult.items.length > 0 ? (nutResult.unresolved.length > 0 ? "mixed" : "database") : "ai";
+            finalStructuredItems = JSON.stringify(nutResult.items);
+            finalIngredientBreakdown = JSON.stringify(nutResult);
+          } catch { /* fallback to AI values */ }
+        }
+
+        const mealId = await ctx.runMutation(internal.meals.addMealFromAI, {
+          userId, date: today,
+          name: parsed.name,
+          calories: finalCalories,
+          protein: finalProtein,
+          carbs: finalCarbs,
+          fat: finalFat,
+          time: parsed.time,
+          aiSuggestion: parsed.aiSuggestion,
+          mealType: parsed.mealType,
+          components: parsed.components,
+          confidence: finalConfidence,
+          nutritionSource: finalSource,
+          structuredItems: finalStructuredItems,
+          ingredientBreakdown: finalIngredientBreakdown,
+        });
+        loggedItem = { type: "meal", data: { _id: mealId, ...parsed, calories: finalCalories, protein: finalProtein, carbs: finalCarbs, fat: finalFat } };
       } catch (err) {
         console.error("Failed to log meal from AI:", err);
       }
@@ -437,14 +817,35 @@ Rules:
       cleanReply = reply.replace(/⟦LOG_WORKOUT⟧[\s\S]*?⟦\/LOG_WORKOUT⟧/, "").trim();
       try {
         const logData = JSON.parse(workoutMatch[1].trim());
+        // Get metabolic profile for workout
+        const metabolicProfile: any = await ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {});
         const userPhysique: UserPhysique | undefined = profile ? {
           weight: profile.weight,
           height: profile.height,
           age: profile.age,
           sex: profile.sex,
+          fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
+          metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
         } : undefined;
         const parsed = await parseWorkoutDescription(logData.description || message, undefined, undefined, model, apiKey, userPhysique);
-        const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, { userId, date: today, ...parsed });
+        const calorieFields = parsed.calorieResult ? {
+          calorieConfidence: parsed.calorieResult.confidence,
+          calorieRangeLow: parsed.calorieResult.range_low,
+          calorieRangeHigh: parsed.calorieResult.range_high,
+          calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown),
+          calculationVersion: 1,
+        } : {};
+        const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
+          userId, date: today,
+          name: parsed.name,
+          sets: parsed.sets,
+          duration: parsed.duration,
+          intensity: parsed.intensity,
+          exercises: parsed.exercises,
+          rationale: parsed.rationale,
+          caloriesBurned: parsed.caloriesBurned,
+          ...calorieFields,
+        });
         loggedItem = { type: "workout", data: { _id: workoutId, ...parsed } };
       } catch (err) {
         console.error("Failed to log workout from AI:", err);
@@ -600,10 +1001,11 @@ export const suggestWorkout = action({
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
 
-    const [recentWorkouts, settings, profile] = await Promise.all([
+    const [recentWorkouts, settings, profile, metabolicProfile] = await Promise.all([
       ctx.runQuery(internal.workouts.getRecentWorkoutsDetailed, { userId }),
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+      ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {}),
     ]);
 
     let userContext = "";
@@ -631,14 +1033,62 @@ Return ONLY a valid JSON object (no markdown, no explanation):
   ],
   "duration": "45 min",
   "intensity": "HIGH",
-  "caloriesBurned": 350,
   "rationale": "one sentence why this suits their goal and training history"
 }
-Include 3-6 exercises with 3-4 sets each. For cardio, use duration as reps field and omit weight. Be specific with exercise names.`;
+Include 3-6 exercises with 3-4 sets each. For cardio, use duration as reps field and omit weight. Be specific with exercise names. Do NOT include caloriesBurned — calories are calculated separately.`;
     const model = settings?.openRouterModel ?? undefined;
     const apiKey = settings?.openRouterKey ?? undefined;
     const content = await callAI([{ role: "user", content: prompt }], 800, model, apiKey);
-    return parseJSON<any>(content, {});
+    const result = parseJSON<any>(content, {});
+
+    // Deterministic calorie calculation
+    const exercises = (result.exercises || []).map((ex: any) => ({
+      name: ex.name || "Exercise",
+      sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({ weight: String(s.weight || ""), reps: String(s.reps || "") })) : [],
+    }));
+    let calorieResult: any = null;
+    if (profile?.weight && exercises.length > 0) {
+      try {
+        const durationMin = parseDurationMinutes(result.duration || "45 min");
+        const engineIntensity = mapAIIntensity(result.intensity || "HIGH");
+        const engineDensity = inferDensity(exercises, durationMin);
+        const exerciseMetas = matchExercises(exercises);
+        const compoundRatio = countCompoundRatio(exerciseMetas);
+        const weightedMet = getWeightedMET(exercises);
+
+        const calcResult = calculateWorkoutCalories(
+          {
+            duration_min: durationMin,
+            intensity: engineIntensity,
+            density: engineDensity,
+            compound_ratio: compoundRatio,
+            exercises,
+            weighted_met: weightedMet,
+          },
+          {
+            weight_kg: profile.weight ?? 70,
+            age: profile.age ?? 30,
+            sex: (profile.sex === "female" ? "female" : "male"),
+            fitness_level: (metabolicProfile?.fitnessLevel as "beginner" | "intermediate" | "advanced") || "beginner",
+            metabolic_factor: metabolicProfile?.metabolicFactor ?? 1.0,
+          },
+        );
+        calorieResult = {
+          total_kcal: calcResult.total_kcal,
+          confidence: calcResult.confidence,
+          range_low: calcResult.range_low,
+          range_high: calcResult.range_high,
+          breakdown: calcResult.breakdown,
+        };
+      } catch { /* ignore */ }
+    }
+
+    return {
+      ...result,
+      exercises,
+      caloriesBurned: calorieResult?.total_kcal ?? 0,
+      calorieResult,
+    };
   },
 });
 
