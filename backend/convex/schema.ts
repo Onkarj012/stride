@@ -120,6 +120,7 @@ export default defineSchema({
     searchCount: v.optional(v.number()),
   })
     .index("by_barcode", ["barcode"])
+    .index("by_search_count", ["searchCount"])
     .searchIndex("by_name_search", {
       searchField: "name",
       filterFields: ["source", "verified"],

@@ -6,6 +6,14 @@ import { getCoach, classifyCoachType, COACHES, type CoachType } from "./coaches"
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
 
+const VISION_MODELS = new Set([
+  "openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4-turbo",
+  "anthropic/claude-3-opus", "anthropic/claude-3-sonnet", "anthropic/claude-3-haiku",
+  "anthropic/claude-3.5-sonnet", "anthropic/claude-3.5-haiku",
+  "google/gemini-1.5-pro", "google/gemini-1.5-flash", "google/gemini-2.0-flash",
+  "meta-llama/llama-3.2-11b-vision", "meta-llama/llama-3.2-90b-vision",
+]);
+
 interface AIMessage { role: string; content: string }
 
 async function callAI(messages: AIMessage[], maxTokens = 500, model?: string, apiKey?: string): Promise<string> {
@@ -649,6 +657,7 @@ export const parseNutritionImage = action({
       model = settings?.openRouterModel ?? undefined;
       apiKey = settings?.openRouterKey ?? undefined;
     }
+    const visionModel = model && VISION_MODELS.has(model) ? model : DEFAULT_MODEL;
 
     const key = apiKey || process.env.OPENROUTER_API_KEY;
     if (!key) throw new Error("OPENROUTER_API_KEY is not set");
@@ -667,7 +676,7 @@ export const parseNutritionImage = action({
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
         body: JSON.stringify({
-          model: model || DEFAULT_MODEL,
+          model: visionModel,
           messages: [{
             role: "user",
             content: [
@@ -806,7 +815,7 @@ export const getCoaches = query({
 export const transcribe = action({
   args: { audio: v.string(), mimeType: v.optional(v.string()) },
   handler: async (_ctx, { audio, mimeType }) => {
-    const apiKey = process.env.GROQ_API_KEY || process.env.OPENROUTER_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("GROQ_API_KEY is not set in Convex environment");
 
     const mime = mimeType || "audio/webm";
