@@ -819,7 +819,10 @@ export const regenerateSuggestion = action({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) {
+      throw new Error("Authentication required to use AI features.");
+    }
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
     if (userId) {

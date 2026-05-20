@@ -52,15 +52,18 @@ function RecipeModal({ open, onClose, children }: { open: boolean; onClose: () =
 
 interface RecipesTabProps {
   today: string;
+  userId?: string;
   commitMeal: (data: any) => Promise<void>;
   chatAction: (args: { message: string; sessionId?: Id<"chat_sessions">; coachType?: string }) => Promise<any>;
   activeSessionId: Id<"chat_sessions"> | null;
 }
 
-export default function RecipesTab({ today, commitMeal, chatAction, activeSessionId }: RecipesTabProps) {
+const RECIPES_STORAGE_KEY = (userId?: string) => userId ? `user-recipes:${userId}` : 'user-recipes';
+
+export default function RecipesTab({ today, userId, commitMeal, chatAction, activeSessionId }: RecipesTabProps) {
   const [recipes, setRecipes] = useState<any[]>(() => {
     try {
-      const saved = localStorage.getItem('user-recipes');
+      const saved = localStorage.getItem(RECIPES_STORAGE_KEY(userId));
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -68,8 +71,8 @@ export default function RecipesTab({ today, commitMeal, chatAction, activeSessio
   });
 
   useEffect(() => {
-    localStorage.setItem('user-recipes', JSON.stringify(recipes));
-  }, [recipes]);
+    localStorage.setItem(RECIPES_STORAGE_KEY(userId), JSON.stringify(recipes));
+  }, [recipes, userId]);
 
   const [showRecipeForm, setShowRecipeForm] = useState(false);
   const [recipeForm, setRecipeForm] = useState({
@@ -404,8 +407,8 @@ export default function RecipesTab({ today, commitMeal, chatAction, activeSessio
                                 mealType: "unspecified",
                                 time: recipeLogForm?.time || "",
                               }}
-                              onConfirm={(data) => {
-                                commitMeal(data);
+                              onConfirm={async (data) => {
+                                await commitMeal(data);
                                 setRecipeLogConfirm(null);
                                 setRecipeLogForm(null);
                               }}
@@ -477,8 +480,8 @@ export default function RecipesTab({ today, commitMeal, chatAction, activeSessio
                     mealType: "unspecified",
                     time: "",
                   }}
-                  onConfirm={(data) => {
-                    commitMeal(data);
+                  onConfirm={async (data) => {
+                    await commitMeal(data);
                     setRecipeLogConfirm(null);
                     setRecipeLogForm(null);
                   }}

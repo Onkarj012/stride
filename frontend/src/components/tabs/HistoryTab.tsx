@@ -251,8 +251,8 @@ export default function HistoryTab({
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                   {(() => {
                     const days = historyInsights.daily;
-                    const avgCals = Math.round(days.reduce((s: number, d: any) => s + d.calories, 0) / days.length);
-                    const avgProtein = Math.round(days.reduce((s: number, d: any) => s + d.protein, 0) / days.length);
+                    const avgCals = days.length ? Math.round(days.reduce((s: number, d: any) => s + d.calories, 0) / days.length) : 0;
+                    const avgProtein = days.length ? Math.round(days.reduce((s: number, d: any) => s + d.protein, 0) / days.length) : 0;
                     const totalWorkouts = days.reduce((s: number, d: any) => s + d.workouts, 0);
                     const streakDays = days.reduce((max: number, d: any, i: number, arr: any[]) => {
                       let count = 0;
@@ -402,7 +402,7 @@ export default function HistoryTab({
                           </div>
                           <div className="flex items-center gap-3 text-[10px] font-mono text-[var(--text-muted)] tracking-wide">
                             <span>P: {m.protein}g</span>
-                            <span>C: {m.carbs.toFixed(2)}g</span>
+                            <span>C: {Number(m.carbs ?? 0).toFixed(2)}g</span>
                             <span>F: {m.fat}g</span>
                             {m.mealType && <span className="uppercase">{m.mealType}</span>}
                           </div>
@@ -415,7 +415,7 @@ export default function HistoryTab({
                       ))}
                     </div>
                     <div className="text-xs font-mono text-[var(--text-muted)] mt-2 tracking-wide">
-                      TOTAL: {historyDayData.meals.reduce((s: number, m: any) => s + m.calories, 0)} kcal · P: {historyDayData.meals.reduce((s: number, m: any) => s + m.protein, 0)}g · C: {historyDayData.meals.reduce((s: number, m: any) => s + m.carbs, 0).toFixed(2)}g · F: {historyDayData.meals.reduce((s: number, m: any) => s + m.fat, 0)}g
+                      TOTAL: {historyDayData.meals.reduce((s: number, m: any) => s + m.calories, 0)} kcal · P: {historyDayData.meals.reduce((s: number, m: any) => s + m.protein, 0)}g · C: {historyDayData.meals.reduce((s: number, m: any) => s + Number(m.carbs ?? 0), 0).toFixed(2)}g · F: {historyDayData.meals.reduce((s: number, m: any) => s + m.fat, 0)}g
                     </div>
                   </div>
                 )}

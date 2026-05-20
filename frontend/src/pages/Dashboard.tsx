@@ -807,7 +807,7 @@ export default function Dashboard() {
         {/* ═══════════════════════════════════════════════════════════════════
             RECIPES TAB — 2-Panel System
         ═══════════════════════════════════════════════════════════════════ */}
-        {activeTab === "RECIPES" && <RecipesTab today={today} commitMeal={commitMeal} chatAction={chatAction} activeSessionId={activeSessionId} />}
+        {activeTab === "RECIPES" && <RecipesTab today={today} userId={user?.id} commitMeal={commitMeal} chatAction={chatAction} activeSessionId={activeSessionId} />}
 
         {/* ═══════════════════════════════════════════════════════════════════
             INSIGHTS TAB - Enhanced with visualization buttons

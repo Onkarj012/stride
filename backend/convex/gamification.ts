@@ -221,14 +221,12 @@ export const recordActivity = mutation({
       const ratio = args.totalProtein / args.proteinTarget;
       if (ratio >= 0.9 && ratio <= 1.2) {
         check("hit_protein", true);
-        if (newMissions.includes("hit_protein")) xpGained += 25;
       }
     }
     if (args.totalCalories && args.calorieTarget) {
       const ratio = args.totalCalories / args.calorieTarget;
       if (ratio >= 0.9 && ratio <= 1.1) {
         check("hit_calories", true);
-        if (newMissions.includes("hit_calories")) xpGained += 25;
       }
     }
 

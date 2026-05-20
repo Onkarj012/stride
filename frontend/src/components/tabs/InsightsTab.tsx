@@ -90,8 +90,8 @@ export default function InsightsTab({
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="CALORIES" value={totalCals || 0} subValue={`${Math.round(((totalCals || 0) / effectiveGoals.calorieGoal) * 100)}% of goal`} icon={Flame} accent />
-        <StatCard label="PROTEIN" value={`${totalProtein || 0}g`} subValue={`${Math.round(((totalProtein || 0) / effectiveGoals.proteinGoal) * 100)}% of goal`} icon={Target} />
+        <StatCard label="CALORIES" value={totalCals || 0} subValue={`${effectiveGoals.calorieGoal ? Math.round(((totalCals || 0) / effectiveGoals.calorieGoal) * 100) : 0}% of goal`} icon={Flame} accent />
+        <StatCard label="PROTEIN" value={`${totalProtein || 0}g`} subValue={`${effectiveGoals.proteinGoal ? Math.round(((totalProtein || 0) / effectiveGoals.proteinGoal) * 100) : 0}% of goal`} icon={Target} />
         <StatCard label="HYDRATION" value={waterUnit === 'glasses' ? Math.floor(waterIntake) : waterIntake.toFixed(1)} subValue={waterUnit === 'glasses' ? 'GLASSES' : 'LITRES'} icon={Droplets} />
         <StatCard label="SLEEP" value={`${sleepHours}h`} subValue={sleepHours >= sleepGoal ? "GOAL MET" : `${(sleepGoal - sleepHours).toFixed(1)}h short`} icon={BedDouble} />
       </div>
@@ -194,9 +194,9 @@ export default function InsightsTab({
               <div className="flex items-center justify-between p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
                 <div className="flex items-center gap-3">
                   <Activity size={20} className="text-yellow-500" />
-                  <span className="font-mono tracking-wide">Calorie progress: {Math.round((totalCals / effectiveGoals.calorieGoal) * 100)}%</span>
+                  <span className="font-mono tracking-wide">Calorie progress: {effectiveGoals.calorieGoal ? Math.round((totalCals / effectiveGoals.calorieGoal) * 100) : 0}%</span>
                 </div>
-                <span className="text-yellow-500 font-heading">{Math.round((totalCals / effectiveGoals.calorieGoal) * 100)}%</span>
+                <span className="text-yellow-500 font-heading">{effectiveGoals.calorieGoal ? Math.round((totalCals / effectiveGoals.calorieGoal) * 100) : 0}%</span>
               </div>
             </div>
           </>

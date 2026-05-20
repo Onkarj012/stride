@@ -374,7 +374,7 @@ export default function AICoachTab({
                 data-testid="chat-input"
                 value={chatInput}
                 onChange={handleChatInputChange}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSendChat(); } }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !chatLoading && chatInput.trim()) { e.preventDefault(); onSendChat(); } }}
                 placeholder="Describe a meal, log a workout, or ask anything..."
                 rows={1}
                 className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent focus:shadow-[0_0_0_2px_var(--theme-primary)] placeholder:text-[var(--text-muted)] resize-none min-h-[48px] max-h-[150px] leading-relaxed tracking-wide transition-all"

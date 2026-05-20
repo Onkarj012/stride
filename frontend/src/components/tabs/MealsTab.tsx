@@ -118,8 +118,8 @@ export default function MealsTab({
         <ConfirmLogCard
           mode="meal"
           initialData={mealConfirm.initialData}
-          onConfirm={(data) => {
-            onCommitMeal(data, mealForm.date);
+          onConfirm={async (data) => {
+            await onCommitMeal(data, mealForm.date);
             setMealConfirm(null);
             setMealForm({ description: "", time: "", date: today });
           }}
@@ -252,7 +252,7 @@ export default function MealsTab({
                     <div className="flex items-center gap-4 text-sm font-mono text-[var(--text-secondary)] tracking-wide">
                       <span><Flame size={14} className="inline mr-1" />{meal.calories} KCAL</span>
                       <span>P: {meal.protein}g</span>
-                      <span>C: {meal.carbs.toFixed(2)}g</span>
+                      <span>C: {Number(meal.carbs ?? 0).toFixed(2)}g</span>
                       <span>F: {meal.fat}g</span>
                     </div>
                   </div>
@@ -354,8 +354,8 @@ export default function MealsTab({
 
       {showScanner && (
         <NutritionScanner
-          onConfirm={(mealData) => {
-            onCommitMeal(mealData, mealForm.date);
+          onConfirm={async (mealData) => {
+            await onCommitMeal(mealData, mealForm.date);
             setShowScanner(false);
           }}
           onClose={() => setShowScanner(false)}

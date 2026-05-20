@@ -342,13 +342,19 @@ export default function HomeTab({
             </div>
             <div className="flex gap-2 mt-2">
               <button
-                onClick={() => setWaterUnit('glasses')}
+                onClick={() => {
+                  if (waterUnit !== 'glasses') setWaterIntake(waterIntake * 4);
+                  setWaterUnit('glasses');
+                }}
                 className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border ${waterUnit === 'glasses' ? 'bg-accent text-[var(--theme-primary-text)] border-accent' : 'border-[var(--border-default)] hover:border-accent'}`}
               >
                 Glasses
               </button>
               <button
-                onClick={() => setWaterUnit('litres')}
+                onClick={() => {
+                  if (waterUnit !== 'litres') setWaterIntake(waterIntake / 4);
+                  setWaterUnit('litres');
+                }}
                 className={`px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider border ${waterUnit === 'litres' ? 'bg-accent text-[var(--theme-primary-text)] border-accent' : 'border-[var(--border-default)] hover:border-accent'}`}
               >
                 Litres

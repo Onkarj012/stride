@@ -87,8 +87,8 @@ export default function WorkoutsTab({
         <ConfirmLogCard
           mode="workout"
           initialData={workoutConfirm.initialData}
-          onConfirm={(data) => {
-            onCommitWorkout(data);
+          onConfirm={async (data) => {
+            await onCommitWorkout(data);
             setWorkoutConfirm(null);
             setWorkoutForm({ description: "", duration: "", intensity: "HIGH" });
           }}
@@ -374,7 +374,7 @@ export default function WorkoutsTab({
               rationale: logAgainWorkout.rationale,
               exercises: logAgainWorkout.exercises,
             }}
-            onConfirm={(data) => { onCommitWorkout(data); setLogAgainWorkout(null); }}
+            onConfirm={async (data) => { await onCommitWorkout(data); setLogAgainWorkout(null); }}
             onDiscard={() => setLogAgainWorkout(null)}
           />
         )}
