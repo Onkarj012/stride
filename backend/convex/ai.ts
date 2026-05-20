@@ -828,11 +828,23 @@ export const transcribe = action({
     formData.append("file", new Blob([bytes], { type: mime }), `audio.${ext}`);
     formData.append("model", "whisper-large-v3-turbo");
 
-    const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: formData,
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    let res: Response;
+    try {
+      res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: formData,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timeout);
+      if ((err as Error).name === "AbortError") throw new Error("Groq transcription timed out after 30s");
+      throw err;
+    }
+    clearTimeout(timeout);
 
     if (!res.ok) throw new Error(`Groq transcription error ${res.status}: ${await res.text()}`);
     const data = await res.json() as { text?: string; error?: { message?: string } };

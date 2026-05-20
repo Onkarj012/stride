@@ -196,16 +196,18 @@ export default function Dashboard() {
   // Confetti state
   const [showConfetti, setShowConfetti] = useState(false);
   const prevMissionsRef = useRef<string[]>([]);
+  const isInitialLoadRef = useRef(true);
 
   useEffect(() => {
     if (gamificationState?.missions) {
       const completed = (gamificationState.missions as any[]).filter((m) => m.completed).map((m) => m.id);
       const prev = prevMissionsRef.current;
       const newlyCompleted = completed.filter((id) => !prev.includes(id));
-      if (newlyCompleted.length > 0) {
+      if (newlyCompleted.length > 0 && !isInitialLoadRef.current) {
         setShowConfetti(true);
       }
       prevMissionsRef.current = completed;
+      isInitialLoadRef.current = false;
     }
   }, [gamificationState]);
 

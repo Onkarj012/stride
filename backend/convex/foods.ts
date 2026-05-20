@@ -176,7 +176,12 @@ export const searchFoods = action({
       })
       .sort((a: any, b: any) => b._score - a._score);
 
-    if (ranked.length >= 8) return ranked.slice(0, 12);
+    if (ranked.length >= 8) {
+      for (const item of ranked) {
+        ctx.runMutation(internal.foods.bumpSearchCount, { id: item._id }).catch(() => {});
+      }
+      return ranked.slice(0, 12);
+    }
 
     // 2. Query Open Food Facts
     const offResults: NormalizedFood[] = [];
@@ -230,7 +235,12 @@ export const searchFoods = action({
       } catch { /* skip duplicates */ }
     }
 
-    // 5. Merge and deduplicate by name
+    // 5. Bump search counts for all ranked cached results (fire-and-forget)
+    for (const item of ranked) {
+      ctx.runMutation(internal.foods.bumpSearchCount, { id: item._id }).catch(() => {});
+    }
+
+    // 6. Merge and deduplicate by name
     const seen = new Set<string>(ranked.map((f: any) => f.name.toLowerCase()));
     const merged: any[] = [...ranked];
     for (const f of newFoods) {
