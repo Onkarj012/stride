@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronRight,
   ChevronLeft,
@@ -10,46 +10,30 @@ import {
   Scale,
   Footprints,
   Dumbbell,
-  Briefcase,
   TrendingUp,
-  BrainCircuit,
-  BarChart3,
+  TrendingDown,
   Flame,
   Trophy,
   ArrowRight,
   Sparkles,
   Activity,
-  Clock,
+  Calendar,
+  Timer,
 } from "lucide-react";
 import { useMutation, useAction } from "convex/react";
 import { api } from "../../../backend/convex/_generated/api";
 import CustomSelect from "./ui/CustomSelect";
 
 const pageVariants = {
-  initial: { opacity: 0, scale: 0.96, filter: "blur(4px)" },
-  animate: { opacity: 1, scale: 1, filter: "blur(0px)" },
-  exit: { opacity: 0, scale: 0.96, filter: "blur(4px)" },
+  initial: { opacity: 0, x: 20 },
+  animate: { opacity: 1, x: 0 },
+  exit: { opacity: 0, x: -20 },
 };
 
 const pageTransition = {
   type: "spring",
   stiffness: 300,
   damping: 30,
-  mass: 0.8,
-};
-
-const staggerContainer = {
-  animate: {
-    transition: {
-      staggerChildren: 0.06,
-      delayChildren: 0.1,
-    },
-  },
-};
-
-const staggerItem = {
-  initial: { opacity: 0, y: 12 },
-  animate: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 400, damping: 25 } },
 };
 
 interface OnboardingModalProps {
@@ -86,11 +70,84 @@ const STYLE_OPTIONS = [
 ];
 
 const GOAL_OPTIONS = [
-  { value: "cut", label: "Cut", description: "Lose fat — moderate deficit" },
-  { value: "bulk", label: "Bulk", description: "Build muscle — small surplus" },
-  { value: "maintain", label: "Maintain", description: "Keep current weight" },
-  { value: "recomp", label: "Recomp", description: "Simultaneous build + burn" },
+  { value: "cut", label: "Cut", description: "Lose fat — moderate deficit", icon: TrendingDown },
+  { value: "bulk", label: "Bulk", description: "Build muscle — small surplus", icon: TrendingUp },
+  { value: "maintain", label: "Maintain", description: "Keep current weight", icon: Target },
+  { value: "recomp", label: "Recomp", description: "Simultaneous build + burn", icon: Flame },
 ];
+
+function getProjectedResults(form: any) {
+  const weight = Number(form.weight) || 75;
+  const bodyFat = Number(form.bodyFat) || 18;
+  const goal = form.goal;
+
+  if (goal === "cut") {
+    const fatToLose = Math.round(weight * (bodyFat / 100) * 0.3);
+    const weeksNeeded = Math.round(fatToLose / 0.5);
+    const targetWeight = Math.round(weight - fatToLose);
+    const dailyDeficit = 500;
+    return {
+      headline: `Lose ${fatToLose}kg of fat`,
+      timeline: `${weeksNeeded} weeks`,
+      targetWeight: `${targetWeight}kg`,
+      dailyDeficit: `${dailyDeficit}cal deficit`,
+      details: [
+        { label: "Weekly fat loss", value: "0.5kg", icon: TrendingDown },
+        { label: "Daily deficit", value: `${dailyDeficit} cal`, icon: Flame },
+        { label: "Target weight", value: `${targetWeight}kg`, icon: Scale },
+        { label: "Timeline", value: `${weeksNeeded} weeks`, icon: Calendar },
+      ],
+      tip: "Hit your protein target daily to preserve muscle while cutting.",
+    };
+  } else if (goal === "bulk") {
+    const muscleToGain = Math.round(weight * 0.05);
+    const weeksNeeded = Math.round(muscleToGain / 0.25);
+    const targetWeight = Math.round(weight + muscleToGain);
+    const proteinTarget = Math.round(weight * 2.2);
+    return {
+      headline: `Build ${muscleToGain}kg of muscle`,
+      timeline: `${weeksNeeded} weeks`,
+      targetWeight: `${targetWeight}kg`,
+      dailySurplus: "300cal surplus",
+      details: [
+        { label: "Weekly muscle gain", value: "0.25kg", icon: TrendingUp },
+        { label: "Daily protein", value: `${proteinTarget}g`, icon: Dumbbell },
+        { label: "Target weight", value: `${targetWeight}kg`, icon: Scale },
+        { label: "Timeline", value: `${weeksNeeded} weeks`, icon: Calendar },
+      ],
+      tip: "Train 4+ days per week and hit your protein target for optimal gains.",
+    };
+  } else if (goal === "recomp") {
+    const weeksNeeded = 12;
+    return {
+      headline: "Transform your physique",
+      timeline: `${weeksNeeded} weeks`,
+      targetWeight: `${weight}kg`,
+      dailySurplus: "At maintenance",
+      details: [
+        { label: "Body composition", value: "Improving", icon: Activity },
+        { label: "Protein priority", value: `${Math.round(weight * 2.2)}g/day`, icon: Dumbbell },
+        { label: "Scale weight", value: "Stable", icon: Scale },
+        { label: "Visual change", value: "8-12 weeks", icon: Calendar },
+      ],
+      tip: "Progress is measured in the mirror, not the scale. Trust the process.",
+    };
+  } else {
+    return {
+      headline: "Maintain your gains",
+      timeline: "Ongoing",
+      targetWeight: `${weight}kg`,
+      dailySurplus: "At maintenance",
+      details: [
+        { label: "Daily calories", value: "At TDEE", icon: Flame },
+        { label: "Protein target", value: `${Math.round(weight * 1.8)}g`, icon: Dumbbell },
+        { label: "Weight fluctuation", value: "±1kg normal", icon: Scale },
+        { label: "Check-in", value: "Weekly", icon: Calendar },
+      ],
+      tip: "Focus on performance and how you feel rather than the scale.",
+    };
+  }
+}
 
 export default function OnboardingModal({ open, onClose, onComplete }: OnboardingModalProps) {
   const [step, setStep] = useState(0);
@@ -113,7 +170,7 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
     trainingDays: "3",
     cardioMinutes: "0",
     jobType: "desk",
-    goal: "maintain",
+    goal: "cut",
     trainingStyle: "resistance",
   });
 
@@ -203,26 +260,30 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
     onClose();
   };
 
+  const inputClass = "w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent transition-colors";
+  const labelClass = "block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider";
+
   if (!open) return null;
+
+  const projected = getProjectedResults(form);
 
   return (
     <motion.div
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm"
     >
       <motion.div
-        initial={{ opacity: 0, scale: 0.92, y: 24 }}
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.92, y: 24 }}
-        transition={{ type: "spring", damping: 28, stiffness: 350, mass: 0.8 }}
-        className="bg-[var(--bg-card)] border border-[var(--border-default)] w-full max-w-3xl shadow-2xl will-change-transform"
-        style={{ maxHeight: "92vh" }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        transition={{ type: "spring", damping: 25, stiffness: 300 }}
+        className="bg-[var(--bg-card)] border border-[var(--border-default)] w-full max-w-2xl shadow-2xl flex flex-col"
+        style={{ height: "640px", maxHeight: "90vh" }}
       >
-        {/* Progress Header */}
-        <div className="sticky top-0 z-10 bg-[var(--bg-card)] border-b border-[var(--border-default)] px-6 py-4">
+        {/* Header with Progress */}
+        <div className="shrink-0 border-b border-[var(--border-default)] px-6 py-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-accent flex items-center justify-center">
@@ -231,118 +292,102 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
               <span className="font-heading text-lg uppercase tracking-normal">STRIDE</span>
             </div>
             <span className="text-[10px] font-mono text-[var(--text-muted)] tracking-wider">
-              {step === 0 ? "GET STARTED" : `STEP ${step} / ${STEPS.length - 1}`}
+              {step === 0 ? "GET STARTED" : `STEP ${step} OF ${STEPS.length - 1}`}
             </span>
           </div>
           <div className="flex gap-1.5">
             {STEPS.map((s, i) => (
               <div
                 key={s.id}
-                className={`flex-1 h-1 transition-all duration-300 ${
-                  i < step ? "bg-accent" : i === step ? "bg-accent/50" : "bg-[var(--border-default)]"
+                className={`flex-1 h-1.5 transition-all duration-300 ${
+                  i < step ? "bg-accent" : i === step ? "bg-[var(--text-primary)]" : "bg-[var(--bg-elevated)]"
                 }`}
               />
             ))}
           </div>
         </div>
 
-        {/* Content - Fixed height container for consistent size */}
-        <div className="p-6 lg:p-8" style={{ height: "520px" }}>
-          <LayoutGroup>
-            <AnimatePresence mode="wait" initial={false}>
-              {/* ─── WELCOME ─────────────────────────────────────────────── */}
-              {step === 0 && (
-                <motion.div
-                  key="welcome"
-                  variants={pageVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  transition={pageTransition}
-                  className="space-y-8"
-                >
-                <motion.div
-                  className="text-center space-y-3"
-                  variants={staggerContainer}
-                  initial="initial"
-                  animate="animate"
-                >
-                  <motion.h2
-                    variants={staggerItem}
-                    className="font-heading text-3xl uppercase tracking-normal"
-                  >
+        {/* Content Area - Flex grow to fill space */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <AnimatePresence mode="wait" initial={false}>
+            {/* ─── WELCOME ─────────────────────────────────────────────── */}
+            {step === 0 && (
+              <motion.div
+                key="welcome"
+                variants={pageVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                transition={pageTransition}
+                className="h-full flex flex-col"
+              >
+                <div className="text-center mb-6">
+                  <h2 className="font-heading text-3xl uppercase tracking-normal mb-2">
                     Your Transformation Starts Now
-                  </motion.h2>
-                  <motion.p
-                    variants={staggerItem}
-                    className="text-sm text-[var(--text-secondary)] tracking-wide max-w-lg mx-auto leading-relaxed"
-                  >
-                    Answer a few questions and we'll build your personalized nutrition & training protocol.
-                    In 30 days, you'll look back at this moment as the day everything changed.
-                  </motion.p>
-                </motion.div>
+                  </h2>
+                  <p className="text-sm text-[var(--text-secondary)] tracking-wide max-w-md mx-auto">
+                    In under 2 minutes, we'll build your personalized protocol. Here's what you'll achieve:
+                  </p>
+                </div>
 
-                {/* Feature preview cards */}
-                <motion.div
-                  className="grid sm:grid-cols-3 gap-3"
-                  variants={staggerContainer}
-                  initial="initial"
-                  animate="animate"
-                >
-                  {[
-                    {
-                      icon: BarChart3,
-                      title: "Daily Insights",
-                      desc: "AI-powered analysis of your nutrition and training patterns, updated every day.",
-                    },
-                    {
-                      icon: TrendingUp,
-                      title: "Progress Tracking",
-                      desc: "Visualize your calorie trends, macro consistency, and workout volume over time.",
-                    },
-                    {
-                      icon: BrainCircuit,
-                      title: "AI Coach",
-                      desc: "A personal trainer in your pocket. Ask anything, log meals by talking, get real-time feedback.",
-                    },
-                  ].map((feature) => (
-                    <motion.div
-                      key={feature.title}
-                      variants={staggerItem}
-                      whileHover={{ y: -2, transition: { duration: 0.15 } }}
-                      className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)] hover:border-accent/50 transition-colors group will-change-transform"
-                    >
-                      <feature.icon size={20} className="text-accent mb-3 group-hover:scale-110 transition-transform duration-200" />
-                      <div className="text-xs font-mono uppercase tracking-wider mb-1.5">{feature.title}</div>
-                      <div className="text-[11px] text-[var(--text-muted)] leading-relaxed tracking-wide">
-                        {feature.desc}
-                      </div>
-                    </motion.div>
-                  ))}
-                </motion.div>
-
-                {/* What you'll get at 30 days */}
-                <div className="p-5 border border-accent/30 bg-accent/5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Sparkles size={16} className="text-accent" />
-                    <span className="text-xs font-mono uppercase text-accent tracking-wider">In 30 Days You'll Receive</span>
+                {/* Results preview cards */}
+                <div className="grid grid-cols-3 gap-3 mb-6">
+                  <div className="p-4 bg-accent/10 border border-accent/30 text-center">
+                    <TrendingDown size={24} className="text-accent mx-auto mb-2" />
+                    <div className="font-heading text-2xl">5kg</div>
+                    <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Fat Loss</div>
+                    <div className="text-[10px] font-mono text-accent mt-1">in 10 weeks</div>
                   </div>
-                  <div className="grid sm:grid-cols-2 gap-3">
-                    {[
-                      "A complete macro blueprint tailored to your body",
-                      "Weekly trend reports showing exactly how you're progressing",
-                      "AI-generated adjustments based on your real data",
-                      "Habit streaks and achievements that keep you locked in",
-                    ].map((item, i) => (
-                      <div key={i} className="flex items-start gap-2 text-xs text-[var(--text-secondary)] tracking-wide">
-                        <CheckCircle2 size={12} className="text-accent shrink-0 mt-0.5" />
-                        {item}
-                      </div>
-                    ))}
+                  <div className="p-4 bg-accent/10 border border-accent/30 text-center">
+                    <Dumbbell size={24} className="text-accent mx-auto mb-2" />
+                    <div className="font-heading text-2xl">3kg</div>
+                    <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Muscle Gain</div>
+                    <div className="text-[10px] font-mono text-accent mt-1">in 12 weeks</div>
+                  </div>
+                  <div className="p-4 bg-accent/10 border border-accent/30 text-center">
+                    <Target size={24} className="text-accent mx-auto mb-2" />
+                    <div className="font-heading text-2xl">100%</div>
+                    <div className="text-[10px] font-mono text-[var(--text-muted)] uppercase tracking-wider">Macro Accuracy</div>
+                    <div className="text-[10px] font-mono text-accent mt-1">AI-powered</div>
                   </div>
                 </div>
 
-                <div className="text-center">
+                {/* Timeline visualization */}
+                <div className="p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)] mb-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Timer size={14} className="text-accent" />
+                    <span className="text-xs font-mono uppercase tracking-wider">Your 30-Day Transformation</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 relative">
+                      <div className="h-2 bg-[var(--border-default)] rounded-full overflow-hidden">
+                        <div className="h-full w-1/3 bg-accent rounded-full" />
+                      </div>
+                      <div className="flex justify-between mt-2">
+                        <span className="text-[10px] font-mono text-accent">Today</span>
+                        <span className="text-[10px] font-mono text-[var(--text-muted)]">Week 2</span>
+                        <span className="text-[10px] font-mono text-[var(--text-muted)]">Week 4</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 mt-4 text-center">
+                    <div>
+                      <div className="text-xs font-mono text-[var(--text-muted)]">Week 1</div>
+                      <div className="text-[10px] text-[var(--text-secondary)]">Habits form</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-mono text-[var(--text-muted)]">Week 2</div>
+                      <div className="text-[10px] text-[var(--text-secondary)]">Energy increases</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-mono text-[var(--text-muted)]">Week 4</div>
+                      <div className="text-[10px] text-[var(--text-secondary)]">Visible results</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CTA */}
+                <div className="mt-auto text-center">
                   <button
                     onClick={() => setStep(1)}
                     className="px-8 py-3.5 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 transition-opacity inline-flex items-center gap-2"
@@ -365,24 +410,25 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
                 animate="animate"
                 exit="exit"
                 transition={pageTransition}
-                className="space-y-5"
+                className="h-full flex flex-col"
               >
-                <div>
+                <div className="mb-5">
                   <h3 className="font-heading text-xl uppercase tracking-normal mb-1">Body Metrics</h3>
                   <p className="text-xs text-[var(--text-muted)] font-mono tracking-wide">These determine your metabolic baseline. Be honest — precision matters.</p>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4">
+
+                <div className="grid sm:grid-cols-2 gap-4 mb-4">
                   <div>
-                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Weight (kg) *</label>
-                    <input type="number" value={form.weight} onChange={(e) => update("weight", e.target.value)} placeholder="75" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                    <label className={labelClass}>Weight (kg) *</label>
+                    <input type="number" value={form.weight} onChange={(e) => update("weight", e.target.value)} placeholder="75" className={inputClass} />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Height (cm) *</label>
-                    <input type="number" value={form.height} onChange={(e) => update("height", e.target.value)} placeholder="175" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                    <label className={labelClass}>Height (cm) *</label>
+                    <input type="number" value={form.height} onChange={(e) => update("height", e.target.value)} placeholder="175" className={inputClass} />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Age *</label>
-                    <input type="number" value={form.age} onChange={(e) => update("age", e.target.value)} placeholder="28" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                    <label className={labelClass}>Age *</label>
+                    <input type="number" value={form.age} onChange={(e) => update("age", e.target.value)} placeholder="28" className={inputClass} />
                   </div>
                   <CustomSelect
                     label="Sex *"
@@ -391,23 +437,23 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
                     options={SEX_OPTIONS}
                   />
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4">
+
+                <div className="grid sm:grid-cols-2 gap-4 mb-4">
                   <div>
-                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Body Fat % (optional)</label>
-                    <input type="number" step="0.1" value={form.bodyFat} onChange={(e) => update("bodyFat", e.target.value)} placeholder="15" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                    <label className={labelClass}>Body Fat % (optional)</label>
+                    <input type="number" step="0.1" value={form.bodyFat} onChange={(e) => update("bodyFat", e.target.value)} placeholder="15" className={inputClass} />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Lean Mass kg (optional)</label>
-                    <input type="number" step="0.1" value={form.leanMass} onChange={(e) => update("leanMass", e.target.value)} placeholder="65" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                    <label className={labelClass}>Lean Mass kg (optional)</label>
+                    <input type="number" step="0.1" value={form.leanMass} onChange={(e) => update("leanMass", e.target.value)} placeholder="65" className={inputClass} />
                   </div>
                 </div>
 
-                {/* Info section */}
-                <div className="p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)]">
+                <div className="mt-auto p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)]">
                   <div className="flex items-start gap-3">
                     <Scale size={18} className="text-accent shrink-0 mt-0.5" />
                     <div>
-                      <div className="text-xs font-mono uppercase tracking-wider mb-1">About These Metrics</div>
+                      <div className="text-xs font-mono uppercase tracking-wider mb-1">Why This Matters</div>
                       <p className="text-[11px] text-[var(--text-muted)] leading-relaxed tracking-wide">
                         We use the Mifflin-St Jeor equation by default. If you provide body fat % or lean mass,
                         we'll switch to the Cunningham equation — typically 5-10% more accurate for trained individuals.
@@ -427,27 +473,26 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
                 animate="animate"
                 exit="exit"
                 transition={pageTransition}
-                className="space-y-6"
+                className="h-full flex flex-col"
               >
-                <div>
+                <div className="mb-5">
                   <h3 className="font-heading text-xl uppercase tracking-normal mb-1">Daily Activity</h3>
                   <p className="text-xs text-[var(--text-muted)] font-mono tracking-wide">Your non-training movement shapes your total daily expenditure.</p>
                 </div>
-                <div>
-                  <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Average Daily Steps</label>
-                  <input type="number" value={form.dailySteps} onChange={(e) => update("dailySteps", e.target.value)} placeholder="8000" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+
+                <div className="mb-4">
+                  <label className={labelClass}>Average Daily Steps</label>
+                  <input type="number" value={form.dailySteps} onChange={(e) => update("dailySteps", e.target.value)} placeholder="8000" className={inputClass} />
                 </div>
-                <div>
-                  <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-3 tracking-wider">Job Type</label>
+
+                <div className="mb-4">
+                  <label className={labelClass}>Job Type</label>
                   <div className="grid grid-cols-2 gap-2">
                     {JOB_OPTIONS.map((opt) => (
-                      <motion.button
+                      <button
                         key={opt.value}
                         onClick={() => update("jobType", opt.value)}
-                        whileHover={{ scale: 1.01 }}
-                        whileTap={{ scale: 0.98 }}
-                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                        className={`p-3 border text-left transition-colors will-change-transform ${
+                        className={`p-3 border text-left transition-colors ${
                           form.jobType === opt.value
                             ? "border-accent bg-accent/10"
                             : "border-[var(--border-default)] hover:border-[var(--text-secondary)]"
@@ -455,17 +500,16 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
                       >
                         <div className="text-xs font-mono uppercase tracking-wider">{opt.label}</div>
                         <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mt-1">{opt.description}</div>
-                      </motion.button>
+                      </button>
                     ))}
                   </div>
                 </div>
 
-                {/* Info section to fill space */}
-                <div className="p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)]">
+                <div className="mt-auto p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)]">
                   <div className="flex items-start gap-3">
                     <Footprints size={18} className="text-accent shrink-0 mt-0.5" />
                     <div>
-                      <div className="text-xs font-mono uppercase tracking-wider mb-1">Why This Matters</div>
+                      <div className="text-xs font-mono uppercase tracking-wider mb-1">NEAT Matters</div>
                       <p className="text-[11px] text-[var(--text-muted)] leading-relaxed tracking-wide">
                         Non-exercise activity thermogenesis (NEAT) can account for 15-30% of your daily calorie burn.
                         A desk worker walking 3,000 steps burns ~200 fewer calories than someone hitting 10,000 steps.
@@ -485,33 +529,32 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
                 animate="animate"
                 exit="exit"
                 transition={pageTransition}
-                className="space-y-6"
+                className="h-full flex flex-col"
               >
-                <div>
+                <div className="mb-5">
                   <h3 className="font-heading text-xl uppercase tracking-normal mb-1">Training Profile</h3>
                   <p className="text-xs text-[var(--text-muted)] font-mono tracking-wide">How you train directly impacts your calorie needs and macro targets.</p>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4">
+
+                <div className="grid sm:grid-cols-2 gap-4 mb-4">
                   <div>
-                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Training Days / Week</label>
-                    <input type="number" value={form.trainingDays} onChange={(e) => update("trainingDays", e.target.value)} placeholder="3" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                    <label className={labelClass}>Training Days / Week</label>
+                    <input type="number" value={form.trainingDays} onChange={(e) => update("trainingDays", e.target.value)} placeholder="3" className={inputClass} />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wider">Cardio Minutes / Week</label>
-                    <input type="number" value={form.cardioMinutes} onChange={(e) => update("cardioMinutes", e.target.value)} placeholder="60" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                    <label className={labelClass}>Cardio Minutes / Week</label>
+                    <input type="number" value={form.cardioMinutes} onChange={(e) => update("cardioMinutes", e.target.value)} placeholder="60" className={inputClass} />
                   </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-3 tracking-wider">Training Style</label>
+
+                <div className="mb-4">
+                  <label className={labelClass}>Training Style</label>
                   <div className="grid grid-cols-3 gap-2">
                     {STYLE_OPTIONS.map((opt) => (
-                      <motion.button
+                      <button
                         key={opt.value}
                         onClick={() => update("trainingStyle", opt.value)}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.97 }}
-                        transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                        className={`p-3 border text-center transition-colors will-change-transform ${
+                        className={`p-3 border text-center transition-colors ${
                           form.trainingStyle === opt.value
                             ? "border-accent bg-accent/10"
                             : "border-[var(--border-default)] hover:border-[var(--text-secondary)]"
@@ -519,13 +562,12 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
                       >
                         <div className="text-xs font-mono uppercase tracking-wider">{opt.label}</div>
                         <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mt-1">{opt.description}</div>
-                      </motion.button>
+                      </button>
                     ))}
                   </div>
                 </div>
 
-                {/* Info section to fill space */}
-                <div className="p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)]">
+                <div className="mt-auto p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)]">
                   <div className="flex items-start gap-3">
                     <Dumbbell size={18} className="text-accent shrink-0 mt-0.5" />
                     <div>
@@ -549,74 +591,54 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
                 animate="animate"
                 exit="exit"
                 transition={pageTransition}
-                className="space-y-6"
+                className="h-full flex flex-col"
               >
-                <div>
-                  <h3 className="font-heading text-xl uppercase tracking-normal mb-1">Select Your Goal</h3>
-                  <p className="text-xs text-[var(--text-muted)] font-mono tracking-wide">This determines your calorie surplus or deficit. You can change this anytime.</p>
+                <div className="mb-5">
+                  <h3 className="font-heading text-xl uppercase tracking-normal mb-1">What's Your Goal?</h3>
+                  <p className="text-xs text-[var(--text-muted)] font-mono tracking-wide">This determines your calorie target and macro split.</p>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+
+                <div className="grid grid-cols-2 gap-3 mb-5">
                   {GOAL_OPTIONS.map((opt) => (
-                    <motion.button
+                    <button
                       key={opt.value}
                       onClick={() => update("goal", opt.value)}
-                      whileHover={{ scale: 1.02, y: -2 }}
-                      whileTap={{ scale: 0.98 }}
-                      transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                      className={`p-4 border text-left transition-colors will-change-transform ${
+                      className={`p-4 border text-left transition-colors ${
                         form.goal === opt.value
                           ? "border-accent bg-accent/10"
                           : "border-[var(--border-default)] hover:border-[var(--text-secondary)]"
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-mono uppercase tracking-wider font-bold">
-                          {opt.label}
-                        </span>
-                        <AnimatePresence>
-                          {form.goal === opt.value && (
-                            <motion.span
-                              initial={{ scale: 0, opacity: 0 }}
-                              animate={{ scale: 1, opacity: 1 }}
-                              exit={{ scale: 0, opacity: 0 }}
-                              transition={{ type: "spring", stiffness: 500, damping: 25 }}
-                            >
-                              <CheckCircle2 size={14} className="text-accent" />
-                            </motion.span>
-                          )}
-                        </AnimatePresence>
+                      <div className="flex items-center justify-between mb-2">
+                        <opt.icon size={20} className={form.goal === opt.value ? "text-accent" : "text-[var(--text-muted)]"} />
+                        {form.goal === opt.value && <CheckCircle2 size={14} className="text-accent" />}
                       </div>
-                      <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">{opt.description}</div>
-                    </motion.button>
+                      <div className="text-sm font-mono uppercase tracking-wider font-bold">{opt.label}</div>
+                      <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mt-1">{opt.description}</div>
+                    </button>
                   ))}
                 </div>
 
-                {/* Goal explanation */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)]">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Target size={16} className="text-accent" />
-                      <span className="text-xs font-mono uppercase tracking-wider">Calorie Adjustment</span>
-                    </div>
-                    <p className="text-[11px] text-[var(--text-muted)] leading-relaxed tracking-wide">
-                      {form.goal === "cut" && "We'll set you at ~15% below maintenance for steady fat loss without muscle sacrifice."}
-                      {form.goal === "bulk" && "A modest 10% surplus maximizes muscle gain while minimizing fat accumulation."}
-                      {form.goal === "maintain" && "You'll eat at maintenance — perfect for sustaining progress or body recomposition."}
-                      {form.goal === "recomp" && "Eating at maintenance with high protein enables simultaneous fat loss and muscle gain."}
-                    </p>
+                {/* Dynamic projection based on selected goal */}
+                <div className="mt-auto p-4 border border-accent/30 bg-accent/5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Sparkles size={14} className="text-accent" />
+                    <span className="text-xs font-mono uppercase text-accent tracking-wider">Your Projected Results</span>
                   </div>
-                  <div className="p-4 border border-[var(--border-default)] bg-[var(--bg-elevated)]">
-                    <div className="flex items-center gap-2 mb-2">
-                      <TrendingUp size={16} className="text-accent" />
-                      <span className="text-xs font-mono uppercase tracking-wider">Expected Timeline</span>
-                    </div>
-                    <p className="text-[11px] text-[var(--text-muted)] leading-relaxed tracking-wide">
-                      {form.goal === "cut" && "Aim for 0.5-1% body weight loss per week. Visible results in 4-6 weeks."}
-                      {form.goal === "bulk" && "Expect 0.25-0.5% weight gain per week. Strength gains within 2-3 weeks."}
-                      {form.goal === "maintain" && "Focus on performance metrics and how you feel rather than the scale."}
-                      {form.goal === "recomp" && "Progress is slower but sustainable. Track measurements, not just weight."}
-                    </p>
+                  <div className="text-center mb-3">
+                    <div className="font-heading text-2xl">{projected.headline}</div>
+                    <div className="text-xs font-mono text-[var(--text-muted)]">Timeline: {projected.timeline}</div>
                   </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {projected.details.map((detail, i) => (
+                      <div key={i} className="text-center p-2 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                        <detail.icon size={14} className="text-accent mx-auto mb-1" />
+                        <div className="text-[10px] font-mono text-[var(--text-muted)]">{detail.label}</div>
+                        <div className="text-xs font-mono font-bold">{detail.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] font-mono text-accent mt-3 text-center">{projected.tip}</p>
                 </div>
               </motion.div>
             )}
@@ -630,96 +652,88 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
                 animate="animate"
                 exit="exit"
                 transition={pageTransition}
-                className="space-y-6"
+                className="h-full flex flex-col"
               >
                 {loading ? (
-                  <div className="flex flex-col items-center justify-center py-16 gap-4">
+                  <div className="flex-1 flex flex-col items-center justify-center gap-4">
                     <Loader2 size={36} className="animate-spin text-accent" />
                     <div className="text-sm font-mono text-[var(--text-muted)] tracking-wide">CALCULATING YOUR PROTOCOL...</div>
                   </div>
                 ) : error ? (
                   <div className="p-4 bg-red-500/10 border border-red-500/30 text-red-400 text-sm font-mono tracking-wide">{error}</div>
                 ) : results ? (
-                  <div className="space-y-6">
-                    <div className="text-center space-y-2">
-                      <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-accent/10 border border-accent/30 text-accent text-[10px] font-mono uppercase tracking-wider">
-                        <Sparkles size={12} /> Personalized Protocol Ready
+                  <>
+                    <div className="text-center mb-4">
+                      <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-accent/10 border border-accent/30 text-accent text-[10px] font-mono uppercase tracking-wider mb-2">
+                        <Sparkles size={12} /> Your Protocol is Ready
                       </div>
-                      <h3 className="font-heading text-2xl uppercase tracking-normal">Your Daily Targets</h3>
-                      <p className="text-xs text-[var(--text-muted)] font-mono tracking-wide max-w-md mx-auto">
-                        Based on {form.sex === "male" ? "Mifflin-St Jeor" : "Mifflin-St Jeor"} equation
-                        {form.leanMass || form.bodyFat ? " + Cunningham adjustment" : ""}.
-                        These numbers adapt as you log data.
-                      </p>
+                      <h3 className="font-heading text-xl uppercase tracking-normal">{projected.headline}</h3>
+                      <p className="text-xs text-[var(--text-muted)] font-mono">Achieve this in {projected.timeline} with consistent tracking</p>
                     </div>
 
                     {/* Big calorie number */}
-                    <div className="p-6 bg-accent text-[var(--theme-primary-text)] text-center">
-                      <div className="text-[10px] font-mono uppercase tracking-widest opacity-70 mb-2">Daily Calorie Target</div>
-                      <div className="font-heading text-5xl tracking-tight">{results.targetCals}</div>
-                      <div className="text-xs font-mono uppercase tracking-widest opacity-70 mt-1">KCAL / DAY</div>
+                    <div className="p-5 bg-accent text-[var(--theme-primary-text)] text-center mb-4">
+                      <div className="text-[10px] font-mono uppercase tracking-widest opacity-70 mb-1">Daily Calorie Target</div>
+                      <div className="font-heading text-4xl tracking-tight">{results.targetCals}</div>
+                      <div className="text-xs font-mono uppercase tracking-widest opacity-70">KCAL / DAY</div>
                     </div>
 
                     {/* Macro grid */}
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)] text-center">
-                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mb-1">PROTEIN</div>
-                        <div className="font-heading text-2xl">{results.targetProtein}g</div>
-                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mt-1">{Math.round(results.targetProtein * 4)} kcal</div>
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] text-center">
+                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">PROTEIN</div>
+                        <div className="font-heading text-xl">{results.targetProtein}g</div>
                       </div>
-                      <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)] text-center">
-                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mb-1">CARBS</div>
-                        <div className="font-heading text-2xl">{results.targetCarbs}g</div>
-                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mt-1">{Math.round(results.targetCarbs * 4)} kcal</div>
+                      <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] text-center">
+                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">CARBS</div>
+                        <div className="font-heading text-xl">{results.targetCarbs}g</div>
                       </div>
-                      <div className="p-4 bg-[var(--bg-elevated)] border border-[var(--border-default)] text-center">
-                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mb-1">FAT</div>
-                        <div className="font-heading text-2xl">{results.targetFat}g</div>
-                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mt-1">{Math.round(results.targetFat * 9)} kcal</div>
+                      <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] text-center">
+                        <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">FAT</div>
+                        <div className="font-heading text-xl">{results.targetFat}g</div>
                       </div>
                     </div>
 
                     {/* Stats row */}
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-3 mb-4">
                       <div className="p-3 border border-[var(--border-default)] flex items-center gap-3">
-                        <Activity size={18} className="text-accent" />
+                        <Activity size={16} className="text-accent" />
                         <div>
-                          <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">RMR</div>
+                          <div className="text-[10px] font-mono text-[var(--text-muted)]">RMR</div>
                           <div className="font-heading text-lg">{results.rmr} <span className="text-xs font-mono text-[var(--text-muted)]">kcal</span></div>
                         </div>
                       </div>
                       <div className="p-3 border border-[var(--border-default)] flex items-center gap-3">
-                        <Flame size={18} className="text-accent" />
+                        <Flame size={16} className="text-accent" />
                         <div>
-                          <div className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">TDEE</div>
+                          <div className="text-[10px] font-mono text-[var(--text-muted)]">TDEE</div>
                           <div className="font-heading text-lg">{results.tdee} <span className="text-xs font-mono text-[var(--text-muted)]">kcal</span></div>
                         </div>
                       </div>
                     </div>
 
                     {/* CTA */}
-                    <div className="text-center space-y-3 pt-2">
+                    <div className="mt-auto text-center">
                       <button
                         onClick={handleFinish}
-                        className="px-10 py-4 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 transition-opacity inline-flex items-center gap-2"
+                        className="px-10 py-3.5 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 transition-opacity inline-flex items-center gap-2"
                       >
                         <Trophy size={16} /> Start My Journey
                       </button>
-                      <p className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide">
-                        Your targets are saved. You can edit them anytime in Settings.
+                      <p className="text-[10px] font-mono text-[var(--text-muted)] tracking-wide mt-2">
+                        Your targets are saved. Edit anytime in Settings.
                       </p>
                     </div>
-                  </div>
+                  </>
                 ) : null}
               </motion.div>
             )}
-            </AnimatePresence>
-          </LayoutGroup>
+          </AnimatePresence>
         </div>
 
-        {/* Footer Navigation */}
+        {/* Footer Navigation - Always visible for steps 1-4 */}
         {step > 0 && step < 5 && (
-          <div className="sticky bottom-0 bg-[var(--bg-card)] border-t border-[var(--border-default)] px-6 py-4 flex items-center justify-between">
+          <div className="shrink-0 border-t border-[var(--border-default)] px-6 py-4 flex items-center justify-between">
             <button
               onClick={handleBack}
               className="flex items-center gap-2 px-4 py-2 border border-[var(--border-default)] font-mono text-xs uppercase tracking-wider hover:border-accent transition-colors"
@@ -732,7 +746,7 @@ export default function OnboardingModal({ open, onClose, onComplete }: Onboardin
               className="flex items-center gap-2 px-6 py-2.5 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               {step === STEPS.length - 2 ? (
-                loading ? <><Loader2 size={14} className="animate-spin" /> Calculating...</> : <><Sparkles size={14} /> Reveal My Plan</>
+                loading ? <><Loader2 size={14} className="animate-spin" /> Calculating...</> : <><Sparkles size={14} /> See My Results</>
               ) : (
                 <>Next <ChevronRight size={14} /></>
               )}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -35,14 +36,14 @@ import {
   Plus,
   Minus,
   ChefHat,
-  BookOpen,
   BarChart3,
   Clock,
   Activity,
   Award,
   Star,
-  GlassWater,
   LineChart,
+  Barcode,
+  Camera,
   PieChart,
   BarChart2,
   Calendar,
@@ -78,6 +79,9 @@ import { ProgressBar } from "../components/ui/ProgressBar";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ConfirmLogCard } from "../components/ConfirmLogCard";
 import { InlineLogPanel } from "../components/InlineLogPanel";
+import { GamificationPanel } from "../components/GamificationPanel";
+import { GamificationPage } from "../components/GamificationPage";
+import { NutritionScanner } from "../components/NutritionScanner";
 import { ToastStack } from "../components/ToastStack";
 import { CommandBar } from "../components/CommandBar";
 import { RemainingBudget } from "../components/RemainingBudget";
@@ -86,6 +90,8 @@ import OnboardingModal from "../components/OnboardingModal";
 import { useLayout } from "../components/Layout";
 import { LiveWorkout } from "../components/LiveWorkout";
 import { TypingIndicator, SkeletonCard } from "../components/ui/AnimatedComponents";
+import CustomSelect from "../components/ui/CustomSelect";
+import { Confetti } from "../components/Confetti";
 import { springs, chatBubbleIn, staggerContainer, staggerItem } from "../lib/animations";
 
 const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
@@ -96,6 +102,35 @@ function getDaysInMonth(year: number, month: number) {
 
 function getFirstDayOfMonth(year: number, month: number) {
   return new Date(year, month - 1, 1).getDay();
+}
+
+function RecipeModal({ open, onClose, children }: { open: boolean; onClose: () => void; children: React.ReactNode }) {
+  return createPortal(
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          key="recipe-modal"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 overflow-y-auto"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            className="bg-[var(--bg-card)] border border-[var(--border-default)] w-full max-w-2xl max-h-[90vh] flex flex-col min-h-0 my-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {children}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>,
+    document.body
+  );
 }
 
 // Badge definitions
@@ -141,6 +176,7 @@ export default function Dashboard() {
   const dailyInsightsAction = useAction(api.ai.generateDailyInsights);
   const weeklySummaryAction = useAction(api.ai.generateWeeklySummary);
   const suggestWorkoutAction = useAction(api.ai.suggestWorkout);
+  const recordActivityMutation = useMutation(api.gamification.recordActivity);
 
   // ─── Convex reactive queries ────────────────────────────────────────────────
   const mealsQuery = useQuery(api.meals.getMeals, { date: today });
@@ -154,6 +190,24 @@ export default function Dashboard() {
   const goals = goalsData ?? { calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 };
   const dailyInsightsData = useQuery(api.insights.getDailyInsights, { date: today }) ?? { insights: [] };
   const weeklySummary = useQuery(api.insights.getWeeklySummary) ?? null;
+  const streakData = useQuery(api.history.getStreak) ?? { streak: 0, todayLogged: false };
+  const gamificationState = useQuery(api.gamification.getState);
+
+  // Confetti state
+  const [showConfetti, setShowConfetti] = useState(false);
+  const prevMissionsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    if (gamificationState?.missions) {
+      const completed = (gamificationState.missions as any[]).filter((m) => m.completed).map((m) => m.id);
+      const prev = prevMissionsRef.current;
+      const newlyCompleted = completed.filter((id) => !prev.includes(id));
+      if (newlyCompleted.length > 0) {
+        setShowConfetti(true);
+      }
+      prevMissionsRef.current = completed;
+    }
+  }, [gamificationState]);
 
   // Ensure user record exists on first load
   useEffect(() => {
@@ -286,6 +340,9 @@ export default function Dashboard() {
   // Insights visualization mode
   const [insightView, setInsightView] = useState<'overview' | 'calories' | 'macros' | 'trends'>('overview');
 
+  // Home stat cards expand/collapse together
+  const [homeCardsExpanded, setHomeCardsExpanded] = useState(false);
+
   // Save to localStorage
   useEffect(() => {
     localStorage.setItem(`water-${today}`, String(waterIntake));
@@ -357,7 +414,7 @@ export default function Dashboard() {
   const totalCarbs = meals.reduce((s, m) => s + m.carbs, 0);
   const totalFat = meals.reduce((s, m) => s + m.fat, 0);
 
-  const [mealForm, setMealForm] = useState({ description: "", mealType: "breakfast", time: "" });
+  const [mealForm, setMealForm] = useState({ description: "", time: "", date: today });
   const [mealError, setMealError] = useState<string | null>(null);
 
   const [workoutForm, setWorkoutForm] = useState({ description: "", duration: "", intensity: "HIGH" });
@@ -674,6 +731,7 @@ export default function Dashboard() {
   // Home inline panels
   const [showQuickMealPanel, setShowQuickMealPanel] = useState(false);
   const [showQuickWorkoutPanel, setShowQuickWorkoutPanel] = useState(false);
+  const [voiceInput, setVoiceInput] = useState("");
 
   // Confirm flow states per context
   const [mealConfirm, setMealConfirm] = useState<{ initialData: any } | null>(null);
@@ -683,7 +741,8 @@ export default function Dashboard() {
   const [logAgainWorkout, setLogAgainWorkout] = useState<any | null>(null);
   const [historyAddMealDate, setHistoryAddMealDate] = useState<string | null>(null);
   const [historyAddWorkoutDate, setHistoryAddWorkoutDate] = useState<string | null>(null);
-  const [suggestionConfirm, setSuggestionConfirm] = useState<any | null>(null);
+  const [showScanner, setShowScanner] = useState(false);
+
 
   // Global Cmd+K listener
   useEffect(() => {
@@ -709,12 +768,23 @@ export default function Dashboard() {
       date: targetDate,
       mealType: data.mealType,
       aiSuggestion: data.aiSuggestion,
+      components: data.components,
     });
     toastSuccess(
       `Logged: ${data.name}`,
       async () => { try { await deleteMealMutation({ id: id as Id<"meals"> }); } catch {} },
       "UNDO",
     );
+    // Update gamification state
+    recordActivityMutation({
+      type: "meal",
+      date: targetDate ?? today,
+      totalCalories: totalCals + (data.calories ?? 0),
+      totalProtein: totalProtein + (data.protein ?? 0),
+      calorieTarget: goals.calorieGoal,
+      proteinTarget: goals.proteinGoal,
+      mealsLoggedToday: meals.length,
+    }).catch(() => {});
   };
 
   const commitWorkout = async (data: any, targetDate?: string) => {
@@ -733,6 +803,7 @@ export default function Dashboard() {
       async () => { try { await deleteWorkoutMutation({ id: id as Id<"workouts"> }); } catch {} },
       "UNDO",
     );
+    recordActivityMutation({ type: "workout", date: targetDate ?? today }).catch(() => {});
   };
 
   // Context-aware AI coach prompts
@@ -830,6 +901,17 @@ export default function Dashboard() {
                 >
                   <Plus size={14} strokeWidth={3} /> WORKOUT
                 </button>
+                <VoiceInputButton
+                  value={voiceInput}
+                  onChange={(text) => {
+                    setVoiceInput(text);
+                    if (text.trim()) {
+                      setShowQuickMealPanel(true);
+                      setShowQuickWorkoutPanel(false);
+                    }
+                  }}
+                  className="h-[42px]"
+                />
               </div>
             </div>
 
@@ -837,13 +919,14 @@ export default function Dashboard() {
               mode="meal"
               open={showQuickMealPanel}
               onClose={() => setShowQuickMealPanel(false)}
-
               onConfirm={(data) => commitMeal(data)}
               totalCals={totalCals}
               totalProtein={totalProtein}
               totalCarbs={totalCarbs}
               totalFat={totalFat}
               goals={effectiveGoals}
+              defaultDescription={voiceInput}
+              onDescriptionUsed={() => setVoiceInput("")}
             />
             <InlineLogPanel
               mode="workout"
@@ -866,6 +949,8 @@ export default function Dashboard() {
                 subValue={`/ ${effectiveGoals.calorieGoal} KCAL`}
                 icon={Flame}
                 accent
+                expanded={homeCardsExpanded}
+                onToggle={() => setHomeCardsExpanded(!homeCardsExpanded)}
                 tooltipContent={
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs font-mono tracking-wide">
@@ -898,6 +983,8 @@ export default function Dashboard() {
                 value={`${totalProtein || 0}g`}
                 subValue={`/ ${effectiveGoals.proteinGoal}g`}
                 icon={Target}
+                expanded={homeCardsExpanded}
+                onToggle={() => setHomeCardsExpanded(!homeCardsExpanded)}
                 tooltipContent={
                   <div className="space-y-2">
                     <div className="flex justify-between text-xs font-mono tracking-wide">
@@ -913,9 +1000,46 @@ export default function Dashboard() {
                   </div>
                 }
               />
-              <StatCard label="WORKOUTS" value={workouts.length} subValue="TODAY" icon={Dumbbell} />
-              <StatCard label="BURNED" value={caloriesBurnedData.total} subValue="KCAL" icon={Zap} />
+              <StatCard
+                label="NET"
+                value={totalCals - caloriesBurnedData.total}
+                subValue="KCAL"
+                icon={Activity}
+                expanded={homeCardsExpanded}
+                onToggle={() => setHomeCardsExpanded(!homeCardsExpanded)}
+                tooltipContent={
+                  <div className="space-y-1 text-xs font-mono tracking-wide">
+                    <div className="flex justify-between">
+                      <span className="text-[var(--text-muted)]">EATEN</span>
+                      <span>{totalCals}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[var(--text-muted)]">BURNED</span>
+                      <span className="text-accent">-{caloriesBurnedData.total}</span>
+                    </div>
+                  </div>
+                }
+              />
+              <StatCard
+                label="STREAK"
+                value={streakData.streak}
+                subValue={streakData.streak === 1 ? "DAY" : "DAYS"}
+                icon={Flame}
+                accent={streakData.streak >= 7}
+                expanded={homeCardsExpanded}
+                onToggle={() => setHomeCardsExpanded(!homeCardsExpanded)}
+                tooltipContent={
+                  <div className="text-xs font-mono tracking-wide">
+                    {streakData.todayLogged
+                      ? "You've logged today! Keep it up."
+                      : "Log something today to continue your streak!"}
+                  </div>
+                }
+              />
             </div>
+
+            {/* Gamification Panel */}
+            <GamificationPanel />
 
             {/* Water & Sleep - Flexible Input */}
             <div className="grid lg:grid-cols-2 gap-4">
@@ -927,27 +1051,12 @@ export default function Dashboard() {
                     <span className="font-mono text-sm uppercase tracking-wider">Hydration</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="font-heading text-2xl">{waterIntake.toFixed(1)}/{waterGoal}</span>
-                    <span className="text-[10px] font-mono uppercase text-[var(--text-muted)] tracking-wide">{waterUnit === 'glasses' ? 'GLS' : 'L'}</span>
+                    <span className="font-heading text-2xl">{waterUnit === 'glasses' ? Math.floor(waterIntake) : waterIntake.toFixed(1)}</span>
+                    <span className="text-[10px] font-mono uppercase text-[var(--text-muted)] tracking-wide">{waterUnit === 'glasses' ? 'GLASSES' : 'LITRES'}</span>
                   </div>
                 </div>
 
                 <div>
-                  {/* Visual glasses */}
-                  {waterUnit === 'glasses' && (
-                    <div className="flex gap-1.5 mb-3">
-                      {Array.from({ length: waterGoalGlasses }).map((_, i) => (
-                        <button
-                          key={i}
-                          onClick={() => setWaterIntake(i + 1)}
-                          className={`flex-1 h-10 border transition-all ${
-                            i < Math.floor(waterIntake) ? 'bg-accent border-accent' : 'bg-[var(--bg-elevated)] border-[var(--border-default)] hover:border-accent'
-                          }`}
-                        />
-                      ))}
-                    </div>
-                  )}
-
                   {/* Quick buttons + custom input */}
                   <div className="flex gap-2">
                     <button onClick={() => setWaterIntake(Math.max(0, waterIntake - (waterUnit === 'glasses' ? 1 : 0.25)))} className="px-3 py-2 border border-[var(--border-default)] font-mono text-xs hover:border-accent transition-colors">
@@ -1059,7 +1168,6 @@ export default function Dashboard() {
                     {meals.slice(0, 3).map((meal: any) => (
                       <div key={meal._id} className="flex items-center justify-between p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] group">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[10px] font-mono bg-[var(--bg-main)] border border-[var(--border-default)] px-1.5 py-0.5 uppercase tracking-wider">{meal.mealType}</span>
                           <span className="text-xs font-mono bg-accent text-[var(--theme-primary-text)] px-2 py-1">{meal.time}</span>
                           <span className="font-medium tracking-wide">{meal.name}</span>
                         </div>
@@ -1170,39 +1278,40 @@ export default function Dashboard() {
               <ConfirmLogCard
                 mode="meal"
                 initialData={mealConfirm.initialData}
-  
                 onConfirm={(data) => {
-                  commitMeal(data);
+                  commitMeal(data, mealForm.date);
                   setMealConfirm(null);
-                  setMealForm({ description: "", mealType: "breakfast", time: "" });
+                  setMealForm({ description: "", time: "", date: today });
                 }}
                 onDiscard={() => setMealConfirm(null)}
               />
             ) : (
               <Card className="p-6">
-                <h3 className="font-mono text-sm uppercase tracking-wider text-[var(--text-muted)] mb-4">Log New Meal — AI Powered</h3>
+                <h3 className="font-mono text-sm uppercase tracking-wider text-[var(--text-muted)] mb-4">Log New Meal</h3>
                 <div className="space-y-4">
-                  <div className="flex gap-3">
-                    <select
-                      value={mealForm.mealType}
-                      onChange={(e) => setMealForm({ ...mealForm, mealType: e.target.value })}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="date"
+                      value={mealForm.date}
+                      onChange={(e) => setMealForm({ ...mealForm, date: e.target.value })}
                       className="px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
-                    >
-                      <option value="breakfast">BREAKFAST</option>
-                      <option value="lunch">LUNCH</option>
-                      <option value="snack">SNACK</option>
-                      <option value="dinner">DINNER</option>
-                    </select>
+                    />
                     <input
                       placeholder="Time (HH:MM)"
                       value={mealForm.time}
                       onChange={(e) => setMealForm({ ...mealForm, time: e.target.value })}
-                      className="flex-1 px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)]"
+                      className="flex-1 min-w-[120px] px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)]"
                     />
+                    <button
+                      onClick={() => setShowScanner(true)}
+                      className="flex items-center gap-1.5 px-3 py-2.5 border border-[var(--border-default)] font-mono text-[10px] uppercase tracking-wider hover:border-accent transition-colors"
+                    >
+                      <Camera size={12} /> Scan Food
+                    </button>
                   </div>
                   <div className="relative">
                     <textarea
-                      placeholder="Describe your meal — what you ate, portion sizes, ingredients... AI will estimate macros."
+                      placeholder="Describe your meal — what you ate, portion sizes, ingredients... We'll estimate macros."
                       value={mealForm.description}
                       onChange={(e) => setMealForm({ ...mealForm, description: e.target.value })}
                       rows={3}
@@ -1225,7 +1334,6 @@ export default function Dashboard() {
                       setMealConfirm({
                         initialData: {
                           description: mealForm.description,
-                          mealType: mealForm.mealType,
                           time: mealForm.time,
                         },
                       });
@@ -1234,7 +1342,7 @@ export default function Dashboard() {
                     className="flex items-center gap-2 px-6 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
                   >
                     <Sparkles size={16} />
-                    AI Log Meal
+                    Log Meal
                   </button>
                 </div>
               </Card>
@@ -1285,12 +1393,6 @@ export default function Dashboard() {
                       <div className="flex gap-3">
                         <input value={editMealForm.name} onChange={(e) => setEditMealForm({ ...editMealForm, name: e.target.value })} className="flex-1 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="Name" />
                         <input value={editMealForm.time} onChange={(e) => setEditMealForm({ ...editMealForm, time: e.target.value })} className="w-24 px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent" placeholder="Time" />
-                        <select value={editMealForm.mealType} onChange={(e) => setEditMealForm({ ...editMealForm, mealType: e.target.value })} className="px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent">
-                          <option value="breakfast">BREAKFAST</option>
-                          <option value="lunch">LUNCH</option>
-                          <option value="snack">SNACK</option>
-                          <option value="dinner">DINNER</option>
-                        </select>
                       </div>
                       <button onClick={() => handleUpdateMeal(meal._id)} className="flex items-center gap-2 px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold">
                         <Save size={12} /> SAVE
@@ -1301,10 +1403,14 @@ export default function Dashboard() {
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 flex-wrap mb-2">
-                            <span className="text-[10px] font-mono bg-[var(--bg-main)] border border-[var(--border-default)] px-1.5 py-0.5 uppercase tracking-wider">{meal.mealType}</span>
                             <span className="text-xs font-mono bg-accent text-[var(--theme-primary-text)] px-2 py-1">{meal.time}</span>
                             <h3 className="text-lg font-heading uppercase tracking-normal">{meal.name}</h3>
                           </div>
+                          {meal.components && (
+                            <div className="text-xs text-[var(--text-muted)] font-mono tracking-wide mb-2">
+                              {meal.components}
+                            </div>
+                          )}
                           <div className="flex items-center gap-4 text-sm font-mono text-[var(--text-secondary)] tracking-wide">
                             <span><Flame size={14} className="inline mr-1" />{meal.calories} KCAL</span>
                             <span>P: {meal.protein}g</span>
@@ -1324,8 +1430,8 @@ export default function Dashboard() {
                                   carbs: meal.carbs,
                                   fat: meal.fat,
                                   time: meal.time,
-                                  mealType: meal.mealType || 'unspecified',
                                   aiSuggestion: meal.aiSuggestion || null,
+                                  components: meal.components || null,
                                 });
                               }}
                               className="shrink-0 p-2 border border-[var(--border-default)] hover:border-accent transition-all"
@@ -1359,10 +1465,16 @@ export default function Dashboard() {
                         {expandedMealId === meal._id && (
                           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
                             <div className="mt-3 pt-3 border-t border-[var(--border-default)] space-y-2">
-                              {meal.aiSuggestion && (
+                              {meal.components && (
                                 <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                                  <div className="text-[10px] font-mono uppercase text-accent tracking-wider mb-1">AI Note</div>
-                                  <p className="text-sm text-[var(--text-secondary)] tracking-wide">{meal.aiSuggestion}</p>
+                                  <div className="text-[10px] font-mono uppercase text-accent tracking-wider mb-1">Components</div>
+                                  <p className="text-sm text-[var(--text-secondary)] tracking-wide">{meal.components}</p>
+                                </div>
+                              )}
+                              {meal.aiSuggestion && (
+                                <div className="p-3 bg-accent/5 border border-accent/20">
+                                  <div className="text-[10px] font-mono uppercase text-accent tracking-wider mb-1">Next Meal Insight</div>
+                                  <p className="text-sm text-[var(--text-secondary)] tracking-wide italic">{meal.aiSuggestion}</p>
                                 </div>
                               )}
                               <div className="grid grid-cols-4 gap-2 text-center">
@@ -1393,6 +1505,17 @@ export default function Dashboard() {
                 </motion.div>
               ))}
             </div>
+
+            {showScanner && (
+              <NutritionScanner
+                onConfirm={(mealData) => {
+                  commitMeal(mealData, mealForm.date);
+                  setShowScanner(false);
+                }}
+                onClose={() => setShowScanner(false)}
+                time={mealForm.time}
+              />
+            )}
           </motion.div>
         )}
 
@@ -1425,7 +1548,7 @@ export default function Dashboard() {
               />
             ) : (
               <Card className="p-6">
-                <h3 className="font-mono text-sm uppercase tracking-wider text-[var(--text-muted)] mb-4">Log Workout — AI Powered</h3>
+                <h3 className="font-mono text-sm uppercase tracking-wider text-[var(--text-muted)] mb-4">Log Workout</h3>
                 <div className="space-y-4">
                   <div className="relative">
                     <textarea
@@ -1448,16 +1571,19 @@ export default function Dashboard() {
                       onChange={(e) => setWorkoutForm({ ...workoutForm, duration: e.target.value })}
                       className="flex-1 px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)]"
                     />
-                    <select
-                      value={workoutForm.intensity}
-                      onChange={(e) => setWorkoutForm({ ...workoutForm, intensity: e.target.value })}
-                      className="px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
-                    >
-                      <option value="LOW">LOW</option>
-                      <option value="MEDIUM">MEDIUM</option>
-                      <option value="HIGH">HIGH</option>
-                      <option value="MAX">MAX</option>
-                    </select>
+                    <div className="w-48">
+                      <CustomSelect
+                        value={workoutForm.intensity}
+                        onChange={(val) => setWorkoutForm({ ...workoutForm, intensity: val })}
+                        options={[
+                          { value: "LOW", label: "LOW", description: "Light activity, easy pace" },
+                          { value: "MEDIUM", label: "MEDIUM", description: "Moderate effort, breaking a sweat" },
+                          { value: "HIGH", label: "HIGH", description: "Hard effort, heavy breathing" },
+                          { value: "MAX", label: "MAX", description: "All-out intensity, failure reps" },
+                        ]}
+                        placeholder="Intensity"
+                      />
+                    </div>
                   </div>
                   {workoutError && <div className="text-xs font-mono text-red-400 tracking-wide">{workoutError}</div>}
                   <button
@@ -1479,72 +1605,59 @@ export default function Dashboard() {
                     className="flex items-center gap-2 px-6 py-3 bg-accent text-[var(--theme-primary-text)] font-mono text-sm uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
                   >
                     <Sparkles size={16} />
-                    AI Log Workout
+                    Log Workout
                   </button>
                 </div>
               </Card>
             )}
 
             {/* Workout suggestion */}
-            {suggestionConfirm ? (
-              <ConfirmLogCard
-                mode="workout"
-                initialData={{ description: workoutSuggestion?.name || "" }}
-  
-                preParsed={{
-                  name: workoutSuggestion.name,
-                  sets: workoutSuggestion.sets,
-                  duration: workoutSuggestion.duration,
-                  intensity: workoutSuggestion.intensity,
-                  rationale: workoutSuggestion.rationale,
-                  exercises: null,
-                }}
-                onConfirm={(data) => {
-                  commitWorkout(data);
-                  setSuggestionConfirm(null);
-                }}
-                onDiscard={() => setSuggestionConfirm(null)}
-              />
-            ) : (
-              <Card className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-mono text-sm uppercase tracking-wider text-[var(--text-muted)]">AI Workout Suggestion</h3>
-                  <button
-                    onClick={handleGetWorkoutSuggestion}
-                    disabled={suggestionLoading}
-                    className="flex items-center gap-2 px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
-                  >
-                    {suggestionLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                    SUGGEST
-                  </button>
-                </div>
-                {workoutSuggestion ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <span className={`text-[10px] font-mono px-2 py-1 ${workoutSuggestion.intensity === "MAX" ? "bg-red-600 text-white" : workoutSuggestion.intensity === "HIGH" ? "bg-accent text-[var(--theme-primary-text)]" : "border border-[var(--border-default)]"}`}>{workoutSuggestion.intensity}</span>
-                      <h4 className="font-heading text-lg uppercase tracking-normal">{workoutSuggestion.name}</h4>
-                      <span className="text-xs font-mono text-[var(--text-muted)] tracking-wide">{workoutSuggestion.duration}</span>
-                    </div>
-                    <div className="text-sm font-mono text-[var(--text-secondary)] tracking-wide">
-                      {workoutSuggestion.sets && <span className="mr-4">{workoutSuggestion.sets}</span>}
-                      {workoutSuggestion.reps && <span className="mr-4">{workoutSuggestion.reps} reps</span>}
-                      {workoutSuggestion.weight && <span className="mr-4">{workoutSuggestion.weight}</span>}
-                    </div>
-                    {workoutSuggestion.rationale && (
-                      <p className="text-xs text-[var(--text-muted)] tracking-wide">{workoutSuggestion.rationale}</p>
+            <Card className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-mono text-sm uppercase tracking-wider text-[var(--text-muted)]">Workout Suggestion</h3>
+                <button
+                  onClick={handleGetWorkoutSuggestion}
+                  disabled={suggestionLoading}
+                  className="flex items-center gap-2 px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50"
+                >
+                  {suggestionLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  SUGGEST
+                </button>
+              </div>
+              {workoutSuggestion ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className={`text-[10px] font-mono px-2 py-1 ${workoutSuggestion.intensity === "MAX" ? "bg-red-600 text-white" : workoutSuggestion.intensity === "HIGH" ? "bg-accent text-[var(--theme-primary-text)]" : "border border-[var(--border-default)]"}`}>{workoutSuggestion.intensity}</span>
+                    <h4 className="font-heading text-lg uppercase tracking-normal">{workoutSuggestion.name}</h4>
+                    <span className="text-xs font-mono text-[var(--text-muted)] tracking-wide">{workoutSuggestion.duration}</span>
+                    {workoutSuggestion.caloriesBurned > 0 && (
+                      <span className="text-xs font-mono text-accent tracking-wide">~{workoutSuggestion.caloriesBurned} kcal</span>
                     )}
-                    <button
-                      onClick={() => setSuggestionConfirm(workoutSuggestion)}
-                      className="mt-2 flex items-center gap-2 px-4 py-2 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 transition-opacity"
-                    >
-                      <Sparkles size={12} /> LOG THIS WORKOUT
-                    </button>
                   </div>
-                ) : (
-                  <div className="text-sm font-mono text-[var(--text-muted)] tracking-wide">Click SUGGEST to get an AI-powered workout recommendation.</div>
-                )}
-              </Card>
-            )}
+                  {workoutSuggestion.exercises && workoutSuggestion.exercises.length > 0 && (
+                    <div className="space-y-2">
+                      {workoutSuggestion.exercises.map((ex: any, ei: number) => (
+                        <div key={ei} className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+                          <div className="font-mono text-sm tracking-wide mb-1">{ex.name}</div>
+                          <div className="flex flex-wrap gap-2">
+                            {ex.sets.map((s: any, si: number) => (
+                              <span key={si} className="text-xs font-mono bg-[var(--bg-main)] border border-[var(--border-default)] px-2 py-1">
+                                {s.weight ? `${s.weight} x ` : ""}{s.reps}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {workoutSuggestion.rationale && (
+                    <p className="text-xs text-[var(--text-muted)] tracking-wide italic">{workoutSuggestion.rationale}</p>
+                  )}
+                </div>
+              ) : (
+                <div className="text-sm font-mono text-[var(--text-muted)] tracking-wide">Click SUGGEST to get a workout recommendation based on your recent training.</div>
+              )}
+            </Card>
 
             {/* Live Workout Mode */}
             <AnimatePresence mode="wait">
@@ -1739,71 +1852,53 @@ export default function Dashboard() {
             </div>
 
             {/* Recipe Modal */}
-            <AnimatePresence>
-              {showRecipeForm && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-                  onClick={() => setShowRecipeForm(false)}
-                >
-                  <motion.div
-                    initial={{ scale: 0.95 }}
-                    animate={{ scale: 1 }}
-                    exit={{ scale: 0.95 }}
-                    className="bg-[var(--bg-card)] border border-[var(--border-default)] w-full max-w-2xl max-h-[90vh] overflow-y-auto"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="p-6 border-b border-[var(--border-default)] flex items-center justify-between">
-                      <h2 className="font-heading text-2xl uppercase tracking-normal">Add Recipe</h2>
-                      <button onClick={() => setShowRecipeForm(false)} className="p-2 hover:bg-[var(--bg-elevated)]"><X size={20} /></button>
-                    </div>
-                    <div className="p-6 space-y-4">
-                      <div>
-                        <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Recipe Name *</label>
-                        <input
-                          data-testid="recipe-name"
-                          value={recipeForm.name}
-                          onChange={(e) => setRecipeForm({ ...recipeForm, name: e.target.value })}
-                          className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent"
-                          placeholder="e.g. High Protein Breakfast Bowl"
-                        />
-                      </div>
-                      <div className="grid grid-cols-3 gap-4">
-                        <div>
-                          <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Servings</label>
-                          <input data-testid="recipe-servings" value={recipeForm.servings} onChange={(e) => setRecipeForm({ ...recipeForm, servings: e.target.value })} className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Prep Time</label>
-                          <input data-testid="recipe-prep-time" value={recipeForm.prepTime} onChange={(e) => setRecipeForm({ ...recipeForm, prepTime: e.target.value })} placeholder="10 min" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Cook Time</label>
-                          <input data-testid="recipe-cook-time" value={recipeForm.cookTime} onChange={(e) => setRecipeForm({ ...recipeForm, cookTime: e.target.value })} placeholder="15 min" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
-                        </div>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Ingredients</label>
-                        <textarea data-testid="recipe-ingredients" value={recipeForm.ingredients} onChange={(e) => setRecipeForm({ ...recipeForm, ingredients: e.target.value })} rows={4} placeholder="List ingredients with portions (one per line)" className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Instructions</label>
-                        <textarea data-testid="recipe-instructions" value={recipeForm.instructions} onChange={(e) => setRecipeForm({ ...recipeForm, instructions: e.target.value })} rows={4} placeholder="Step-by-step cooking method..." className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Notes (For AI Coach)</label>
-                        <textarea data-testid="recipe-notes" value={recipeForm.notes} onChange={(e) => setRecipeForm({ ...recipeForm, notes: e.target.value })} rows={2} placeholder="Any notes for the AI coach..." className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
-                      </div>
-                      <button data-testid="save-recipe-btn" onClick={handleSaveRecipe} disabled={!recipeForm.name.trim()} className="w-full py-4 bg-accent text-[var(--theme-primary-text)] font-mono uppercase tracking-wider font-bold disabled:opacity-50">
-                        Save Recipe
-                      </button>
-                    </div>
-                  </motion.div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            <RecipeModal open={showRecipeForm} onClose={() => setShowRecipeForm(false)}>
+              <div className="p-4 border-b border-[var(--border-default)] flex items-center justify-between shrink-0">
+                <h2 className="font-heading text-2xl uppercase tracking-normal">Add Recipe</h2>
+                <button onClick={() => setShowRecipeForm(false)} className="p-2 hover:bg-[var(--bg-elevated)]"><X size={20} /></button>
+              </div>
+              <div className="p-4 space-y-3 flex-1 min-h-0 overflow-y-auto">
+                <div>
+                  <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Recipe Name *</label>
+                  <input
+                    data-testid="recipe-name"
+                    value={recipeForm.name}
+                    onChange={(e) => setRecipeForm({ ...recipeForm, name: e.target.value })}
+                    className="w-full px-4 py-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent"
+                    placeholder="e.g. High Protein Breakfast Bowl"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Servings</label>
+                     <input data-testid="recipe-servings" value={recipeForm.servings} onChange={(e) => setRecipeForm({ ...recipeForm, servings: e.target.value })} className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Prep Time</label>
+                    <input data-testid="recipe-prep-time" value={recipeForm.prepTime} onChange={(e) => setRecipeForm({ ...recipeForm, prepTime: e.target.value })} placeholder="10 min" className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Cook Time</label>
+                    <input data-testid="recipe-cook-time" value={recipeForm.cookTime} onChange={(e) => setRecipeForm({ ...recipeForm, cookTime: e.target.value })} placeholder="15 min" className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Ingredients</label>
+                  <textarea data-testid="recipe-ingredients" value={recipeForm.ingredients} onChange={(e) => setRecipeForm({ ...recipeForm, ingredients: e.target.value })} rows={3} placeholder="List ingredients with portions (one per line)" className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Instructions</label>
+                  <textarea data-testid="recipe-instructions" value={recipeForm.instructions} onChange={(e) => setRecipeForm({ ...recipeForm, instructions: e.target.value })} rows={3} placeholder="Step-by-step cooking method..." className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono uppercase text-[var(--text-muted)] mb-2 tracking-wide">Notes (For AI Coach)</label>
+                  <textarea data-testid="recipe-notes" value={recipeForm.notes} onChange={(e) => setRecipeForm({ ...recipeForm, notes: e.target.value })} rows={2} placeholder="Any notes for the AI coach..." className="w-full px-3 py-2 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono focus:outline-none focus:border-accent resize-none leading-relaxed" />
+                </div>
+                <button data-testid="save-recipe-btn" onClick={handleSaveRecipe} disabled={!recipeForm.name.trim()} className="w-full py-3 bg-accent text-[var(--theme-primary-text)] font-mono uppercase tracking-wider font-bold disabled:opacity-50">
+                  Save Recipe
+                </button>
+              </div>
+            </RecipeModal>
 
             {recipes.length === 0 ? (
               <Card className="p-12 text-center border-dashed">
@@ -2060,7 +2155,7 @@ export default function Dashboard() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard label="CALORIES" value={totalCals || 0} subValue={`${Math.round(((totalCals || 0) / effectiveGoals.calorieGoal) * 100)}% of goal`} icon={Flame} accent />
               <StatCard label="PROTEIN" value={`${totalProtein || 0}g`} subValue={`${Math.round(((totalProtein || 0) / effectiveGoals.proteinGoal) * 100)}% of goal`} icon={Target} />
-              <StatCard label="HYDRATION" value={`${waterIntake}/${waterGoal}`} subValue={waterUnit.toUpperCase()} icon={Droplets} />
+              <StatCard label="HYDRATION" value={waterUnit === 'glasses' ? Math.floor(waterIntake) : waterIntake.toFixed(1)} subValue={waterUnit === 'glasses' ? 'GLASSES' : 'LITRES'} icon={Droplets} />
               <StatCard label="SLEEP" value={`${sleepHours}h`} subValue={sleepHours >= sleepGoal ? "GOAL MET" : `${(sleepGoal - sleepHours).toFixed(1)}h short`} icon={BedDouble} />
             </div>
 
@@ -2471,44 +2566,91 @@ export default function Dashboard() {
                         <div className="text-xs font-mono uppercase text-[var(--text-muted)] mb-3 tracking-wider">Meals ({historyDayData.meals.length})</div>
                         <div className="space-y-2">
                           {historyDayData.meals.map((m: any) => (
-                            <div key={m._id} className="flex items-center justify-between p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-mono bg-accent text-[var(--theme-primary-text)] px-2 py-0.5">{m.time}</span>
-                                <span className="font-medium tracking-wide">{m.name}</span>
+                            <div key={m._id} className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] group">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  <span className="text-xs font-mono bg-accent text-[var(--theme-primary-text)] px-2 py-0.5 shrink-0">{m.time}</span>
+                                  <span className="font-medium tracking-wide truncate">{m.name}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-accent tracking-wide">{m.calories} kcal</span>
+                                  <motion.button
+                                    whileHover={{ scale: 1.1 }}
+                                    whileTap={{ scale: 0.9 }}
+                                    onClick={() => commitMeal({ name: m.name, calories: m.calories, protein: m.protein, carbs: m.carbs, fat: m.fat, time: m.time, mealType: m.mealType })}
+                                    className="p-1.5 border border-[var(--border-default)] hover:border-accent hover:bg-accent hover:text-[var(--theme-primary-text)] transition-all opacity-0 group-hover:opacity-100"
+                                    title="Log again today"
+                                  >
+                                    <Repeat size={12} />
+                                  </motion.button>
+                                </div>
                               </div>
-                              <span className="font-mono text-accent tracking-wide">{m.calories} kcal</span>
+                              <div className="flex items-center gap-3 text-[10px] font-mono text-[var(--text-muted)] tracking-wide">
+                                <span>P: {m.protein}g</span>
+                                <span>C: {m.carbs}g</span>
+                                <span>F: {m.fat}g</span>
+                                {m.mealType && <span className="uppercase">{m.mealType}</span>}
+                              </div>
+                              {m.aiSuggestion && (
+                                <div className="mt-2 text-xs text-[var(--text-muted)] italic border-l-2 border-accent pl-2">
+                                  {m.aiSuggestion}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
                         <div className="text-xs font-mono text-[var(--text-muted)] mt-2 tracking-wide">
-                          TOTAL: {historyDayData.meals.reduce((s: number, m: any) => s + m.calories, 0)} kcal
+                          TOTAL: {historyDayData.meals.reduce((s: number, m: any) => s + m.calories, 0)} kcal · P: {historyDayData.meals.reduce((s: number, m: any) => s + m.protein, 0)}g · C: {historyDayData.meals.reduce((s: number, m: any) => s + m.carbs, 0)}g · F: {historyDayData.meals.reduce((s: number, m: any) => s + m.fat, 0)}g
                         </div>
                       </div>
                     )}
 
                     {historyDayData.workouts.length > 0 && (
-                      <div>
+                      <div className="mb-6">
                         <div className="text-xs font-mono uppercase text-[var(--text-muted)] mb-3 tracking-wider">Workouts ({historyDayData.workouts.length})</div>
                         <div className="space-y-2">
                           {historyDayData.workouts.map((w: any) => (
-                            <div key={w._id} className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                              <div className="flex items-center gap-2 mb-2">
-                                <span className={`text-xs font-mono px-2 py-0.5 ${w.intensity === "MAX" ? "bg-red-600 text-white" : w.intensity === "HIGH" ? "bg-accent text-[var(--theme-primary-text)]" : "border border-[var(--border-default)]"}`}>{w.intensity}</span>
-                                <span className="font-medium tracking-wide">{w.name}</span>
-                                {w.duration && <span className="text-xs text-[var(--text-muted)]">{w.duration}</span>}
-                                {w.caloriesBurned !== undefined && w.caloriesBurned !== null && (
-                                  <span className="text-xs font-mono text-accent">{w.caloriesBurned} kcal</span>
-                                )}
+                            <div key={w._id} className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)] group">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  <span className={`text-xs font-mono px-2 py-0.5 shrink-0 ${w.intensity === "MAX" ? "bg-red-600 text-white" : w.intensity === "HIGH" ? "bg-accent text-[var(--theme-primary-text)]" : "border border-[var(--border-default)]"}`}>{w.intensity}</span>
+                                  <span className="font-medium tracking-wide truncate">{w.name}</span>
+                                  {w.duration && <span className="text-xs text-[var(--text-muted)] shrink-0">{w.duration}</span>}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {w.caloriesBurned !== undefined && w.caloriesBurned !== null && w.caloriesBurned > 0 && (
+                                    <span className="flex items-center gap-1 text-xs font-mono bg-accent/20 text-accent px-2 py-0.5">
+                                      <Flame size={10} /> {w.caloriesBurned} kcal
+                                    </span>
+                                  )}
+                                  <motion.button
+                                    whileHover={{ scale: 1.1 }}
+                                    whileTap={{ scale: 0.9 }}
+                                    onClick={() => commitWorkout({ name: w.name, sets: w.sets, duration: w.duration, intensity: w.intensity, exercises: w.exercises, rationale: w.rationale, caloriesBurned: w.caloriesBurned })}
+                                    className="p-1.5 border border-[var(--border-default)] hover:border-accent hover:bg-accent hover:text-[var(--theme-primary-text)] transition-all opacity-0 group-hover:opacity-100"
+                                    title="Log again today"
+                                  >
+                                    <Repeat size={12} />
+                                  </motion.button>
+                                </div>
                               </div>
                               {w.exercises && w.exercises.length > 0 && (
-                                <div className="text-xs text-[var(--text-muted)] space-y-1">
+                                <div className="text-xs text-[var(--text-muted)] space-y-1 mb-2">
                                   {w.exercises.map((ex: any, ei: number) => (
-                                    <div key={ei} className="tracking-wide">{ex.name}: {ex.sets.map((s: any) => `${s.weight}×${s.reps}`).join(', ')}</div>
+                                    <div key={ei} className="tracking-wide">{ex.name}: {ex.sets.map((s: any) => `${s.weight ? s.weight + '×' : ''}${s.reps}`).join(', ')}</div>
                                   ))}
+                                </div>
+                              )}
+                              {w.rationale && (
+                                <div className="text-xs text-[var(--text-muted)] italic border-l-2 border-accent pl-2">
+                                  {w.rationale}
                                 </div>
                               )}
                             </div>
                           ))}
+                        </div>
+                        <div className="text-xs font-mono text-[var(--text-muted)] mt-2 tracking-wide flex items-center gap-1">
+                          <Flame size={12} className="text-accent" /> TOTAL BURNED: {historyDayData.workouts.reduce((s: number, w: any) => s + (w.caloriesBurned ?? 0), 0)} kcal
                         </div>
                       </div>
                     )}
@@ -2621,7 +2763,7 @@ export default function Dashboard() {
                         <Trash2 size={12} />
                       </motion.span>
                     </div>
-                    <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{new Date(s.updated_at || s.updatedAt).toLocaleDateString()}</div>
+                    <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{new Date(s.updatedAt).toLocaleDateString()}</div>
                   </motion.button>
                 ))}
               </div>
@@ -2899,6 +3041,24 @@ export default function Dashboard() {
         )}
 
         {/* ═══════════════════════════════════════════════════════════════════
+            LEVELS TAB — Gamification & Progress
+        ═══════════════════════════════════════════════════════════════════ */}
+        {activeTab === "LEVELS" && (
+          <motion.div
+            key="levels-tab"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}
+            className="space-y-6 will-change-transform overflow-auto"
+            data-testid="levels-tab"
+          >
+            <PageHeader title="Levels & Rewards" subtitle="Track your progress, streaks, and achievements" />
+            <GamificationPage />
+          </motion.div>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════════
             PROFILE TAB — deprecated, redirects to settings
         ═══════════════════════════════════════════════════════════════════ */}
         {activeTab === "PROFILE" && (
@@ -2922,6 +3082,9 @@ export default function Dashboard() {
         )}
         </AnimatePresence>
       </div>
+
+      {/* Confetti */}
+      <Confetti active={showConfetti} onDone={() => setShowConfetti(false)} />
 
       {/* Global overlays */}
       <OnboardingModal

@@ -16,9 +16,9 @@ import {
   Sun,
   Settings,
   LogOut,
-  Palette,
+  Trophy,
 } from "lucide-react";
-import { useTheme, colorSchemes } from "../lib/theme";
+import { useTheme } from "../lib/theme";
 
 const navItems = [
   { icon: Home, label: "HOME", short: "HOME" },
@@ -27,6 +27,7 @@ const navItems = [
   { icon: ChefHat, label: "RECIPES", short: "RECIPES" },
   { icon: BarChart3, label: "INSIGHTS", short: "STATS" },
   { icon: CalendarDays, label: "HISTORY", short: "HISTORY" },
+  { icon: Trophy, label: "LEVELS", short: "LEVELS" },
   { icon: Bot, label: "AI COACH", short: "COACH" },
 ];
 
@@ -54,7 +55,6 @@ export default function Layout() {
 
   const [activeTab, setActiveTab] = useState("HOME");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showColorPicker, setShowColorPicker] = useState(false);
 
   const isSettings = location.pathname === "/settings";
 
@@ -93,46 +93,7 @@ export default function Layout() {
 
             {/* Right side controls */}
             <div className="flex items-center gap-1.5 ml-auto">
-              {/* Color Picker */}
-              <div className="relative">
                 <button
-                  data-testid="color-picker-toggle"
-                  onClick={() => setShowColorPicker(!showColorPicker)}
-                  className="hidden lg:flex items-center gap-1.5 px-2.5 py-2 border border-[var(--border-default)] bg-[var(--bg-card)] text-xs font-mono hover:border-accent transition-colors"
-                >
-                  <div className="w-3.5 h-3.5 bg-accent" />
-                  <Palette size={12} />
-                </button>
-
-                <AnimatePresence>
-                  {showColorPicker && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -8, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -8, scale: 0.95 }}
-                      transition={{ type: "spring", stiffness: 400, damping: 25 }}
-                      className="absolute right-0 top-full mt-2 p-3 bg-[var(--bg-card)] border border-[var(--border-default)] z-50 will-change-transform"
-                      data-testid="color-picker-dropdown"
-                    >
-                      <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">ACCENT</div>
-                      <div className="flex gap-2">
-                        {colorSchemes.map((scheme) => (
-                          <button
-                            key={scheme.name}
-                            data-testid={`color-${scheme.name.toLowerCase()}`}
-                            onClick={() => { setAccentColor(scheme.value, scheme.textColor); setShowColorPicker(false); }}
-                            className={`w-7 h-7 transition-all ${accentColor === scheme.value ? 'ring-2 ring-white ring-offset-1 ring-offset-[var(--bg-card)]' : 'hover:scale-110'}`}
-                            style={{ backgroundColor: scheme.value }}
-                            title={scheme.name}
-                          />
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              <button
                 data-testid="theme-toggle"
                 onClick={toggleTheme}
                 className="hidden lg:flex items-center p-2 border border-[var(--border-default)] bg-[var(--bg-card)] hover:border-accent transition-colors"
@@ -193,28 +154,16 @@ export default function Layout() {
                     </button>
                   ))}
                 </div>
-                <div className="flex items-center justify-between p-3 border-t border-[var(--border-default)]">
-                  <div className="flex gap-1.5">
-                    {colorSchemes.map((scheme) => (
-                      <button
-                        key={scheme.name}
-                        onClick={() => setAccentColor(scheme.value, scheme.textColor)}
-                        className={`w-6 h-6 ${accentColor === scheme.value ? 'ring-2 ring-white' : ''}`}
-                        style={{ backgroundColor: scheme.value }}
-                      />
-                    ))}
-                  </div>
-                  <div className="flex gap-1.5">
-                    <button onClick={() => navigate('/settings')} className="p-2 border border-[var(--border-default)]">
-                      <Settings size={14} />
-                    </button>
-                    <button onClick={toggleTheme} className="p-2 border border-[var(--border-default)]">
-                      {isDark ? <Sun size={14} /> : <Moon size={14} />}
-                    </button>
-                    <button onClick={() => signOut()} className="p-2 border border-[var(--border-default)]">
-                      <LogOut size={14} />
-                    </button>
-                  </div>
+                <div className="flex items-center justify-end p-3 border-t border-[var(--border-default)] gap-1.5">
+                  <button onClick={() => navigate('/settings')} className="p-2 border border-[var(--border-default)]">
+                    <Settings size={14} />
+                  </button>
+                  <button onClick={toggleTheme} className="p-2 border border-[var(--border-default)]">
+                    {isDark ? <Sun size={14} /> : <Moon size={14} />}
+                  </button>
+                  <button onClick={() => signOut()} className="p-2 border border-[var(--border-default)]">
+                    <LogOut size={14} />
+                  </button>
                 </div>
               </motion.div>
             )}

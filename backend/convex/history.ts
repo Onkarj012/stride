@@ -157,3 +157,51 @@ export const getHistoryInsights = query({
     };
   },
 });
+
+export const getStreak = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const today = new Date().toISOString().split("T")[0];
+    const startDate = new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0];
+
+    const [mealRows, workoutRows] = await Promise.all([
+      ctx.db
+        .query("meals")
+        .withIndex("by_user_date", (q: any) => q.eq("userId", userId).gte("date", startDate))
+        .filter((q: any) => q.lte(q.field("date"), today))
+        .collect(),
+      ctx.db
+        .query("workouts")
+        .withIndex("by_user_date", (q: any) => q.eq("userId", userId).gte("date", startDate))
+        .filter((q: any) => q.lte(q.field("date"), today))
+        .collect(),
+    ]);
+
+    const datesWithActivity = new Set<string>();
+    for (const m of mealRows) datesWithActivity.add(m.date);
+    for (const w of workoutRows) datesWithActivity.add(w.date);
+
+    let streak = 0;
+    let currentDate = new Date();
+
+    // Check if today has activity, if not start from yesterday
+    if (!datesWithActivity.has(today)) {
+      currentDate.setDate(currentDate.getDate() - 1);
+    }
+
+    // Count consecutive days with activity
+    while (true) {
+      const dateStr = currentDate.toISOString().split("T")[0];
+      if (datesWithActivity.has(dateStr)) {
+        streak++;
+        currentDate.setDate(currentDate.getDate() - 1);
+      } else {
+        break;
+      }
+      if (streak > 90) break; // Safety limit
+    }
+
+    return { streak, todayLogged: datesWithActivity.has(today) };
+  },
+});

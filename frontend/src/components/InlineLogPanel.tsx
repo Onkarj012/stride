@@ -1,9 +1,19 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Sparkles, Loader2, Utensils, Dumbbell } from "lucide-react";
+import { X, Sparkles, Loader2, Utensils, Dumbbell, Search, Barcode, Camera } from "lucide-react";
 import { Card } from "./ui/Card";
 import { ConfirmLogCard } from "./ConfirmLogCard";
 import { RemainingBudget } from "./RemainingBudget";
+import { FoodSearch } from "./FoodSearch";
+import { NutritionScanner } from "./NutritionScanner";
+import CustomSelect from "./ui/CustomSelect";
+
+const INTENSITY_OPTIONS = [
+  { value: "LOW", label: "LOW", description: "Light activity, easy pace, minimal exertion" },
+  { value: "MEDIUM", label: "MEDIUM", description: "Moderate effort, breaking a sweat, can still talk" },
+  { value: "HIGH", label: "HIGH", description: "Hard effort, heavy breathing, challenging sets" },
+  { value: "MAX", label: "MAX", description: "All-out intensity, failure reps, peak exertion" },
+];
 
 interface InlineLogPanelProps {
   mode: "meal" | "workout";
@@ -20,6 +30,9 @@ interface InlineLogPanelProps {
     carbGoal: number;
     fatGoal: number;
   };
+  defaultDescription?: string;
+  onDescriptionUsed?: () => void;
+  defaultDate?: string;
 }
 
 export function InlineLogPanel({
@@ -32,29 +45,46 @@ export function InlineLogPanel({
   totalCarbs,
   totalFat,
   goals,
+  defaultDescription = "",
+  onDescriptionUsed,
+  defaultDate,
 }: InlineLogPanelProps) {
-  const [description, setDescription] = useState("");
-  const [mealType, setMealType] = useState("breakfast");
+  const [inputMode, setInputMode] = useState<"ai" | "search">("ai");
+  const [description, setDescription] = useState(defaultDescription);
   const [time, setTime] = useState("");
+  const [date, setDate] = useState(defaultDate || new Date().toISOString().split("T")[0]);
   const [duration, setDuration] = useState("");
   const [intensity, setIntensity] = useState("HIGH");
   const [showConfirm, setShowConfirm] = useState(false);
   const [initialConfirmData, setInitialConfirmData] = useState<any>(null);
+  const [showScanner, setShowScanner] = useState(false);
+
+  useEffect(() => {
+    if (defaultDescription && defaultDescription !== description) {
+      setDescription(defaultDescription);
+      onDescriptionUsed?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultDescription]);
+
+  useEffect(() => {
+    if (defaultDate) setDate(defaultDate);
+  }, [defaultDate]);
 
   const handleParse = () => {
     if (!description.trim()) return;
     setShowConfirm(true);
     setInitialConfirmData({
       description,
-      mealType: mode === "meal" ? mealType : undefined,
       time: mode === "meal" ? time : undefined,
+      date,
       duration: mode === "workout" ? duration : undefined,
       intensity: mode === "workout" ? intensity : undefined,
     });
   };
 
   const handleConfirm = (data: any) => {
-    onConfirm(data);
+    onConfirm({ ...data, date });
     setShowConfirm(false);
     setDescription("");
     setTime("");
@@ -65,6 +95,12 @@ export function InlineLogPanel({
   const handleDiscard = () => {
     setShowConfirm(false);
     setInitialConfirmData(null);
+  };
+
+  const handleScannerConfirm = (mealData: any) => {
+    onConfirm({ ...mealData, date });
+    setShowScanner(false);
+    onClose();
   };
 
   return (
@@ -100,15 +136,33 @@ export function InlineLogPanel({
                 >
                   <Card className="p-5 border-accent border-2">
                     <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        {mode === "meal" ? (
-                          <Utensils size={16} className="text-accent" />
-                        ) : (
-                          <Dumbbell size={16} className="text-accent" />
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          {mode === "meal" ? (
+                            <Utensils size={16} className="text-accent" />
+                          ) : (
+                            <Dumbbell size={16} className="text-accent" />
+                          )}
+                          <span className="font-mono text-xs uppercase tracking-wider text-accent">
+                            QUICK LOG {mode}
+                          </span>
+                        </div>
+                        {mode === "meal" && (
+                          <div className="flex border border-[var(--border-default)] overflow-hidden">
+                            <button
+                              onClick={() => setInputMode("ai")}
+                              className={`px-2 py-1 text-[10px] font-mono uppercase transition-colors flex items-center gap-1 ${inputMode === "ai" ? "bg-accent text-[var(--theme-primary-text)]" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}
+                            >
+                              <Sparkles size={10} /> Text
+                            </button>
+                            <button
+                              onClick={() => setInputMode("search")}
+                              className={`px-2 py-1 text-[10px] font-mono uppercase transition-colors flex items-center gap-1 ${inputMode === "search" ? "bg-accent text-[var(--theme-primary-text)]" : "text-[var(--text-muted)] hover:text-[var(--text-primary)]"}`}
+                            >
+                              <Search size={10} /> Search
+                            </button>
+                          </div>
                         )}
-                        <span className="font-mono text-xs uppercase tracking-wider text-accent">
-                          QUICK LOG {mode}
-                        </span>
                       </div>
                       <button
                         onClick={onClose}
@@ -128,16 +182,12 @@ export function InlineLogPanel({
                           goals={goals}
                         />
                         <div className="flex gap-3 mb-3">
-                          <select
-                            value={mealType}
-                            onChange={(e) => setMealType(e.target.value)}
+                          <input
+                            type="date"
+                            value={date}
+                            onChange={(e) => setDate(e.target.value)}
                             className="px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-xs focus:outline-none focus:border-accent"
-                          >
-                            <option value="breakfast">BREAKFAST</option>
-                            <option value="lunch">LUNCH</option>
-                            <option value="snack">SNACK</option>
-                            <option value="dinner">DINNER</option>
-                          </select>
+                          />
                           <input
                             placeholder="Time (HH:MM)"
                             value={time}
@@ -148,53 +198,86 @@ export function InlineLogPanel({
                       </>
                     )}
 
-                    {mode === "workout" && (
-                      <div className="flex gap-3 mb-3">
-                        <input
-                          placeholder="Duration (e.g. 45 min)"
-                          value={duration}
-                          onChange={(e) => setDuration(e.target.value)}
-                          className="flex-1 px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-xs focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)]"
-                        />
-                        <select
-                          value={intensity}
-                          onChange={(e) => setIntensity(e.target.value)}
-                          className="px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-xs focus:outline-none focus:border-accent"
+                    {/* Food search mode */}
+                    {mode === "meal" && inputMode === "search" && (
+                      <FoodSearch
+                        date={date}
+                        mealType="unspecified"
+                        time={time}
+                        onLogged={(meal) => { onConfirm({ ...meal, date }); onClose(); }}
+                      />
+                    )}
+
+                    {/* Scanner button for meal */}
+                    {mode === "meal" && inputMode === "ai" && (
+                      <div className="flex gap-2 mb-3">
+                        <button
+                          onClick={() => setShowScanner(true)}
+                          className="flex items-center gap-1.5 px-3 py-2 border border-[var(--border-default)] font-mono text-[10px] uppercase tracking-wider hover:border-accent transition-colors"
                         >
-                          <option value="LOW">LOW</option>
-                          <option value="MEDIUM">MEDIUM</option>
-                          <option value="HIGH">HIGH</option>
-                          <option value="MAX">MAX</option>
-                        </select>
+                          <Camera size={12} /> Scan Food
+                        </button>
                       </div>
                     )}
 
-                    <textarea
-                      placeholder={
-                        mode === "meal"
-                          ? "Describe your meal — what you ate, portion sizes, ingredients..."
-                          : "Describe your workout — exercises, sets, reps, weights..."
-                      }
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      rows={3}
-                      className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)] resize-none leading-relaxed mb-3"
-                    />
+                    {/* AI log mode */}
+                    {(mode !== "meal" || inputMode === "ai") && (
+                      <>
+                        {mode === "workout" && (
+                          <div className="flex gap-3 mb-3">
+                            <input
+                              placeholder="Duration (e.g. 45 min)"
+                              value={duration}
+                              onChange={(e) => setDuration(e.target.value)}
+                              className="flex-1 px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-xs focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)]"
+                            />
+                            <div className="w-40">
+                              <CustomSelect
+                                value={intensity}
+                                onChange={setIntensity}
+                                options={INTENSITY_OPTIONS}
+                                placeholder="Intensity"
+                              />
+                            </div>
+                          </div>
+                        )}
+                        <textarea
+                          placeholder={
+                            mode === "meal"
+                              ? "Describe your meal — what you ate, portion sizes, ingredients..."
+                              : "Describe your workout — exercises, sets, reps, weights..."
+                          }
+                          value={description}
+                          onChange={(e) => setDescription(e.target.value)}
+                          rows={3}
+                          className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent placeholder:text-[var(--text-muted)] resize-none leading-relaxed mb-3"
+                        />
+                      </>
+                    )}
 
-                    <button
-                      onClick={handleParse}
-                      disabled={!description.trim()}
-                      className="flex items-center gap-2 px-5 py-2.5 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50 transition-opacity"
-                    >
-                      <Sparkles size={14} />
-                      AI LOG {mode === "meal" ? "MEAL" : "WORKOUT"}
-                    </button>
+                    {(mode !== "meal" || inputMode === "ai") && (
+                      <button
+                        onClick={handleParse}
+                        disabled={!description.trim()}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold hover:opacity-90 disabled:opacity-50 transition-opacity"
+                      >
+                        <Sparkles size={14} />
+                        LOG {mode === "meal" ? "MEAL" : "WORKOUT"}
+                      </button>
+                    )}
                   </Card>
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
         </motion.div>
+      )}
+      {showScanner && (
+        <NutritionScanner
+          onConfirm={handleScannerConfirm}
+          onClose={() => setShowScanner(false)}
+          time={time}
+        />
       )}
     </AnimatePresence>
   );

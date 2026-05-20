@@ -128,6 +128,25 @@ export const getRecentWorkoutNames = internalQuery({
   },
 });
 
+export const getRecentWorkoutsDetailed = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const startDate = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
+    const workouts = await ctx.db
+      .query("workouts")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
+      .order("desc")
+      .take(7);
+    return workouts.map((w) => ({
+      date: w.date,
+      name: w.name,
+      intensity: w.intensity,
+      duration: w.duration,
+      exercises: w.exercises,
+    }));
+  },
+});
+
 export const addWorkoutFromAI = internalMutation({
   args: {
     userId: v.string(),

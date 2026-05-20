@@ -19,6 +19,7 @@ export default defineSchema({
     time: v.string(),
     aiSuggestion: v.optional(v.string()),
     mealType: v.optional(v.string()),
+    components: v.optional(v.string()),
   }).index("by_user_date", ["userId", "date"]),
 
   workouts: defineTable({
@@ -76,6 +77,8 @@ export default defineSchema({
     goal: v.optional(v.string()),
     trainingStyle: v.optional(v.string()),
     onboardingComplete: v.optional(v.boolean()),
+    dietaryPreference: v.optional(v.string()),
+    allergies: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 
   user_settings: defineTable({
@@ -98,4 +101,41 @@ export default defineSchema({
   })
     .index("by_session", ["sessionId"])
     .index("by_user", ["userId"]),
+
+  food_cache: defineTable({
+    barcode: v.optional(v.string()),
+    name: v.string(),
+    brand: v.optional(v.string()),
+    caloriesPer100g: v.number(),
+    proteinPer100g: v.number(),
+    carbsPer100g: v.number(),
+    fatPer100g: v.number(),
+    servingSize: v.optional(v.number()),
+    servingUnit: v.optional(v.string()),
+    ingredients: v.optional(v.string()),
+    imageUrl: v.optional(v.string()),
+    source: v.string(),
+    verified: v.optional(v.boolean()),
+    fdcId: v.optional(v.string()),
+    searchCount: v.optional(v.number()),
+  })
+    .index("by_barcode", ["barcode"])
+    .searchIndex("by_name_search", {
+      searchField: "name",
+      filterFields: ["source", "verified"],
+    }),
+
+  user_gamification: defineTable({
+    userId: v.string(),
+    xp: v.number(),
+    streakDays: v.number(),
+    longestStreak: v.number(),
+    lastLoggedDate: v.optional(v.string()),
+    streakFreezes: v.number(),
+    frozenDates: v.optional(v.array(v.string())),
+    totalDaysLogged: v.number(),
+    totalMealsLogged: v.number(),
+    totalWorkoutsLogged: v.number(),
+    missionsCompleted: v.optional(v.array(v.string())),
+  }).index("by_user", ["userId"]),
 });

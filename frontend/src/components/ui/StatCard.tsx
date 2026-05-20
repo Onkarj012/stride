@@ -9,6 +9,8 @@ export function StatCard({
   icon: Icon,
   accent = false,
   tooltipContent,
+  expanded,
+  onToggle,
 }: {
   label: string;
   value: string | number;
@@ -16,12 +18,19 @@ export function StatCard({
   icon: any;
   accent?: boolean;
   tooltipContent?: React.ReactNode;
+  expanded?: boolean;
+  onToggle?: () => void;
 }) {
-  const [showTooltip, setShowTooltip] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isExpanded = expanded !== undefined ? expanded : internalExpanded;
+  const handleToggle = () => {
+    if (onToggle) onToggle();
+    else setInternalExpanded(!internalExpanded);
+  };
   return (
     <Card
       className={`p-5 ${accent ? "border-accent border-2" : ""} ${tooltipContent ? "cursor-pointer" : ""}`}
-      onClick={tooltipContent ? () => setShowTooltip(!showTooltip) : undefined}
+      onClick={tooltipContent ? handleToggle : undefined}
     >
       <div className="flex items-start justify-between">
         <div>
@@ -52,7 +61,7 @@ export function StatCard({
         </div>
       </div>
       <AnimatePresence>
-        {showTooltip && tooltipContent && (
+        {isExpanded && tooltipContent && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}

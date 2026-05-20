@@ -15,12 +15,14 @@ import {
   BrainCircuit,
   RotateCcw,
   Sparkles,
+  Palette,
 } from "lucide-react";
 
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../backend/convex/_generated/api";
 import { Card } from "../components/ui/Card";
 import CustomSelect from "../components/ui/CustomSelect";
+import { useTheme, colorSchemes } from "../lib/theme";
 
 const TABS = [
   { id: "profile", label: "Profile", icon: User },
@@ -29,6 +31,7 @@ const TABS = [
   { id: "training", label: "Training", icon: Dumbbell },
   { id: "goals", label: "Goals", icon: Target },
   { id: "ai", label: "AI Settings", icon: BrainCircuit },
+  { id: "customization", label: "Customization", icon: Palette },
 ];
 
 const SEX_OPTIONS = [
@@ -56,17 +59,35 @@ const STYLE_OPTIONS = [
   { value: "endurance", label: "Endurance", description: "Running, cycling, etc." },
 ];
 
+const DIETARY_OPTIONS = [
+  { value: "none", label: "No Restrictions", description: "Eat anything" },
+  { value: "vegetarian", label: "Vegetarian", description: "No meat or fish" },
+  { value: "vegan", label: "Vegan", description: "No animal products" },
+  { value: "pescatarian", label: "Pescatarian", description: "Fish but no meat" },
+  { value: "halal", label: "Halal", description: "Islamic dietary laws" },
+  { value: "kosher", label: "Kosher", description: "Jewish dietary laws" },
+  { value: "keto", label: "Keto", description: "Very low carb" },
+  { value: "paleo", label: "Paleo", description: "Whole foods only" },
+];
+
 const OPENROUTER_MODELS = [
   { value: "openai/gpt-4o-mini", label: "GPT-4o Mini", description: "Fast & affordable — default" },
-  { value: "openai/gpt-4o", label: "GPT-4o", description: "Best overall quality" },
-  { value: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", description: "Excellent reasoning" },
-  { value: "anthropic/claude-3-haiku", label: "Claude 3 Haiku", description: "Fast & efficient" },
-  { value: "google/gemini-flash-1.5", label: "Gemini Flash 1.5", description: "Google's best value" },
-  { value: "meta-llama/llama-3.1-8b-instruct", label: "Llama 3.1 8B", description: "Open source local feel" },
+  { value: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6", description: "Best reasoning" },
+  { value: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5", description: "Fast & efficient" },
+  { value: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash", description: "Ultra fast" },
+  { value: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro", description: "High quality" },
+  { value: "openai/gpt-5.5", label: "GPT-5.5", description: "Latest OpenAI model" },
+  { value: "openai/gpt-oss-120b", label: "GPT-OSS 120B", description: "Open source 120B" },
+  { value: "moonshotai/kimi-k2.6", label: "Kimi K2.6", description: "Moonshot AI" },
+  { value: "qwen/qwen3.6-plus", label: "Qwen 3.6 Plus", description: "Alibaba's best" },
+  { value: "z-ai/glm-5.1", label: "GLM 5.1", description: "Zhipu AI" },
+  { value: "minimax/minimax-m2.5", label: "MiniMax M2.5", description: "Efficient model" },
+  { value: "google/gemma-4-31b-it", label: "Gemma 4 31B", description: "Google open model" },
 ];
 
 export default function SettingsPage() {
   const { user } = useUser();
+  const { accentColor, setAccentColor } = useTheme();
   const [activeTab, setActiveTab] = useState("profile");
 
   const profile = useQuery(api.profile.getProfile) ?? null;
@@ -82,6 +103,7 @@ export default function SettingsPage() {
     dailySteps: "", trainingDays: "", cardioMinutes: "",
     jobType: "desk", goal: "maintain", trainingStyle: "resistance",
     calorieTarget: "", proteinTarget: "", carbTarget: "", fatTarget: "",
+    dietaryPreference: "none", allergies: "",
   });
 
   const [settingsForm, setSettingsForm] = useState({
@@ -115,6 +137,8 @@ export default function SettingsPage() {
         proteinTarget: profile.proteinTarget ? String(profile.proteinTarget) : '',
         carbTarget: profile.carbTarget ? String(profile.carbTarget) : '',
         fatTarget: profile.fatTarget ? String(profile.fatTarget) : '',
+        dietaryPreference: profile.dietaryPreference || 'none',
+        allergies: profile.allergies || '',
       });
     }
   }, [profile]);
@@ -153,6 +177,8 @@ export default function SettingsPage() {
         proteinTarget: form.proteinTarget ? Number(form.proteinTarget) : undefined,
         carbTarget: form.carbTarget ? Number(form.carbTarget) : undefined,
         fatTarget: form.fatTarget ? Number(form.fatTarget) : undefined,
+        dietaryPreference: form.dietaryPreference || undefined,
+        allergies: form.allergies || undefined,
       });
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -202,11 +228,9 @@ export default function SettingsPage() {
     <div className="h-full overflow-auto">
       <div className="max-w-7xl mx-auto w-full p-5 lg:p-8 min-h-full">
         {/* Header */}
-        <div className="flex items-center gap-4 mb-8">
-          <div>
-            <h1 className="font-heading text-2xl uppercase tracking-normal">Settings</h1>
-            <p className="text-xs font-mono text-[var(--text-muted)] tracking-wide">Manage your profile, targets, and preferences</p>
-          </div>
+        <div className="mb-8">
+          <h1 className="text-4xl lg:text-5xl font-heading uppercase tracking-normal leading-none">Settings</h1>
+          <p className="text-sm font-mono text-[var(--text-muted)] mt-2 tracking-wide">Manage your profile, targets, and preferences</p>
         </div>
 
         {saveError && (
@@ -478,6 +502,24 @@ export default function SettingsPage() {
                         options={GOAL_OPTIONS}
                       />
                     </div>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <CustomSelect
+                        label="Dietary Preference"
+                        value={form.dietaryPreference}
+                        onChange={(val) => updateForm("dietaryPreference", val)}
+                        options={DIETARY_OPTIONS}
+                      />
+                      <div>
+                        <label className={labelClass}>Allergies / Avoid</label>
+                        <input
+                          type="text"
+                          value={form.allergies}
+                          onChange={(e) => updateForm("allergies", e.target.value)}
+                          placeholder="e.g. peanuts, shellfish, gluten"
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
                     <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
                       <div>
                         <label className={labelClass}>Calories (kcal)</label>
@@ -556,6 +598,46 @@ export default function SettingsPage() {
                         {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                         Save AI Settings
                       </button>
+                    </div>
+                  </Card>
+                </motion.div>
+              )}
+
+              {activeTab === "customization" && (
+                <motion.div
+                  key="customization"
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.98 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  className="space-y-4 will-change-transform"
+                >
+                  <Card className="p-6 space-y-6">
+                    <div className="flex items-center gap-3 mb-2 pb-2 border-b border-[var(--border-default)]">
+                      <Palette size={18} className="text-accent" />
+                      <h3 className="font-heading text-lg uppercase tracking-normal">Appearance</h3>
+                    </div>
+                    <div>
+                      <label className={labelClass}>Accent Color</label>
+                      <div className="flex flex-wrap gap-3">
+                        {colorSchemes.map((scheme) => (
+                          <button
+                            key={scheme.name}
+                            onClick={() => setAccentColor(scheme.value, scheme.textColor)}
+                            className={`flex items-center gap-2 px-3 py-2 border transition-all ${
+                              accentColor === scheme.value
+                                ? "border-accent bg-accent/10"
+                                : "border-[var(--border-default)] hover:border-[var(--text-secondary)]"
+                            }`}
+                          >
+                            <div
+                              className={`w-5 h-5 ${accentColor === scheme.value ? "ring-2 ring-white" : ""}`}
+                              style={{ backgroundColor: scheme.value }}
+                            />
+                            <span className="text-xs font-mono tracking-wide">{scheme.name}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </Card>
                 </motion.div>
