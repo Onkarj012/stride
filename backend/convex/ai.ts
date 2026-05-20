@@ -804,6 +804,48 @@ Return ONLY a JSON object with these keys (numbers only, no text):
   },
 });
 
+export const regenerateSuggestion = action({
+  args: {
+    mealName: v.string(),
+    mealComponents: v.optional(v.string()),
+    mealCalories: v.number(),
+    mealProtein: v.number(),
+    mealCarbs: v.number(),
+    mealFat: v.number(),
+    remainingCalories: v.optional(v.number()),
+    remainingProtein: v.optional(v.number()),
+    remainingCarbs: v.optional(v.number()),
+    remainingFat: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    const userId = identity?.subject;
+    let model: string | undefined;
+    let apiKey: string | undefined;
+    if (userId) {
+      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+      model = settings?.openRouterModel ?? undefined;
+      apiKey = settings?.openRouterKey ?? undefined;
+    }
+
+    const budgetContext = args.remainingCalories != null
+      ? `\nDaily remaining: ${args.remainingCalories} kcal, ${args.remainingProtein}g protein, ${args.remainingCarbs}g carbs, ${args.remainingFat}g fat.`
+      : "";
+
+    const prompt = `You are a professional nutritionist. Give ONE forward-looking sentence about what the user should focus on in their NEXT meal (not criticism of this meal).
+
+Meal: "${args.mealName}"
+Components: ${args.mealComponents || "unknown"}
+Macros: ${args.mealCalories} kcal, ${args.mealProtein}g protein, ${args.mealCarbs}g carbs, ${args.mealFat}g fat${budgetContext}
+
+Return ONLY a short JSON object: {"suggestion":"one forward-looking next-meal tip (max 25 words)"}`;
+
+    const content = await callAI([{ role: "user", content: prompt }], 400, model, apiKey);
+    const result = parseJSON<any>(content, { suggestion: "" });
+    return { suggestion: result.suggestion || "" };
+  },
+});
+
 export const getCoaches = query({
   args: {},
   handler: async () => {

@@ -83,7 +83,7 @@ function BudgetItem({
       <div className="flex justify-between text-xs font-mono mb-1 tracking-wide">
         <span className="text-[var(--text-muted)]">{label}</span>
         <span className="text-accent font-bold">
-          {remaining}
+          {Number(remaining.toFixed(2))}
           {unit}
         </span>
       </div>
@@ -94,7 +94,7 @@ function BudgetItem({
         />
       </div>
       <div className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5 tracking-wide">
-        {used}/{goal}
+        {Number(used.toFixed(2))}/{goal}
         {unit}
       </div>
     </div>

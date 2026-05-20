@@ -328,7 +328,7 @@ function MealEditor({
           </label>
           <input
             type="number"
-            value={data.carbs}
+            value={Number(data.carbs.toFixed(2))}
             onChange={(e) => onChange({ carbs: Number(e.target.value) || 0 })}
             className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
           />

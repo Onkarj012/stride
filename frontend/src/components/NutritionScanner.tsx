@@ -38,6 +38,7 @@ interface NutritionScannerProps {
 export function NutritionScanner({ onConfirm, onClose, time }: NutritionScannerProps) {
   const [mode, setMode] = useState<"menu" | "barcode" | "image" | "portion">("menu");
   const [product, setProduct] = useState<ScannedProduct | null>(null);
+  const [productName, setProductName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [grams, setGrams] = useState("");
@@ -58,6 +59,7 @@ export function NutritionScanner({ onConfirm, onClose, time }: NutritionScannerP
       const food = await lookupBarcode({ barcode }) as ScannedProduct | null;
       if (food) {
         setProduct(food);
+        setProductName(food.name);
         setGrams(food.servingSize ? String(food.servingSize) : "100");
         setMode("portion");
       } else {
@@ -79,8 +81,9 @@ export function NutritionScanner({ onConfirm, onClose, time }: NutritionScannerP
       const dataUrl = await fileToDataUrl(file);
       const result = await parseNutritionImage({ imageDataUrl: dataUrl });
       if (result) {
+        const name = result.name || "Scanned Product";
         setProduct({
-          name: result.name || "Scanned Product",
+          name,
           caloriesPer100g: result.caloriesPer100g || 0,
           proteinPer100g: result.proteinPer100g || 0,
           carbsPer100g: result.carbsPer100g || 0,
@@ -89,6 +92,7 @@ export function NutritionScanner({ onConfirm, onClose, time }: NutritionScannerP
           servingUnit: result.servingUnit || "g",
           source: "scan",
         });
+        setProductName(name);
         setGrams(result.servingSize ? String(result.servingSize) : "100");
         setMode("portion");
       } else {
@@ -164,8 +168,8 @@ export function NutritionScanner({ onConfirm, onClose, time }: NutritionScannerP
     if (!product || !calculated) return;
     const servingLabel = calculated.grams > 0 ? `${calculated.grams}g` : "";
     const fullName = product.brand
-      ? `${product.name} (${product.brand}) – ${servingLabel}`
-      : `${product.name} – ${servingLabel}`;
+      ? `${productName || product.name} (${product.brand}) – ${servingLabel}`
+      : `${productName || product.name} – ${servingLabel}`;
     onConfirm({
       name: fullName,
       calories: calculated.calories,
@@ -173,7 +177,7 @@ export function NutritionScanner({ onConfirm, onClose, time }: NutritionScannerP
       carbs: calculated.carbs,
       fat: calculated.fat,
       time: time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
-      components: product.name,
+      components: productName || product.name,
     });
   };
 
@@ -250,7 +254,11 @@ export function NutritionScanner({ onConfirm, onClose, time }: NutritionScannerP
             <div className="space-y-4">
               {/* Product info */}
               <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
-                <div className="text-sm font-mono font-bold">{product.name}</div>
+                <input
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  className="w-full bg-transparent text-sm font-mono font-bold focus:outline-none border-b border-transparent focus:border-accent"
+                />
                 {product.brand && <div className="text-[10px] text-[var(--text-muted)]">{product.brand}</div>}
                 <div className="mt-2 grid grid-cols-4 gap-2 text-center">
                   <div>
@@ -362,7 +370,7 @@ export function NutritionScanner({ onConfirm, onClose, time }: NutritionScannerP
 
               <div className="flex gap-2">
                 <button
-                  onClick={() => { setMode("menu"); setProduct(null); setCalculated(null); setError(null); }}
+                  onClick={() => { setMode("menu"); setProduct(null); setProductName(""); setCalculated(null); setError(null); }}
                   className="flex-1 py-2.5 border border-[var(--border-default)] font-mono text-xs uppercase tracking-wider hover:border-accent transition-colors"
                 >
                   Back
