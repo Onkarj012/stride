@@ -18,6 +18,19 @@ export const getWorkouts = query({
   },
 });
 
+export const getTotalCaloriesBurned = query({
+  args: { date: v.string() },
+  handler: async (ctx, { date }) => {
+    const userId = await requireUserId(ctx);
+    const workouts = await ctx.db
+      .query("workouts")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
+      .collect();
+    const total = workouts.reduce((sum, w) => sum + (w.caloriesBurned ?? 0), 0);
+    return { total, count: workouts.length };
+  },
+});
+
 export const addWorkout = mutation({
   args: {
     name: v.string(),
@@ -29,6 +42,7 @@ export const addWorkout = mutation({
     date: v.optional(v.string()),
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
+    caloriesBurned: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
@@ -44,6 +58,7 @@ export const addWorkout = mutation({
       intensity: args.intensity || "HIGH",
       exercises: args.exercises,
       rationale: args.rationale,
+      caloriesBurned: args.caloriesBurned,
     });
   },
 });
@@ -59,6 +74,7 @@ export const updateWorkout = mutation({
     intensity: v.string(),
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
+    caloriesBurned: v.optional(v.number()),
   },
   handler: async (ctx, { id, ...fields }) => {
     const userId = await requireUserId(ctx);
@@ -73,6 +89,7 @@ export const updateWorkout = mutation({
       intensity: fields.intensity,
       exercises: fields.exercises,
       rationale: fields.rationale,
+      caloriesBurned: fields.caloriesBurned,
     });
   },
 });
@@ -111,6 +128,25 @@ export const getRecentWorkoutNames = internalQuery({
   },
 });
 
+export const getRecentWorkoutsDetailed = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const startDate = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
+    const workouts = await ctx.db
+      .query("workouts")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
+      .order("desc")
+      .take(7);
+    return workouts.map((w) => ({
+      date: w.date,
+      name: w.name,
+      intensity: w.intensity,
+      duration: w.duration,
+      exercises: w.exercises,
+    }));
+  },
+});
+
 export const addWorkoutFromAI = internalMutation({
   args: {
     userId: v.string(),
@@ -121,6 +157,7 @@ export const addWorkoutFromAI = internalMutation({
     date: v.string(),
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
+    caloriesBurned: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     return ctx.db.insert("workouts", {
@@ -132,6 +169,7 @@ export const addWorkoutFromAI = internalMutation({
       intensity: args.intensity || "HIGH",
       exercises: args.exercises,
       rationale: args.rationale,
+      caloriesBurned: args.caloriesBurned,
     });
   },
 });

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Loader2,
@@ -7,11 +7,11 @@ import {
   X,
   Trash2,
   Plus,
-  Minus,
 } from "lucide-react";
 import { Card } from "./ui/Card";
 import { useAction } from "convex/react";
 import { api } from "../../../backend/convex/_generated/api";
+import CustomSelect from "./ui/CustomSelect";
 
 interface ParsedMeal {
   name: string;
@@ -22,6 +22,7 @@ interface ParsedMeal {
   time: string;
   mealType: string;
   aiSuggestion?: string | null;
+  components?: string | null;
   description?: string;
 }
 
@@ -52,6 +53,13 @@ export interface ConfirmLogCardProps {
   preParsed?: ParsedMeal | ParsedWorkout | null;
 }
 
+const INTENSITY_OPTIONS = [
+  { value: "LOW", label: "LOW", description: "Light activity, easy pace" },
+  { value: "MEDIUM", label: "MEDIUM", description: "Moderate effort, breaking a sweat" },
+  { value: "HIGH", label: "HIGH", description: "Hard effort, heavy breathing" },
+  { value: "MAX", label: "MAX", description: "All-out intensity, failure reps" },
+];
+
 export function ConfirmLogCard({
   mode,
   initialData,
@@ -64,10 +72,12 @@ export function ConfirmLogCard({
   const [error, setError] = useState<string | null>(null);
   const parseMeal = useAction(api.ai.parseMeal);
   const parseWorkout = useAction(api.ai.parseWorkout);
+  const hasParsedRef = useRef(false);
 
   // Auto-parse on mount if we have a description and no pre-parsed data
   useEffect(() => {
-    if (initialData.description && !parsed && !loading && !preParsed) {
+    if (initialData.description && !parsed && !loading && !preParsed && !hasParsedRef.current) {
+      hasParsedRef.current = true;
       handleParse();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -154,7 +164,7 @@ export function ConfirmLogCard({
         <div className="flex items-center gap-3 text-accent">
           <Loader2 size={20} className="animate-spin" />
           <span className="font-mono text-sm uppercase tracking-wider">
-            {mode === "meal" ? "AI ESTIMATING MACROS..." : "AI PARSING WORKOUT..."}
+            {mode === "meal" ? "ESTIMATING MACROS..." : "PARSING WORKOUT..."}
           </span>
         </div>
       </Card>
@@ -190,7 +200,7 @@ export function ConfirmLogCard({
           <div className="flex items-center gap-2">
             <Sparkles size={18} className="text-accent" />
             <span className="font-mono text-sm uppercase text-accent tracking-wider">
-              AI PARSED — CONFIRM TO LOG
+              PARSED — CONFIRM TO LOG
             </span>
           </div>
           <button onClick={handleParse} className="px-3 py-1.5 bg-accent text-[var(--theme-primary-text)] font-mono text-xs uppercase tracking-wider font-bold">
@@ -203,16 +213,18 @@ export function ConfirmLogCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
+      initial={{ opacity: 0, scale: 0.98, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.98, y: -8 }}
+      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+      className="will-change-transform"
     >
       <Card className="p-6 border-2 border-accent">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Sparkles size={18} className="text-accent" />
             <span className="font-mono text-sm uppercase text-accent tracking-wider">
-              AI PARSED — CONFIRM TO LOG
+              PARSED — CONFIRM TO LOG
             </span>
           </div>
           <button
@@ -279,6 +291,14 @@ function MealEditor({
         />
       </div>
 
+      {/* Components */}
+      {data.components && (
+        <div className="p-3 bg-[var(--bg-elevated)] border border-[var(--border-default)]">
+          <div className="text-[10px] font-mono uppercase text-accent mb-1 tracking-wider">Detected Components</div>
+          <div className="text-sm text-[var(--text-secondary)] tracking-wide">{data.components}</div>
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-3">
         <div>
           <label className="block text-[10px] font-mono uppercase text-[var(--text-muted)] mb-1.5 tracking-wider">
@@ -308,7 +328,7 @@ function MealEditor({
           </label>
           <input
             type="number"
-            value={data.carbs}
+            value={Number((Number(data.carbs ?? 0)).toFixed(2))}
             onChange={(e) => onChange({ carbs: Number(e.target.value) || 0 })}
             className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
           />
@@ -326,33 +346,24 @@ function MealEditor({
         </div>
       </div>
 
-      <div className="flex gap-3">
-        <div className="flex-1">
-          <label className="block text-[10px] font-mono uppercase text-[var(--text-muted)] mb-1.5 tracking-wider">
-            Meal Type
-          </label>
-          <select
-            value={data.mealType}
-            onChange={(e) => onChange({ mealType: e.target.value })}
-            className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
-          >
-            <option value="breakfast">BREAKFAST</option>
-            <option value="lunch">LUNCH</option>
-            <option value="snack">SNACK</option>
-            <option value="dinner">DINNER</option>
-          </select>
-        </div>
-        <div className="flex-1">
-          <label className="block text-[10px] font-mono uppercase text-[var(--text-muted)] mb-1.5 tracking-wider">
-            Time
-          </label>
-          <input
-            value={data.time}
-            onChange={(e) => onChange({ time: e.target.value })}
-            className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
-          />
-        </div>
+      <div>
+        <label className="block text-[10px] font-mono uppercase text-[var(--text-muted)] mb-1.5 tracking-wider">
+          Time
+        </label>
+        <input
+          value={data.time}
+          onChange={(e) => onChange({ time: e.target.value })}
+          className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
+        />
       </div>
+
+      {/* AI Insight */}
+      {data.aiSuggestion && (
+        <div className="p-3 bg-accent/5 border border-accent/20">
+          <div className="text-[10px] font-mono uppercase text-accent mb-1 tracking-wider">Insight for Next Meal</div>
+          <div className="text-sm text-[var(--text-secondary)] tracking-wide italic">{data.aiSuggestion}</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -398,16 +409,12 @@ function WorkoutEditor({
           <label className="block text-[10px] font-mono uppercase text-[var(--text-muted)] mb-1.5 tracking-wider">
             Intensity
           </label>
-          <select
+          <CustomSelect
             value={data.intensity}
-            onChange={(e) => onChange({ intensity: e.target.value })}
-            className="w-full px-3 py-2.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] font-mono text-sm focus:outline-none focus:border-accent"
-          >
-            <option value="LOW">LOW</option>
-            <option value="MEDIUM">MEDIUM</option>
-            <option value="HIGH">HIGH</option>
-            <option value="MAX">MAX</option>
-          </select>
+            onChange={(val) => onChange({ intensity: val })}
+            options={INTENSITY_OPTIONS}
+            placeholder="Select intensity"
+          />
         </div>
       </div>
 

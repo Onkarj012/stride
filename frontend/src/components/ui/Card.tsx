@@ -1,4 +1,5 @@
 import { type ReactNode, type MouseEvent } from "react";
+import { motion } from "framer-motion";
 
 export function Card({
   children,
@@ -11,14 +12,22 @@ export function Card({
   hover?: boolean;
   onClick?: (e: MouseEvent<HTMLDivElement>) => void;
 }) {
+  if (hover) {
+    return (
+      <motion.div
+        onClick={onClick}
+        whileHover={{ y: -4, transition: { type: "spring", stiffness: 400, damping: 25 } }}
+        className={`bg-[var(--bg-card)] border border-[var(--border-default)] hover:shadow-brutal transition-shadow duration-200 will-change-transform ${className}`}
+      >
+        {children}
+      </motion.div>
+    );
+  }
+
   return (
     <div
       onClick={onClick}
-      className={`bg-[var(--bg-card)] border border-[var(--border-default)] ${
-        hover
-          ? "hover:-translate-y-1 hover:shadow-brutal transition-all duration-200"
-          : ""
-      } ${className}`}
+      className={`bg-[var(--bg-card)] border border-[var(--border-default)] ${className}`}
     >
       {children}
     </div>

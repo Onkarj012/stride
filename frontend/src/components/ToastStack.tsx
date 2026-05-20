@@ -57,7 +57,8 @@ function ToastItem({
       initial={{ opacity: 0, x: 50, scale: 0.95 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: 50, scale: 0.95 }}
-      className={`pointer-events-auto min-w-[320px] max-w-[420px] bg-[var(--bg-card)] border-2 ${bgClass} overflow-hidden`}
+      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+      className={`pointer-events-auto min-w-[320px] max-w-[420px] bg-[var(--bg-card)] border-2 ${bgClass} overflow-hidden will-change-transform`}
     >
       <div className="p-4 flex items-start gap-3">
         {toast.type === "success" && (

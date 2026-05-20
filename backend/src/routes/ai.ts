@@ -264,6 +264,42 @@ async function logWorkoutFromDescription(
   };
 }
 
+// ─── Transcription ───────────────────────────────────────────────────────────
+
+async function transcribeAudio(audioBuffer: Buffer, mimeType: string): Promise<string> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error("GROQ_API_KEY is required for voice transcription. Set it in backend/.env.local");
+  }
+
+  const ext = mimeType === "audio/webm" ? "webm" : mimeType === "audio/mp4" ? "mp4" : "wav";
+  const filename = `audio.${ext}`;
+
+  const formData = new FormData();
+  formData.append("file", new Blob([audioBuffer], { type: mimeType }), filename);
+  formData.append("model", "whisper-large-v3-turbo");
+
+  const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    throw new Error(`Groq transcription error ${response.status}: ${errBody}`);
+  }
+
+  const data = (await response.json()) as { text?: string; error?: { message?: string } };
+  if (data.error) {
+    throw new Error(`Groq transcription error: ${data.error.message}`);
+  }
+  if (!data.text) {
+    throw new Error("Groq returned empty transcription");
+  }
+  return data.text.trim();
+}
+
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
 router.post("/estimate-meal", requireAuth, async (req: Request, res: Response) => {
@@ -642,6 +678,21 @@ Give a brief (2-3 sentences) weekly summary and recommendation. Military/cyberpu
 );
 
 // ─── Parse endpoints (no DB write) ───────────────────────────────────────────
+
+router.post("/transcribe", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { audio, mimeType } = req.body as { audio?: string; mimeType?: string };
+    if (!audio) {
+      res.status(400).json({ error: "Audio data required (base64 string)" });
+      return;
+    }
+    const audioBuffer = Buffer.from(audio, "base64");
+    const transcript = await transcribeAudio(audioBuffer, mimeType || "audio/webm");
+    res.json({ transcript });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
 
 router.post("/parse-meal", requireAuth, async (req: Request, res: Response) => {
   try {

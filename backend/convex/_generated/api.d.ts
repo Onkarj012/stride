@@ -11,6 +11,8 @@
 import type * as ai from "../ai.js";
 import type * as chat from "../chat.js";
 import type * as coaches from "../coaches.js";
+import type * as foods from "../foods.js";
+import type * as gamification from "../gamification.js";
 import type * as goals from "../goals.js";
 import type * as history from "../history.js";
 import type * as insights from "../insights.js";
@@ -30,6 +32,8 @@ declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   chat: typeof chat;
   coaches: typeof coaches;
+  foods: typeof foods;
+  gamification: typeof gamification;
   goals: typeof goals;
   history: typeof history;
   insights: typeof insights;

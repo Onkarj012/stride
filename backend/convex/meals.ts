@@ -30,6 +30,7 @@ export const addMeal = mutation({
     date: v.optional(v.string()),
     aiSuggestion: v.optional(v.string()),
     mealType: v.optional(v.string()),
+    components: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (args.calories < 0 || args.protein < 0 || args.carbs < 0 || args.fat < 0) {
@@ -48,6 +49,7 @@ export const addMeal = mutation({
       time: args.time,
       aiSuggestion: args.aiSuggestion,
       mealType: args.mealType ?? "unspecified",
+      components: args.components,
     });
   },
 });
@@ -62,7 +64,8 @@ export const updateMeal = mutation({
     fat: v.number(),
     time: v.string(),
     mealType: v.optional(v.string()),
-    aiSuggestion: v.optional(v.string()),
+    aiSuggestion: v.optional(v.union(v.string(), v.null())),
+    components: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, { id, ...fields }) => {
     if (fields.calories < 0 || fields.protein < 0 || fields.carbs < 0 || fields.fat < 0) {
@@ -79,7 +82,8 @@ export const updateMeal = mutation({
       fat: fields.fat,
       time: fields.time,
       mealType: fields.mealType ?? "unspecified",
-      aiSuggestion: fields.aiSuggestion,
+      aiSuggestion: fields.aiSuggestion ?? undefined,
+      components: fields.components ?? undefined,
     });
   },
 });
@@ -136,6 +140,7 @@ export const addMealFromAI = internalMutation({
     date: v.string(),
     aiSuggestion: v.optional(v.string()),
     mealType: v.optional(v.string()),
+    components: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return ctx.db.insert("meals", {
@@ -149,6 +154,7 @@ export const addMealFromAI = internalMutation({
       time: args.time,
       aiSuggestion: args.aiSuggestion,
       mealType: args.mealType ?? "unspecified",
+      components: args.components,
     });
   },
 });
