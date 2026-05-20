@@ -143,10 +143,11 @@ export const getRecentFoods = query({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return [];
     // Return top cached foods by search count (popular foods)
-    return ctx.db
-      .query("food_cache")
-      .withSearchIndex("by_name_search", (q) => q.search("name", ""))
-      .take(20);
+    const foods = await ctx.db.query("food_cache").collect();
+    return foods
+      .filter((f) => f.verified)
+      .sort((a, b) => (b.searchCount ?? 0) - (a.searchCount ?? 0))
+      .slice(0, 20);
   },
 });
 

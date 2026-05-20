@@ -267,9 +267,9 @@ async function logWorkoutFromDescription(
 // ─── Transcription ───────────────────────────────────────────────────────────
 
 async function transcribeAudio(audioBuffer: Buffer, mimeType: string): Promise<string> {
-  const apiKey = process.env.GROQ_API_KEY || process.env.OPENROUTER_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    throw new Error("No API key available. Set GROQ_API_KEY or OPENROUTER_API_KEY in backend/.env.local");
+    throw new Error("GROQ_API_KEY is required for voice transcription. Set it in backend/.env.local");
   }
 
   const ext = mimeType === "audio/webm" ? "webm" : mimeType === "audio/mp4" ? "mp4" : "wav";

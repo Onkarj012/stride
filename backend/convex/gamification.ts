@@ -142,7 +142,6 @@ export const recordActivity = mutation({
         streakDays += 1;
       } else if (lastLoggedDate) {
         // Potentially broken — check if last missed day is in frozen dates
-        const frozenIdx = frozenDates.indexOf(today);
         const prevDayFrozen = frozenDates.includes(yesterday);
         if (prevDayFrozen) {
           // Freeze covered yesterday, streak continues

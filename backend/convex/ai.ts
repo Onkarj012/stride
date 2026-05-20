@@ -642,9 +642,11 @@ export const parseNutritionImage = action({
   handler: async (ctx, { imageDataUrl, userDescription }) => {
     const identity = await ctx.auth.getUserIdentity();
     const userId = identity?.subject;
+    let model: string | undefined;
     let apiKey: string | undefined;
     if (userId) {
       const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+      model = settings?.openRouterModel ?? undefined;
       apiKey = settings?.openRouterKey ?? undefined;
     }
 
@@ -665,7 +667,7 @@ export const parseNutritionImage = action({
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
         body: JSON.stringify({
-          model: "openai/gpt-4o-mini",
+          model: model || DEFAULT_MODEL,
           messages: [{
             role: "user",
             content: [
