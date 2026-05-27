@@ -38,10 +38,10 @@ export const getProgress = query({
         .collect(),
     ]);
 
-    const mealsByDate = new Map<string, { cals: number; prot: number }>();
+    const mealsByDate = new Map<string, { cals: number; prot: number; carbs: number; fat: number }>();
     for (const m of allMeals) {
-      const e = mealsByDate.get(m.date) ?? { cals: 0, prot: 0 };
-      mealsByDate.set(m.date, { cals: e.cals + m.calories, prot: e.prot + m.protein });
+      const e = mealsByDate.get(m.date) ?? { cals: 0, prot: 0, carbs: 0, fat: 0 };
+      mealsByDate.set(m.date, { cals: e.cals + m.calories, prot: e.prot + m.protein, carbs: e.carbs + m.carbs, fat: e.fat + m.fat });
     }
 
     const workoutsByDate = new Map<string, number>();
@@ -64,6 +64,8 @@ export const getProgress = query({
         dayLabel: DAY_NAMES[d.getDay()],
         calories: Math.round(m?.cals ?? 0),
         protein: Math.round(m?.prot ?? 0),
+        carbs: Math.round(m?.carbs ?? 0),
+        fat: Math.round(m?.fat ?? 0),
         workouts: workoutsByDate.get(date) ?? 0,
         goal: goalsByDate.get(date) ?? 2400,
       });

@@ -28,6 +28,7 @@ export function useAudioRecorder(onTranscript: (text: string) => void) {
   useEffect(() => () => cleanup(), [cleanup]);
 
   const start = useCallback(async () => {
+    if (recording) return; // guard against re-entry
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -43,7 +44,7 @@ export function useAudioRecorder(onTranscript: (text: string) => void) {
       mr.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: mimeType });
         cleanup();
-        if (blob.size === 0) { setRecording(false); return; }
+        if (blob.size === 0) { setError("No audio captured — try again"); setRecording(false); return; }
 
         setTranscribing(true);
         try {

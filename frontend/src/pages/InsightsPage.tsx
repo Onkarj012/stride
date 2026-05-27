@@ -42,10 +42,10 @@ export function InsightsPage() {
     : totalProtein;
   const todayCarbs = period === "today"
     ? logs.reduce((s, l) => s + (l.meal?.carbs ?? 0), 0)
-    : progressRows.reduce((s, r) => s + (("carbs" in r ? (r as { carbs?: number }).carbs : undefined) ?? 0), 0);
+    : progressRows.reduce((s, r) => s + r.carbs, 0);
   const todayFat = period === "today"
     ? logs.reduce((s, l) => s + (l.meal?.fat ?? 0), 0)
-    : 0;
+    : progressRows.reduce((s, r) => s + r.fat, 0);
 
   const workoutMin = period === "today"
     ? logs.reduce((s, l) => s + (l.workout?.duration ?? 0), 0)

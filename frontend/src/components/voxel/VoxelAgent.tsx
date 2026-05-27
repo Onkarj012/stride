@@ -1,10 +1,8 @@
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useState, lazy, Suspense, Component, type ReactNode } from "react";
 import type { CSSProperties } from "react";
 import { PixelAgent, type AgentKind, type AgentState } from "@/components/primitives/PixelAgent";
 import { supportsWebGL } from "./voxel-meta";
 
-/* The heavy 3D scene is split into its own module so three.js stays in the
- * lazy-loaded voxel-vendor chunk. */
 const VoxelTrack = lazy(() =>
   import("./VoxelTrack").then((m) => ({ default: m.VoxelTrack })),
 );
@@ -13,10 +11,23 @@ type VoxelAgentProps = {
   agent?: AgentKind;
   size?: number;
   state?: AgentState;
-  /** Disable the idle bob (e.g. for static dock thumbnails) */
   static?: boolean;
   className?: string;
 };
+
+/* ── ErrorBoundary that falls back to PixelAgent ── */
+type EBProps = { agent: AgentKind; size: number; state: AgentState; isStatic: boolean; className?: string; children: ReactNode };
+type EBState = { hasError: boolean };
+class VoxelErrorBoundary extends Component<EBProps, EBState> {
+  state: EBState = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() {
+    if (this.state.hasError) {
+      return <PixelAgent agent={this.props.agent} size={this.props.size} state={this.props.state} static={this.props.isStatic} className={this.props.className} />;
+    }
+    return this.props.children;
+  }
+}
 
 export function VoxelAgent({
   agent = "main",
@@ -52,24 +63,26 @@ export function VoxelAgent({
   }
 
   return (
-    <Suspense
-      fallback={
-        <PixelAgent
+    <VoxelErrorBoundary agent={agent} size={size} state={state} isStatic={isStatic} className={className}>
+      <Suspense
+        fallback={
+          <PixelAgent
+            agent={agent}
+            size={size}
+            state={state}
+            static={isStatic}
+            className={className}
+          />
+        }
+      >
+        <VoxelTrack
           agent={agent}
           size={size}
           state={state}
-          static={isStatic}
+          spinning={!isStatic}
           className={className}
         />
-      }
-    >
-      <VoxelTrack
-        agent={agent}
-        size={size}
-        state={state}
-        spinning={!isStatic}
-        className={className}
-      />
-    </Suspense>
+      </Suspense>
+    </VoxelErrorBoundary>
   );
 }
