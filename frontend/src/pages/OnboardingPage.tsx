@@ -137,8 +137,11 @@ export function OnboardingPage() {
       });
       localStorage.setItem("stride.prefs.v1", JSON.stringify({ units: "metric", notifications: true, reduceMotion: false, coachingStyle: state.coachingStyle }));
       navigate("/");
-    } catch { navigate("/"); }
-    finally { setSubmitting(false); }
+    } catch (err) {
+      console.error("Onboarding profile save failed:", err);
+      // Profile save failed — still navigate so user isn't stuck; they can update in Settings
+      navigate("/");
+    } finally { setSubmitting(false); }
   }
 
   return (

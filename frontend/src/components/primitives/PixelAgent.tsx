@@ -283,14 +283,18 @@ export function PixelAgent({
   useEffect(() => {
     // Only the main elephant has blink frames distinct from idle.
     if (agent !== "main" || state !== "idle") return;
-    let timeoutId: number | undefined;
+    let loopTimeoutId: number | undefined;
+    let blinkOffTimeoutId: number | undefined;
     const blinkLoop = () => {
       setBlinking(true);
-      window.setTimeout(() => setBlinking(false), 130);
-      timeoutId = window.setTimeout(blinkLoop, 2800 + Math.random() * 2400);
+      blinkOffTimeoutId = window.setTimeout(() => setBlinking(false), 130);
+      loopTimeoutId = window.setTimeout(blinkLoop, 2800 + Math.random() * 2400);
     };
-    timeoutId = window.setTimeout(blinkLoop, 1200 + Math.random() * 1500);
-    return () => { if (timeoutId !== undefined) window.clearTimeout(timeoutId); };
+    loopTimeoutId = window.setTimeout(blinkLoop, 1200 + Math.random() * 1500);
+    return () => {
+      if (loopTimeoutId !== undefined) window.clearTimeout(loopTimeoutId);
+      if (blinkOffTimeoutId !== undefined) window.clearTimeout(blinkOffTimeoutId);
+    };
   }, [agent, state]);
 
   const frames = FRAMES[agent];

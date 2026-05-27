@@ -159,7 +159,7 @@ function SettingsTab() {
   const { theme, toggle } = useTheme();
   const { prefs, update } = usePrefs();
   const { signOut } = useClerk();
-  const upsertSettings = useMutation(api.profile.upsertSettings);
+  const clearAllData = useMutation(api.users.clearAllData);
 
   return (
     <div className="space-y-5">
@@ -238,7 +238,7 @@ function SettingsTab() {
           }} />
         <ListDivider />
         <ListRow icon={<Trash2 />} title="Clear all entries" meta="Permanently remove every log"
-          onClick={() => { if (confirm("Delete all your data? This cannot be undone.")) upsertSettings({}); }} />
+          onClick={() => { if (confirm("Delete all your data? This cannot be undone.")) clearAllData(); }} />
       </Card>
 
       <Card tone="card" radius="lg" padding="none" className="overflow-hidden">

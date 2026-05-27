@@ -151,7 +151,7 @@ export function BarcodeModal({ open, onClose }: Props) {
                     />
                     <p className="text-[12px] text-text-muted">
                       → {Math.round(product.caloriesPer100g * grams / 100)} kcal
-                      · {Math.round(product.proteinPer100g * grams / 10) / 10}g protein
+                      · {Math.round(product.proteinPer100g * grams / 100 * 10) / 10}g protein
                     </p>
                   </div>
 

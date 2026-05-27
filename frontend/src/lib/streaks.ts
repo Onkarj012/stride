@@ -7,8 +7,6 @@ export type StreakInfo = {
   lastLogDay: Date | null;
 };
 
-const DAY_MS = 86_400_000;
-
 export function computeStreak(logs: LogEntry[]): StreakInfo {
   if (logs.length === 0) {
     return { current: 0, best: 0, recovery: false, lastLogDay: null };
@@ -43,14 +41,16 @@ export function computeStreak(logs: LogEntry[]): StreakInfo {
     }
   }
 
-  // Best: longest consecutive run in history
-  const sortedTimes = Array.from(days)
-    .map((d) => new Date(d).getTime())
-    .sort((a, b) => a - b);
-  let best = sortedTimes.length > 0 ? 1 : 0;
+  // Best: longest consecutive run in history (compare date strings to avoid DST bugs)
+  const sortedDates = Array.from(days)
+    .map((d) => new Date(d))
+    .sort((a, b) => a.getTime() - b.getTime());
+  let best = sortedDates.length > 0 ? 1 : 0;
   let run = 1;
-  for (let i = 1; i < sortedTimes.length; i++) {
-    if (sortedTimes[i] - sortedTimes[i - 1] === DAY_MS) {
+  for (let i = 1; i < sortedDates.length; i++) {
+    const prev = new Date(sortedDates[i - 1]);
+    prev.setDate(prev.getDate() + 1);
+    if (prev.toDateString() === sortedDates[i].toDateString()) {
       run++;
       best = Math.max(best, run);
     } else {

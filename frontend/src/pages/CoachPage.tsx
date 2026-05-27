@@ -294,10 +294,13 @@ export function CoachPage() {
         coachType: "auto",
         today: new Date().toISOString().split("T")[0],
       });
-      const reply = (result as { reply?: string }).reply ?? String(result);
-      const coachType = (result as { coachType?: string }).coachType;
+      const r = result as Record<string, unknown>;
+      const reply = typeof r.reply === "string" ? r.reply : String(result);
+      const coachType = typeof r.coachType === "string" ? r.coachType : undefined;
       const agent = coachToAgent(coachType);
-      const loggedItem = (result as { loggedItem?: { type: string; data: any } }).loggedItem;
+      const loggedItem = (r.loggedItem && typeof r.loggedItem === "object" && "type" in (r.loggedItem as object))
+        ? r.loggedItem as { type: string; data: any }
+        : undefined;
 
       setThinking(false);
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: reply, agent, streamed: true }]);

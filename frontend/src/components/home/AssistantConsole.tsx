@@ -126,8 +126,6 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
       if (!e.clipboardData) return;
-      const target = e.target as HTMLElement | null;
-      if (target && target.tagName === "INPUT" && target !== activeRef.current) return;
       for (const item of Array.from(e.clipboardData.items)) {
         if (item.type.startsWith("image/")) {
           e.preventDefault();
@@ -210,10 +208,14 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
       setThinking(false);
 
       if (result.kind === "meal" || result.kind === "workout") {
-        // Show concise tier-1 summary and open ConfirmModal
         setReply({ text: result.tier1Summary, agent: result.kind === "meal" ? "diet" : "workout" });
         pendingTier2Ref.current = result.tier2Detail ?? "";
-        setPendingDraft(result.draft as LogDraft);
+        if (result.draft && typeof result.draft === "object" && "kind" in result.draft) {
+          setPendingDraft(result.draft as LogDraft);
+        } else {
+          console.error("Unexpected draft shape:", result.draft);
+          setReply({ text: "Sorry, couldn't parse the draft. Please try again.", agent: "main" });
+        }
       } else {
         // Question/chat reply
         const agent = coachToAgent(result.coachType);

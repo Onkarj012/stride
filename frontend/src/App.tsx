@@ -1,7 +1,7 @@
 import { Routes, Route, useLocation, Navigate } from "react-router-dom";
 import { lazy, Suspense, useEffect } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Show, useUser, ClerkLoaded, ClerkLoading } from "@clerk/react";
+import { Show, useUser, ClerkLoaded, ClerkLoading, AuthenticateWithRedirectCallback } from "@clerk/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { ThemeProvider } from "@/context/ThemeContext";
@@ -38,7 +38,8 @@ function EnsureUser() {
   const ensureUser = useMutation(api.users.ensureUser);
   useEffect(() => {
     if (!user) return;
-    ensureUser({ name: user.fullName ?? user.username ?? "User", email: user.primaryEmailAddress?.emailAddress ?? "" }).catch(() => {});
+    ensureUser({ name: user.fullName ?? user.username ?? "User", email: user.primaryEmailAddress?.emailAddress ?? "" })
+      .catch((err) => console.error("ensureUser failed:", err));
   }, [user, ensureUser]);
   return null;
 }
@@ -86,6 +87,7 @@ export default function App() {
           <Routes>
             <Route path="/sign-in" element={<SignInPage />} />
             <Route path="/sign-up" element={<SignUpPage />} />
+            <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback />} />
             <Route path="*" element={<Navigate to="/sign-in" replace />} />
           </Routes>
         </Show>

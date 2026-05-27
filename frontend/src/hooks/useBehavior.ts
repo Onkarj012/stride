@@ -59,16 +59,19 @@ export function useBehavior() {
     write(next); setState(next);
   }, []);
 
-  /** Has the user dismissed this window's prompt 3+ days running? */
+  /** Has the user dismissed this window's prompt on 3 consecutive calendar days? */
   const isWindowFatigued = useCallback((window: keyof BehaviorState["dismissals"]): boolean => {
     const arr = state.dismissals[window] ?? [];
     if (arr.length < 3) return false;
     const last3 = arr.slice(-3);
     const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    // last3[0] must be exactly 2 days ago, last3[1] exactly 1 day ago, last3[2] today
     return last3.every((iso, i) => {
       const d = new Date(iso);
+      d.setHours(0, 0, 0, 0);
       const diff = Math.round((today.getTime() - d.getTime()) / 86_400_000);
-      return diff <= 3 - i;
+      return diff === 2 - i;
     });
   }, [state.dismissals]);
 

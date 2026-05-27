@@ -35,10 +35,12 @@ const PROP: Record<AgentKind, string | null> = {
 /* ── Shared material factory ── */
 function useMeshMaterial(texturePath: string) {
   const texture = useLoader(TextureLoader, texturePath);
-  texture.magFilter = NearestFilter;
-  texture.minFilter = NearestFilter;
-  texture.generateMipmaps = false;
-  return new MeshStandardMaterial({ map: texture, roughness: 0.55, metalness: 0 });
+  return useMemo(() => {
+    texture.magFilter = NearestFilter;
+    texture.minFilter = NearestFilter;
+    texture.generateMipmaps = false;
+    return new MeshStandardMaterial({ map: texture, roughness: 0.55, metalness: 0 });
+  }, [texture]);
 }
 
 /* ── Animal mesh ── */

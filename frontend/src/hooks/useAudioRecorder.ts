@@ -4,7 +4,8 @@ import { api } from "@convex/_generated/api";
 
 /**
  * Records audio via MediaRecorder, transcribes via Groq Whisper through Convex action.
- * Returns the transcript via callback. Falls back to Web Speech API if MediaRecorder fails.
+ * Returns the transcript via callback.
+ * If microphone permission is denied, sets an error message.
  */
 export function useAudioRecorder(onTranscript: (text: string) => void) {
   const [recording, setRecording] = useState(false);
@@ -46,11 +47,14 @@ export function useAudioRecorder(onTranscript: (text: string) => void) {
 
         setTranscribing(true);
         try {
-          // Convert to base64 (no data URL prefix)
+          // Convert to base64 in chunks to avoid O(n²) string concatenation
           const arrayBuffer = await blob.arrayBuffer();
           const bytes = new Uint8Array(arrayBuffer);
+          const chunkSize = 8192;
           let binary = "";
-          for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+          for (let i = 0; i < bytes.byteLength; i += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+          }
           const base64 = btoa(binary);
 
           const result = await transcribe({ audio: base64, mimeType: mimeType.split(";")[0] });

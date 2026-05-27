@@ -206,8 +206,8 @@ export function HistoryPage() {
 
   // Day summary from calendar data
   const dateStr = toDateStr(selected);
-  const dayData = calendarData[dateStr];
   const data = useQuery(api.history.getDayHistory, { date: dateStr });
+  const waterLogs = useQuery(api.wellness.getWater, { date: dateStr }) ?? [];
   const meals = data?.meals ?? [];
   const workouts = data?.workouts ?? [];
 
@@ -222,7 +222,7 @@ export function HistoryPage() {
     { label: "Calories", value: Math.round(macros.kcal), unit: "", sub: `${Math.round(macros.protein)}p · ${Math.round(macros.carbs)}c · ${Math.round(macros.fat)}f`, tone: "bg-peach" },
     { label: "Workout", value: workoutMin, unit: "min", sub: `${workouts.length} session${workouts.length !== 1 ? "s" : ""}`, tone: "bg-lavender" },
     { label: "Sleep", value: "—", unit: "h", sub: "not tracked", tone: "bg-sky" },
-    { label: "Water", value: dayData ? (dayData.calories > 0 ? "✓" : "—") : "—", unit: "", sub: "from logs", tone: "bg-mint" },
+    { label: "Water", value: waterLogs.length > 0 ? (waterLogs.reduce((s, w) => s + w.ml, 0) / 1000).toFixed(1) : "—", unit: waterLogs.length > 0 ? "L" : "", sub: `${waterLogs.length} glass${waterLogs.length !== 1 ? "es" : ""}`, tone: "bg-mint" },
   ];
 
   return (

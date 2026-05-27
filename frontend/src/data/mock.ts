@@ -280,7 +280,7 @@ export function weeklyNarrative(stats: {
   workouts: number;
   avgKcal: number;
 }): { headline: string; body: string } {
-  const consistency = stats.activeDays / stats.totalDays;
+  const consistency = stats.totalDays > 0 ? stats.activeDays / stats.totalDays : 0;
   let headline: string;
   if (consistency >= 0.85) headline = `Strong week — ${stats.activeDays}/${stats.totalDays} active days`;
   else if (consistency >= 0.6) headline = `Solid week — ${stats.activeDays}/${stats.totalDays} active days`;

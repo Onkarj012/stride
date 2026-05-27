@@ -204,13 +204,14 @@ export function SignUpPage() {
     setError(null);
     setLoading(true);
     try {
-      const { error: verifyErr } = await (signUp as any).verifyEmailCode({ code });
-      if (verifyErr) { setError(verifyErr.message); return; }
-      const { error: finalErr } = await signUp.finalize();
-      if (finalErr) { setError(finalErr.message); return; }
+      const result = await (signUp as any).attemptEmailAddressVerification({ code });
+      if (result.status !== "complete") {
+        setError("Verification incomplete — please try again");
+        return;
+      }
       navigate("/onboarding");
     } catch (err: any) {
-      setError(err?.message ?? "Couldn't verify code");
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't verify code");
     } finally {
       setLoading(false);
     }

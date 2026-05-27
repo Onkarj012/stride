@@ -176,7 +176,7 @@ function WorkoutCard({
             <div className="flex items-center gap-1.5">
               <Footprints className="h-4 w-4 text-text-muted" strokeWidth={1.75} />
               <span className="text-[13px] text-text-muted">
-                {(draft.duration / draft.distance).toFixed(1)} min/km pace
+                {draft.distance > 0 ? (draft.duration / draft.distance).toFixed(1) : "—"} min/km pace
               </span>
             </div>
           </>
