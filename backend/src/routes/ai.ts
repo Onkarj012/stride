@@ -22,6 +22,8 @@ interface OpenAIResponse {
   error?: { message?: string };
 }
 
+const FALLBACK_MODEL = "anthropic/claude-3-haiku";
+
 async function callAI(
   messages: AIMessage[],
   maxTokens = 500,
@@ -31,31 +33,74 @@ async function callAI(
   if (!apiKey) {
     throw new Error("OPENROUTER_API_KEY is not set. Check backend/.env.local");
   }
-  const response = await fetch(OPENROUTER_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
-      messages,
-      max_tokens: maxTokens,
-    }),
-  });
-  if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`OpenRouter error ${response.status}: ${errBody}`);
+
+  const primaryModel = "openai/gpt-4o-mini";
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const useFallback = attempt >= 2;
+    const currentModel = useFallback ? FALLBACK_MODEL : primaryModel;
+
+    // Small backoff between retries
+    if (attempt > 0) {
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
+
+    try {
+      const response = await fetch(OPENROUTER_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: currentModel,
+          messages,
+          max_tokens: maxTokens,
+        }),
+      });
+
+      if (!response.ok) {
+        const status = response.status;
+        const errBody = await response.text();
+        if (status >= 500 || status === 429) {
+          lastError = new Error(`OpenRouter error ${status}: ${errBody}`);
+          continue;
+        }
+        throw new Error(`OpenRouter error ${status}: ${errBody}`);
+      }
+
+      const data = (await response.json()) as OpenAIResponse;
+      if (data.error) {
+        lastError = new Error(`OpenRouter API error: ${data.error.message}`);
+        continue;
+      }
+
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) {
+        lastError = new Error("OpenRouter returned empty response");
+        continue;
+      }
+
+      return content;
+    } catch (err) {
+      const error = err as Error;
+      if (
+        error.message.includes("fetch failed") ||
+        error.message.includes("ECONNREFUSED") ||
+        error.message.includes("ETIMEDOUT") ||
+        error.message.includes("ECONNRESET") ||
+        error.message.includes("network") ||
+        error.message.includes("timeout")
+      ) {
+        lastError = error;
+        continue;
+      }
+      throw err;
+    }
   }
-  const data = (await response.json()) as OpenAIResponse;
-  if (data.error) {
-    throw new Error(`OpenRouter API error: ${data.error.message}`);
-  }
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error("OpenRouter returned empty response");
-  }
-  return content;
+
+  throw lastError || new Error("OpenRouter failed after maximum retries");
 }
 
 // ─── Shared parse helpers ─────────────────────────────────────────────────────

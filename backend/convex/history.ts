@@ -73,6 +73,10 @@ export const getDayHistory = query({
         mealType: m.mealType,
         aiSuggestion: m.aiSuggestion,
         date: m.date,
+        confidence: m.confidence ?? null,
+        nutritionSource: m.nutritionSource ?? null,
+        structuredItems: m.structuredItems ?? null,
+        ingredientBreakdown: m.ingredientBreakdown ?? null,
       })),
       workouts: workoutRows.map((w: any) => ({
         _id: w._id,
@@ -84,17 +88,21 @@ export const getDayHistory = query({
         caloriesBurned: w.caloriesBurned ?? null,
         date: w.date,
         rationale: w.rationale ?? null,
+        calorieConfidence: w.calorieConfidence ?? null,
+        calorieRangeLow: w.calorieRangeLow ?? null,
+        calorieRangeHigh: w.calorieRangeHigh ?? null,
+        calorieBreakdown: w.calorieBreakdown ?? null,
       })),
     };
   },
 });
 
 export const getHistoryInsights = query({
-  args: { days: v.optional(v.number()) },
-  handler: async (ctx, { days }) => {
+  args: { days: v.optional(v.number()), today: v.optional(v.string()) },
+  handler: async (ctx, { days, today }) => {
     const userId = await requireUserId(ctx);
     const dayCount = Math.min(90, Math.max(7, days ?? 30));
-    const endDate = new Date().toISOString().split("T")[0];
+    const endDate = today ?? new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - dayCount * 86400000).toISOString().split("T")[0];
 
     const [mealRows, workoutRows, goalRows] = await Promise.all([
@@ -129,8 +137,10 @@ export const getHistoryInsights = query({
     }
 
     const daily = [];
+    const end = new Date(endDate + "T00:00:00");
     for (let i = 0; i < dayCount; i++) {
-      const d = new Date(Date.now() - i * 86400000);
+      const d = new Date(end);
+      d.setDate(d.getDate() - i);
       const dateStr = d.toISOString().split("T")[0];
       const m = mealMap.get(dateStr);
       const w = workoutMap.get(dateStr);
@@ -159,10 +169,10 @@ export const getHistoryInsights = query({
 });
 
 export const getStreak = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { today: v.optional(v.string()) },
+  handler: async (ctx, { today: todayArg }) => {
     const userId = await requireUserId(ctx);
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayArg ?? new Date().toISOString().split("T")[0];
     const startDate = new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0];
 
     const [mealRows, workoutRows] = await Promise.all([
@@ -183,7 +193,7 @@ export const getStreak = query({
     for (const w of workoutRows) datesWithActivity.add(w.date);
 
     let streak = 0;
-    let currentDate = new Date();
+    let currentDate = new Date(today + "T00:00:00");
 
     // Check if today has activity, if not start from yesterday
     if (!datesWithActivity.has(today)) {

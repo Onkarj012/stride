@@ -8,22 +8,22 @@ import {
   scoreCompoundRatio,
   parseDurationMinutes,
   type CalorieResult,
-} from "./calorie-engine";
+} from "./calorie_engine";
 import {
   lookupExercise,
   matchExercises,
   getWeightedMET,
   getDominantCategory,
-} from "./exercise-db";
+} from "./exercise_db";
 import {
   mapAIIntensity,
   inferDensity,
   countCompoundRatio,
   generateSetsSummary,
-} from "./workout-scorer";
+} from "./workout_scorer";
 import {
   toGrams,
-} from "./unit-converter";
+} from "./unit_converter";
 import {
   matchBestFood,
   computeNutrition,
@@ -32,10 +32,11 @@ import {
   scaleResult,
   type ItemBreakdown,
   type NutritionResult,
-} from "./nutrition-engine";
+} from "./nutrition_engine";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
+const FALLBACK_MODEL = "anthropic/claude-3-haiku";
 
 const VISION_MODELS = new Set([
   "openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4-turbo",
@@ -51,30 +52,65 @@ async function callAI(messages: AIMessage[], maxTokens = 500, model?: string, ap
   const key = apiKey || process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
+  const primaryModel = model || DEFAULT_MODEL;
+  let lastError: Error | null = null;
 
-  try {
-    const res = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: model || DEFAULT_MODEL, messages, max_tokens: maxTokens }),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`OpenRouter error ${res.status}: ${await res.text()}`);
-    const data = await res.json() as any;
-    if (data.error) throw new Error(`OpenRouter API error: ${data.error.message}`);
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error("OpenRouter returned empty response");
-    return content;
-  } catch (err) {
-    if (err instanceof Error && err.name === "AbortError") {
-      throw new Error("OpenRouter request timed out after 60s");
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const useFallback = attempt >= 2;
+    const currentModel = useFallback ? FALLBACK_MODEL : primaryModel;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+
+    try {
+      const res = await fetch(OPENROUTER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: currentModel, messages, max_tokens: maxTokens }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const status = res.status;
+        const errBody = await res.text();
+        if (status >= 500 || status === 429) {
+          lastError = new Error(`OpenRouter error ${status}: ${errBody}`);
+          continue;
+        }
+        throw new Error(`OpenRouter error ${status}: ${errBody}`);
+      }
+      const data = await res.json() as any;
+      if (data.error) {
+        lastError = new Error(`OpenRouter API error: ${data.error.message}`);
+        continue;
+      }
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) {
+        lastError = new Error("OpenRouter returned empty response");
+        continue;
+      }
+      return content;
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        lastError = new Error("OpenRouter request timed out after 60s");
+        continue;
+      }
+      const error = err as Error;
+      if (
+        error.message.includes("fetch failed") ||
+        error.message.includes("ECONNREFUSED") ||
+        error.message.includes("ETIMEDOUT") ||
+        error.message.includes("ECONNRESET") ||
+        error.message.includes("network")
+      ) {
+        lastError = error;
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
     }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw lastError || new Error("OpenRouter failed after maximum retries");
 }
 
 function parseJSON<T>(text: string, fallback: T): T {
@@ -83,7 +119,7 @@ function parseJSON<T>(text: string, fallback: T): T {
 }
 
 async function parseMealDescription(description: string, mealType: string, time: string, model?: string, apiKey?: string) {
-  const prompt = `You are a professional nutritionist. Extract structured ingredients from this meal description.
+  const prompt = `You are a professional nutritionist. Extract structured ingredients from this meal description AND estimate total macros.
 
 Meal type: ${mealType || "unspecified"}
 User's description:
@@ -99,18 +135,18 @@ Instructions:
 5. Estimate total_recipe_servings if mentioned.
 6. In "components", list the key ingredients detected (e.g. "paneer, rice, ghee"). Be specific.
 7. In "suggestion", give ONE forward-looking sentence about what the user should focus on in their NEXT meal (not criticism of this meal).
-8. Do NOT estimate calories, protein, carbs, or fat. Set them all to 0.
+8. ALSO estimate total calories, protein (g), carbs (g), and fat (g) for the entire meal. These serve as fallback values when the food database doesn't have complete data for every ingredient.
 
 Return ONLY a JSON object (no other text, no markdown):
-{"name":"short descriptive name (max 4 words)","calories":0,"protein":0,"carbs":0,"fat":0,"components":"comma-separated ingredient list","suggestion":"one forward-looking next-meal tip (max 20 words)","ingredients":[{"food_text":"paneer","amount":150,"unit":"g","is_oil_or_fat":false,"confidence":0.9}],"cooking_method":"fried","portion_scale":1.0,"total_recipe_servings":2,"missing_fields":["oil_amount"]}`;
+{"name":"short descriptive name (max 4 words)","calories":450,"protein":35,"carbs":40,"fat":18,"components":"comma-separated ingredient list","suggestion":"one forward-looking next-meal tip (max 20 words)","ingredients":[{"food_text":"paneer","amount":150,"unit":"g","is_oil_or_fat":false,"confidence":0.9}],"cooking_method":"fried","portion_scale":1.0,"total_recipe_servings":2,"missing_fields":["oil_amount"]}`;
 
   const content = await callAI([{ role: "user", content: prompt }], 1000, model, apiKey);
   const result = parseJSON<any>(content, {
     name: description.slice(0, 50),
-    calories: 0,
-    protein: 0,
-    carbs: 0,
-    fat: 0,
+    calories: 400,
+    protein: 20,
+    carbs: 35,
+    fat: 15,
     components: "",
     suggestion: "",
     ingredients: [],
@@ -122,10 +158,10 @@ Return ONLY a JSON object (no other text, no markdown):
   const mealTime = time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
   return {
     name: result.name || description.slice(0, 50),
-    calories: result.calories || 0,
-    protein: result.protein || 0,
-    carbs: result.carbs || 0,
-    fat: result.fat || 0,
+    calories: result.calories || 400,
+    protein: result.protein || 20,
+    carbs: result.carbs || 35,
+    fat: result.fat || 15,
     time: mealTime,
     aiSuggestion: result.suggestion || undefined,
     components: result.components || undefined,
@@ -260,6 +296,156 @@ Return ONLY valid JSON:
   };
 }
 
+// ─── Deterministic Nutrition Engine ───────────────────────────────────────────
+
+async function runNutritionEngine(
+  ctx: any,
+  parsedMeal: any,
+): Promise<{
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  confidence: number;
+  nutritionSource: string;
+  ingredientBreakdown: NutritionResult | null;
+}> {
+  let nutritionResult: NutritionResult | null = null;
+  const breakdownItems: ItemBreakdown[] = [];
+  const unresolved: string[] = [];
+  const ingredients = parsedMeal.ingredients || [];
+
+  if (ingredients.length > 0) {
+    try {
+      for (const ingredient of ingredients) {
+        const foodText: string = ingredient.food_text || "";
+        const amount: number = ingredient.amount || 0;
+        const unit: string = ingredient.unit || "g";
+
+        if (!foodText || amount <= 0) continue;
+
+        const conversion = toGrams(amount, unit, foodText);
+        const grams = conversion.grams;
+
+        const cachedResults: any[] = await ctx.runQuery(internal.foods.searchFoodsInCache, { query: foodText });
+        const bestMatch = matchBestFood(foodText, cachedResults);
+
+        if (bestMatch) {
+          const nutrition = computeNutrition(bestMatch, grams);
+          breakdownItems.push({
+            food_text: foodText,
+            matched_food_name: bestMatch.name,
+            grams,
+            calories_kcal: nutrition.calories_kcal,
+            protein_g: nutrition.protein_g,
+            carbs_g: nutrition.carbs_g,
+            fat_g: nutrition.fat_g,
+            source: bestMatch.source || "cache",
+            confidence: conversion.confidence,
+          });
+          ctx.runMutation(internal.foods.bumpSearchCount, { id: bestMatch._id }).catch(() => {});
+        } else if (ingredient.is_oil_or_fat) {
+          const oilCals = Math.round(grams * 8.84);
+          breakdownItems.push({
+            food_text: foodText,
+            matched_food_name: foodText,
+            grams,
+            calories_kcal: oilCals,
+            protein_g: 0,
+            carbs_g: 0,
+            fat_g: grams,
+            source: "standard",
+            confidence: 0.85,
+          });
+        } else {
+          unresolved.push(foodText);
+        }
+      }
+
+      const hasOil = ingredients.some((i: any) => i.is_oil_or_fat);
+      if (!hasOil && breakdownItems.length > 0) {
+        const oilAdjustment = cookingMethodAdjustment(parsedMeal.cooking_method || "unknown");
+        if (oilAdjustment.oil_calories > 0) {
+          const method = parsedMeal.cooking_method || "unknown";
+          breakdownItems.push({
+            food_text: `cooking oil (${method})`,
+            matched_food_name: `cooking oil (${method})`,
+            grams: 0,
+            calories_kcal: oilAdjustment.oil_calories,
+            protein_g: 0,
+            carbs_g: 0,
+            fat_g: oilAdjustment.oil_fat_g,
+            source: "estimated",
+            confidence: 0.5,
+          });
+        }
+      }
+
+      nutritionResult = buildNutritionResult(breakdownItems, unresolved);
+
+      if (parsedMeal.portion_scale < 1.0) {
+        nutritionResult = scaleResult(nutritionResult, parsedMeal.portion_scale);
+      }
+    } catch {
+      // Fall back to AI-estimated values on error
+    }
+  }
+
+  // Blend engine result with AI fallback when the engine result is incomplete
+  const hasUnresolved = unresolved.length > 0;
+  const aiCals = parsedMeal.calories || 400;
+  const aiProtein = parsedMeal.protein || 20;
+  const aiCarbs = parsedMeal.carbs || 35;
+  const aiFat = parsedMeal.fat || 15;
+
+  let finalCalories: number;
+  let finalProtein: number;
+  let finalCarbs: number;
+  let finalFat: number;
+  let finalConfidence: number;
+  let finalSource: string;
+
+  if (nutritionResult && nutritionResult.items.length > 0) {
+    const engine = nutritionResult;
+
+    if (!hasUnresolved) {
+      // All ingredients resolved → pure deterministic result
+      finalCalories = engine.calories_kcal;
+      finalProtein = engine.protein_g;
+      finalCarbs = engine.carbs_g;
+      finalFat = engine.fat_g;
+      finalConfidence = engine.confidence;
+      finalSource = "database";
+    } else {
+      // Some ingredients unresolved → blend: use engine for what matched, AI for missing macros
+      finalCalories = engine.calories_kcal > 0 ? Math.max(engine.calories_kcal, aiCals) : aiCals;
+      finalProtein = engine.protein_g > 0 ? engine.protein_g : aiProtein;
+      finalCarbs = engine.carbs_g > 0 ? engine.carbs_g : aiCarbs;
+      finalFat = engine.fat_g > 0 ? engine.fat_g : aiFat;
+      finalConfidence = Math.max(0.3, engine.confidence * 0.7);
+      finalSource = "mixed";
+    }
+  } else {
+    // Nothing resolved → pure AI fallback
+    finalCalories = aiCals;
+    finalProtein = aiProtein;
+    finalCarbs = aiCarbs;
+    finalFat = aiFat;
+    finalConfidence = 0.3;
+    finalSource = "ai";
+  }
+
+  return {
+    calories: Math.round(finalCalories),
+    protein: Math.round(finalProtein * 10) / 10,
+    carbs: Math.round(finalCarbs * 10) / 10,
+    fat: Math.round(finalFat * 10) / 10,
+    confidence: finalConfidence,
+    nutritionSource: finalSource,
+    ingredientBreakdown: nutritionResult,
+  };
+}
+
 // ─── Public actions ───────────────────────────────────────────────────────────
 
 export const estimateMeal = action({
@@ -297,7 +483,21 @@ export const parseMeal = action({
       model = settings?.openRouterModel ?? undefined;
       apiKey = settings?.openRouterKey ?? undefined;
     }
-    return parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
+    const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
+
+    // Run deterministic nutrition calculation
+    const nutrition = await runNutritionEngine(ctx, parsedMeal);
+
+    return {
+      ...parsedMeal,
+      calories: nutrition.calories,
+      protein: nutrition.protein,
+      carbs: nutrition.carbs,
+      fat: nutrition.fat,
+      confidence: nutrition.confidence,
+      nutritionSource: nutrition.nutritionSource,
+      ingredientBreakdown: nutrition.ingredientBreakdown,
+    };
   },
 });
 
@@ -374,135 +574,40 @@ export const logMeal = action({
     }
 
     // Run deterministic nutrition calculation from structured ingredients
-    let nutritionResult: NutritionResult | null = null;
-    const ingredients = parsedMeal.ingredients || [];
-    if (ingredients.length > 0) {
-      try {
-        const breakdownItems: ItemBreakdown[] = [];
-        const unresolved: string[] = [];
-
-        for (const ingredient of ingredients) {
-          const foodText: string = ingredient.food_text || "";
-          const amount: number = ingredient.amount || 0;
-          const unit: string = ingredient.unit || "g";
-
-          if (!foodText || amount <= 0) continue;
-
-          // Convert to grams
-          const conversion = toGrams(amount, unit, foodText);
-          const grams = conversion.grams;
-
-          // Search food cache
-          const cachedResults: any[] = await ctx.runQuery(internal.foods.searchFoodsInCache, { query: foodText });
-          const bestMatch = matchBestFood(foodText, cachedResults);
-
-          if (bestMatch) {
-            const nutrition = computeNutrition(bestMatch, grams);
-            breakdownItems.push({
-              food_text: foodText,
-              matched_food_name: bestMatch.name,
-              grams,
-              calories_kcal: nutrition.calories_kcal,
-              protein_g: nutrition.protein_g,
-              carbs_g: nutrition.carbs_g,
-              fat_g: nutrition.fat_g,
-              source: bestMatch.source || "cache",
-              confidence: conversion.confidence,
-            });
-            // Bump search count asynchronously
-            ctx.runMutation(internal.foods.bumpSearchCount, { id: bestMatch._id }).catch(() => {});
-          } else if (ingredient.is_oil_or_fat) {
-            // For oils/fats, use standard values
-            const oilCals = Math.round(grams * 8.84);
-            breakdownItems.push({
-              food_text: foodText,
-              matched_food_name: foodText,
-              grams,
-              calories_kcal: oilCals,
-              protein_g: 0,
-              carbs_g: 0,
-              fat_g: grams,
-              source: "standard",
-              confidence: 0.85,
-            });
-          } else {
-            unresolved.push(foodText);
-          }
-        }
-
-        // Apply cooking method adjustment if we have ingredients but no explicit oil
-        const hasOil = ingredients.some((i: any) => i.is_oil_or_fat);
-        if (!hasOil && breakdownItems.length > 0) {
-          const oilAdjustment = cookingMethodAdjustment(parsedMeal.cooking_method || "unknown");
-          if (oilAdjustment.oil_calories > 0) {
-            const method = parsedMeal.cooking_method || "unknown";
-            breakdownItems.push({
-              food_text: `cooking oil (${method})`,
-              matched_food_name: `cooking oil (${method})`,
-              grams: 0,
-              calories_kcal: oilAdjustment.oil_calories,
-              protein_g: 0,
-              carbs_g: 0,
-              fat_g: oilAdjustment.oil_fat_g,
-              source: "estimated",
-              confidence: 0.5,
-            });
-          }
-        }
-
-        nutritionResult = buildNutritionResult(breakdownItems, unresolved);
-
-        // Apply portion scaling
-        if (parsedMeal.portion_scale < 1.0) {
-          nutritionResult = scaleResult(nutritionResult, parsedMeal.portion_scale);
-        }
-      } catch {
-        // Fall back to AI-estimated values on error
-      }
-    }
-
-    // Determine final values
-    const finalCalories = nutritionResult?.calories_kcal ?? parsedMeal.calories ?? 400;
-    const finalProtein = nutritionResult?.protein_g ?? parsedMeal.protein ?? 20;
-    const finalCarbs = nutritionResult?.carbs_g ?? parsedMeal.carbs ?? 35;
-    const finalFat = nutritionResult?.fat_g ?? parsedMeal.fat ?? 15;
-    const finalConfidence = nutritionResult?.confidence ?? 0.3;
-    const finalSource = nutritionResult && nutritionResult.items.length > 0
-      ? (nutritionResult.unresolved.length > 0 ? "mixed" : "database")
-      : "ai";
-    const structuredItems = nutritionResult ? JSON.stringify(nutritionResult.items) : undefined;
-    const ingredientBreakdown = nutritionResult ? JSON.stringify(nutritionResult) : undefined;
+    const nutrition = await runNutritionEngine(ctx, parsedMeal);
+    const structuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
+    const ingredientBreakdownStr = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
 
     const id = await ctx.runMutation(internal.meals.addMealFromAI, {
       userId, date: today,
       name: parsedMeal.name || "Meal",
-      calories: finalCalories,
-      protein: finalProtein,
-      carbs: finalCarbs,
-      fat: finalFat,
+      calories: nutrition.calories,
+      protein: nutrition.protein,
+      carbs: nutrition.carbs,
+      fat: nutrition.fat,
       time: parsedMeal.time,
       aiSuggestion: parsedMeal.aiSuggestion,
       mealType: parsedMeal.mealType || mealType || "unspecified",
       components: parsedMeal.components,
-      confidence: finalConfidence,
-      nutritionSource: finalSource,
+      confidence: nutrition.confidence,
+      nutritionSource: nutrition.nutritionSource,
       structuredItems,
-      ingredientBreakdown,
+      ingredientBreakdown: ingredientBreakdownStr,
     });
     data = {
       _id: id,
       name: parsedMeal.name,
-      calories: finalCalories,
-      protein: finalProtein,
-      carbs: finalCarbs,
-      fat: finalFat,
+      calories: nutrition.calories,
+      protein: nutrition.protein,
+      carbs: nutrition.carbs,
+      fat: nutrition.fat,
       time: parsedMeal.time,
       aiSuggestion: parsedMeal.aiSuggestion,
       mealType: parsedMeal.mealType || mealType || "unspecified",
       components: parsedMeal.components,
-      confidence: finalConfidence,
-      nutritionSource: finalSource,
-      ingredientBreakdown: nutritionResult,
+      confidence: nutrition.confidence,
+      nutritionSource: nutrition.nutritionSource,
+      ingredientBreakdown: nutrition.ingredientBreakdown,
     };
     return data;
   },
@@ -602,13 +707,14 @@ export const chat = action({
     message: v.string(),
     sessionId: v.optional(v.id("chat_sessions")),
     coachType: v.optional(v.string()),
+    today: v.optional(v.string()),
   },
-  handler: async (ctx, { message, sessionId, coachType }) => {
+  handler: async (ctx, { message, sessionId, coachType, today: todayArg }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
     const userName = identity.name ?? "Athlete";
-    const today = new Date().toISOString().split("T")[0];
+    const today = todayArg ?? new Date().toISOString().split("T")[0];
 
     // Gather context
     const [profile, todayMeals, todayWorkouts, recentCals, settings] = await Promise.all([
@@ -718,98 +824,27 @@ Rules:
         const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", model, apiKey);
 
         // Run deterministic nutrition calculation
-        let finalCalories = parsed.calories;
-        let finalProtein = parsed.protein;
-        let finalCarbs = parsed.carbs;
-        let finalFat = parsed.fat;
-        let finalConfidence: number | undefined;
-        let finalSource: string | undefined;
-        let finalStructuredItems: string | undefined;
-        let finalIngredientBreakdown: string | undefined;
-
-        const ingredients = parsed.ingredients || [];
-        if (ingredients.length > 0) {
-          try {
-            const breakdownItems: ItemBreakdown[] = [];
-            const unresolved: string[] = [];
-            for (const ingredient of ingredients) {
-              const foodText: string = ingredient.food_text || "";
-              const amount: number = ingredient.amount || 0;
-              const unit: string = ingredient.unit || "g";
-              if (!foodText || amount <= 0) continue;
-              const conversion = toGrams(amount, unit, foodText);
-              const grams = conversion.grams;
-              const cachedResults: any[] = await ctx.runQuery(internal.foods.searchFoodsInCache, { query: foodText });
-              const bestMatch = matchBestFood(foodText, cachedResults);
-              if (bestMatch) {
-                const nutrition = computeNutrition(bestMatch, grams);
-                breakdownItems.push({
-                  food_text: foodText, matched_food_name: bestMatch.name, grams,
-                  calories_kcal: nutrition.calories_kcal, protein_g: nutrition.protein_g,
-                  carbs_g: nutrition.carbs_g, fat_g: nutrition.fat_g,
-                  source: bestMatch.source || "cache", confidence: conversion.confidence,
-                });
-                ctx.runMutation(internal.foods.bumpSearchCount, { id: bestMatch._id }).catch(() => {});
-              } else if (ingredient.is_oil_or_fat) {
-                const oilCals = Math.round(grams * 8.84);
-                breakdownItems.push({
-                  food_text: foodText, matched_food_name: foodText, grams,
-                  calories_kcal: oilCals, protein_g: 0, carbs_g: 0, fat_g: grams,
-                  source: "standard", confidence: 0.85,
-                });
-              } else {
-                unresolved.push(foodText);
-              }
-            }
-            const hasOil = ingredients.some((i: any) => i.is_oil_or_fat);
-            if (!hasOil && breakdownItems.length > 0) {
-              const oilAdj = cookingMethodAdjustment(parsed.cooking_method || "unknown");
-              if (oilAdj.oil_calories > 0) {
-                breakdownItems.push({
-                  food_text: `cooking oil (${parsed.cooking_method || "unknown"})`,
-                  matched_food_name: `cooking oil (${parsed.cooking_method || "unknown"})`,
-                  grams: 0, calories_kcal: oilAdj.oil_calories, protein_g: 0, carbs_g: 0, fat_g: oilAdj.oil_fat_g,
-                  source: "estimated", confidence: 0.5,
-                });
-              }
-            }
-            const nutResult = buildNutritionResult(breakdownItems, unresolved);
-            if (parsed.portion_scale < 1.0) {
-              const scaled = scaleResult(nutResult, parsed.portion_scale);
-              finalCalories = scaled.calories_kcal;
-              finalProtein = scaled.protein_g;
-              finalCarbs = scaled.carbs_g;
-              finalFat = scaled.fat_g;
-            } else {
-              finalCalories = nutResult.calories_kcal;
-              finalProtein = nutResult.protein_g;
-              finalCarbs = nutResult.carbs_g;
-              finalFat = nutResult.fat_g;
-            }
-            finalConfidence = nutResult.confidence;
-            finalSource = nutResult.items.length > 0 ? (nutResult.unresolved.length > 0 ? "mixed" : "database") : "ai";
-            finalStructuredItems = JSON.stringify(nutResult.items);
-            finalIngredientBreakdown = JSON.stringify(nutResult);
-          } catch { /* fallback to AI values */ }
-        }
+        const nutrition = await runNutritionEngine(ctx, parsed);
+        const finalStructuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
+        const finalIngredientBreakdown = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
 
         const mealId = await ctx.runMutation(internal.meals.addMealFromAI, {
           userId, date: today,
           name: parsed.name,
-          calories: finalCalories,
-          protein: finalProtein,
-          carbs: finalCarbs,
-          fat: finalFat,
+          calories: nutrition.calories,
+          protein: nutrition.protein,
+          carbs: nutrition.carbs,
+          fat: nutrition.fat,
           time: parsed.time,
           aiSuggestion: parsed.aiSuggestion,
           mealType: parsed.mealType,
           components: parsed.components,
-          confidence: finalConfidence,
-          nutritionSource: finalSource,
+          confidence: nutrition.confidence,
+          nutritionSource: nutrition.nutritionSource,
           structuredItems: finalStructuredItems,
           ingredientBreakdown: finalIngredientBreakdown,
         });
-        loggedItem = { type: "meal", data: { _id: mealId, ...parsed, calories: finalCalories, protein: finalProtein, carbs: finalCarbs, fat: finalFat } };
+        loggedItem = { type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat } };
       } catch (err) {
         console.error("Failed to log meal from AI:", err);
       }
