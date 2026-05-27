@@ -153,6 +153,37 @@ export default defineSchema({
     missionsCompleted: v.optional(v.array(v.string())),
   }).index("by_user", ["userId"]),
 
+  // ─── Wellness logs (water, sleep, mood, steps) ─────────────────────────────
+
+  water_logs: defineTable({
+    userId: v.string(),
+    date: v.string(),
+    ml: v.number(),
+    time: v.string(),
+  }).index("by_user_date", ["userId", "date"]),
+
+  sleep_logs: defineTable({
+    userId: v.string(),
+    date: v.string(),
+    hours: v.number(),
+    quality: v.string(), // poor | ok | good | great
+    note: v.optional(v.string()),
+  }).index("by_user_date", ["userId", "date"]),
+
+  mood_logs: defineTable({
+    userId: v.string(),
+    date: v.string(),
+    rating: v.number(), // 1..5
+    note: v.optional(v.string()),
+    time: v.string(),
+  }).index("by_user_date", ["userId", "date"]),
+
+  steps_logs: defineTable({
+    userId: v.string(),
+    date: v.string(),
+    count: v.number(),
+  }).index("by_user_date", ["userId", "date"]),
+
   // ─── Calorie Engine ────────────────────────────────────────────────────────
 
   user_metabolic_profiles: defineTable({

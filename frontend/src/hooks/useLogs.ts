@@ -1,11 +1,10 @@
 /**
- * useLogs — Convex-backed replacement for the localStorage mock.
+ * useLogs — Convex-backed unified hook for all log types.
  *
- * Keeps the same external API: { logs, add, remove, clear }
- * so all existing page components work without changes.
- *
- * Data is fetched for today by default. The `logs` array is a flat
- * LogEntry[] normalized from Convex meals + workouts tables.
+ * Returns flat LogEntry[] (today's data by default) and provides:
+ *   - add(category, text, extras) — routes to correct Convex mutation
+ *   - remove(id) — deletes by id (auto-detects table)
+ *   - clear() — deletes all of today's entries
  */
 import { useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
@@ -23,17 +22,72 @@ export function useLogs(date?: string) {
 
   const meals = useQuery(api.meals.getMeals, { date: d });
   const workouts = useQuery(api.workouts.getWorkouts, { date: d });
+  const water = useQuery(api.wellness.getWater, { date: d });
+  const sleep = useQuery(api.wellness.getSleep, { date: d });
+  const mood = useQuery(api.wellness.getMood, { date: d });
+  const steps = useQuery(api.wellness.getSteps, { date: d });
 
   const addMeal = useMutation(api.meals.addMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
+  const addWater = useMutation(api.wellness.addWater);
+  const upsertSleep = useMutation(api.wellness.upsertSleep);
+  const addMood = useMutation(api.wellness.addMood);
+  const upsertSteps = useMutation(api.wellness.upsertSteps);
+
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
+  const deleteWater = useMutation(api.wellness.deleteWater);
+  const deleteSleep = useMutation(api.wellness.deleteSleep);
+  const deleteMood = useMutation(api.wellness.deleteMood);
 
   const logs: LogEntry[] = useMemo(() => {
-    const mealEntries = (meals ?? []).map(mealToLogEntry);
-    const workoutEntries = (workouts ?? []).map(workoutToLogEntry);
-    return [...mealEntries, ...workoutEntries].sort((a, b) => b.createdAt - a.createdAt);
-  }, [meals, workouts]);
+    const items: LogEntry[] = [];
+
+    for (const m of meals ?? []) items.push(mealToLogEntry(m));
+    for (const w of workouts ?? []) items.push(workoutToLogEntry(w));
+
+    for (const w of water ?? []) {
+      items.push({
+        id: w._id as string,
+        category: "water",
+        text: `${w.ml} ml water`,
+        createdAt: w._creationTime ?? Date.now(),
+        water: { ml: w.ml },
+        agent: "water",
+      });
+    }
+    if (sleep) {
+      items.push({
+        id: sleep._id as string,
+        category: "sleep",
+        text: `${sleep.hours.toFixed(1)}h sleep`,
+        createdAt: sleep._creationTime ?? Date.now(),
+        sleep: { hours: sleep.hours, quality: (sleep.quality as "poor" | "ok" | "good" | "great") ?? "ok" },
+        agent: "sleep",
+      });
+    }
+    for (const m of mood ?? []) {
+      items.push({
+        id: m._id as string,
+        category: "mood",
+        text: m.note ?? `Mood: ${m.rating}/5`,
+        createdAt: m._creationTime ?? Date.now(),
+        mood: { rating: m.rating as 1 | 2 | 3 | 4 | 5, note: m.note },
+        agent: "wellness",
+      });
+    }
+    if (steps) {
+      items.push({
+        id: steps._id as string,
+        category: "steps",
+        text: `${steps.count.toLocaleString()} steps`,
+        createdAt: steps._creationTime ?? Date.now(),
+        steps: { count: steps.count },
+        agent: "habit",
+      });
+    }
+    return items.sort((a, b) => b.createdAt - a.createdAt);
+  }, [meals, workouts, water, sleep, mood, steps]);
 
   const add = useCallback(
     async (
@@ -41,7 +95,7 @@ export function useLogs(date?: string) {
       text: string,
       extra?: Partial<Omit<LogEntry, "id" | "category" | "text" | "createdAt">>,
     ) => {
-      if (!text.trim()) return null;
+      if (!text.trim() && category !== "water") return null;
       const now = new Date();
       const time = now.toTimeString().slice(0, 5);
 
@@ -53,48 +107,62 @@ export function useLogs(date?: string) {
           protein: meal?.protein ?? 0,
           carbs: meal?.carbs ?? 0,
           fat: meal?.fat ?? 0,
-          time,
-          date: d,
+          time, date: d,
           aiSuggestion: extra?.aiInsight,
           components: meal?.items?.join(", "),
         });
       } else if (category === "workout") {
-        const workout = extra?.workout;
+        const w = extra?.workout;
         await addWorkout({
           name: text,
           sets: "1",
-          duration: workout?.duration ? String(workout.duration) : undefined,
-          intensity: workout?.intensity?.toUpperCase() ?? "MEDIUM",
+          duration: w?.duration ? String(w.duration) : undefined,
+          intensity: w?.intensity?.toUpperCase() ?? "MEDIUM",
           date: d,
-          caloriesBurned: workout?.kcal,
+          caloriesBurned: w?.kcal,
           rationale: extra?.aiInsight,
         });
+      } else if (category === "water") {
+        const ml = extra?.water?.ml ?? 250;
+        await addWater({ ml, date: d, time });
+      } else if (category === "sleep") {
+        const s = extra?.sleep;
+        if (!s) return null;
+        await upsertSleep({ hours: s.hours, quality: s.quality, date: d, note: text });
+      } else if (category === "mood") {
+        const m = extra?.mood;
+        if (!m) return null;
+        await addMood({ rating: m.rating, date: d, time, note: m.note ?? text });
+      } else if (category === "steps") {
+        const count = extra?.steps?.count;
+        if (!count) return null;
+        await upsertSteps({ count, date: d });
       }
-      // water/sleep/mood/steps: not yet in Convex schema — silently skip
       return null;
     },
-    [addMeal, addWorkout, d],
+    [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, d],
   );
 
   const remove = useCallback(
     async (id: string) => {
-      // Determine table from which list the id appears in
-      const isMeal = (meals ?? []).some((m) => m._id === id);
-      if (isMeal) {
-        await deleteMeal({ id: id as Id<"meals"> });
-      } else {
-        await deleteWorkout({ id: id as Id<"workouts"> });
-      }
+      if ((meals ?? []).some((m) => m._id === id)) return deleteMeal({ id: id as Id<"meals"> });
+      if ((workouts ?? []).some((w) => w._id === id)) return deleteWorkout({ id: id as Id<"workouts"> });
+      if ((water ?? []).some((w) => w._id === id)) return deleteWater({ id: id as Id<"water_logs"> });
+      if (sleep && sleep._id === id) return deleteSleep({ id: id as Id<"sleep_logs"> });
+      if ((mood ?? []).some((m) => m._id === id)) return deleteMood({ id: id as Id<"mood_logs"> });
     },
-    [meals, deleteMeal, deleteWorkout],
+    [meals, workouts, water, sleep, mood, deleteMeal, deleteWorkout, deleteWater, deleteSleep, deleteMood],
   );
 
   const clear = useCallback(async () => {
     await Promise.all([
       ...(meals ?? []).map((m) => deleteMeal({ id: m._id })),
       ...(workouts ?? []).map((w) => deleteWorkout({ id: w._id })),
+      ...(water ?? []).map((w) => deleteWater({ id: w._id })),
+      ...((mood ?? []).map((m) => deleteMood({ id: m._id }))),
+      ...(sleep ? [deleteSleep({ id: sleep._id })] : []),
     ]);
-  }, [meals, workouts, deleteMeal, deleteWorkout]);
+  }, [meals, workouts, water, sleep, mood, deleteMeal, deleteWorkout, deleteWater, deleteSleep, deleteMood]);
 
   return { logs, add, remove, clear };
 }

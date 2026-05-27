@@ -25,6 +25,7 @@ import type * as profile from "../profile.js";
 import type * as progress from "../progress.js";
 import type * as unit_converter from "../unit_converter.js";
 import type * as users from "../users.js";
+import type * as wellness from "../wellness.js";
 import type * as workout_scorer from "../workout_scorer.js";
 import type * as workouts from "../workouts.js";
 
@@ -52,6 +53,7 @@ declare const fullApi: ApiFromModules<{
   progress: typeof progress;
   unit_converter: typeof unit_converter;
   users: typeof users;
+  wellness: typeof wellness;
   workout_scorer: typeof workout_scorer;
   workouts: typeof workouts;
 }>;

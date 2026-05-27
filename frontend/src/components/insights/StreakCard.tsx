@@ -5,11 +5,23 @@ import { computeStreak, getLastNDays } from "@/lib/streaks";
 import type { LogEntry } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
-const WEEK_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
+const DAY_INITIALS = ["S", "M", "T", "W", "T", "F", "S"]; // Sun..Sat
+
+function lastNDayLabels(n: number): string[] {
+  const today = new Date();
+  const labels: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    labels.push(DAY_INITIALS[d.getDay()]);
+  }
+  return labels;
+}
 
 export function StreakCard({ logs }: { logs: LogEntry[] }) {
   const streak = computeStreak(logs);
   const last7 = getLastNDays(logs, 7);
+  const labels = lastNDayLabels(7);
 
   return (
     <Card tone="peach" radius="lg" padding="lg" className="space-y-4">
@@ -43,12 +55,22 @@ export function StreakCard({ logs }: { logs: LogEntry[] }) {
       )}
 
       <div className="flex gap-1.5">
-        {last7.map((hit, i) => (
-          <div key={i} className="flex flex-1 flex-col items-center gap-1">
-            <div className={cn("h-2 w-full rounded-full", hit ? "bg-ink" : "bg-ink/15")} />
-            <span className="text-[10px] font-semibold text-ink/55">{WEEK_LABELS[i]}</span>
-          </div>
-        ))}
+        {last7.map((hit, i) => {
+          const isToday = i === last7.length - 1;
+          return (
+            <div key={i} className="flex flex-1 flex-col items-center gap-1">
+              <div className={cn(
+                "h-2 w-full rounded-full",
+                hit ? "bg-ink" : "bg-ink/15",
+                isToday && !hit && "ring-1 ring-ink/40",
+              )} />
+              <span className={cn(
+                "text-[10px] font-semibold",
+                isToday ? "text-ink" : "text-ink/55",
+              )}>{labels[i]}</span>
+            </div>
+          );
+        })}
       </div>
     </Card>
   );

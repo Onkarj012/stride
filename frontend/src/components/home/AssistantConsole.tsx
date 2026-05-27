@@ -1,146 +1,275 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, Camera, MicOff } from "lucide-react";
+import { ArrowUp, Mic, Camera, MicOff, X, Barcode, ImagePlus, Loader2 } from "lucide-react";
 import { useUser } from "@clerk/react";
+import { useAction, useMutation } from "convex/react";
+import { api } from "@convex/_generated/api";
 import { VoxelAgent } from "@/components/voxel/VoxelAgent";
-import { ConfirmModal } from "@/components/coach/ConfirmModal";
 import { SuggestionChip } from "@/components/primitives/SuggestionChip";
+import { AgentBadge } from "@/components/insights/AgentBadge";
+import { BarcodeModal } from "@/components/coach/BarcodeModal";
+import { ConfirmModal } from "@/components/coach/ConfirmModal";
 import { useTypewriter } from "@/hooks/useTypewriter";
-import { useLogs } from "@/hooks/useLogs";
-import { usePrefs } from "@/hooks/usePrefs";
-import { useVoice } from "@/hooks/useVoice";
+import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { useDailyWindow, type DailyWindow } from "@/hooks/useDailyWindow";
+import { useBehavior } from "@/hooks/useBehavior";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useToast } from "@/context/ToastContext";
 import { recordSuggestion } from "@/lib/behavior";
-import { getGreeting } from "@/lib/greeting";
-import { cannedFlows, todaySuggestions, DRAFT_TRIGGERS } from "@/data/mock";
-import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import { cn } from "@/lib/utils";
+import type { Agent } from "@/lib/storage";
+import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 
 const SPRING = { type: "spring", stiffness: 260, damping: 28 } as const;
 
-function StreamingReply({ text }: { text: string }) {
+/* ── Window-aware greeting ── */
+function greetingFor(firstName: string, w: DailyWindow): { headline: string; sub: string } {
+  switch (w) {
+    case "morning":
+      return { headline: `Morning, ${firstName}.`, sub: "How are you feeling? What's on for today?" };
+    case "day":
+      return { headline: `Hi, ${firstName}.`, sub: "Quick log, photo, or question — I'm here." };
+    case "evening":
+      return { headline: `Evening, ${firstName}.`, sub: "How was today, 1 to 5? Anything I can help close out?" };
+    case "night":
+      return { headline: `Hey ${firstName}.`, sub: "Heading to bed? Aiming for a steady wind-down." };
+  }
+}
+
+/* ── Window quick-tap chips ── */
+const WINDOW_TAPS: Record<DailyWindow, string[]> = {
+  morning: ["Energy is low", "Energy is okay", "Energy is great", "Plan today"],
+  day: ["Log a meal", "Suggest lunch", "How am I doing?", "Plan a workout"],
+  evening: ["Today was a 1", "Today was a 3", "Today was a 5", "Summarize today"],
+  night: ["Going to sleep now", "Stress is high", "Stress is low", "Wind down"],
+};
+
+/* ── Map backend coachType → frontend Agent ── */
+function coachToAgent(coachType?: string): Agent {
+  switch (coachType) {
+    case "diet": return "diet";
+    case "workout": return "workout";
+    case "recovery": return "sleep";
+    case "mindset": return "habit";
+    default: return "main";
+  }
+}
+
+/* ── Streaming reply with typewriter ── */
+function StreamingReply({ text, agent }: { text: string; agent: Agent }) {
   const { displayed, done } = useTypewriter(text, 18, true);
   return (
-    <p className="text-[14.5px] leading-relaxed text-text text-center max-w-[40ch] mx-auto">
-      {displayed}
-      {!done && <span className="ml-0.5 inline-block h-3.5 w-0.5 align-middle animate-pulse bg-lavender" />}
-    </p>
+    <div className="space-y-2 max-w-[44ch] mx-auto">
+      <p className="text-[14.5px] leading-relaxed text-text text-center">
+        {displayed}
+        {!done && <span className="ml-0.5 inline-block h-3.5 w-0.5 align-middle animate-pulse bg-lavender" />}
+      </p>
+      {done && agent !== "main" && (
+        <div className="flex justify-center">
+          <AgentBadge agent={agent} />
+        </div>
+      )}
+    </div>
   );
 }
 
-type AssistantConsoleProps = {
-  inputRef?: React.RefObject<HTMLInputElement | null>;
-};
+type AssistantConsoleProps = { inputRef?: React.RefObject<HTMLInputElement | null> };
 
 export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
   const [textValue, setTextValue] = useState("");
-  const [reply, setReply] = useState<string | null>(null);
+  const [reply, setReply] = useState<{ text: string; agent: Agent } | null>(null);
   const [thinking, setThinking] = useState(false);
-  const [draft, setDraft] = useState<LogDraft | null>(null);
-  const [pendingConfirmReply, setPendingConfirmReply] = useState<string>("");
-  const [pendingDiscardReply, setPendingDiscardReply] = useState<string>("");
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [barcodeOpen, setBarcodeOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
-  const { logs, add } = useLogs();
-  const { prefs } = usePrefs();
+  // ConfirmModal state — user must confirm before logging
+  const [pendingDraft, setPendingDraft] = useState<LogDraft | null>(null);
+  const pendingTier2Ref = useRef<string>("");
+
   const { user } = useUser();
-  const style = prefs.coachingStyle;
+  const { recordEngagement } = useBehavior();
+  const window = useDailyWindow();
   const internalRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const activeRef = inputRef ?? internalRef;
+  const toast = useToast();
+
+  // Use the new homepageInput action (intent-classifying, NOT auto-logging)
+  const homepageInput = useAction(api.ai.homepageInput);
+  const addMeal = useMutation(api.meals.addMeal);
+  const addWorkout = useMutation(api.workouts.addWorkout);
+  const recordActivity = useMutation(api.gamification.recordActivity);
 
   const firstName = user?.firstName ?? user?.username ?? "there";
-  const greeting = getGreeting(firstName, logs);
+  const greeting = greetingFor(firstName, window);
   const isLarge = useMediaQuery("(min-width: 1024px)");
 
-  const showReply = useCallback((text: string) => {
-    setReply(text);
+  /* ── Voice (Groq Whisper) ── */
+  const onTranscript = useCallback((t: string) => {
+    setTextValue((prev) => (prev ? `${prev} ${t}` : t).trim());
   }, []);
+  const voice = useAudioRecorder(onTranscript);
 
-  const respond = useCallback((text: string) => {
-    setThinking(true);
-    setTimeout(() => {
-      setThinking(false);
-      showReply(text);
-    }, 700);
-  }, [showReply]);
-
-  const handleConfirm = useCallback((confirmed: LogDraft) => {
-    if (confirmed.kind === "meal") {
-      const d = confirmed as MealDraft;
-      add("meal", d.description, {
-        agent: "diet",
-        meal: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, items: d.items },
-        aiInsight: `AI-parsed: ${d.kcal} kcal, ${d.protein}g protein`,
-      });
-    } else {
-      const d = confirmed as WorkoutDraft;
-      add("workout", d.description, {
-        agent: "workout",
-        workout: { type: d.type, duration: d.duration, distance: d.distance, kcal: d.kcal, intensity: d.intensity },
-        aiInsight: `AI-parsed: ${d.duration} min ${d.type}, ${d.kcal} kcal`,
-      });
-    }
-    setDraft(null);
-    showReply(pendingConfirmReply);
-  }, [add, pendingConfirmReply, showReply]);
-
-  const handleDiscard = useCallback(() => {
-    setDraft(null);
-    showReply(pendingDiscardReply);
-  }, [pendingDiscardReply, showReply]);
-
-  const send = useCallback((text: string) => {
-    const v = text.trim();
-    if (!v) return;
-    setReply(null);
-    setDraft(null);
-
-    const trigger = DRAFT_TRIGGERS[v.toLowerCase()];
-    if (trigger) {
-      setThinking(true);
-      setTimeout(() => {
-        setThinking(false);
-        setPendingConfirmReply(trigger.confirmReply);
-        setPendingDiscardReply(trigger.discardReply);
-        setDraft(trigger.draft);
-      }, 1400);
+  /* ── Image input from file picker ── */
+  const onPickImage = useCallback(async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Not an image", "Please choose an image file");
       return;
     }
+    const reader = new FileReader();
+    reader.onload = () => setAttachedImage(reader.result as string);
+    reader.readAsDataURL(file);
+  }, [toast]);
 
-    const flow = cannedFlows[v];
-    if (flow) {
-      if (flow.log) add(flow.log.category, v, flow.log.extra);
-      else add("note", v);
-      respond(flow.reply[style]);
-    } else {
-      add("note", v);
-      respond("Got it — I've noted that. Anything else?");
+  /* ── Cmd+V image paste (page-wide) ── */
+  useEffect(() => {
+    function onPaste(e: ClipboardEvent) {
+      if (!e.clipboardData) return;
+      const target = e.target as HTMLElement | null;
+      if (target && target.tagName === "INPUT" && target !== activeRef.current) return;
+      for (const item of Array.from(e.clipboardData.items)) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) onPickImage(file);
+          return;
+        }
+      }
     }
-  }, [add, respond, style]);
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [onPickImage, activeRef]);
 
-  const onVoiceResult = useCallback((text: string) => setTextValue(text), []);
-  const voice = useVoice(onVoiceResult);
+  /* ── Confirm draft → actually log ── */
+  const handleConfirm = useCallback(async (draft: LogDraft) => {
+    setPendingDraft(null);
+    const time = new Date().toTimeString().slice(0, 5);
+    const date = new Date().toISOString().split("T")[0];
+    const tier2 = pendingTier2Ref.current;
 
-  const submit = () => { send(textValue); setTextValue(""); };
+    try {
+      if (draft.kind === "meal") {
+        const d = draft as MealDraft;
+        await addMeal({
+          name: d.description,
+          calories: d.kcal,
+          protein: d.protein,
+          carbs: d.carbs,
+          fat: d.fat,
+          time, date,
+          aiSuggestion: tier2 || undefined,
+          components: d.items.join(", "),
+        });
+        toast.success(`Logged: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
+      } else {
+        const d = draft as WorkoutDraft;
+        await addWorkout({
+          name: d.description,
+          sets: "1",
+          duration: String(d.duration),
+          intensity: d.intensity.toUpperCase(),
+          date,
+          caloriesBurned: d.kcal,
+          rationale: tier2 || undefined,
+        });
+        toast.success(`Logged workout: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
+      }
+      // Update gamification (XP / streak)
+      await recordActivity({ type: draft.kind === "meal" ? "meal" : "workout" }).catch(() => {});
+    } catch (err) {
+      toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");
+    }
+    pendingTier2Ref.current = "";
+  }, [addMeal, addWorkout, recordActivity, toast]);
 
-  const botState = thinking ? "thinking" : voice.recording ? "listening" : "idle";
+  const handleDiscard = useCallback(() => {
+    setPendingDraft(null);
+    pendingTier2Ref.current = "";
+    setReply({ text: "No problem — nothing logged. Tell me when you're ready.", agent: "main" });
+  }, []);
+
+  /* ── Send to backend (uses homepageInput, not chat) ── */
+  const send = useCallback(async (text: string, image?: string) => {
+    const v = text.trim();
+    if (!v && !image) return;
+
+    setReply(null);
+    setThinking(true);
+    setTextValue("");
+    setAttachedImage(null);
+    recordEngagement(window);
+
+    try {
+      const result = await homepageInput({
+        message: v,
+        image,
+        today: new Date().toISOString().split("T")[0],
+      });
+
+      setThinking(false);
+
+      if (result.kind === "meal" || result.kind === "workout") {
+        // Show concise tier-1 summary and open ConfirmModal
+        setReply({ text: result.tier1Summary, agent: result.kind === "meal" ? "diet" : "workout" });
+        pendingTier2Ref.current = result.tier2Detail ?? "";
+        setPendingDraft(result.draft as LogDraft);
+      } else {
+        // Question/chat reply
+        const agent = coachToAgent(result.coachType);
+        setReply({ text: result.reply, agent });
+      }
+    } catch (err) {
+      setThinking(false);
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setReply({ text: `Sorry — ${msg}`, agent: "main" });
+      toast.error("Couldn't reach Stry", "Check your connection or try again");
+    }
+  }, [homepageInput, toast, recordEngagement, window]);
+
+  // Focus shortcut handler (Enter on the form)
+  const submit = () => send(textValue, attachedImage ?? undefined);
+
+  const botState: "thinking" | "listening" | "idle" =
+    thinking ? "thinking" : voice.recording ? "listening" : "idle";
 
   return (
     <>
+      {/* Hidden file input for camera/gallery */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onPickImage(file);
+          e.target.value = "";
+        }}
+      />
+
       <div className="flex flex-col items-center gap-4 w-full">
-        <div className="relative">
-          <VoxelAgent agent="main" size={isLarge ? 224 : 180} state={botState} />
+        {/* Voxel agent */}
+        <div className="relative overflow-hidden rounded-full"
+          style={{ width: isLarge ? 224 : 160, height: isLarge ? 224 : 160 }}>
+          <VoxelAgent agent="main" size={isLarge ? 224 : 160} state={botState} />
           {voice.recording && (
-            <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 inline-flex h-2 w-2 rounded-full bg-peach animate-pulse" />
+            <span className="absolute bottom-2 left-1/2 -translate-x-1/2 inline-flex h-2 w-2 rounded-full bg-peach animate-pulse" />
+          )}
+          {voice.transcribing && (
+            <span className="absolute bottom-2 left-1/2 -translate-x-1/2 inline-flex h-2 w-2 rounded-full bg-lavender animate-pulse" />
           )}
         </div>
 
+        {/* Greeting */}
         <div className="text-center space-y-1.5">
           <h1 className="text-display text-text leading-[1.05]">{greeting.headline}</h1>
           <p className="text-[16px] text-text-muted">{greeting.sub}</p>
         </div>
 
-        {/* Reply / thinking — fixed-height slot, no draft card here */}
-        <div className="min-h-[44px] flex items-center justify-center w-full max-w-[42ch]">
+        {/* Reply / thinking slot */}
+        <div className="min-h-[44px] flex items-center justify-center w-full max-w-[44ch]">
           <AnimatePresence mode="wait">
             {thinking && (
               <motion.div key="thinking" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex gap-1.5">
@@ -153,55 +282,118 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
               </motion.div>
             )}
             {!thinking && reply && (
-              <motion.div key={reply} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="w-full">
-                <StreamingReply text={reply} />
+              <motion.div key={reply.text} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="w-full">
+                <StreamingReply text={reply.text} agent={reply.agent} />
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
+        {/* Image attachment preview */}
+        <AnimatePresence>
+          {attachedImage && (
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="relative">
+              <img src={attachedImage} alt="Attached" className="h-20 w-20 rounded-xl object-cover border border-border" />
+              <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
+                className="absolute -top-2 -right-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-ink text-text-on-ink shadow-[var(--shadow-elev)]">
+                <X className="h-3 w-3" strokeWidth={2.5} />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Input bar */}
         <form onSubmit={(e) => { e.preventDefault(); submit(); }}
           className={cn(
-            "flex items-center gap-1.5 rounded-full bg-card border pl-5 pr-1.5 py-1.5 w-full max-w-lg transition-colors duration-150",
-            voice.recording ? "border-peach" : "border-border-strong focus-within:border-lavender",
+            "relative flex items-center gap-1.5 rounded-full bg-card border pl-5 pr-1.5 py-1.5 w-full max-w-lg transition-colors",
+            voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender",
           )}
         >
-          <input ref={activeRef} type="text" value={textValue} onChange={(e) => setTextValue(e.target.value)}
-            placeholder={voice.recording ? "Listening…" : "Ask Stry anything…"}
+          <input
+            ref={activeRef as React.RefObject<HTMLInputElement>}
+            type="text"
+            value={textValue}
+            onChange={(e) => setTextValue(e.target.value)}
+            placeholder={
+              voice.recording ? "Listening…" :
+              voice.transcribing ? "Transcribing…" :
+              attachedImage ? "Add a note (optional)…" :
+              "Ask Stry, paste an image, or speak…"
+            }
             aria-label="Ask Stry"
-            className="min-w-0 flex-1 bg-transparent text-[15px] text-text placeholder:text-text-subtle focus:outline-none py-1.5"
+            disabled={voice.recording || voice.transcribing}
+            className="min-w-0 flex-1 bg-transparent text-[15px] text-text placeholder:text-text-subtle focus:outline-none py-1.5 disabled:opacity-50"
           />
-          <button type="button" aria-label="Photo" className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-            <Camera className="h-4 w-4" strokeWidth={1.75} />
-          </button>
+
+          {/* More button (camera + barcode menu) */}
+          <div className="relative">
+            <button type="button" aria-label="Add"
+              onClick={() => setMoreMenuOpen((o) => !o)}
+              onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
+              <Camera className="h-4 w-4" strokeWidth={1.75} />
+            </button>
+            <AnimatePresence>
+              {moreMenuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 4, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 4, scale: 0.96 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute bottom-full mb-2 right-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20"
+                >
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                    <ImagePlus className="h-4 w-4" strokeWidth={1.75} />
+                    Photo / camera
+                  </button>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                    <Barcode className="h-4 w-4" strokeWidth={1.75} />
+                    Scan barcode
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Voice button */}
           <button type="button" aria-label={voice.recording ? "Stop listening" : "Voice input"}
             onClick={() => voice.recording ? voice.stop() : voice.start()}
-            className={cn("inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+            disabled={voice.transcribing}
+            className={cn("inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-50",
               voice.recording ? "bg-peach text-ink" : "text-text-muted hover:bg-card-elev")}>
-            {voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> : <Mic className="h-4 w-4" strokeWidth={1.75} />}
+            {voice.transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> :
+              voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> :
+              <Mic className="h-4 w-4" strokeWidth={1.75} />}
           </button>
-          <motion.button type="submit" aria-label="Send" disabled={!textValue.trim()}
-            animate={{ scale: textValue.trim() ? 1 : 0.9, opacity: textValue.trim() ? 1 : 0.5 }}
+
+          {/* Send */}
+          <motion.button type="submit" aria-label="Send"
+            disabled={(!textValue.trim() && !attachedImage) || thinking}
+            animate={{ scale: (textValue.trim() || attachedImage) ? 1 : 0.9, opacity: (textValue.trim() || attachedImage) ? 1 : 0.5 }}
             transition={SPRING}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed">
             <ArrowUp className="h-4 w-4" strokeWidth={2.25} />
           </motion.button>
         </form>
 
+        {/* Window-aware tap chips */}
         <div className="flex flex-wrap justify-center gap-2 max-w-xl">
-          {todaySuggestions.map((s) => (
+          {WINDOW_TAPS[window].map((s) => (
             <SuggestionChip key={s} label={s} onClick={() => { recordSuggestion(s); send(s); }} />
           ))}
         </div>
+
+        {voice.error && (
+          <p className="text-[12px] text-bubblegum">{voice.error}</p>
+        )}
       </div>
 
-      {/* Draft confirmation lives in a portal — no layout impact */}
-      <ConfirmModal
-        draft={draft}
-        onConfirm={handleConfirm}
-        onDiscard={handleDiscard}
-      />
+      {/* Barcode modal */}
+      <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
+      <ConfirmModal draft={pendingDraft} onConfirm={handleConfirm} onDiscard={handleDiscard} />
     </>
   );
 }

@@ -50,10 +50,10 @@ export function SpecialistDock() {
                   lift
                   className="flex flex-col items-center gap-2 text-center h-full"
                 >
-                  <div
-                    className={`w-full aspect-square rounded-[14px] grid place-items-center ${TONE_BG[meta.tone] ?? "bg-card-elev"}`}
-                  >
-                    <VoxelAgent agent={kind} size={128} />
+                  <div className={`w-full aspect-square rounded-[14px] overflow-hidden relative ${TONE_BG[meta.tone] ?? "bg-card-elev"}`}>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <VoxelAgent agent={kind} size={96} />
+                    </div>
                   </div>
                   <div className="space-y-0.5 min-h-[36px]">
                     <p className="text-[13px] font-bold text-text leading-tight">

@@ -2,13 +2,15 @@ import { useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "motion/react";
 import { ArrowRight, Sparkles, Lightbulb, Droplets, Plus, Minus } from "lucide-react";
+import { useQuery } from "convex/react";
+import { api } from "@convex/_generated/api";
 import { AssistantConsole } from "@/components/home/AssistantConsole";
 import { SpecialistDock } from "@/components/home/SpecialistDock";
 import { Card } from "@/components/primitives/Card";
 import { StreakCard } from "@/components/insights/StreakCard";
 import { useShortcut } from "@/hooks/useShortcut";
 import { useLogs } from "@/hooks/useLogs";
-import { categoryById, dailyTargets, dailyGuidance, coachingNudge } from "@/data/mock";
+import { categoryById, dailyTargets } from "@/data/mock";
 import type { LogEntry } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
@@ -191,29 +193,56 @@ function RecentStrip({ logs }: { logs: LogEntry[] }) {
   );
 }
 
-/* ── Daily guidance card ── */
+/* ── Daily guidance card (backend-powered) ── */
 function DailyGuidanceCard() {
+  const brief = useQuery(api.insights.getTodayBrief, {});
+  if (!brief) {
+    return (
+      <Card tone="lavender" radius="xl" padding="lg" className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-ink/70" strokeWidth={2} />
+          <span className="text-[12px] font-bold uppercase tracking-wider text-ink/60">Daily guidance</span>
+        </div>
+        <div className="h-4 w-32 bg-ink/10 rounded animate-pulse" />
+        <div className="h-3 w-full bg-ink/10 rounded animate-pulse" />
+      </Card>
+    );
+  }
   return (
     <Card tone="lavender" radius="xl" padding="lg" className="space-y-2">
       <div className="flex items-center gap-2">
         <Sparkles className="h-4 w-4 text-ink/70" strokeWidth={2} />
-        <span className="text-[12px] font-bold uppercase tracking-wider text-ink/60">Daily guidance</span>
+        <span className="text-[12px] font-bold uppercase tracking-wider text-ink/60">{brief.headline}</span>
       </div>
-      <p className="text-[15px] leading-relaxed text-ink/85">{dailyGuidance.message}</p>
+      <p className="text-[15px] leading-relaxed text-ink/85">{brief.priority}</p>
     </Card>
   );
 }
 
-/* ── Coaching nudge ── */
+/* ── Coaching nudge (backend-powered) ── */
 function CoachingNudgeCard() {
+  const brief = useQuery(api.insights.getTodayBrief, {});
+  if (!brief) {
+    return (
+      <Card tone="card" radius="lg" padding="md" className="flex items-center gap-3 border-l-4 border-l-peach">
+        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-peach/20">
+          <Lightbulb className="h-4 w-4 text-peach" strokeWidth={2} />
+        </div>
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="h-3 w-24 bg-text-muted/20 rounded animate-pulse" />
+          <div className="h-2 w-full bg-text-muted/20 rounded animate-pulse" />
+        </div>
+      </Card>
+    );
+  }
   return (
     <Card tone="card" radius="lg" padding="md" className="flex items-center gap-3 border-l-4 border-l-peach">
       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-peach/20">
         <Lightbulb className="h-4 w-4 text-peach" strokeWidth={2} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-bold text-text">{coachingNudge.action}</p>
-        <p className="text-[12px] text-text-muted">{coachingNudge.reason}</p>
+        <p className="text-[13px] font-bold text-text">{brief.nudge.action}</p>
+        <p className="text-[12px] text-text-muted">{brief.nudge.reason}</p>
       </div>
     </Card>
   );

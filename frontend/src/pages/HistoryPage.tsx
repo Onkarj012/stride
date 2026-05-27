@@ -9,17 +9,15 @@ import { cn } from "@/lib/utils";
 
 const DAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
-function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate();
+function isSameDay(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function formatDate(d: Date): string {
+function formatDate(d: Date) {
   return d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
 }
 
-function toDateStr(d: Date): string {
+function toDateStr(d: Date) {
   return d.toISOString().split("T")[0];
 }
 
@@ -36,25 +34,16 @@ function getMonthGrid(year: number, month: number): (Date | null)[][] {
   return rows;
 }
 
-/* ── Day cell ── */
 function DayCell({ date, hasMeals, hasWorkouts, isSelected, isToday, onClick }: {
   date: Date; hasMeals: boolean; hasWorkouts: boolean;
   isSelected: boolean; isToday: boolean; onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <button type="button" onClick={onClick}
       className={cn(
-        "relative aspect-square flex flex-col items-center justify-center rounded-[10px]",
-        "transition-colors duration-150 focus-visible:outline-none",
-        isSelected
-          ? "bg-ink text-text-on-ink"
-          : isToday
-            ? "ring-1 ring-lavender text-text hover:bg-card-elev"
-            : "text-text hover:bg-card-elev",
-      )}
-    >
+        "relative aspect-square flex flex-col items-center justify-center rounded-[10px] transition-colors focus-visible:outline-none",
+        isSelected ? "bg-ink text-text-on-ink" : isToday ? "ring-1 ring-lavender text-text hover:bg-card-elev" : "text-text hover:bg-card-elev",
+      )}>
       <span className="text-[13px] font-semibold leading-none">{date.getDate()}</span>
       {(hasMeals || hasWorkouts) && (
         <span className="absolute bottom-1 flex gap-0.5">
@@ -66,58 +55,44 @@ function DayCell({ date, hasMeals, hasWorkouts, isSelected, isToday, onClick }: 
   );
 }
 
-/* ── Calendar grid ── */
 function CalendarGrid({ calendarData, selected, onSelect }: {
   calendarData: Record<string, { meals: number; workouts: number; calories: number; burned: number }>;
-  selected: Date;
-  onSelect: (d: Date) => void;
+  selected: Date; onSelect: (d: Date) => void;
 }) {
-  const [month, setMonth] = useState<Date>(() => {
-    const d = new Date(selected);
-    d.setDate(1);
-    return d;
-  });
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const [month, setMonth] = useState<Date>(() => { const d = new Date(selected); d.setDate(1); return d; });
+  const today = new Date(); today.setHours(0, 0, 0, 0);
   const grid = getMonthGrid(month.getFullYear(), month.getMonth());
 
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between">
         <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} aria-label="Previous month"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev hover:text-text transition-colors">
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
           <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
         <span className="text-[13px] font-semibold text-text">
           {month.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
         </span>
         <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} aria-label="Next month"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev hover:text-text transition-colors">
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
           <ChevronRight className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
       </div>
       <div className="grid grid-cols-7 gap-0.5">
-        {DAYS.map((d, i) => (
-          <span key={i} className="text-center text-[10px] font-medium text-text-muted">{d}</span>
-        ))}
+        {DAYS.map((d, i) => <span key={i} className="text-center text-[10px] font-medium text-text-muted">{d}</span>)}
       </div>
       <div className="space-y-0.5">
         {grid.map((row, ri) => (
           <div key={ri} className="grid grid-cols-7 gap-0.5">
             {row.map((d, ci) => {
-              if (!d) return <div key={`empty-${ri}-${ci}`} />;
+              if (!d) return <div key={`e-${ri}-${ci}`} />;
               const key = toDateStr(d);
-              const dayData = calendarData[key];
+              const dd = calendarData[key];
               return (
-                <DayCell
-                  key={key}
-                  date={d}
-                  hasMeals={(dayData?.meals ?? 0) > 0}
-                  hasWorkouts={(dayData?.workouts ?? 0) > 0}
-                  isSelected={isSameDay(d, selected)}
-                  isToday={isSameDay(d, today)}
-                  onClick={() => onSelect(d)}
-                />
+                <DayCell key={key} date={d}
+                  hasMeals={(dd?.meals ?? 0) > 0} hasWorkouts={(dd?.workouts ?? 0) > 0}
+                  isSelected={isSameDay(d, selected)} isToday={isSameDay(d, today)}
+                  onClick={() => onSelect(d)} />
               );
             })}
           </div>
@@ -127,7 +102,6 @@ function CalendarGrid({ calendarData, selected, onSelect }: {
   );
 }
 
-/* ── Day detail ── */
 type Tab = "meals" | "workouts";
 
 function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
@@ -136,21 +110,9 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
   onDeleteWorkout: (id: Id<"workouts">) => void;
 }) {
   const [tab, setTab] = useState<Tab>("meals");
-  const dateStr = toDateStr(date);
-  const data = useQuery(api.history.getDayHistory, { date: dateStr });
-
+  const data = useQuery(api.history.getDayHistory, { date: toDateStr(date) });
   const meals = data?.meals ?? [];
   const workouts = data?.workouts ?? [];
-
-  const macros = useMemo(() => meals.reduce(
-    (acc, m) => ({ kcal: acc.kcal + m.calories, protein: acc.protein + m.protein, carbs: acc.carbs + m.carbs, fat: acc.fat + m.fat }),
-    { kcal: 0, protein: 0, carbs: 0, fat: 0 },
-  ), [meals]);
-
-  const workoutMin = useMemo(() =>
-    workouts.reduce((s, w) => s + (w.duration ? parseInt(w.duration, 10) || 0 : 0), 0),
-    [workouts],
-  );
 
   return (
     <div className="space-y-3">
@@ -159,36 +121,20 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
         <span className="text-[13px] text-text-muted">{meals.length + workouts.length} entries</span>
       </div>
 
-      {/* Summary chips */}
-      <div className="grid grid-cols-2 gap-2">
-        <div className="rounded-[14px] bg-peach px-3 py-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-ink/60">Calories</div>
-          <div className="text-[17px] font-extrabold text-ink leading-none mt-0.5">{Math.round(macros.kcal)}</div>
-          <div className="text-[10px] text-ink/70 mt-0.5">{Math.round(macros.protein)}p · {Math.round(macros.carbs)}c · {Math.round(macros.fat)}f</div>
-        </div>
-        <div className="rounded-[14px] bg-lavender px-3 py-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-ink/60">Workout</div>
-          <div className="text-[17px] font-extrabold text-ink leading-none mt-0.5">{workoutMin}<span className="text-[11px] text-ink/70 ml-0.5 font-medium">min</span></div>
-        </div>
-      </div>
-
       {/* Tab bar */}
       <div className="flex gap-1.5">
         {(["meals", "workouts"] as Tab[]).map((t) => {
           const count = t === "meals" ? meals.length : workouts.length;
           return (
             <button key={t} type="button" onClick={() => setTab(t)}
-              className={cn(
-                "shrink-0 px-3 py-1.5 rounded-full text-[12px] font-semibold transition-colors capitalize",
-                tab === t ? (t === "meals" ? "bg-peach text-ink" : "bg-lavender text-ink") : "bg-card-elev text-text-muted hover:text-text",
-              )}>
+              className={cn("shrink-0 px-3 py-1.5 rounded-full text-[12px] font-semibold transition-colors capitalize",
+                tab === t ? (t === "meals" ? "bg-peach text-ink" : "bg-lavender text-ink") : "bg-card-elev text-text-muted hover:text-text")}>
               {t}{count > 0 ? ` (${count})` : ""}
             </button>
           );
         })}
       </div>
 
-      {/* Content */}
       {tab === "meals" && (
         meals.length === 0
           ? <Card tone="card" radius="lg" padding="lg" className="text-center"><p className="text-[14px] text-text-muted">No meals logged.</p></Card>
@@ -198,15 +144,13 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                 {meals.map((m) => (
                   <li key={m._id} className="flex items-start gap-3 px-4 py-3">
                     <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[14px] font-semibold text-text">{m.name}</span>
                         <span className="text-[11px] text-text-muted">{m.time}</span>
                       </div>
                       <div className="flex flex-wrap gap-x-3 text-[12px] text-text-muted">
-                        <span>{m.calories} kcal</span>
-                        <span>{m.protein}g protein</span>
-                        <span>{m.carbs}g carbs</span>
-                        <span>{m.fat}g fat</span>
+                        <span>{m.calories} kcal</span><span>{m.protein}g protein</span>
+                        <span>{m.carbs}g carbs</span><span>{m.fat}g fat</span>
                       </div>
                       {m.aiSuggestion && <p className="text-[12px] italic text-text-subtle">Stry: {m.aiSuggestion}</p>}
                     </div>
@@ -258,18 +202,58 @@ export function HistoryPage() {
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
 
   const now = new Date();
-  const calendarData = useQuery(api.history.getCalendar, {
-    year: now.getFullYear(),
-    month: now.getMonth() + 1,
-  }) ?? {};
+  const calendarData = useQuery(api.history.getCalendar, { year: now.getFullYear(), month: now.getMonth() + 1 }) ?? {};
+
+  // Day summary from calendar data
+  const dateStr = toDateStr(selected);
+  const dayData = calendarData[dateStr];
+  const data = useQuery(api.history.getDayHistory, { date: dateStr });
+  const meals = data?.meals ?? [];
+  const workouts = data?.workouts ?? [];
+
+  const macros = useMemo(() => meals.reduce(
+    (acc, m) => ({ kcal: acc.kcal + m.calories, protein: acc.protein + m.protein, carbs: acc.carbs + m.carbs, fat: acc.fat + m.fat }),
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+  ), [meals]);
+
+  const workoutMin = useMemo(() => workouts.reduce((s, w) => s + (w.duration ? parseInt(w.duration, 10) || 0 : 0), 0), [workouts]);
+
+  const statCards = [
+    { label: "Calories", value: Math.round(macros.kcal), unit: "", sub: `${Math.round(macros.protein)}p · ${Math.round(macros.carbs)}c · ${Math.round(macros.fat)}f`, tone: "bg-peach" },
+    { label: "Workout", value: workoutMin, unit: "min", sub: `${workouts.length} session${workouts.length !== 1 ? "s" : ""}`, tone: "bg-lavender" },
+    { label: "Sleep", value: "—", unit: "h", sub: "not tracked", tone: "bg-sky" },
+    { label: "Water", value: dayData ? (dayData.calories > 0 ? "✓" : "—") : "—", unit: "", sub: "from logs", tone: "bg-mint" },
+  ];
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       <PageHeader center="History" />
-      <div className="grid grid-cols-1 lg:grid-cols-[380px_1fr] gap-4 items-start">
-        <Card tone="card" radius="lg" padding="sm">
-          <CalendarGrid calendarData={calendarData} selected={selected} onSelect={setSelected} />
-        </Card>
+
+      {/* Mobile: stacked. Desktop: 2 columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">
+
+        {/* LEFT COLUMN: 2×2 stat grid + calendar */}
+        <div className="space-y-3">
+          {/* 2×2 stat grid */}
+          <div className="grid grid-cols-2 gap-2">
+            {statCards.map((s) => (
+              <div key={s.label} className={cn("rounded-[14px] px-3 py-2.5", s.tone)}>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-ink/60">{s.label}</div>
+                <div className="text-[20px] font-extrabold text-ink leading-none mt-0.5">
+                  {s.value}<span className="text-[11px] font-medium text-ink/70 ml-0.5">{s.unit}</span>
+                </div>
+                <div className="text-[10px] text-ink/60 mt-0.5">{s.sub}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Calendar */}
+          <Card tone="card" radius="lg" padding="sm">
+            <CalendarGrid calendarData={calendarData} selected={selected} onSelect={setSelected} />
+          </Card>
+        </div>
+
+        {/* RIGHT COLUMN: tab nav + detail list */}
         <DayDetail
           date={selected}
           onDeleteMeal={(id) => deleteMeal({ id })}

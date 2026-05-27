@@ -46,7 +46,7 @@ const VISION_MODELS = new Set([
   "meta-llama/llama-3.2-11b-vision", "meta-llama/llama-3.2-90b-vision",
 ]);
 
-interface AIMessage { role: string; content: string }
+interface AIMessage { role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }
 
 async function callAI(messages: AIMessage[], maxTokens = 500, model?: string, apiKey?: string): Promise<string> {
   const key = apiKey || process.env.OPENROUTER_API_KEY;
@@ -708,8 +708,9 @@ export const chat = action({
     sessionId: v.optional(v.id("chat_sessions")),
     coachType: v.optional(v.string()),
     today: v.optional(v.string()),
+    image: v.optional(v.string()),
   },
-  handler: async (ctx, { message, sessionId, coachType, today: todayArg }) => {
+  handler: async (ctx, { message, sessionId, coachType, today: todayArg, image }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
@@ -803,11 +804,23 @@ Rules:
     const messages: AIMessage[] = [
       { role: "system", content: `${coach.systemPrompt}\n\n${contextBlock}${loggingPrompt}` },
       ...history.map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content })),
-      { role: "user", content: message },
+      image
+        ? {
+            role: "user",
+            content: [
+              { type: "text", text: message || "What do you see in this image? If it's food, estimate the macros and offer to log it." },
+              { type: "image_url", image_url: { url: image } },
+            ],
+          }
+        : { role: "user", content: message },
     ];
 
-    const model = settings?.openRouterModel ?? undefined;
+    const settingsModel = settings?.openRouterModel ?? undefined;
     const apiKey = settings?.openRouterKey ?? undefined;
+    // When image is present, force a vision-capable model
+    const model = image
+      ? (settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL)
+      : settingsModel;
     const reply = await callAI(messages, 800, model, apiKey);
 
     // Parse log blocks
@@ -1381,5 +1394,197 @@ export const transcribe = action({
     if (data.error) throw new Error(`Groq error: ${data.error.message}`);
     if (!data.text) throw new Error("Groq returned empty transcription");
     return { transcript: data.text.trim() };
+  },
+});
+
+
+/**
+ * Homepage quick-input action.
+ *
+ * Detects intent in the user's message:
+ *   - "meal" → returns parsed meal draft (no logging) for the UI to confirm
+ *   - "workout" → returns parsed workout draft (no logging) for the UI to confirm
+ *   - "question" → routes to chat coach and returns reply
+ *
+ * Two-tier response:
+ *   - tier1Summary: short, concise — for the homepage reply slot (always under 25 words)
+ *   - tier2Detail: full analysis with calories burned / next-meal suggestion / etc. — to be
+ *     stored on the entry's `aiSuggestion` field after the user confirms the draft
+ */
+export const homepageInput = action({
+  args: {
+    message: v.string(),
+    image: v.optional(v.string()),
+    today: v.optional(v.string()),
+  },
+  handler: async (ctx, { message, image, today: todayArg }): Promise<
+    | { kind: "meal"; draft: any; tier1Summary: string; tier2Detail: string }
+    | { kind: "workout"; draft: any; tier1Summary: string; tier2Detail: string }
+    | { kind: "reply"; reply: string; coachType: CoachType }
+  > => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+    const today = todayArg ?? new Date().toISOString().split("T")[0];
+
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    const settingsModel = settings?.openRouterModel ?? undefined;
+    const apiKey = settings?.openRouterKey ?? undefined;
+
+    // Step 1: Intent classification (use vision-capable model when image is present)
+    const visionModel = settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL;
+    const intentModel = image ? visionModel : settingsModel;
+
+    const intentSystem = `You are an intent classifier for a fitness/wellness app.
+Given the user's message (and optional image), decide if they are:
+  - "meal" — describing a meal they ate or are about to eat (food photos count)
+  - "workout" — describing a workout they did
+  - "question" — asking a question, seeking advice, chatting
+
+Return ONLY a single word: meal, workout, or question.`;
+
+    const intentMessages: AIMessage[] = [
+      { role: "system", content: intentSystem },
+      image
+        ? {
+            role: "user",
+            content: [
+              { type: "text", text: message || "Classify this image." },
+              { type: "image_url", image_url: { url: image } },
+            ],
+          }
+        : { role: "user", content: message },
+    ];
+
+    const intentRaw = await callAI(intentMessages, 8, intentModel, apiKey);
+    const intent = intentRaw.toLowerCase().trim().replace(/[^a-z]/g, "").slice(0, 10);
+
+    // ── Path A: meal ──
+    if (intent.startsWith("meal")) {
+      // Use AI to parse the meal description (with image if provided)
+      let mealDescription = message;
+      if (image && !message.trim()) {
+        // Vision: describe the food in the image first
+        const describePrompt = "Describe this food in 1-2 sentences (what it is, approximate portion). Be specific about ingredients you can see.";
+        const describeMessages: AIMessage[] = [{
+          role: "user",
+          content: [
+            { type: "text", text: describePrompt },
+            { type: "image_url", image_url: { url: image } },
+          ],
+        }];
+        mealDescription = await callAI(describeMessages, 200, visionModel, apiKey);
+      }
+
+      const parsed = await parseMealDescription(mealDescription, "unspecified", "", settingsModel, apiKey);
+      const nutrition = await runNutritionEngine(ctx, parsed);
+
+      // Tier 1: short summary
+      const tier1 = `${parsed.name || "Meal"} — ~${nutrition.calories} kcal, ${Math.round(nutrition.protein)}g protein. Confirm to log.`;
+
+      // Tier 2: detailed analysis (one fetch — async would be cleaner but blocking is fine here)
+      const profile = await ctx.runQuery(internal.profile.getProfileForContext, { userId });
+      const tier2Prompt = `Give a brief but specific analysis (3-4 sentences) of this meal. Focus on: macro balance, what's good, what could be added/swapped next time. Be encouraging.
+
+Meal: ${parsed.name}
+Macros: ${nutrition.calories} kcal, ${Math.round(nutrition.protein)}g protein, ${Math.round(nutrition.carbs)}g carbs, ${Math.round(nutrition.fat)}g fat
+${profile?.calorieTarget ? `Daily targets: ${profile.calorieTarget} kcal, ${profile.proteinTarget}g protein` : ""}`;
+      const tier2 = await callAI([{ role: "user", content: tier2Prompt }], 200, settingsModel, apiKey).catch(() => "");
+
+      return {
+        kind: "meal",
+        draft: {
+          kind: "meal",
+          description: parsed.name || mealDescription,
+          name: parsed.name,
+          kcal: nutrition.calories,
+          protein: Math.round(nutrition.protein),
+          carbs: Math.round(nutrition.carbs),
+          fat: Math.round(nutrition.fat),
+          items: parsed.components ? parsed.components.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+          components: parsed.components,
+          mealType: parsed.mealType ?? "unspecified",
+          time: parsed.time,
+          aiSuggestion: parsed.aiSuggestion,
+          confidence: nutrition.confidence,
+          nutritionSource: nutrition.nutritionSource,
+        },
+        tier1Summary: tier1,
+        tier2Detail: tier2,
+      };
+    }
+
+    // ── Path B: workout ──
+    if (intent.startsWith("workout") || intent.startsWith("exercise") || intent.startsWith("train")) {
+      const metabolicProfile: any = await ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {});
+      const profile = await ctx.runQuery(internal.profile.getProfileForContext, { userId });
+      const userPhysique: UserPhysique | undefined = profile ? {
+        weight: profile.weight,
+        height: profile.height,
+        age: profile.age,
+        sex: profile.sex,
+        fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
+        metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
+      } : undefined;
+
+      const parsed = await parseWorkoutDescription(message, undefined, undefined, settingsModel, apiKey, userPhysique);
+
+      const tier1 = `${parsed.name} — ${parsed.duration ?? "?"}, ~${parsed.caloriesBurned} kcal burned. Confirm to log.`;
+      const tier2Prompt = `Give a brief specific analysis (3-4 sentences) of this workout. Focus on: training stimulus, what's good, recovery/protein needs, suggestion for next session. Be specific.
+
+Workout: ${parsed.name}, ${parsed.duration ?? "?"}, intensity ${parsed.intensity}
+Calories burned: ${parsed.caloriesBurned}
+${parsed.exercises ? `Exercises: ${JSON.stringify(parsed.exercises).slice(0, 500)}` : ""}`;
+      const tier2 = await callAI([{ role: "user", content: tier2Prompt }], 200, settingsModel, apiKey).catch(() => "");
+
+      return {
+        kind: "workout",
+        draft: {
+          kind: "workout",
+          description: parsed.name,
+          name: parsed.name,
+          type: parsed.name,
+          duration: parseDurationMinutes(parsed.duration ?? "30 min") || 30,
+          kcal: parsed.caloriesBurned ?? 0,
+          intensity: (parsed.intensity?.toLowerCase() === "high" ? "high" : parsed.intensity?.toLowerCase() === "low" ? "light" : "medium"),
+          sets: parsed.sets,
+          rationale: parsed.rationale,
+          exercises: parsed.exercises,
+          calorieResult: parsed.calorieResult,
+        },
+        tier1Summary: tier1,
+        tier2Detail: tier2,
+      };
+    }
+
+    // ── Path C: question — full chat coach response (no logging) ──
+    const coachType: CoachType = classifyCoachType(message);
+    const coach = getCoach(coachType);
+
+    const [todayMealsList, todayWorkoutsList, profile] = await Promise.all([
+      ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
+      ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
+      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+    ]);
+    const userName = identity.name ?? "Athlete";
+    let context = `USER: ${userName}\n`;
+    if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
+    context += `Today: ${todayMealsList.length} meals, ${todayWorkoutsList.length} workouts logged.\n`;
+
+    const replyMessages: AIMessage[] = [
+      { role: "system", content: `${coach.systemPrompt}\n\n${context}\n\nKeep your reply concise — under 60 words. The user is on the homepage with limited space.` },
+      image
+        ? {
+            role: "user",
+            content: [
+              { type: "text", text: message },
+              { type: "image_url", image_url: { url: image } },
+            ],
+          }
+        : { role: "user", content: message },
+    ];
+
+    const reply = await callAI(replyMessages, 250, image ? visionModel : settingsModel, apiKey);
+    return { kind: "reply", reply, coachType };
   },
 });
