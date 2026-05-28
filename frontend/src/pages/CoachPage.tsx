@@ -106,44 +106,7 @@ function ThinkingBubble() {
 }
 
 /* ── Session list (slide-in panel) ── */
-type ConvexSession = { id: Id<"chat_sessions">; title: string; updatedAt: number };
 
-function SessionPanel({ sessions, activeId, onNew, onLoad, onDelete }: {
-  sessions: ConvexSession[]; activeId: Id<"chat_sessions"> | null;
-  onNew: () => void; onLoad: (s: ConvexSession) => void;
-  onDelete: (id: Id<"chat_sessions">) => void;
-}) {
-  return (
-    <motion.div
-      initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }}
-      transition={{ type: "spring", stiffness: 300, damping: 32 }}
-      className="absolute inset-y-0 left-0 z-20 w-72 flex flex-col bg-bg border-r border-border shadow-[var(--shadow-elev)]"
-    >
-      <div className="flex items-center justify-end px-4 py-3 border-b border-border h-[60px]">
-        <span className="text-[14px] font-bold text-text mr-auto pl-11">Chats</span>
-      </div>
-      <button type="button" onClick={onNew}
-        className="flex items-center gap-2 mx-3 mt-3 mb-1 rounded-[12px] border border-border bg-card px-3 py-2.5 text-[13px] font-semibold text-text hover:bg-card-elev transition-colors">
-        <Plus className="h-3.5 w-3.5" strokeWidth={2.5} /> New chat
-      </button>
-      <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-0.5 no-scrollbar">
-        {sessions.length === 0 && <p className="text-[12px] text-text-muted px-2 py-4">No previous chats yet.</p>}
-        {sessions.map((s) => (
-          <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeId ? "bg-card-elev" : "hover:bg-card-elev")}>
-            <button type="button" onClick={() => onLoad(s)} className="flex-1 text-left px-3 py-2 min-w-0">
-              <div className="text-[13px] font-medium text-text truncate">{s.title}</div>
-              <div className="text-[11px] text-text-subtle">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
-            </button>
-            <button type="button" onClick={() => onDelete(s.id)} aria-label="Delete"
-              className="opacity-0 group-hover:opacity-100 mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum transition-colors">
-              <Trash2 className="h-3 w-3" strokeWidth={2} />
-            </button>
-          </div>
-        ))}
-      </div>
-    </motion.div>
-  );
-}
 
 /* ── Main page ── */
 export function CoachPage() {
@@ -164,7 +127,7 @@ export function CoachPage() {
   ]);
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true); // open by default
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -323,220 +286,210 @@ export function CoachPage() {
   }, [activeSessionId, createSession, sendToAI, scroll, toast]);
 
   return (
-    <div className="relative flex flex-col h-[calc(100dvh-2rem)] lg:h-[calc(100dvh-5rem)] max-w-3xl mx-auto overflow-hidden -mx-2 lg:-mx-5 px-2 lg:px-5">
+    <div className="flex h-[calc(100dvh-2rem)] lg:h-[calc(100dvh-5rem)] max-w-5xl mx-auto gap-0">
 
-      {/* Hidden file input for camera/gallery */}
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onPickImage(file);
-          e.target.value = "";
-        }}
-      />
+      {/* Hidden file input */}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
 
       {/* Barcode modal */}
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
-      {/* Persistent sidebar toggle — same position whether open or closed */}
-      <button
-        type="button"
-        onClick={() => setPanelOpen((o) => !o)}
-        aria-label={panelOpen ? "Close chat history" : "Open chat history"}
-        className={cn(
-          "absolute top-2 left-2 z-30 inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
-          panelOpen
-            ? "bg-card-elev text-text border border-border-strong"
-            : "border border-border bg-card text-text-muted hover:bg-card-elev",
-        )}
-      >
-        {panelOpen ? (
-          <ChevronLeft className="h-4 w-4" strokeWidth={2} />
-        ) : (
-          <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75">
-            <line x1="2" y1="4" x2="14" y2="4" /><line x1="2" y1="8" x2="10" y2="8" /><line x1="2" y1="12" x2="12" y2="12" />
-          </svg>
-        )}
-      </button>
-
-      {/* Session panel overlay */}
-      <AnimatePresence>
+      {/* LEFT: Session sidebar — always visible, collapsible */}
+      <AnimatePresence initial={false}>
         {panelOpen && (
-          <>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="absolute inset-0 z-10 bg-bg/60 backdrop-blur-sm"
-              onClick={() => setPanelOpen(false)}
-            />
-            <SessionPanel
-              sessions={sessions} activeId={activeSessionId}
-              onNew={newChat}
-              onLoad={(s) => { setActiveSessionId(s.id); setPanelOpen(false); }}
-              onDelete={(id) => deleteSession({ id })}
-            />
-          </>
-        )}
-      </AnimatePresence>
-
-      {/* Header — note: pl-12 to leave space for persistent sidebar toggle */}
-      <div className="flex items-center gap-3 pb-3 shrink-0 pl-11">
-        {/* Stry avatar — clipped so it never overflows */}
-        <div className="shrink-0 w-9 h-9 rounded-full overflow-hidden border border-border bg-card-elev relative">
-          <div style={{ position: "absolute", top: -18, left: -18, width: 72, height: 72 }}>
-            <VoxelAgent agent="main" size={72} />
-          </div>
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <p className="text-[15px] font-extrabold text-text leading-none">Stry</p>
-          <p className="text-[11px] text-text-muted mt-0.5">Your AI wellness coach</p>
-        </div>
-
-        {/* Style picker */}
-        <div className="flex items-center gap-0.5 rounded-full bg-card-elev border border-border p-0.5" role="radiogroup">
-          {coachingPersonalities.map((p) => (
-            <button key={p.id} type="button" role="radio" aria-checked={style === p.id}
-              onClick={() => update({ coachingStyle: p.id })}
-              className={cn("rounded-full px-2 py-1 text-[11px] font-semibold transition-colors",
-                style === p.id ? "bg-ink text-text-on-ink" : "text-text-muted hover:text-text")}>
-              {p.label}
-            </button>
-          ))}
-        </div>
-
-        {messages.length > 1 && (
-          <button type="button" onClick={newChat} aria-label="New chat"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
-            <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
-          </button>
-        )}
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-2">
-        {messages.map((m, i) => {
-          if (m.kind === "draft") {
-            if (m.settled) return null;
-            return (
-              <motion.div key={m.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={SPRING} className="pl-9">
-                <LogConfirmCard draft={m.draft} onConfirm={(d) => handleConfirm(m.id, d, m.confirmReply)} onDiscard={() => handleDiscard(m.id, m.discardReply)} />
-              </motion.div>
-            );
-          }
-          return (
-            <motion.div key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}
-              className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-              {m.role === "assistant"
-                ? <AssistantBubble text={m.text} agent={m.agent} isLast={i === lastTextIdx && !!m.streamed} />
-                : <UserBubble text={m.text} />}
-            </motion.div>
-          );
-        })}
-        {thinking && (
-          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}>
-            <ThinkingBubble />
-          </motion.div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Suggestion chips */}
-      {!hasUserMsg && (
-        <div className="flex flex-wrap gap-1.5 py-2 shrink-0">
-          {orderedSuggestions.map((s) => (
-            <button key={s} type="button" onClick={() => { recordSuggestion(s); send(s); }}
-              className="rounded-full border border-border bg-card px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-card-elev transition-colors">
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Image attachment preview */}
-      <AnimatePresence>
-        {attachedImage && (
-          <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-            className="shrink-0 flex justify-start py-2">
-            <div className="relative">
-              <img src={attachedImage} alt="Attached" className="h-20 w-20 rounded-xl object-cover border border-border" />
-              <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
-                className="absolute -top-2 -right-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-ink text-text-on-ink shadow-[var(--shadow-elev)]">
-                <X className="h-3 w-3" strokeWidth={2.5} />
+          <motion.div
+            key="sidebar"
+            initial={{ width: 0, opacity: 0 }}
+            animate={{ width: 220, opacity: 1 }}
+            exit={{ width: 0, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 300, damping: 32 }}
+            className="shrink-0 flex flex-col gap-2 overflow-hidden border-r border-border pr-3 mr-3"
+          >
+            <div className="flex items-center justify-between pt-1 pb-2">
+              <span className="text-[13px] font-bold text-text">Chats</span>
+              <button type="button" onClick={() => setPanelOpen(false)} aria-label="Close sidebar"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
+                <ChevronLeft className="h-4 w-4" strokeWidth={2} />
               </button>
+            </div>
+            <button type="button" onClick={newChat}
+              className="flex items-center gap-2 rounded-[12px] border border-border bg-card px-3 py-2.5 text-[13px] font-semibold text-text hover:bg-card-elev transition-colors">
+              <Plus className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} /> New chat
+            </button>
+            <div className="flex-1 overflow-y-auto space-y-0.5 no-scrollbar">
+              {sessions.length === 0 && <p className="text-[12px] text-text-muted px-2 py-3">No previous chats yet.</p>}
+              {sessions.map((s) => (
+                <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeSessionId ? "bg-card-elev" : "hover:bg-card-elev")}>
+                  <button type="button" onClick={() => { setActiveSessionId(s.id); }} className="flex-1 text-left px-3 py-2 min-w-0">
+                    <div className="text-[12px] font-medium text-text truncate">{s.title}</div>
+                    <div className="text-[10px] text-text-subtle">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+                  </button>
+                  <button type="button" onClick={() => deleteSession({ id: s.id })} aria-label="Delete"
+                    className="opacity-0 group-hover:opacity-100 mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum transition-colors">
+                    <Trash2 className="h-3 w-3" strokeWidth={2} />
+                  </button>
+                </div>
+              ))}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Input */}
-      <form onSubmit={(e) => { e.preventDefault(); send(input, attachedImage ?? undefined); }}
-        className={cn("shrink-0 flex items-center gap-1.5 rounded-full bg-card border pl-4 pr-1.5 py-1.5 transition-colors",
-          voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender")}>
-        <input ref={inputRef} type="text" value={input} onChange={(e) => setInput(e.target.value)}
-          placeholder={
-            voice.recording ? "Listening…" :
-            voice.transcribing ? "Transcribing…" :
-            attachedImage ? "Add a note (optional)…" :
-            "Ask Stry, paste an image, or speak…"
-          }
-          disabled={voice.recording || voice.transcribing}
-          aria-label="Message Stry"
-          className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none py-1 disabled:opacity-50" />
-
-        {/* Camera + barcode menu */}
-        <div className="relative">
-          <button type="button" aria-label="Add"
-            onClick={() => setMoreMenuOpen((o) => !o)}
-            onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-            <Camera className="h-4 w-4" strokeWidth={1.75} />
+      {/* RIGHT: Chat column — centered, fills remaining space */}
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* Header */}
+        <div className="flex items-center gap-3 pb-3 shrink-0">
+          {/* Sidebar toggle */}
+          <button type="button" onClick={() => setPanelOpen((o) => !o)} aria-label="Toggle chat history"
+            className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors shrink-0",
+              panelOpen ? "bg-card-elev text-text border-border-strong" : "border-border text-text-muted hover:bg-card-elev")}>
+            <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75">
+              <line x1="2" y1="4" x2="14" y2="4" /><line x1="2" y1="8" x2="10" y2="8" /><line x1="2" y1="12" x2="12" y2="12" />
+            </svg>
           </button>
-          <AnimatePresence>
-            {moreMenuOpen && (
-              <motion.div
-                initial={{ opacity: 0, y: 4, scale: 0.96 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 4, scale: 0.96 }}
-                transition={{ duration: 0.12 }}
-                className="absolute bottom-full mb-2 right-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20"
-              >
-                <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
-                  <ImagePlus className="h-4 w-4" strokeWidth={1.75} />
-                  Photo / camera
-                </button>
-                <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
-                  <Barcode className="h-4 w-4" strokeWidth={1.75} />
-                  Scan barcode
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+
+          {/* Stry avatar */}
+          <div className="shrink-0 w-9 h-9 rounded-full overflow-hidden border border-border bg-card-elev relative">
+            <div style={{ position: "absolute", top: -18, left: -18, width: 72, height: 72 }}>
+              <VoxelAgent agent="main" size={72} />
+            </div>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <p className="text-[15px] font-extrabold text-text leading-none">Stry</p>
+            <p className="text-[11px] text-text-muted mt-0.5">Your AI wellness coach</p>
+          </div>
+
+          {/* Style picker */}
+          <div className="flex items-center gap-0.5 rounded-full bg-card-elev border border-border p-0.5" role="radiogroup">
+            {coachingPersonalities.map((p) => (
+              <button key={p.id} type="button" role="radio" aria-checked={style === p.id}
+                onClick={() => update({ coachingStyle: p.id })}
+                className={cn("rounded-full px-2 py-1 text-[11px] font-semibold transition-colors",
+                  style === p.id ? "bg-ink text-text-on-ink" : "text-text-muted hover:text-text")}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {messages.length > 1 && (
+            <button type="button" onClick={newChat} aria-label="New chat"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
+              <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
+            </button>
+          )}
         </div>
 
-        {/* Voice */}
-        <button type="button" aria-label={voice.recording ? "Stop" : "Voice"}
-          onClick={() => voice.recording ? voice.stop() : voice.start()}
-          disabled={voice.transcribing}
-          className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-50",
-            voice.recording ? "bg-peach text-ink" : "text-text-muted hover:bg-card-elev")}>
-          {voice.transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> :
-            voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> :
-            <Mic className="h-4 w-4" strokeWidth={1.75} />}
-        </button>
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-2">
+          {messages.map((m, i) => {
+            if (m.kind === "draft") {
+              if (m.settled) return null;
+              return (
+                <motion.div key={m.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={SPRING} className="pl-9">
+                  <LogConfirmCard draft={m.draft} onConfirm={(d) => handleConfirm(m.id, d, m.confirmReply)} onDiscard={() => handleDiscard(m.id, m.discardReply)} />
+                </motion.div>
+              );
+            }
+            return (
+              <motion.div key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}
+                className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
+                {m.role === "assistant"
+                  ? <AssistantBubble text={m.text} agent={m.agent} isLast={i === lastTextIdx && !!m.streamed} />
+                  : <UserBubble text={m.text} />}
+              </motion.div>
+            );
+          })}
+          {thinking && (
+            <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}>
+              <ThinkingBubble />
+            </motion.div>
+          )}
+          <div ref={bottomRef} />
+        </div>
 
-        <motion.button type="submit" aria-label="Send"
-          disabled={(!input.trim() && !attachedImage) || thinking}
-          animate={{ scale: (input.trim() || attachedImage) ? 1 : 0.88, opacity: (input.trim() || attachedImage) ? 1 : 0.45 }}
-          transition={SPRING}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed">
-          <ArrowUp className="h-4 w-4" strokeWidth={2.25} />
-        </motion.button>
-      </form>
+        {/* Suggestion chips */}
+        {!hasUserMsg && (
+          <div className="flex flex-wrap gap-1.5 py-2 shrink-0">
+            {orderedSuggestions.map((s) => (
+              <button key={s} type="button" onClick={() => { recordSuggestion(s); send(s); }}
+                className="rounded-full border border-border bg-card px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-card-elev transition-colors">
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Image attachment preview */}
+        <AnimatePresence>
+          {attachedImage && (
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
+              className="shrink-0 flex justify-start py-2">
+              <div className="relative">
+                <img src={attachedImage} alt="Attached" className="h-20 w-20 rounded-xl object-cover border border-border" />
+                <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
+                  className="absolute -top-2 -right-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-ink text-text-on-ink shadow-[var(--shadow-elev)]">
+                  <X className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Input */}
+        <form onSubmit={(e) => { e.preventDefault(); send(input, attachedImage ?? undefined); }}
+          className={cn("shrink-0 flex items-center gap-1.5 rounded-full bg-card border pl-4 pr-1.5 py-1.5 transition-colors",
+            voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender")}>
+          <input ref={inputRef} type="text" value={input} onChange={(e) => setInput(e.target.value)}
+            placeholder={voice.recording ? "Listening…" : voice.transcribing ? "Transcribing…" : attachedImage ? "Add a note (optional)…" : "Ask Stry, paste an image, or speak…"}
+            disabled={voice.recording || voice.transcribing}
+            aria-label="Message Stry"
+            className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none py-1 disabled:opacity-50" />
+
+          {/* Camera + barcode menu */}
+          <div className="relative">
+            <button type="button" aria-label="Add" onClick={() => setMoreMenuOpen((o) => !o)} onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
+              <Camera className="h-4 w-4" strokeWidth={1.75} />
+            </button>
+            <AnimatePresence>
+              {moreMenuOpen && (
+                <motion.div initial={{ opacity: 0, y: 4, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 4, scale: 0.96 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute bottom-full mb-2 right-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20">
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                    <ImagePlus className="h-4 w-4" strokeWidth={1.75} /> Photo / camera
+                  </button>
+                  <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                    <Barcode className="h-4 w-4" strokeWidth={1.75} /> Scan barcode
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* Voice */}
+          <button type="button" aria-label={voice.recording ? "Stop" : "Voice"} onClick={() => voice.recording ? voice.stop() : voice.start()}
+            disabled={voice.transcribing}
+            className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-50",
+              voice.recording ? "bg-peach text-ink" : "text-text-muted hover:bg-card-elev")}>
+            {voice.transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> :
+              voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> :
+              <Mic className="h-4 w-4" strokeWidth={1.75} />}
+          </button>
+
+          <motion.button type="submit" aria-label="Send"
+            disabled={(!input.trim() && !attachedImage) || thinking}
+            animate={{ scale: (input.trim() || attachedImage) ? 1 : 0.88, opacity: (input.trim() || attachedImage) ? 1 : 0.45 }}
+            transition={SPRING}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed">
+            <ArrowUp className="h-4 w-4" strokeWidth={2.25} />
+          </motion.button>
+        </form>
+      </div>
     </div>
   );
 }
