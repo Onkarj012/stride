@@ -21,6 +21,7 @@ export function Markdown({ children, className }: MarkdownProps) {
     <div className={cn("markdown-body text-[14px] leading-relaxed text-text break-words", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        disallowedElements={["img"]}
         components={{
           p: ({ node: _node, ...props }) => (
             <p className="my-1 first:mt-0 last:mb-0 whitespace-pre-wrap" {...props} />

@@ -100,7 +100,7 @@ function TodaysMealsCard({ date }: { date: string }) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => deleteMeal({ id: m._id as Id<"meals"> }).catch(() => {})}
+                    onClick={() => deleteMeal({ id: m._id as Id<"meals"> }).catch((err) => toast.error("Couldn't delete", err instanceof Error ? err.message : "Try again"))}
                     aria-label="Delete"
                     title="Delete"
                     className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
@@ -191,7 +191,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
                   </button>
                   <button
                     type="button"
-                    onClick={() => deleteWorkout({ id: w._id as Id<"workouts"> }).catch(() => {})}
+                    onClick={() => deleteWorkout({ id: w._id as Id<"workouts"> }).catch((err) => toast.error("Couldn't delete", err instanceof Error ? err.message : "Try again"))}
                     aria-label="Delete"
                     title="Delete"
                     className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
@@ -289,13 +289,19 @@ function TodaysInsightsMini({ date }: { date: string }) {
   const insightsData = useQuery(api.insights.getDailyInsights, { date });
   const brief = useQuery(api.insights.getTodayBrief, {});
   const generate = useAction(api.ai.generateDailyInsights);
+  const toast = useToast();
   const insights = insightsData?.insights ?? [];
   const [generating, setGenerating] = useState(false);
 
   async function refresh() {
     setGenerating(true);
-    await generate({ date }).catch(() => {});
-    setGenerating(false);
+    try {
+      await generate({ date });
+    } catch (err) {
+      toast.error("Couldn't refresh", err instanceof Error ? err.message : "Try again");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   return (

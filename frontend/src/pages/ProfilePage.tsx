@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import {
   User as UserIcon, Activity, Target, Settings as SettingsIcon,
@@ -198,7 +198,6 @@ function AIProviderCard() {
     if (!settings) return;
     setModel(settings.openRouterModel ?? "openai/gpt-4o-mini");
     if (settings.openRouterKey) {
-      setApiKey(settings.openRouterKey);
       setHasSavedKey(true);
     }
   }, [settings]);
@@ -208,8 +207,6 @@ function AIProviderCard() {
     try {
       await upsertSettings({
         openRouterModel: nextModel ?? model,
-        // Send undefined when the user hasn't typed anything new — preserves existing key.
-        // Send empty-string explicitly to clear it (handled in backend).
         openRouterKey: nextKey !== undefined ? nextKey : (apiKey || undefined),
       });
       setSaving("saved");
@@ -221,15 +218,38 @@ function AIProviderCard() {
     }
   }
 
-  function handleClearKey() {
+  async function handleClearKey() {
     setApiKey("");
     setHasSavedKey(false);
-    handleSave(model, "");
+    await handleSave(model, "");
     toast.success("API key cleared");
   }
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const selectedModel = OPENROUTER_MODELS.find((m) => m.id === model);
+
+  // Click-outside handler for dropdown
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [dropdownOpen]);
+
+  // Escape key to close dropdown
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === "Escape") setDropdownOpen(false);
+    }
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [dropdownOpen]);
 
   return (
     <Card tone="card" radius="lg" padding="lg" className="space-y-4">
@@ -248,7 +268,7 @@ function AIProviderCard() {
       {/* Model selector — custom dropdown */}
       <div className="flex flex-col gap-1.5">
         <span className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Model</span>
-        <div className="relative">
+        <div className="relative" ref={dropdownRef}>
           <button
             type="button"
             onClick={() => setDropdownOpen((o) => !o)}

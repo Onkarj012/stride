@@ -60,10 +60,10 @@ function TodaysPulse({ logs, compact = false }: { logs: LogEntry[]; compact?: bo
       { label: "Sleep", value: lastSleep ? lastSleep.hours.toFixed(1) : "—", unit: "h", pct: lastSleep ? Math.min(1, lastSleep.hours / dailyTargets.sleepHours) : 0, tone: "lavender" },
     ],
     [
-      { label: "Protein", value: protein > 0 ? `${Math.round(protein)}g` : "—", unit: "", pct: Math.min(1, protein / 150), tone: "peach" },
-      { label: "Carbs", value: carbs > 0 ? `${Math.round(carbs)}g` : "—", unit: "", pct: Math.min(1, carbs / 200), tone: "sky" },
-      { label: "Fat", value: fat > 0 ? `${Math.round(fat)}g` : "—", unit: "", pct: Math.min(1, fat / 60), tone: "mint" },
-      { label: "Burned", value: kcalBurned > 0 ? Math.round(kcalBurned).toLocaleString() : "—", unit: "kcal", pct: Math.min(1, kcalBurned / 500), tone: "lavender" },
+      { label: "Protein", value: protein > 0 ? `${Math.round(protein)}g` : "—", unit: "", pct: Math.min(1, protein / dailyTargets.protein), tone: "peach" },
+      { label: "Carbs", value: carbs > 0 ? `${Math.round(carbs)}g` : "—", unit: "", pct: Math.min(1, carbs / dailyTargets.carbs), tone: "sky" },
+      { label: "Fat", value: fat > 0 ? `${Math.round(fat)}g` : "—", unit: "", pct: Math.min(1, fat / dailyTargets.fat), tone: "mint" },
+      { label: "Burned", value: kcalBurned > 0 ? Math.round(kcalBurned).toLocaleString() : "—", unit: "kcal", pct: Math.min(1, kcalBurned / dailyTargets.kcalBurned), tone: "lavender" },
     ],
   ];
 

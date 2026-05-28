@@ -205,7 +205,7 @@ export function CoachPage() {
     if (!convexMessages) return; // still loading
     const hydrated: Message[] = convexMessages.map((m, i) => ({
       kind: "text" as const, id: `cx-${i}`,
-      role: m.role as "user" | "assistant", text: m.content, streamed: false,
+      role: m.role === "ai" ? "assistant" as const : "user" as const, text: m.content, streamed: false,
     }));
     setMessages(hydrated.length > 0 ? hydrated : [{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
     pendingHydrateRef.current = null;

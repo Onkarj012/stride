@@ -116,7 +116,7 @@ export const relogMeal = mutation({
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
     const targetDate = date ?? new Date().toISOString().split("T")[0];
-    const targetTime = time ?? new Date().toTimeString().slice(0, 5);
+    const targetTime = time ?? new Date().toISOString().slice(11, 16);
     return ctx.db.insert("meals", {
       userId,
       date: targetDate,

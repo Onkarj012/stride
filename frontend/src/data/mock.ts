@@ -269,6 +269,7 @@ export const dailyTargets = {
   steps: 8000,
   sleepHours: 7.5,
   workoutMinutes: 30,
+  kcalBurned: 500,
 };
 
 /* ── Weekly narrative templating ── */

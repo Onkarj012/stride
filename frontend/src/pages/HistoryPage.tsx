@@ -121,22 +121,31 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
   const toast = useToast();
   const [editMeal, setEditMeal] = useState<EditableMeal | null>(null);
   const [editWorkout, setEditWorkout] = useState<EditableWorkout | null>(null);
+  const [relogging, setRelogging] = useState<string | null>(null);
 
   async function handleRelogMeal(id: Id<"meals">, name: string) {
+    if (relogging) return;
+    setRelogging(id);
     try {
       await relogMeal({ id });
       toast.success("Logged again", `${name} added to today`);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
+    } finally {
+      setRelogging(null);
     }
   }
 
   async function handleRelogWorkout(id: Id<"workouts">, name: string) {
+    if (relogging) return;
+    setRelogging(id);
     try {
       await relogWorkout({ id });
       toast.success("Logged again", `${name} added to today`);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
+    } finally {
+      setRelogging(null);
     }
   }
 
@@ -195,7 +204,8 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         onClick={() => handleRelogMeal(m._id as Id<"meals">, m.name)}
                         aria-label="Log again"
                         title="Log again today"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors"
+                        disabled={relogging === m._id}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors disabled:opacity-50"
                       >
                         <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
                       </button>
@@ -248,7 +258,8 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         onClick={() => handleRelogWorkout(w._id as Id<"workouts">, w.name)}
                         aria-label="Log again"
                         title="Log again today"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors"
+                        disabled={relogging === w._id}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors disabled:opacity-50"
                       >
                         <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
                       </button>

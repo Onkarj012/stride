@@ -225,16 +225,16 @@ export function EditLogModal(props: Props) {
                     <Field label="Duration (min)">
                       <input
                         type="number"
-                        value={workoutForm.duration ? parseInt(workoutForm.duration, 10) || 0 : 0}
-                        onChange={(e) => setWorkoutForm({ ...workoutForm, duration: String(Number(e.target.value)) })}
+                        value={workoutForm.duration ?? ""}
+                        onChange={(e) => setWorkoutForm({ ...workoutForm, duration: e.target.value === "" ? null : e.target.value })}
                         className="w-full bg-input border border-border rounded-lg px-3 py-2 text-[14px] text-text focus:outline-none focus:border-lavender"
                       />
                     </Field>
                     <Field label="Calories burned">
                       <input
                         type="number"
-                        value={workoutForm.caloriesBurned ?? 0}
-                        onChange={(e) => setWorkoutForm({ ...workoutForm, caloriesBurned: Number(e.target.value) })}
+                        value={workoutForm.caloriesBurned ?? ""}
+                        onChange={(e) => setWorkoutForm({ ...workoutForm, caloriesBurned: e.target.value === "" ? null : Number(e.target.value) })}
                         className="w-full bg-input border border-border rounded-lg px-3 py-2 text-[14px] text-text focus:outline-none focus:border-lavender"
                       />
                     </Field>
