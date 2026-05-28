@@ -8,6 +8,11 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Point the runtime import to a browser-safe shim.
+      // The backend's _generated/api.js imports `convex/server` (Node-only),
+      // which Rollup can't bundle. The shim re-exports anyApi from the
+      // browser-safe ESM path. TypeScript types still come from api.d.ts.
+      "@convex/_generated/api": path.resolve(__dirname, "./src/lib/convex-api-shim.ts"),
       "@convex": path.resolve(__dirname, "../backend/convex"),
     },
   },
