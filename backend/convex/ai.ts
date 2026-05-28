@@ -772,18 +772,21 @@ export const chat = action({
     const loggingPrompt = `\n\nDIRECT LOGGING CAPABILITY:
 You can log multiple items directly when the user describes them. Append log blocks at the very end of your response.
 
-For meals: ⟦LOG_MEAL⟧{"description":"full meal description","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string"}⟦/LOG_MEAL⟧
-For workouts: ⟦LOG_WORKOUT⟧{"description":"full workout description with exercises, sets, reps, weights"}⟦/LOG_WORKOUT⟧
-For sleep: ⟦LOG_SLEEP⟧{"hours":6.5,"quality":"poor|ok|good|great"}⟦/LOG_SLEEP⟧
-For water: ⟦LOG_WATER⟧{"ml":500}⟦/LOG_WATER⟧
-For mood: ⟦LOG_MOOD⟧{"rating":3,"note":"optional note"}⟦/LOG_MOOD⟧
-For steps: ⟦LOG_STEPS⟧{"count":8000}⟦/LOG_STEPS⟧
+Today's date is ${today}. Each log block can include an optional "date" field (YYYY-MM-DD). If the user says "yesterday", "2 days ago", or names a specific past day, set the date accordingly. Default is today.
+
+For meals: ⟦LOG_MEAL⟧{"description":"full meal description","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string","date":"YYYY-MM-DD (optional)"}⟦/LOG_MEAL⟧
+For workouts: ⟦LOG_WORKOUT⟧{"description":"full workout description with exercises, sets, reps, weights","date":"YYYY-MM-DD (optional)"}⟦/LOG_WORKOUT⟧
+For sleep: ⟦LOG_SLEEP⟧{"hours":6.5,"quality":"poor|ok|good|great","date":"YYYY-MM-DD (optional)"}⟦/LOG_SLEEP⟧
+For water: ⟦LOG_WATER⟧{"ml":500,"date":"YYYY-MM-DD (optional)"}⟦/LOG_WATER⟧
+For mood: ⟦LOG_MOOD⟧{"rating":3,"note":"optional note","date":"YYYY-MM-DD (optional)"}⟦/LOG_MOOD⟧
+For steps: ⟦LOG_STEPS⟧{"count":8000,"date":"YYYY-MM-DD (optional)"}⟦/LOG_STEPS⟧
 
 Rules:
 - Append ALL relevant log blocks when the user reports multiple activities (e.g. meal + water → append both blocks)
 - ONLY append log blocks when the user is clearly reporting what they did/ate/slept
+- If user says "yesterday I had X" → use yesterday's date in the log block
 - Sleep descriptions ("slept X hours", "went to bed at X", "woke up at Y") → LOG_SLEEP, NOT LOG_WORKOUT
-- Your message text (before the blocks) should confirm what you logged
+- Your message text (before the blocks) should confirm what you logged AND mention the date if it's not today
 - YOU MUST include the markers exactly as shown.`;
 
     // Load session history
@@ -847,12 +850,13 @@ Rules:
     for (const mealMatch of mealMatches) {
       try {
         const logData = JSON.parse(mealMatch[1].trim());
+        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", model, apiKey);
         const nutrition = await runNutritionEngine(ctx, parsed);
         const finalStructuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
         const finalIngredientBreakdown = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
         const mealId = await ctx.runMutation(internal.meals.addMealFromAI, {
-          userId, date: today,
+          userId, date: targetDate,
           name: parsed.name, calories: nutrition.calories, protein: nutrition.protein,
           carbs: nutrition.carbs, fat: nutrition.fat, time: parsed.time,
           aiSuggestion: parsed.aiSuggestion, mealType: parsed.mealType, components: parsed.components,
@@ -868,6 +872,7 @@ Rules:
     for (const workoutMatch of workoutMatches) {
       try {
         const logData = JSON.parse(workoutMatch[1].trim());
+        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const metabolicProfile: any = await ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {});
         const userPhysique: UserPhysique | undefined = profile ? {
           weight: profile.weight, height: profile.height, age: profile.age, sex: profile.sex,
@@ -880,7 +885,7 @@ Rules:
           calorieRangeHigh: parsed.calorieResult.range_high, calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
         } : {};
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
-          userId, date: today, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
+          userId, date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
           intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
           caloriesBurned: parsed.caloriesBurned, ...calorieFields,
         });
@@ -893,9 +898,10 @@ Rules:
     for (const sleepMatch of sleepMatches) {
       try {
         const logData = JSON.parse(sleepMatch[1].trim());
+        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const hours = Math.max(0.5, Math.min(24, Number(logData.hours) || 7));
         const quality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : "ok";
-        const sleepId = await ctx.runMutation(api.wellness.upsertSleep, { hours, quality, date: today });
+        const sleepId = await ctx.runMutation(api.wellness.upsertSleep, { hours, quality, date: targetDate });
         loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality } });
       } catch (err) { console.error("Failed to log sleep from AI:", err); }
     }
@@ -905,9 +911,10 @@ Rules:
     for (const waterMatch of waterMatches) {
       try {
         const logData = JSON.parse(waterMatch[1].trim());
+        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const ml = Math.max(50, Math.min(5000, Number(logData.ml) || 250));
         const time = new Date().toTimeString().slice(0, 5);
-        const waterId = await ctx.runMutation(api.wellness.addWater, { ml, date: today, time });
+        const waterId = await ctx.runMutation(api.wellness.addWater, { ml, date: targetDate, time });
         loggedItems.push({ type: "water", data: { _id: waterId, ml } });
       } catch (err) { console.error("Failed to log water from AI:", err); }
     }
@@ -917,9 +924,10 @@ Rules:
     for (const moodMatch of moodMatches) {
       try {
         const logData = JSON.parse(moodMatch[1].trim());
+        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const rating = Math.max(1, Math.min(5, Number(logData.rating) || 3)) as 1|2|3|4|5;
         const time = new Date().toTimeString().slice(0, 5);
-        const moodId = await ctx.runMutation(api.wellness.addMood, { rating, date: today, time, note: logData.note });
+        const moodId = await ctx.runMutation(api.wellness.addMood, { rating, date: targetDate, time, note: logData.note });
         loggedItems.push({ type: "mood", data: { _id: moodId, rating } });
       } catch (err) { console.error("Failed to log mood from AI:", err); }
     }
@@ -929,8 +937,9 @@ Rules:
     for (const stepsMatch of stepsMatches) {
       try {
         const logData = JSON.parse(stepsMatch[1].trim());
+        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const count = Math.max(0, Number(logData.count) || 0);
-        const stepsId = await ctx.runMutation(api.wellness.upsertSteps, { count, date: today });
+        const stepsId = await ctx.runMutation(api.wellness.upsertSteps, { count, date: targetDate });
         loggedItems.push({ type: "steps", data: { _id: stepsId, count } });
       } catch (err) { console.error("Failed to log steps from AI:", err); }
     }
@@ -1474,24 +1483,34 @@ export const homepageInput = action({
     // Returns a JSON array of items to log, or "question" if it's a chat message.
     const extractSystem = `You are a wellness tracking assistant. Extract ALL loggable items from the user's message.
 
+Today's date is ${today}.
+
 Return a JSON object with:
 {
   "isQuestion": boolean,  // true if the user is asking a question or chatting, not reporting activities
   "items": [             // array of items to log (can be empty if isQuestion=true)
     {
       "type": "meal" | "workout" | "sleep" | "water" | "mood" | "steps",
-      "description": "what the user said about this item"
+      "description": "what the user said about this item",
+      "date": "YYYY-MM-DD"  // the date this entry is for. Default to today (${today}) unless the user mentions another day.
     }
   ]
 }
 
-Examples:
-- "I had chicken salad and drank 1L of water" → isQuestion:false, items:[{type:"meal",...},{type:"water",...}]
-- "Slept from 12:30am to 7am" → isQuestion:false, items:[{type:"sleep",...}]
-- "Did a 30 min run and had a protein shake" → isQuestion:false, items:[{type:"workout",...},{type:"meal",...}]
-- "How many calories should I eat?" → isQuestion:true, items:[]
-- "I'm feeling tired today, mood is 2/5" → isQuestion:false, items:[{type:"mood",...}]
-- "Walked 8000 steps" → isQuestion:false, items:[{type:"steps",...}]
+Date inference rules:
+- "yesterday" → ${new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0]}
+- "2 days ago" → subtract 2 days from ${today}
+- "last night" → ${new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0]} (sleep entries should usually be the morning AFTER, so for sleep "last night" → today; for meals "last night" → yesterday)
+- "this morning", "today", no day mentioned → ${today}
+- Specific weekdays ("on Monday") → resolve to most recent past Monday
+- For SLEEP entries: the date is the wake-up day (so "slept 6h last night" with today=${today} → date=${today})
+
+Examples (assume today=${today}):
+- "I had chicken salad" → date=${today}
+- "Yesterday I had pizza for dinner" → date=${new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0]}
+- "Did a 30 min run" → date=${today}
+- "I forgot to log my workout from 2 days ago" → date=${new Date(new Date(today).getTime() - 2 * 86400000).toISOString().split("T")[0]}
+- "Slept 7h last night" → date=${today} (sleep wake-up day)
 
 IMPORTANT: Sleep descriptions like "slept X hours", "went to bed at X", "woke up at Y" are type "sleep", NOT "workout".
 Return ONLY valid JSON, no markdown.`;
@@ -1504,10 +1523,16 @@ Return ONLY valid JSON, no markdown.`;
     ];
 
     const extractRaw = await callAI(extractMessages, 300, intentModel, apiKey);
-    const extracted = parseJSON<{ isQuestion: boolean; items: { type: string; description: string }[] }>(
+    const extracted = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
       extractRaw,
       { isQuestion: true, items: [] },
     );
+
+    // Validate date strings — fall back to today if invalid
+    const isValidDate = (d: any) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
+    for (const item of extracted.items) {
+      if (!isValidDate(item.date)) item.date = today;
+    }
 
     // If it's a question, route to chat coach
     if (extracted.isQuestion || extracted.items.length === 0) {
@@ -1556,6 +1581,7 @@ Return ONLY valid JSON, no markdown.`;
           const nutrition = await runNutritionEngine(ctx, parsed);
           drafts.push({
             kind: "meal",
+            date: item.date,
             description: parsed.name || desc,
             name: parsed.name,
             kcal: nutrition.calories,
@@ -1576,6 +1602,7 @@ Return ONLY valid JSON, no markdown.`;
           const parsed = await parseWorkoutDescription(item.description, undefined, undefined, settingsModel, apiKey, userPhysique);
           drafts.push({
             kind: "workout",
+            date: item.date,
             description: parsed.name,
             name: parsed.name,
             type: parsed.name,
@@ -1600,7 +1627,7 @@ Return ONLY JSON.`;
           const sleepData = parseJSON<{ hours: number; quality: string }>(sleepRaw, { hours: 7, quality: "ok" });
           const hours = Math.max(0.5, Math.min(24, sleepData.hours || 7));
           const quality = ["poor", "ok", "good", "great"].includes(sleepData.quality) ? sleepData.quality : "ok";
-          drafts.push({ kind: "sleep", description: item.description, hours, quality });
+          drafts.push({ kind: "sleep", date: item.date, description: item.description, hours, quality });
           summaryParts.push(`Sleep: ${hours.toFixed(1)}h (${quality})`);
 
         } else if (item.type === "water") {
@@ -1610,7 +1637,7 @@ Common conversions: 1 glass = 250ml, 1L = 1000ml, 1 bottle = 500ml.
 Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml" → 500`;
           const mlRaw = await callAI([{ role: "user", content: waterParsePrompt }], 20, settingsModel, apiKey);
           const ml = Math.max(50, Math.min(5000, parseInt(mlRaw.replace(/[^0-9]/g, ""), 10) || 250));
-          drafts.push({ kind: "water", description: item.description, ml });
+          drafts.push({ kind: "water", date: item.date, description: item.description, ml });
           summaryParts.push(`Water: ${ml >= 1000 ? (ml / 1000).toFixed(1) + "L" : ml + "ml"}`);
 
         } else if (item.type === "mood") {
@@ -1618,14 +1645,14 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
 1=very bad, 2=bad, 3=ok, 4=good, 5=great. Return ONLY a number 1-5.`;
           const ratingRaw = await callAI([{ role: "user", content: moodParsePrompt }], 10, settingsModel, apiKey);
           const rating = Math.max(1, Math.min(5, parseInt(ratingRaw.replace(/[^1-5]/g, ""), 10) || 3)) as 1|2|3|4|5;
-          drafts.push({ kind: "mood", description: item.description, rating });
+          drafts.push({ kind: "mood", date: item.date, description: item.description, rating });
           summaryParts.push(`Mood: ${rating}/5`);
 
         } else if (item.type === "steps") {
           const stepsParsePrompt = `Extract step count from: "${item.description}". Return ONLY a number.`;
           const stepsRaw = await callAI([{ role: "user", content: stepsParsePrompt }], 15, settingsModel, apiKey);
           const count = Math.max(0, parseInt(stepsRaw.replace(/[^0-9]/g, ""), 10) || 0);
-          drafts.push({ kind: "steps", description: item.description, count });
+          drafts.push({ kind: "steps", date: item.date, description: item.description, count });
           summaryParts.push(`Steps: ${count.toLocaleString()}`);
         }
       } catch { /* skip failed items */ }
@@ -1637,7 +1664,10 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall" };
     }
 
-    const tier1Summary = summaryParts.join(" · ") + ". Confirm to log.";
+    // If any draft has a date != today, mention it in the summary
+    const nonTodayDates = [...new Set(drafts.map((d) => d.date).filter((d) => d && d !== today))];
+    const dateNote = nonTodayDates.length > 0 ? ` (for ${nonTodayDates.join(", ")})` : "";
+    const tier1Summary = summaryParts.join(" · ") + dateNote + ". Confirm to log.";
 
     // Tier 2: brief analysis of the combined log
     const tier2Prompt = `Give a brief, encouraging analysis (2-3 sentences) of what the user just logged: ${summaryParts.join(", ")}. Be specific and actionable.`;

@@ -147,31 +147,36 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
     // Remove the confirmed draft from the queue
     setPendingDrafts((prev) => prev.slice(1));
     const time = new Date().toTimeString().slice(0, 5);
-    const date = localDateStr();
+    const today = localDateStr();
     const tier2 = pendingTier2Ref.current;
 
     try {
       const d = draft as any;
+      // Use the draft's date if present (e.g. for "yesterday I had pizza"), else today
+      const date = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : today;
+      const isPastDay = date !== today;
+      const dateNote = isPastDay ? ` for ${date}` : "";
+
       if (d.kind === "meal") {
         await addMeal({ name: d.description, calories: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, time, date, aiSuggestion: tier2 || undefined, components: d.items?.join(", ") });
-        toast.success(`Logged: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
-        await recordActivity({ type: "meal" }).catch(() => {});
+        toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
+        if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
       } else if (d.kind === "workout") {
         await addWorkout({ name: d.description, sets: "1", duration: String(d.duration), intensity: d.intensity.toUpperCase(), date, caloriesBurned: d.kcal, rationale: tier2 || undefined });
-        toast.success(`Logged workout: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
-        await recordActivity({ type: "workout" }).catch(() => {});
+        toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
+        if (!isPastDay) await recordActivity({ type: "workout" }).catch(() => {});
       } else if (d.kind === "sleep") {
         await upsertSleep({ hours: d.hours, quality: d.quality, date });
-        toast.success(`Sleep logged`, `${d.hours.toFixed(1)}h · ${d.quality}`);
+        toast.success(`Sleep logged${dateNote}`, `${d.hours.toFixed(1)}h · ${d.quality}`);
       } else if (d.kind === "water") {
         await addWater({ ml: d.ml, date, time });
-        toast.success(`Water logged`, `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`);
+        toast.success(`Water logged${dateNote}`, `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`);
       } else if (d.kind === "mood") {
         await addMood({ rating: d.rating, date, time, note: d.description });
-        toast.success(`Mood logged`, `${d.rating}/5`);
+        toast.success(`Mood logged${dateNote}`, `${d.rating}/5`);
       } else if (d.kind === "steps") {
         await upsertSteps({ count: d.count, date });
-        toast.success(`Steps logged`, `${d.count.toLocaleString()} steps`);
+        toast.success(`Steps logged${dateNote}`, `${d.count.toLocaleString()} steps`);
       }
     } catch (err) {
       toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");

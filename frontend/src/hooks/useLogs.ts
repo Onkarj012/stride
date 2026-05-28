@@ -95,10 +95,12 @@ export function useLogs(date?: string) {
       category: LogCategory,
       text: string,
       extra?: Partial<Omit<LogEntry, "id" | "category" | "text" | "createdAt">>,
+      dateOverride?: string,
     ) => {
       if (!text.trim() && category !== "water") return null;
       const now = new Date();
       const time = now.toTimeString().slice(0, 5);
+      const targetDate = dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride) ? dateOverride : d;
 
       if (category === "meal") {
         const meal = extra?.meal;
@@ -108,7 +110,7 @@ export function useLogs(date?: string) {
           protein: meal?.protein ?? 0,
           carbs: meal?.carbs ?? 0,
           fat: meal?.fat ?? 0,
-          time, date: d,
+          time, date: targetDate,
           aiSuggestion: extra?.aiInsight,
           components: meal?.items?.join(", "),
         });
@@ -119,25 +121,25 @@ export function useLogs(date?: string) {
           sets: "1",
           duration: w?.duration ? String(w.duration) : undefined,
           intensity: w?.intensity?.toUpperCase() ?? "MEDIUM",
-          date: d,
+          date: targetDate,
           caloriesBurned: w?.kcal,
           rationale: extra?.aiInsight,
         });
       } else if (category === "water") {
         const ml = extra?.water?.ml ?? 250;
-        await addWater({ ml, date: d, time });
+        await addWater({ ml, date: targetDate, time });
       } else if (category === "sleep") {
         const s = extra?.sleep;
         if (!s) return null;
-        await upsertSleep({ hours: s.hours, quality: s.quality, date: d, note: text });
+        await upsertSleep({ hours: s.hours, quality: s.quality, date: targetDate, note: text });
       } else if (category === "mood") {
         const m = extra?.mood;
         if (!m) return null;
-        await addMood({ rating: m.rating, date: d, time, note: m.note ?? text });
+        await addMood({ rating: m.rating, date: targetDate, time, note: m.note ?? text });
       } else if (category === "steps") {
         const count = extra?.steps?.count;
         if (!count) return null;
-        await upsertSteps({ count, date: d });
+        await upsertSteps({ count, date: targetDate });
       }
       return null;
     },

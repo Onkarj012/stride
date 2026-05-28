@@ -296,6 +296,11 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
           <p className="text-[13px] font-bold text-text truncate">{draft.description}</p>
           <p className="text-[11px] text-text-muted">{header.label}</p>
         </div>
+        {(draft as any).date && (draft as any).date !== new Date().toLocaleDateString("en-CA") && (
+          <span className="shrink-0 rounded-full bg-card-elev border border-border px-2 py-0.5 text-[10px] font-bold text-text">
+            {(draft as any).date}
+          </span>
+        )}
       </div>
 
       {/* Body */}

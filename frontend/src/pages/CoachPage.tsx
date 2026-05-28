@@ -194,14 +194,28 @@ export function CoachPage() {
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
 
   const handleConfirm = useCallback((msgId: string, draft: any, confirmReply: string) => {
+    const draftDate: string | undefined = draft.date;
+    const dateNote = draftDate && draftDate !== localDateStr() ? ` for ${draftDate}` : "";
     if (draft.kind === "meal") {
       const d = draft as MealDraft;
-      add("meal", d.description, { agent: "diet", meal: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, items: d.items } });
-      toast.success(`Logged: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
-    } else {
+      add("meal", d.description, { agent: "diet", meal: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, items: d.items } }, draftDate);
+      toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
+    } else if (draft.kind === "workout") {
       const d = draft as WorkoutDraft;
-      add("workout", d.description, { agent: "workout", workout: { type: d.type, duration: d.duration, distance: d.distance, kcal: d.kcal, intensity: d.intensity } });
-      toast.success(`Logged workout`, `${d.duration} min · ${d.kcal} kcal`);
+      add("workout", d.description, { agent: "workout", workout: { type: d.type, duration: d.duration, distance: d.distance, kcal: d.kcal, intensity: d.intensity } }, draftDate);
+      toast.success(`Logged workout${dateNote}`, `${d.duration} min · ${d.kcal} kcal`);
+    } else if (draft.kind === "sleep") {
+      add("sleep", draft.description, { agent: "sleep", sleep: { hours: draft.hours, quality: draft.quality } }, draftDate);
+      toast.success(`Sleep logged${dateNote}`, `${draft.hours.toFixed(1)}h · ${draft.quality}`);
+    } else if (draft.kind === "water") {
+      add("water", "water", { agent: "water", water: { ml: draft.ml } }, draftDate);
+      toast.success(`Water logged${dateNote}`, `${draft.ml}ml`);
+    } else if (draft.kind === "mood") {
+      add("mood", draft.description, { agent: "wellness", mood: { rating: draft.rating, note: draft.description } }, draftDate);
+      toast.success(`Mood logged${dateNote}`, `${draft.rating}/5`);
+    } else if (draft.kind === "steps") {
+      add("steps", `${draft.count} steps`, { agent: "habit", steps: { count: draft.count } }, draftDate);
+      toast.success(`Steps logged${dateNote}`, `${draft.count.toLocaleString()} steps`);
     }
     setMessages((prev) => prev.map((m) => m.id === msgId && m.kind === "draft" ? { ...m, settled: true } : m));
     setTimeout(() => {
