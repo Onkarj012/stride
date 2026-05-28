@@ -1,7 +1,8 @@
 {
-  "buildCommand": "cd frontend && bun install && bun run build",
-  "outputDirectory": "frontend/dist",
-  "installCommand": "cd frontend && bun install",
+  "rootDirectory": "frontend",
+  "buildCommand": "bun run build",
+  "outputDirectory": "dist",
+  "installCommand": "bun install",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
   ]
