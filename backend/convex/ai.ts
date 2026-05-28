@@ -1,5 +1,5 @@
 import { action, query } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
 import { getCoach, classifyCoachType, COACHES, type CoachType } from "./coaches";
 import {
@@ -770,15 +770,20 @@ export const chat = action({
     contextBlock += `\nRECENT 7-DAY TREND:\n${recentCals.map((d: any) => `${d.date}: ${d.cals}cal`).join(", ")}`;
 
     const loggingPrompt = `\n\nDIRECT LOGGING CAPABILITY:
-You can log meals and workouts directly when the user describes them. When a user tells you what they ate or what workout they did, append ONE action block at the very end of your response:
+You can log multiple items directly when the user describes them. Append log blocks at the very end of your response.
 
-For meals: ⟦LOG_MEAL⟧{"description":"full meal description with ingredients and amounts","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string"}⟦/LOG_MEAL⟧
+For meals: ⟦LOG_MEAL⟧{"description":"full meal description","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string"}⟦/LOG_MEAL⟧
 For workouts: ⟦LOG_WORKOUT⟧{"description":"full workout description with exercises, sets, reps, weights"}⟦/LOG_WORKOUT⟧
+For sleep: ⟦LOG_SLEEP⟧{"hours":6.5,"quality":"poor|ok|good|great"}⟦/LOG_SLEEP⟧
+For water: ⟦LOG_WATER⟧{"ml":500}⟦/LOG_WATER⟧
+For mood: ⟦LOG_MOOD⟧{"rating":3,"note":"optional note"}⟦/LOG_MOOD⟧
+For steps: ⟦LOG_STEPS⟧{"count":8000}⟦/LOG_STEPS⟧
 
 Rules:
-- ONLY append a log block when the user is clearly reporting what they ate/did
-- Do NOT append log blocks for questions, advice requests, or general discussion
-- Your message text (before the block) should confirm what you logged and give a brief analysis
+- Append ALL relevant log blocks when the user reports multiple activities (e.g. meal + water → append both blocks)
+- ONLY append log blocks when the user is clearly reporting what they did/ate/slept
+- Sleep descriptions ("slept X hours", "went to bed at X", "woke up at Y") → LOG_SLEEP, NOT LOG_WORKOUT
+- Your message text (before the blocks) should confirm what you logged
 - YOU MUST include the markers exactly as shown.`;
 
     // Load session history
@@ -823,82 +828,114 @@ Rules:
       : settingsModel;
     const reply = await callAI(messages, 800, model, apiKey);
 
-    // Parse log blocks
+    // Parse log blocks — support multiple items and new types
     let cleanReply = reply;
-    let loggedItem: any = null;
+    const loggedItems: any[] = [];
 
-    const mealMatch = reply.match(/⟦LOG_MEAL⟧([\s\S]*?)⟦\/LOG_MEAL⟧/);
-    const workoutMatch = reply.match(/⟦LOG_WORKOUT⟧([\s\S]*?)⟦\/LOG_WORKOUT⟧/);
+    // Strip all log blocks from the reply text
+    cleanReply = reply
+      .replace(/⟦LOG_MEAL⟧[\s\S]*?⟦\/LOG_MEAL⟧/g, "")
+      .replace(/⟦LOG_WORKOUT⟧[\s\S]*?⟦\/LOG_WORKOUT⟧/g, "")
+      .replace(/⟦LOG_SLEEP⟧[\s\S]*?⟦\/LOG_SLEEP⟧/g, "")
+      .replace(/⟦LOG_WATER⟧[\s\S]*?⟦\/LOG_WATER⟧/g, "")
+      .replace(/⟦LOG_MOOD⟧[\s\S]*?⟦\/LOG_MOOD⟧/g, "")
+      .replace(/⟦LOG_STEPS⟧[\s\S]*?⟦\/LOG_STEPS⟧/g, "")
+      .trim();
 
-    if (mealMatch) {
-      cleanReply = reply.replace(/⟦LOG_MEAL⟧[\s\S]*?⟦\/LOG_MEAL⟧/, "").trim();
+    // Meal
+    const mealMatches = [...reply.matchAll(/⟦LOG_MEAL⟧([\s\S]*?)⟦\/LOG_MEAL⟧/g)];
+    for (const mealMatch of mealMatches) {
       try {
         const logData = JSON.parse(mealMatch[1].trim());
         const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", model, apiKey);
-
-        // Run deterministic nutrition calculation
         const nutrition = await runNutritionEngine(ctx, parsed);
         const finalStructuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
         const finalIngredientBreakdown = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
-
         const mealId = await ctx.runMutation(internal.meals.addMealFromAI, {
           userId, date: today,
-          name: parsed.name,
-          calories: nutrition.calories,
-          protein: nutrition.protein,
-          carbs: nutrition.carbs,
-          fat: nutrition.fat,
-          time: parsed.time,
-          aiSuggestion: parsed.aiSuggestion,
-          mealType: parsed.mealType,
-          components: parsed.components,
-          confidence: nutrition.confidence,
-          nutritionSource: nutrition.nutritionSource,
-          structuredItems: finalStructuredItems,
-          ingredientBreakdown: finalIngredientBreakdown,
+          name: parsed.name, calories: nutrition.calories, protein: nutrition.protein,
+          carbs: nutrition.carbs, fat: nutrition.fat, time: parsed.time,
+          aiSuggestion: parsed.aiSuggestion, mealType: parsed.mealType, components: parsed.components,
+          confidence: nutrition.confidence, nutritionSource: nutrition.nutritionSource,
+          structuredItems: finalStructuredItems, ingredientBreakdown: finalIngredientBreakdown,
         });
-        loggedItem = { type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat } };
-      } catch (err) {
-        console.error("Failed to log meal from AI:", err);
-      }
-    } else if (workoutMatch) {
-      cleanReply = reply.replace(/⟦LOG_WORKOUT⟧[\s\S]*?⟦\/LOG_WORKOUT⟧/, "").trim();
+        loggedItems.push({ type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat } });
+      } catch (err) { console.error("Failed to log meal from AI:", err); }
+    }
+
+    // Workout
+    const workoutMatches = [...reply.matchAll(/⟦LOG_WORKOUT⟧([\s\S]*?)⟦\/LOG_WORKOUT⟧/g)];
+    for (const workoutMatch of workoutMatches) {
       try {
         const logData = JSON.parse(workoutMatch[1].trim());
-        // Get metabolic profile for workout
         const metabolicProfile: any = await ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {});
         const userPhysique: UserPhysique | undefined = profile ? {
-          weight: profile.weight,
-          height: profile.height,
-          age: profile.age,
-          sex: profile.sex,
+          weight: profile.weight, height: profile.height, age: profile.age, sex: profile.sex,
           fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
           metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
         } : undefined;
         const parsed = await parseWorkoutDescription(logData.description || message, undefined, undefined, model, apiKey, userPhysique);
         const calorieFields = parsed.calorieResult ? {
-          calorieConfidence: parsed.calorieResult.confidence,
-          calorieRangeLow: parsed.calorieResult.range_low,
-          calorieRangeHigh: parsed.calorieResult.range_high,
-          calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown),
-          calculationVersion: 1,
+          calorieConfidence: parsed.calorieResult.confidence, calorieRangeLow: parsed.calorieResult.range_low,
+          calorieRangeHigh: parsed.calorieResult.range_high, calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
         } : {};
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
-          userId, date: today,
-          name: parsed.name,
-          sets: parsed.sets,
-          duration: parsed.duration,
-          intensity: parsed.intensity,
-          exercises: parsed.exercises,
-          rationale: parsed.rationale,
-          caloriesBurned: parsed.caloriesBurned,
-          ...calorieFields,
+          userId, date: today, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
+          intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
+          caloriesBurned: parsed.caloriesBurned, ...calorieFields,
         });
-        loggedItem = { type: "workout", data: { _id: workoutId, ...parsed } };
-      } catch (err) {
-        console.error("Failed to log workout from AI:", err);
-      }
+        loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed } });
+      } catch (err) { console.error("Failed to log workout from AI:", err); }
     }
+
+    // Sleep
+    const sleepMatches = [...reply.matchAll(/⟦LOG_SLEEP⟧([\s\S]*?)⟦\/LOG_SLEEP⟧/g)];
+    for (const sleepMatch of sleepMatches) {
+      try {
+        const logData = JSON.parse(sleepMatch[1].trim());
+        const hours = Math.max(0.5, Math.min(24, Number(logData.hours) || 7));
+        const quality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : "ok";
+        const sleepId = await ctx.runMutation(api.wellness.upsertSleep, { hours, quality, date: today });
+        loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality } });
+      } catch (err) { console.error("Failed to log sleep from AI:", err); }
+    }
+
+    // Water
+    const waterMatches = [...reply.matchAll(/⟦LOG_WATER⟧([\s\S]*?)⟦\/LOG_WATER⟧/g)];
+    for (const waterMatch of waterMatches) {
+      try {
+        const logData = JSON.parse(waterMatch[1].trim());
+        const ml = Math.max(50, Math.min(5000, Number(logData.ml) || 250));
+        const time = new Date().toTimeString().slice(0, 5);
+        const waterId = await ctx.runMutation(api.wellness.addWater, { ml, date: today, time });
+        loggedItems.push({ type: "water", data: { _id: waterId, ml } });
+      } catch (err) { console.error("Failed to log water from AI:", err); }
+    }
+
+    // Mood
+    const moodMatches = [...reply.matchAll(/⟦LOG_MOOD⟧([\s\S]*?)⟦\/LOG_MOOD⟧/g)];
+    for (const moodMatch of moodMatches) {
+      try {
+        const logData = JSON.parse(moodMatch[1].trim());
+        const rating = Math.max(1, Math.min(5, Number(logData.rating) || 3)) as 1|2|3|4|5;
+        const time = new Date().toTimeString().slice(0, 5);
+        const moodId = await ctx.runMutation(api.wellness.addMood, { rating, date: today, time, note: logData.note });
+        loggedItems.push({ type: "mood", data: { _id: moodId, rating } });
+      } catch (err) { console.error("Failed to log mood from AI:", err); }
+    }
+
+    // Steps
+    const stepsMatches = [...reply.matchAll(/⟦LOG_STEPS⟧([\s\S]*?)⟦\/LOG_STEPS⟧/g)];
+    for (const stepsMatch of stepsMatches) {
+      try {
+        const logData = JSON.parse(stepsMatch[1].trim());
+        const count = Math.max(0, Number(logData.count) || 0);
+        const stepsId = await ctx.runMutation(api.wellness.upsertSteps, { count, date: today });
+        loggedItems.push({ type: "steps", data: { _id: stepsId, count } });
+      } catch (err) { console.error("Failed to log steps from AI:", err); }
+    }
+
+    const loggedItem = loggedItems.length === 1 ? loggedItems[0] : loggedItems.length > 1 ? { type: "multiple", items: loggedItems } : null;
 
     // Save AI reply
     await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "ai", content: cleanReply });
@@ -1401,15 +1438,12 @@ export const transcribe = action({
 /**
  * Homepage quick-input action.
  *
- * Detects intent in the user's message:
- *   - "meal" → returns parsed meal draft (no logging) for the UI to confirm
- *   - "workout" → returns parsed workout draft (no logging) for the UI to confirm
- *   - "question" → routes to chat coach and returns reply
+ * Uses the LLM to extract ALL loggable items from a single message.
+ * Returns an array of drafts (meal, workout, sleep, water, mood, steps)
+ * plus a tier-1 summary and tier-2 detail for the UI.
  *
- * Two-tier response:
- *   - tier1Summary: short, concise — for the homepage reply slot (always under 25 words)
- *   - tier2Detail: full analysis with calories burned / next-meal suggestion / etc. — to be
- *     stored on the entry's `aiSuggestion` field after the user confirms the draft
+ * Example: "Had chicken salad and drank 1L of water" → [meal draft, water draft]
+ * Example: "Slept 6.5h last night, woke up at 7" → [sleep draft]
  */
 export const homepageInput = action({
   args: {
@@ -1417,11 +1451,14 @@ export const homepageInput = action({
     image: v.optional(v.string()),
     today: v.optional(v.string()),
   },
-  handler: async (ctx, { message, image, today: todayArg }): Promise<
-    | { kind: "meal"; draft: any; tier1Summary: string; tier2Detail: string }
-    | { kind: "workout"; draft: any; tier1Summary: string; tier2Detail: string }
-    | { kind: "reply"; reply: string; coachType: CoachType }
-  > => {
+  handler: async (ctx, { message, image, today: todayArg }): Promise<{
+    drafts: any[];
+    tier1Summary: string;
+    tier2Detail: string;
+    isQuestion: boolean;
+    reply?: string;
+    coachType?: CoachType;
+  }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
@@ -1430,161 +1467,183 @@ export const homepageInput = action({
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     const settingsModel = settings?.openRouterModel ?? undefined;
     const apiKey = settings?.openRouterKey ?? undefined;
-
-    // Step 1: Intent classification (use vision-capable model when image is present)
     const visionModel = settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL;
     const intentModel = image ? visionModel : settingsModel;
 
-    const intentSystem = `You are an intent classifier for a fitness/wellness app.
-Given the user's message (and optional image), decide if they are:
-  - "meal" — describing a meal they ate or are about to eat (food photos count)
-  - "workout" — describing a workout they did
-  - "question" — asking a question, seeking advice, chatting
+    // Step 1: Extract ALL loggable items from the message in one LLM call.
+    // Returns a JSON array of items to log, or "question" if it's a chat message.
+    const extractSystem = `You are a wellness tracking assistant. Extract ALL loggable items from the user's message.
 
-Return ONLY a single word: meal, workout, or question.`;
+Return a JSON object with:
+{
+  "isQuestion": boolean,  // true if the user is asking a question or chatting, not reporting activities
+  "items": [             // array of items to log (can be empty if isQuestion=true)
+    {
+      "type": "meal" | "workout" | "sleep" | "water" | "mood" | "steps",
+      "description": "what the user said about this item"
+    }
+  ]
+}
 
-    const intentMessages: AIMessage[] = [
-      { role: "system", content: intentSystem },
+Examples:
+- "I had chicken salad and drank 1L of water" → isQuestion:false, items:[{type:"meal",...},{type:"water",...}]
+- "Slept from 12:30am to 7am" → isQuestion:false, items:[{type:"sleep",...}]
+- "Did a 30 min run and had a protein shake" → isQuestion:false, items:[{type:"workout",...},{type:"meal",...}]
+- "How many calories should I eat?" → isQuestion:true, items:[]
+- "I'm feeling tired today, mood is 2/5" → isQuestion:false, items:[{type:"mood",...}]
+- "Walked 8000 steps" → isQuestion:false, items:[{type:"steps",...}]
+
+IMPORTANT: Sleep descriptions like "slept X hours", "went to bed at X", "woke up at Y" are type "sleep", NOT "workout".
+Return ONLY valid JSON, no markdown.`;
+
+    const extractMessages: AIMessage[] = [
+      { role: "system", content: extractSystem },
       image
-        ? {
-            role: "user",
-            content: [
-              { type: "text", text: message || "Classify this image." },
-              { type: "image_url", image_url: { url: image } },
-            ],
-          }
+        ? { role: "user", content: [{ type: "text", text: message || "What do you see?" }, { type: "image_url", image_url: { url: image } }] }
         : { role: "user", content: message },
     ];
 
-    const intentRaw = await callAI(intentMessages, 8, intentModel, apiKey);
-    const intent = intentRaw.toLowerCase().trim().replace(/[^a-z]/g, "").slice(0, 10);
+    const extractRaw = await callAI(extractMessages, 300, intentModel, apiKey);
+    const extracted = parseJSON<{ isQuestion: boolean; items: { type: string; description: string }[] }>(
+      extractRaw,
+      { isQuestion: true, items: [] },
+    );
 
-    // ── Path A: meal ──
-    if (intent.startsWith("meal")) {
-      // Use AI to parse the meal description (with image if provided)
-      let mealDescription = message;
-      if (image && !message.trim()) {
-        // Vision: describe the food in the image first
-        const describePrompt = "Describe this food in 1-2 sentences (what it is, approximate portion). Be specific about ingredients you can see.";
-        const describeMessages: AIMessage[] = [{
-          role: "user",
-          content: [
-            { type: "text", text: describePrompt },
-            { type: "image_url", image_url: { url: image } },
-          ],
-        }];
-        mealDescription = await callAI(describeMessages, 200, visionModel, apiKey);
-      }
-
-      const parsed = await parseMealDescription(mealDescription, "unspecified", "", settingsModel, apiKey);
-      const nutrition = await runNutritionEngine(ctx, parsed);
-
-      // Tier 1: short summary
-      const tier1 = `${parsed.name || "Meal"} — ~${nutrition.calories} kcal, ${Math.round(nutrition.protein)}g protein. Confirm to log.`;
-
-      // Tier 2: detailed analysis (one fetch — async would be cleaner but blocking is fine here)
-      const profile = await ctx.runQuery(internal.profile.getProfileForContext, { userId });
-      const tier2Prompt = `Give a brief but specific analysis (3-4 sentences) of this meal. Focus on: macro balance, what's good, what could be added/swapped next time. Be encouraging.
-
-Meal: ${parsed.name}
-Macros: ${nutrition.calories} kcal, ${Math.round(nutrition.protein)}g protein, ${Math.round(nutrition.carbs)}g carbs, ${Math.round(nutrition.fat)}g fat
-${profile?.calorieTarget ? `Daily targets: ${profile.calorieTarget} kcal, ${profile.proteinTarget}g protein` : ""}`;
-      const tier2 = await callAI([{ role: "user", content: tier2Prompt }], 200, settingsModel, apiKey).catch(() => "");
-
-      return {
-        kind: "meal",
-        draft: {
-          kind: "meal",
-          description: parsed.name || mealDescription,
-          name: parsed.name,
-          kcal: nutrition.calories,
-          protein: Math.round(nutrition.protein),
-          carbs: Math.round(nutrition.carbs),
-          fat: Math.round(nutrition.fat),
-          items: parsed.components ? parsed.components.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
-          components: parsed.components,
-          mealType: parsed.mealType ?? "unspecified",
-          time: parsed.time,
-          aiSuggestion: parsed.aiSuggestion,
-          confidence: nutrition.confidence,
-          nutritionSource: nutrition.nutritionSource,
-        },
-        tier1Summary: tier1,
-        tier2Detail: tier2,
-      };
+    // If it's a question, route to chat coach
+    if (extracted.isQuestion || extracted.items.length === 0) {
+      const coachType: CoachType = classifyCoachType(message);
+      const coach = getCoach(coachType);
+      const [todayMealsList, todayWorkoutsList, profile] = await Promise.all([
+        ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
+        ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
+        ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+      ]);
+      const userName = identity.name ?? "Athlete";
+      let context = `USER: ${userName}\n`;
+      if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
+      context += `Today: ${todayMealsList.length} meals, ${todayWorkoutsList.length} workouts logged.\n`;
+      const replyMessages: AIMessage[] = [
+        { role: "system", content: `${coach.systemPrompt}\n\n${context}\n\nKeep your reply concise — under 60 words.` },
+        image
+          ? { role: "user", content: [{ type: "text", text: message }, { type: "image_url", image_url: { url: image } }] }
+          : { role: "user", content: message },
+      ];
+      const reply = await callAI(replyMessages, 250, image ? visionModel : settingsModel, apiKey);
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType };
     }
 
-    // ── Path B: workout ──
-    if (intent.startsWith("workout") || intent.startsWith("exercise") || intent.startsWith("train")) {
-      const metabolicProfile: any = await ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {});
-      const profile = await ctx.runQuery(internal.profile.getProfileForContext, { userId });
-      const userPhysique: UserPhysique | undefined = profile ? {
-        weight: profile.weight,
-        height: profile.height,
-        age: profile.age,
-        sex: profile.sex,
-        fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
-        metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
-      } : undefined;
+    // Step 2: Parse each item in parallel
+    const profile = await ctx.runQuery(internal.profile.getProfileForContext, { userId });
+    const metabolicProfile: any = await ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {});
+    const userPhysique: UserPhysique | undefined = profile ? {
+      weight: profile.weight, height: profile.height, age: profile.age, sex: profile.sex,
+      fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
+      metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
+    } : undefined;
 
-      const parsed = await parseWorkoutDescription(message, undefined, undefined, settingsModel, apiKey, userPhysique);
+    const drafts: any[] = [];
+    const summaryParts: string[] = [];
 
-      const tier1 = `${parsed.name} — ${parsed.duration ?? "?"}, ~${parsed.caloriesBurned} kcal burned. Confirm to log.`;
-      const tier2Prompt = `Give a brief specific analysis (3-4 sentences) of this workout. Focus on: training stimulus, what's good, recovery/protein needs, suggestion for next session. Be specific.
-
-Workout: ${parsed.name}, ${parsed.duration ?? "?"}, intensity ${parsed.intensity}
-Calories burned: ${parsed.caloriesBurned}
-${parsed.exercises ? `Exercises: ${JSON.stringify(parsed.exercises).slice(0, 500)}` : ""}`;
-      const tier2 = await callAI([{ role: "user", content: tier2Prompt }], 200, settingsModel, apiKey).catch(() => "");
-
-      return {
-        kind: "workout",
-        draft: {
-          kind: "workout",
-          description: parsed.name,
-          name: parsed.name,
-          type: parsed.name,
-          duration: parseDurationMinutes(parsed.duration ?? "30 min") || 30,
-          kcal: parsed.caloriesBurned ?? 0,
-          intensity: (parsed.intensity?.toLowerCase() === "high" ? "high" : parsed.intensity?.toLowerCase() === "low" ? "light" : "medium"),
-          sets: parsed.sets,
-          rationale: parsed.rationale,
-          exercises: parsed.exercises,
-          calorieResult: parsed.calorieResult,
-        },
-        tier1Summary: tier1,
-        tier2Detail: tier2,
-      };
-    }
-
-    // ── Path C: question — full chat coach response (no logging) ──
-    const coachType: CoachType = classifyCoachType(message);
-    const coach = getCoach(coachType);
-
-    const [todayMealsList, todayWorkoutsList, profile] = await Promise.all([
-      ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
-      ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
-      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-    ]);
-    const userName = identity.name ?? "Athlete";
-    let context = `USER: ${userName}\n`;
-    if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
-    context += `Today: ${todayMealsList.length} meals, ${todayWorkoutsList.length} workouts logged.\n`;
-
-    const replyMessages: AIMessage[] = [
-      { role: "system", content: `${coach.systemPrompt}\n\n${context}\n\nKeep your reply concise — under 60 words. The user is on the homepage with limited space.` },
-      image
-        ? {
-            role: "user",
-            content: [
-              { type: "text", text: message },
-              { type: "image_url", image_url: { url: image } },
-            ],
+    for (const item of extracted.items) {
+      try {
+        if (item.type === "meal") {
+          let desc = item.description;
+          if (image && !desc.trim()) {
+            const d = await callAI([{ role: "user", content: [{ type: "text", text: "Describe this food briefly." }, { type: "image_url", image_url: { url: image } }] }], 150, visionModel, apiKey);
+            desc = d;
           }
-        : { role: "user", content: message },
-    ];
+          const parsed = await parseMealDescription(desc, "unspecified", "", settingsModel, apiKey);
+          const nutrition = await runNutritionEngine(ctx, parsed);
+          drafts.push({
+            kind: "meal",
+            description: parsed.name || desc,
+            name: parsed.name,
+            kcal: nutrition.calories,
+            protein: Math.round(nutrition.protein),
+            carbs: Math.round(nutrition.carbs),
+            fat: Math.round(nutrition.fat),
+            items: parsed.components ? parsed.components.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+            components: parsed.components,
+            mealType: parsed.mealType ?? "unspecified",
+            time: parsed.time,
+            aiSuggestion: parsed.aiSuggestion,
+            confidence: nutrition.confidence,
+            nutritionSource: nutrition.nutritionSource,
+          });
+          summaryParts.push(`${parsed.name || "Meal"} (~${nutrition.calories} kcal)`);
 
-    const reply = await callAI(replyMessages, 250, image ? visionModel : settingsModel, apiKey);
-    return { kind: "reply", reply, coachType };
+        } else if (item.type === "workout") {
+          const parsed = await parseWorkoutDescription(item.description, undefined, undefined, settingsModel, apiKey, userPhysique);
+          drafts.push({
+            kind: "workout",
+            description: parsed.name,
+            name: parsed.name,
+            type: parsed.name,
+            duration: parseDurationMinutes(parsed.duration ?? "30 min") || 30,
+            kcal: parsed.caloriesBurned ?? 0,
+            intensity: (parsed.intensity?.toLowerCase() === "high" ? "high" : parsed.intensity?.toLowerCase() === "low" ? "light" : "medium"),
+            sets: parsed.sets,
+            rationale: parsed.rationale,
+            exercises: parsed.exercises,
+            calorieResult: parsed.calorieResult,
+          });
+          summaryParts.push(`${parsed.name} (~${parsed.caloriesBurned ?? 0} kcal burned)`);
+
+        } else if (item.type === "sleep") {
+          // Parse sleep: extract hours and quality from description
+          const sleepParsePrompt = `Extract sleep data from: "${item.description}"
+Return JSON: {"hours": number, "quality": "poor"|"ok"|"good"|"great"}
+Examples: "slept 6.5 hours" → {"hours":6.5,"quality":"ok"}, "slept 8h, felt great" → {"hours":8,"quality":"great"}
+If hours can't be determined from a time range, calculate: e.g. "12:30am to 7am" = 6.5 hours.
+Return ONLY JSON.`;
+          const sleepRaw = await callAI([{ role: "user", content: sleepParsePrompt }], 80, settingsModel, apiKey);
+          const sleepData = parseJSON<{ hours: number; quality: string }>(sleepRaw, { hours: 7, quality: "ok" });
+          const hours = Math.max(0.5, Math.min(24, sleepData.hours || 7));
+          const quality = ["poor", "ok", "good", "great"].includes(sleepData.quality) ? sleepData.quality : "ok";
+          drafts.push({ kind: "sleep", description: item.description, hours, quality });
+          summaryParts.push(`Sleep: ${hours.toFixed(1)}h (${quality})`);
+
+        } else if (item.type === "water") {
+          // Parse water: extract ml from description
+          const waterParsePrompt = `Extract water amount in ml from: "${item.description}"
+Common conversions: 1 glass = 250ml, 1L = 1000ml, 1 bottle = 500ml.
+Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml" → 500`;
+          const mlRaw = await callAI([{ role: "user", content: waterParsePrompt }], 20, settingsModel, apiKey);
+          const ml = Math.max(50, Math.min(5000, parseInt(mlRaw.replace(/[^0-9]/g, ""), 10) || 250));
+          drafts.push({ kind: "water", description: item.description, ml });
+          summaryParts.push(`Water: ${ml >= 1000 ? (ml / 1000).toFixed(1) + "L" : ml + "ml"}`);
+
+        } else if (item.type === "mood") {
+          const moodParsePrompt = `Extract mood rating 1-5 from: "${item.description}"
+1=very bad, 2=bad, 3=ok, 4=good, 5=great. Return ONLY a number 1-5.`;
+          const ratingRaw = await callAI([{ role: "user", content: moodParsePrompt }], 10, settingsModel, apiKey);
+          const rating = Math.max(1, Math.min(5, parseInt(ratingRaw.replace(/[^1-5]/g, ""), 10) || 3)) as 1|2|3|4|5;
+          drafts.push({ kind: "mood", description: item.description, rating });
+          summaryParts.push(`Mood: ${rating}/5`);
+
+        } else if (item.type === "steps") {
+          const stepsParsePrompt = `Extract step count from: "${item.description}". Return ONLY a number.`;
+          const stepsRaw = await callAI([{ role: "user", content: stepsParsePrompt }], 15, settingsModel, apiKey);
+          const count = Math.max(0, parseInt(stepsRaw.replace(/[^0-9]/g, ""), 10) || 0);
+          drafts.push({ kind: "steps", description: item.description, count });
+          summaryParts.push(`Steps: ${count.toLocaleString()}`);
+        }
+      } catch { /* skip failed items */ }
+    }
+
+    if (drafts.length === 0) {
+      // Fallback to question path
+      const reply = "I couldn't parse that. Could you be more specific?";
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall" };
+    }
+
+    const tier1Summary = summaryParts.join(" · ") + ". Confirm to log.";
+
+    // Tier 2: brief analysis of the combined log
+    const tier2Prompt = `Give a brief, encouraging analysis (2-3 sentences) of what the user just logged: ${summaryParts.join(", ")}. Be specific and actionable.`;
+    const tier2Detail = await callAI([{ role: "user", content: tier2Prompt }], 150, settingsModel, apiKey).catch(() => "");
+
+    return { drafts, tier1Summary, tier2Detail, isQuestion: false };
   },
 });
+

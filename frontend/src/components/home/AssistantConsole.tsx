@@ -18,7 +18,7 @@ import { useToast } from "@/context/ToastContext";
 import { recordSuggestion } from "@/lib/behavior";
 import { cn } from "@/lib/utils";
 import type { Agent } from "@/lib/storage";
-import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
+import type { LogDraft } from "@/data/mock";
 
 const SPRING = { type: "spring", stiffness: 260, damping: 28 } as const;
 
@@ -83,8 +83,8 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
-  // ConfirmModal state — user must confirm before logging
-  const [pendingDraft, setPendingDraft] = useState<LogDraft | null>(null);
+  // ConfirmModal state — queue of drafts to confirm one by one
+  const [pendingDrafts, setPendingDrafts] = useState<any[]>([]);
   const pendingTier2Ref = useRef<string>("");
 
   const { user } = useUser();
@@ -99,6 +99,10 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
   const homepageInput = useAction(api.ai.homepageInput);
   const addMeal = useMutation(api.meals.addMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
+  const addWater = useMutation(api.wellness.addWater);
+  const upsertSleep = useMutation(api.wellness.upsertSleep);
+  const addMood = useMutation(api.wellness.addMood);
+  const upsertSteps = useMutation(api.wellness.upsertSteps);
   const recordActivity = useMutation(api.gamification.recordActivity);
 
   const firstName = user?.firstName ?? user?.username ?? "there";
@@ -139,50 +143,46 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
     return () => document.removeEventListener("paste", onPaste);
   }, [onPickImage, activeRef]);
 
-  /* ── Confirm draft → actually log ── */
+  /* ── Confirm draft → actually log, then show next in queue ── */
   const handleConfirm = useCallback(async (draft: LogDraft) => {
-    setPendingDraft(null);
+    // Remove the confirmed draft from the queue
+    setPendingDrafts((prev) => prev.slice(1));
     const time = new Date().toTimeString().slice(0, 5);
     const date = new Date().toISOString().split("T")[0];
     const tier2 = pendingTier2Ref.current;
 
     try {
-      if (draft.kind === "meal") {
-        const d = draft as MealDraft;
-        await addMeal({
-          name: d.description,
-          calories: d.kcal,
-          protein: d.protein,
-          carbs: d.carbs,
-          fat: d.fat,
-          time, date,
-          aiSuggestion: tier2 || undefined,
-          components: d.items.join(", "),
-        });
+      const d = draft as any;
+      if (d.kind === "meal") {
+        await addMeal({ name: d.description, calories: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, time, date, aiSuggestion: tier2 || undefined, components: d.items?.join(", ") });
         toast.success(`Logged: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
-      } else {
-        const d = draft as WorkoutDraft;
-        await addWorkout({
-          name: d.description,
-          sets: "1",
-          duration: String(d.duration),
-          intensity: d.intensity.toUpperCase(),
-          date,
-          caloriesBurned: d.kcal,
-          rationale: tier2 || undefined,
-        });
+        await recordActivity({ type: "meal" }).catch(() => {});
+      } else if (d.kind === "workout") {
+        await addWorkout({ name: d.description, sets: "1", duration: String(d.duration), intensity: d.intensity.toUpperCase(), date, caloriesBurned: d.kcal, rationale: tier2 || undefined });
         toast.success(`Logged workout: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
+        await recordActivity({ type: "workout" }).catch(() => {});
+      } else if (d.kind === "sleep") {
+        await upsertSleep({ hours: d.hours, quality: d.quality, date });
+        toast.success(`Sleep logged`, `${d.hours.toFixed(1)}h · ${d.quality}`);
+      } else if (d.kind === "water") {
+        await addWater({ ml: d.ml, date, time });
+        toast.success(`Water logged`, `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`);
+      } else if (d.kind === "mood") {
+        await addMood({ rating: d.rating, date, time, note: d.description });
+        toast.success(`Mood logged`, `${d.rating}/5`);
+      } else if (d.kind === "steps") {
+        await upsertSteps({ count: d.count, date });
+        toast.success(`Steps logged`, `${d.count.toLocaleString()} steps`);
       }
-      // Update gamification (XP / streak)
-      await recordActivity({ type: draft.kind === "meal" ? "meal" : "workout" }).catch(() => {});
     } catch (err) {
       toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");
     }
-    pendingTier2Ref.current = "";
-  }, [addMeal, addWorkout, recordActivity, toast]);
+    // Clear tier2 only after last draft
+    if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
+  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, toast, pendingDrafts.length]);
 
   const handleDiscard = useCallback(() => {
-    setPendingDraft(null);
+    setPendingDrafts([]);
     pendingTier2Ref.current = "";
     setReply({ text: "No problem — nothing logged. Tell me when you're ready.", agent: "main" });
   }, []);
@@ -207,19 +207,15 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
 
       setThinking(false);
 
-      if (result.kind === "meal" || result.kind === "workout") {
-        setReply({ text: result.tier1Summary, agent: result.kind === "meal" ? "diet" : "workout" });
-        pendingTier2Ref.current = result.tier2Detail ?? "";
-        if (result.draft && typeof result.draft === "object" && "kind" in result.draft) {
-          setPendingDraft(result.draft as LogDraft);
-        } else {
-          console.error("Unexpected draft shape:", result.draft);
-          setReply({ text: "Sorry, couldn't parse the draft. Please try again.", agent: "main" });
-        }
-      } else {
-        // Question/chat reply
+      if (result.isQuestion) {
         const agent = coachToAgent(result.coachType);
-        setReply({ text: result.reply, agent });
+        setReply({ text: result.reply ?? "", agent });
+      } else if (result.drafts && result.drafts.length > 0) {
+        setReply({ text: result.tier1Summary, agent: "main" });
+        pendingTier2Ref.current = result.tier2Detail ?? "";
+        setPendingDrafts(result.drafts);
+      } else {
+        setReply({ text: result.reply ?? "Got it.", agent: "main" });
       }
     } catch (err) {
       setThinking(false);
@@ -395,7 +391,7 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
 
       {/* Barcode modal */}
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
-      <ConfirmModal draft={pendingDraft} onConfirm={handleConfirm} onDiscard={handleDiscard} />
+      <ConfirmModal draft={pendingDrafts[0] ?? null} onConfirm={handleConfirm} onDiscard={handleDiscard} />
     </>
   );
 }
