@@ -97,18 +97,13 @@ export function SignInPage() {
     setError(null);
     setLoading(true);
     try {
-      const { error: createErr } = await signIn.create({ identifier: email });
-      if (createErr) { setError(createErr.message); return; }
-
-      const { error: pwErr } = await signIn.password({ password });
-      if (pwErr) { setError(pwErr.message); return; }
-
-      const { error: finalErr } = await signIn.finalize();
+      const { error: err } = await (signIn as any).password({ emailAddress: email, password });
+      if (err) { setError(err.message); return; }
+      const { error: finalErr } = await (signIn as any).finalize();
       if (finalErr) { setError(finalErr.message); return; }
-
       navigate("/");
     } catch (err: any) {
-      setError(err?.message ?? "Couldn't sign in");
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't sign in");
     } finally {
       setLoading(false);
     }
@@ -189,13 +184,12 @@ export function SignUpPage() {
     setError(null);
     setLoading(true);
     try {
-      const { error: err } = await signUp.create({ emailAddress: email, password, firstName });
+      const { error: err } = await (signUp as any).password({ emailAddress: email, password, firstName });
       if (err) { setError(err.message); return; }
-      const { error: verifyErr } = await (signUp as any).sendEmailCode();
-      if (verifyErr) { setError(verifyErr.message); return; }
+      await (signUp as any).verifications.sendEmailCode();
       setStep("verify");
     } catch (err: any) {
-      setError(err?.message ?? "Couldn't sign up");
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't sign up");
     } finally {
       setLoading(false);
     }
@@ -207,12 +201,12 @@ export function SignUpPage() {
     setError(null);
     setLoading(true);
     try {
-      const result = await (signUp as any).attemptEmailAddressVerification({ code });
-      if (result.status !== "complete") {
+      await (signUp as any).verifications.verifyEmailCode({ code });
+      if ((signUp as any).status === "complete") {
+        await (signUp as any).finalize({ navigate: ({ decorateUrl }: any) => { window.location.href = decorateUrl("/onboarding"); } });
+      } else {
         setError("Verification incomplete — please try again");
-        return;
       }
-      navigate("/onboarding");
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't verify code");
     } finally {
