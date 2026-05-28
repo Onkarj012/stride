@@ -1,12 +1,18 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { Check, X, Pencil, Flame, Dumbbell, Footprints, Zap } from "lucide-react";
+import { Check, X, Pencil, Flame, Dumbbell, Footprints, Zap, Moon, Droplets, Smile, Activity } from "lucide-react";
 import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import { cn } from "@/lib/utils";
 
+type SleepDraft = { kind: "sleep"; description: string; hours: number; quality: "poor"|"ok"|"good"|"great" };
+type WaterDraft = { kind: "water"; description: string; ml: number };
+type MoodDraft = { kind: "mood"; description: string; rating: 1|2|3|4|5 };
+type StepsDraft = { kind: "steps"; description: string; count: number };
+type AnyDraft = LogDraft | SleepDraft | WaterDraft | MoodDraft | StepsDraft;
+
 type Props = {
-  draft: LogDraft;
-  onConfirm: (draft: LogDraft) => void;
+  draft: AnyDraft;
+  onConfirm: (draft: AnyDraft) => void;
   onDiscard: () => void;
 };
 
@@ -186,18 +192,95 @@ function WorkoutCard({
   );
 }
 
+/* ── Wellness cards ── */
+function SleepCard({ draft, editing, onChange }: { draft: SleepDraft; editing: boolean; onChange: (d: SleepDraft) => void }) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2 bg-card-elev rounded-2xl px-4 py-4">
+        <NumField label="Hours" value={draft.hours} unit="h" editing={editing}
+          onChange={(v) => onChange({ ...draft, hours: v })} color="text-lavender" />
+        <div className="flex flex-col items-center gap-0.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Quality</span>
+          {editing ? (
+            <select value={draft.quality} onChange={(e) => onChange({ ...draft, quality: e.target.value as SleepDraft["quality"] })}
+              className="text-[14px] font-bold bg-input border border-border rounded-lg px-2 py-0.5 text-text focus:outline-none focus:border-lavender">
+              <option value="poor">poor</option>
+              <option value="ok">ok</option>
+              <option value="good">good</option>
+              <option value="great">great</option>
+            </select>
+          ) : (
+            <span className="text-[18px] font-extrabold leading-none text-text capitalize">{draft.quality}</span>
+          )}
+          <span className="text-[11px] text-text-muted">felt</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WaterCard({ draft, editing, onChange }: { draft: WaterDraft; editing: boolean; onChange: (d: WaterDraft) => void }) {
+  return (
+    <div className="bg-card-elev rounded-2xl px-4 py-4 flex justify-center">
+      <NumField label="Volume" value={draft.ml} unit="ml" editing={editing}
+        onChange={(v) => onChange({ ...draft, ml: v })} color="text-sky" />
+    </div>
+  );
+}
+
+function MoodCard({ draft, editing, onChange }: { draft: MoodDraft; editing: boolean; onChange: (d: MoodDraft) => void }) {
+  const emoji = ["😢", "😕", "😐", "🙂", "😄"][draft.rating - 1];
+  return (
+    <div className="bg-card-elev rounded-2xl px-4 py-4 flex flex-col items-center gap-2">
+      <span className="text-[40px] leading-none">{emoji}</span>
+      {editing ? (
+        <div className="flex gap-1">
+          {[1, 2, 3, 4, 5].map((r) => (
+            <button key={r} onClick={() => onChange({ ...draft, rating: r as MoodDraft["rating"] })}
+              className={cn("h-8 w-8 rounded-full text-[13px] font-bold transition-colors",
+                r === draft.rating ? "bg-lavender text-text-on-ink" : "bg-input text-text-muted hover:text-text")}>
+              {r}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <span className="text-[15px] font-bold text-text">{draft.rating} / 5</span>
+      )}
+    </div>
+  );
+}
+
+function StepsCard({ draft, editing, onChange }: { draft: StepsDraft; editing: boolean; onChange: (d: StepsDraft) => void }) {
+  return (
+    <div className="bg-card-elev rounded-2xl px-4 py-4 flex justify-center">
+      <NumField label="Steps" value={draft.count} unit="steps" editing={editing}
+        onChange={(v) => onChange({ ...draft, count: v })} color="text-mint" />
+    </div>
+  );
+}
+
 /* ── Public component ── */
 export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Props) {
-  const [draft, setDraft] = useState<LogDraft>(initialDraft);
+  const [draft, setDraft] = useState<AnyDraft>(initialDraft);
   const [editing, setEditing] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-
-  const isMeal = draft.kind === "meal";
 
   function handleConfirm() {
     setConfirmed(true);
     setTimeout(() => onConfirm(draft), 350);
   }
+
+  // Header config per draft kind
+  const HEADER_CONFIG: Record<string, { icon: typeof Flame; bg: string; color: string; label: string }> = {
+    meal:    { icon: Flame,    bg: "bg-peach/10",    color: "text-peach",    label: "Meal estimate — does this look right?" },
+    workout: { icon: Dumbbell, bg: "bg-lavender/10", color: "text-lavender", label: "Workout estimate — does this look right?" },
+    sleep:   { icon: Moon,     bg: "bg-lavender/10", color: "text-lavender", label: "Sleep — confirm to log" },
+    water:   { icon: Droplets, bg: "bg-sky/10",      color: "text-sky",      label: "Water — confirm to log" },
+    mood:    { icon: Smile,    bg: "bg-peach/10",    color: "text-peach",    label: "Mood — confirm to log" },
+    steps:   { icon: Activity, bg: "bg-mint/10",     color: "text-mint",     label: "Steps — confirm to log" },
+  };
+  const header = HEADER_CONFIG[draft.kind] ?? HEADER_CONFIG.meal;
+  const HeaderIcon = header.icon;
 
   return (
     <motion.div
@@ -207,37 +290,22 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
       className="rounded-[20px] rounded-bl-[6px] bg-card border border-border overflow-hidden shadow-[var(--shadow-elev)] w-full max-w-md"
     >
       {/* Header */}
-      <div className={cn(
-        "flex items-center gap-3 px-4 py-3 border-b border-border",
-        isMeal ? "bg-peach/10" : "bg-lavender/10",
-      )}>
-        {isMeal
-          ? <Flame className="h-4 w-4 text-peach shrink-0" strokeWidth={2} />
-          : <Dumbbell className="h-4 w-4 text-lavender shrink-0" strokeWidth={2} />
-        }
+      <div className={cn("flex items-center gap-3 px-4 py-3 border-b border-border", header.bg)}>
+        <HeaderIcon className={cn("h-4 w-4 shrink-0", header.color)} strokeWidth={2} />
         <div className="flex-1 min-w-0">
           <p className="text-[13px] font-bold text-text truncate">{draft.description}</p>
-          <p className="text-[11px] text-text-muted">
-            {isMeal ? "Meal estimate — does this look right?" : "Workout estimate — does this look right?"}
-          </p>
+          <p className="text-[11px] text-text-muted">{header.label}</p>
         </div>
       </div>
 
       {/* Body */}
       <div className="px-4 py-4">
-        {isMeal ? (
-          <MealCard
-            draft={draft as MealDraft}
-            editing={editing}
-            onChange={(d) => setDraft(d)}
-          />
-        ) : (
-          <WorkoutCard
-            draft={draft as WorkoutDraft}
-            editing={editing}
-            onChange={(d) => setDraft(d)}
-          />
-        )}
+        {draft.kind === "meal" && <MealCard draft={draft as MealDraft} editing={editing} onChange={(d) => setDraft(d)} />}
+        {draft.kind === "workout" && <WorkoutCard draft={draft as WorkoutDraft} editing={editing} onChange={(d) => setDraft(d)} />}
+        {draft.kind === "sleep" && <SleepCard draft={draft as SleepDraft} editing={editing} onChange={(d) => setDraft(d)} />}
+        {draft.kind === "water" && <WaterCard draft={draft as WaterDraft} editing={editing} onChange={(d) => setDraft(d)} />}
+        {draft.kind === "mood" && <MoodCard draft={draft as MoodDraft} editing={editing} onChange={(d) => setDraft(d)} />}
+        {draft.kind === "steps" && <StepsCard draft={draft as StepsDraft} editing={editing} onChange={(d) => setDraft(d)} />}
       </div>
 
       {/* Actions */}

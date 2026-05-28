@@ -2,12 +2,11 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { LogConfirmCard } from "./LogConfirmCard";
-import type { LogDraft } from "@/data/mock";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 type Props = {
-  draft: LogDraft | null;
-  onConfirm: (draft: LogDraft) => void;
+  draft: any | null;
+  onConfirm: (draft: any) => void;
   onDiscard: () => void;
 };
 

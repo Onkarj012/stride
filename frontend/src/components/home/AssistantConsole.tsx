@@ -18,7 +18,6 @@ import { useToast } from "@/context/ToastContext";
 import { recordSuggestion } from "@/lib/behavior";
 import { cn, localDateStr } from "@/lib/utils";
 import type { Agent } from "@/lib/storage";
-import type { LogDraft } from "@/data/mock";
 
 const SPRING = { type: "spring", stiffness: 260, damping: 28 } as const;
 
@@ -144,7 +143,7 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
   }, [onPickImage, activeRef]);
 
   /* ── Confirm draft → actually log, then show next in queue ── */
-  const handleConfirm = useCallback(async (draft: LogDraft) => {
+  const handleConfirm = useCallback(async (draft: any) => {
     // Remove the confirmed draft from the queue
     setPendingDrafts((prev) => prev.slice(1));
     const time = new Date().toTimeString().slice(0, 5);

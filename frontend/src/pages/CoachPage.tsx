@@ -193,7 +193,7 @@ export function CoachPage() {
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
 
-  const handleConfirm = useCallback((msgId: string, draft: LogDraft, confirmReply: string) => {
+  const handleConfirm = useCallback((msgId: string, draft: any, confirmReply: string) => {
     if (draft.kind === "meal") {
       const d = draft as MealDraft;
       add("meal", d.description, { agent: "diet", meal: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, items: d.items } });
