@@ -117,10 +117,10 @@ export function SignInPage() {
   async function onGoogle() {
     if (!signIn) return;
     try {
-      await signIn.authenticateWithRedirect({
+      await (signIn as any).sso({
         strategy: "oauth_google",
-        redirectUrl: `${window.location.origin}/sso-callback`,
-        redirectUrlComplete: "/",
+        redirectCallbackUrl: `${window.location.origin}/sso-callback`,
+        redirectUrl: "/",
       });
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Google sign-in failed");
@@ -223,10 +223,10 @@ export function SignUpPage() {
   async function onGoogle() {
     if (!signUp) return;
     try {
-      await signUp.authenticateWithRedirect({
+      await (signUp as any).sso({
         strategy: "oauth_google",
-        redirectUrl: `${window.location.origin}/sso-callback`,
-        redirectUrlComplete: "/onboarding",
+        redirectCallbackUrl: `${window.location.origin}/sso-callback`,
+        redirectUrl: "/onboarding",
       });
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Google sign-in failed");
