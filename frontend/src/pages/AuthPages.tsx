@@ -116,12 +116,15 @@ export function SignInPage() {
 
   async function onGoogle() {
     if (!signIn) return;
-    const { error: err } = await signIn.sso({
-      strategy: "oauth_google",
-      redirectUrl: `${window.location.origin}/sso-callback`,
-      redirectCallbackUrl: "/",
-    });
-    if (err) setError(err.message);
+    try {
+      await signIn.authenticateWithRedirect({
+        strategy: "oauth_google",
+        redirectUrl: `${window.location.origin}/sso-callback`,
+        redirectUrlComplete: "/",
+      });
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Google sign-in failed");
+    }
   }
 
   return (
@@ -219,12 +222,15 @@ export function SignUpPage() {
 
   async function onGoogle() {
     if (!signUp) return;
-    const { error: err } = await signUp.sso({
-      strategy: "oauth_google",
-      redirectUrl: `${window.location.origin}/sso-callback`,
-      redirectCallbackUrl: "/onboarding",
-    });
-    if (err) setError(err.message);
+    try {
+      await signUp.authenticateWithRedirect({
+        strategy: "oauth_google",
+        redirectUrl: `${window.location.origin}/sso-callback`,
+        redirectUrlComplete: "/onboarding",
+      });
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Google sign-in failed");
+    }
   }
 
   return (
