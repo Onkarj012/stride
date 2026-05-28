@@ -208,8 +208,10 @@ export function VoxelTrack({ agent, size, state, className }: VoxelTrackProps) {
         track={trackRef as React.RefObject<HTMLElement>}
         style={{ width: "100%", height: "100%" }}
       >
-        {/* Tight FOV + close camera so the animal fills the frame */}
-        <perspectiveCamera position={[0, 0, 3.8]} fov={22} />
+        {/* Tight FOV + closer camera so the animal nearly fills the round
+            container. Reduces visual padding so the rest of the homepage
+            (greeting, chat history, input) gets more vertical room. */}
+        <perspectiveCamera position={[0, 0, 3.0]} fov={22} />
         <VoxelScene agent={agent} state={state} mouseX={mouseX} mouseY={mouseY} />
       </View>
     </div>

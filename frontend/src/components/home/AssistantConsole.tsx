@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, Camera, MicOff, X, Barcode, ImagePlus, Loader2 } from "lucide-react";
+import { ArrowUp, Mic, Camera, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles } from "lucide-react";
 import { useUser } from "@clerk/react";
-import { useAction, useMutation } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { VoxelAgent } from "@/components/voxel/VoxelAgent";
 import { SuggestionChip } from "@/components/primitives/SuggestionChip";
 import { AgentBadge } from "@/components/insights/AgentBadge";
+import { Markdown } from "@/components/primitives/Markdown";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { ConfirmModal } from "@/components/coach/ConfirmModal";
 import { useTypewriter } from "@/hooks/useTypewriter";
@@ -54,20 +55,53 @@ function coachToAgent(coachType?: string): Agent {
   }
 }
 
-/* ── Streaming reply with typewriter ── */
-function StreamingReply({ text, agent }: { text: string; agent: Agent }) {
-  const { displayed, done } = useTypewriter(text, 18, true);
-  return (
-    <div className="space-y-2 max-w-[44ch] mx-auto">
-      <p className="text-[14.5px] leading-relaxed text-text text-center">
-        {displayed}
-        {!done && <span className="ml-0.5 inline-block h-3.5 w-0.5 align-middle animate-pulse bg-lavender" />}
-      </p>
-      {done && agent !== "main" && (
-        <div className="flex justify-center">
-          <AgentBadge agent={agent} />
+/* ── Single message bubble inside the history panel ── */
+function MessageBubble({
+  role,
+  content,
+  fresh,
+}: {
+  role: "user" | "ai";
+  content: string;
+  fresh: boolean; // true → animate with typewriter (only for the last fresh AI reply)
+}) {
+  const { displayed, done } = useTypewriter(content, 18, fresh);
+  const text = fresh ? displayed : content;
+
+  // For tier-1 + tier-2 stored as "tier1\n\ntier2", show only the first paragraph
+  // on the homepage to keep responses short. Full text remains in chat history.
+  const visibleText = role === "ai" ? text.split(/\n\n/, 1)[0] : text;
+  const hasMore = role === "ai" && text.includes("\n\n");
+
+  if (role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-2xl rounded-br-[6px] bg-ink text-text-on-ink px-3 py-2 text-[13.5px] leading-snug whitespace-pre-wrap break-words">
+          {visibleText}
         </div>
-      )}
+      </div>
+    );
+  }
+
+  // AI bubble: render plain text while typewriter is animating, switch to
+  // markdown once done so formatting (lists, bold, code) shows correctly.
+  const showMarkdown = !fresh || done;
+
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[85%] rounded-2xl rounded-bl-[6px] bg-card-elev border border-border px-3 py-2 text-[13.5px] leading-snug text-text break-words">
+        {showMarkdown ? (
+          <>
+            <Markdown className="text-[13.5px] leading-snug">{visibleText}</Markdown>
+            {hasMore && <span className="ml-1 text-[11px] text-text-muted">…</span>}
+          </>
+        ) : (
+          <span className="whitespace-pre-wrap">
+            {visibleText}
+            {hasMore && <span className="ml-1 text-[11px] text-text-muted">…</span>}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -76,13 +110,15 @@ type AssistantConsoleProps = { inputRef?: React.RefObject<HTMLInputElement | nul
 
 export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
   const [textValue, setTextValue] = useState("");
-  const [reply, setReply] = useState<{ text: string; agent: Agent } | null>(null);
   const [thinking, setThinking] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  // Track which message id was the fresh one (so only it animates)
+  const [freshTs, setFreshTs] = useState<number | null>(null);
+  const [agentHint, setAgentHint] = useState<Agent>("main");
 
-  // ConfirmModal state — queue of drafts to confirm one by one
+  // ConfirmModal queue
   const [pendingDrafts, setPendingDrafts] = useState<any[]>([]);
   const pendingTier2Ref = useRef<string>("");
 
@@ -91,11 +127,17 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
   const window = useDailyWindow();
   const internalRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = inputRef ?? internalRef;
   const toast = useToast();
 
-  // Use the new homepageInput action (intent-classifying, NOT auto-logging)
+  // Persistent homepage chat: load history from Convex.
+  const homepageChat = useQuery(api.chat.getHomepageMessages, {});
+  const messages = homepageChat?.messages ?? [];
+
+  // Backend actions/mutations
   const homepageInput = useAction(api.ai.homepageInput);
+  const clearHomepageMessages = useMutation(api.chat.clearHomepageMessages);
   const addMeal = useMutation(api.meals.addMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
   const addWater = useMutation(api.wellness.addWater);
@@ -107,6 +149,12 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
   const firstName = user?.firstName ?? user?.username ?? "there";
   const greeting = greetingFor(firstName, window);
   const isLarge = useMediaQuery("(min-width: 1024px)");
+
+  // Scroll history to bottom on new message
+  useEffect(() => {
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages.length, thinking]);
 
   /* ── Voice (Groq Whisper) ── */
   const onTranscript = useCallback((t: string) => {
@@ -140,11 +188,10 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
     }
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [onPickImage, activeRef]);
+  }, [onPickImage]);
 
-  /* ── Confirm draft → actually log, then show next in queue ── */
+  /* ── Confirm draft → actually log ── */
   const handleConfirm = useCallback(async (draft: any) => {
-    // Remove the confirmed draft from the queue
     setPendingDrafts((prev) => prev.slice(1));
     const time = new Date().toTimeString().slice(0, 5);
     const today = localDateStr();
@@ -152,7 +199,6 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
 
     try {
       const d = draft as any;
-      // Use the draft's date if present (e.g. for "yesterday I had pizza"), else today
       const date = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : today;
       const isPastDay = date !== today;
       const dateNote = isPastDay ? ` for ${date}` : "";
@@ -181,22 +227,19 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
     } catch (err) {
       toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");
     }
-    // Clear tier2 only after last draft
     if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
   }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, toast, pendingDrafts.length]);
 
   const handleDiscard = useCallback(() => {
     setPendingDrafts([]);
     pendingTier2Ref.current = "";
-    setReply({ text: "No problem — nothing logged. Tell me when you're ready.", agent: "main" });
   }, []);
 
-  /* ── Send to backend (uses homepageInput, not chat) ── */
+  /* ── Send to backend ── */
   const send = useCallback(async (text: string, image?: string) => {
     const v = text.trim();
     if (!v && !image) return;
 
-    setReply(null);
     setThinking(true);
     setTextValue("");
     setAttachedImage(null);
@@ -210,30 +253,41 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
       });
 
       setThinking(false);
+      // Mark this moment so only the just-arrived AI message animates
+      setFreshTs(Date.now());
+      setAgentHint(coachToAgent(result.coachType));
 
-      if (result.isQuestion) {
-        const agent = coachToAgent(result.coachType);
-        setReply({ text: result.reply ?? "", agent });
-      } else if (result.drafts && result.drafts.length > 0) {
-        setReply({ text: result.tier1Summary, agent: "main" });
+      if (!result.isQuestion && result.drafts && result.drafts.length > 0) {
         pendingTier2Ref.current = result.tier2Detail ?? "";
         setPendingDrafts(result.drafts);
-      } else {
-        setReply({ text: result.reply ?? "Got it.", agent: "main" });
       }
     } catch (err) {
       setThinking(false);
       const msg = err instanceof Error ? err.message : "Something went wrong";
-      setReply({ text: `Sorry — ${msg}`, agent: "main" });
-      toast.error("Couldn't reach Stry", "Check your connection or try again");
+      toast.error("Couldn't reach Stry", msg);
     }
   }, [homepageInput, toast, recordEngagement, window]);
 
-  // Focus shortcut handler (Enter on the form)
   const submit = () => send(textValue, attachedImage ?? undefined);
 
   const botState: "thinking" | "listening" | "idle" =
     thinking ? "thinking" : voice.recording ? "listening" : "idle";
+
+  // Voxel sizing: tightened so the response area gets more room.
+  // The container is rounded-full with overflow-hidden, so any extra
+  // canvas padding shows as visual whitespace. Smaller container =
+  // tighter visual padding around the elephant.
+  const voxelSize = isLarge ? 176 : 132;
+
+  // Identify the most recent AI message for typewriter animation
+  const lastAiTs = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "ai") return messages[i].ts;
+    }
+    return null;
+  }, [messages]);
+
+  const showHistory = messages.length > 0;
 
   return (
     <>
@@ -251,11 +305,13 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
         }}
       />
 
-      <div className="flex flex-col items-center gap-4 w-full">
-        {/* Voxel agent */}
-        <div className="relative overflow-hidden rounded-full"
-          style={{ width: isLarge ? 224 : 160, height: isLarge ? 224 : 160 }}>
-          <VoxelAgent agent="main" size={isLarge ? 224 : 160} state={botState} />
+      <div className="flex flex-col items-center gap-3 w-full">
+        {/* Voxel agent — smaller container so it occupies less vertical space */}
+        <div
+          className="relative overflow-hidden rounded-full"
+          style={{ width: voxelSize, height: voxelSize }}
+        >
+          <VoxelAgent agent={agentHint} size={voxelSize} state={botState} />
           {voice.recording && (
             <span className="absolute bottom-2 left-1/2 -translate-x-1/2 inline-flex h-2 w-2 rounded-full bg-peach animate-pulse" />
           )}
@@ -264,32 +320,60 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
           )}
         </div>
 
-        {/* Greeting */}
-        <div className="text-center space-y-1.5">
-          <h1 className="text-display text-text leading-[1.05]">{greeting.headline}</h1>
-          <p className="text-[16px] text-text-muted">{greeting.sub}</p>
+        {/* Greeting — ALWAYS visible, never replaced by replies */}
+        <div className="text-center space-y-1">
+          <h1 className="text-[26px] sm:text-[30px] font-extrabold tracking-tight text-text leading-[1.05]">
+            {greeting.headline}
+          </h1>
+          <p className="text-[14px] text-text-muted">{greeting.sub}</p>
         </div>
 
-        {/* Reply / thinking slot */}
-        <div className="min-h-[44px] flex items-center justify-center w-full max-w-[44ch]">
-          <AnimatePresence mode="wait">
+        {/* Persistent chat panel — fixed max height, scrollable.
+            Replies live here so they never push the input down. */}
+        {(showHistory || thinking) && (
+          <div
+            ref={scrollRef}
+            className="w-full max-w-lg max-h-[180px] overflow-y-auto rounded-2xl bg-bg/40 border border-border px-3 py-2 space-y-2 scroll-smooth"
+            aria-live="polite"
+            aria-label="Chat with Stry"
+          >
+            {messages.map((m) => (
+              <MessageBubble
+                key={m.ts}
+                role={m.role === "user" ? "user" : "ai"}
+                content={m.content}
+                fresh={freshTs !== null && m.ts === lastAiTs}
+              />
+            ))}
             {thinking && (
-              <motion.div key="thinking" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex gap-1.5">
+              <div className="flex items-center gap-1.5 px-2 py-1">
                 {[0, 1, 2].map((i) => (
-                  <motion.span key={i} className="h-2 w-2 rounded-full bg-lavender"
-                    animate={{ y: [0, -5, 0] }}
+                  <motion.span
+                    key={i}
+                    className="h-1.5 w-1.5 rounded-full bg-lavender"
+                    animate={{ y: [0, -4, 0] }}
                     transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }}
                   />
                 ))}
-              </motion.div>
+                <span className="text-[12px] text-text-muted">Stry is thinking…</span>
+              </div>
             )}
-            {!thinking && reply && (
-              <motion.div key={reply.text} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="w-full">
-                <StreamingReply text={reply.text} agent={reply.agent} />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+          </div>
+        )}
+
+        {/* Bottom row above input: agent badge + clear-chat link (only when history) */}
+        {showHistory && !thinking && (
+          <div className="w-full max-w-lg flex items-center justify-between text-[11px] text-text-muted">
+            <AgentBadge agent={agentHint} />
+            <button
+              type="button"
+              onClick={() => clearHomepageMessages().catch(() => {})}
+              className="hover:text-text transition-colors"
+            >
+              Clear chat
+            </button>
+          </div>
+        )}
 
         {/* Image attachment preview */}
         <AnimatePresence>
@@ -305,7 +389,7 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
           )}
         </AnimatePresence>
 
-        {/* Input bar */}
+        {/* Input bar — anchored, never pushed down */}
         <form onSubmit={(e) => { e.preventDefault(); submit(); }}
           className={cn(
             "relative flex items-center gap-1.5 rounded-full bg-card border pl-5 pr-1.5 py-1.5 w-full max-w-lg transition-colors",
@@ -321,6 +405,7 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
               voice.recording ? "Listening…" :
               voice.transcribing ? "Transcribing…" :
               attachedImage ? "Add a note (optional)…" :
+              showHistory ? "Reply or log something else…" :
               "Ask Stry, paste an image, or speak…"
             }
             aria-label="Ask Stry"
@@ -377,16 +462,18 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
             animate={{ scale: (textValue.trim() || attachedImage) ? 1 : 0.9, opacity: (textValue.trim() || attachedImage) ? 1 : 0.5 }}
             transition={SPRING}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed">
-            <ArrowUp className="h-4 w-4" strokeWidth={2.25} />
+            {thinking ? <Sparkles className="h-4 w-4 animate-pulse" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.25} />}
           </motion.button>
         </form>
 
-        {/* Window-aware tap chips */}
-        <div className="flex flex-wrap justify-center gap-2 max-w-xl">
-          {WINDOW_TAPS[window].map((s) => (
-            <SuggestionChip key={s} label={s} onClick={() => { recordSuggestion(s); send(s); }} />
-          ))}
-        </div>
+        {/* Window-aware tap chips — collapse when there's chat history to free up space */}
+        {!showHistory && (
+          <div className="flex flex-wrap justify-center gap-2 max-w-xl">
+            {WINDOW_TAPS[window].map((s) => (
+              <SuggestionChip key={s} label={s} onClick={() => { recordSuggestion(s); send(s); }} />
+            ))}
+          </div>
+        )}
 
         {voice.error && (
           <p className="text-[12px] text-bubblegum">{voice.error}</p>

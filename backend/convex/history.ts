@@ -72,6 +72,7 @@ export const getDayHistory = query({
         time: m.time,
         mealType: m.mealType,
         aiSuggestion: m.aiSuggestion,
+        components: m.components ?? null,
         date: m.date,
         confidence: m.confidence ?? null,
         nutritionSource: m.nutritionSource ?? null,

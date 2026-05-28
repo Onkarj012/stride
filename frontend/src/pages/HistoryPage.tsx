@@ -1,10 +1,12 @@
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Trash2, Pencil, RotateCcw } from "lucide-react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/components/coach/EditLogModal";
+import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 
 const DAYS = ["M", "T", "W", "T", "F", "S", "S"];
@@ -114,6 +116,30 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
   const meals = data?.meals ?? [];
   const workouts = data?.workouts ?? [];
 
+  const relogMeal = useMutation(api.meals.relogMeal);
+  const relogWorkout = useMutation(api.workouts.relogWorkout);
+  const toast = useToast();
+  const [editMeal, setEditMeal] = useState<EditableMeal | null>(null);
+  const [editWorkout, setEditWorkout] = useState<EditableWorkout | null>(null);
+
+  async function handleRelogMeal(id: Id<"meals">, name: string) {
+    try {
+      await relogMeal({ id });
+      toast.success("Logged again", `${name} added to today`);
+    } catch (err) {
+      toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
+    }
+  }
+
+  async function handleRelogWorkout(id: Id<"workouts">, name: string) {
+    try {
+      await relogWorkout({ id });
+      toast.success("Logged again", `${name} added to today`);
+    } catch (err) {
+      toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
+    }
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-baseline justify-between flex-wrap gap-2">
@@ -152,12 +178,37 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         <span>{m.calories} kcal</span><span>{m.protein}g protein</span>
                         <span>{m.carbs}g carbs</span><span>{m.fat}g fat</span>
                       </div>
-                      {m.aiSuggestion && <p className="text-[12px] italic text-text-subtle">Stry: {m.aiSuggestion}</p>}
+                      {m.aiSuggestion && <p className="text-[12px] italic text-text-subtle line-clamp-2">Stry: {m.aiSuggestion}</p>}
                     </div>
-                    <button type="button" onClick={() => onDeleteMeal(m._id as Id<"meals">)} aria-label="Delete"
-                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors">
-                      <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setEditMeal(m as EditableMeal)}
+                        aria-label="Edit"
+                        title="Edit"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
+                      >
+                        <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRelogMeal(m._id as Id<"meals">, m.name)}
+                        aria-label="Log again"
+                        title="Log again today"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteMeal(m._id as Id<"meals">)}
+                        aria-label="Delete"
+                        title="Delete"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -180,18 +231,46 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         <span className="capitalize">{w.intensity.toLowerCase()}</span>
                         {w.caloriesBurned != null && <span>{w.caloriesBurned} kcal burned</span>}
                       </div>
-                      {w.rationale && <p className="text-[12px] italic text-text-subtle">Stry: {w.rationale}</p>}
+                      {w.rationale && <p className="text-[12px] italic text-text-subtle line-clamp-2">Stry: {w.rationale}</p>}
                     </div>
-                    <button type="button" onClick={() => onDeleteWorkout(w._id as Id<"workouts">)} aria-label="Delete"
-                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors">
-                      <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setEditWorkout(w as EditableWorkout)}
+                        aria-label="Edit"
+                        title="Edit"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
+                      >
+                        <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRelogWorkout(w._id as Id<"workouts">, w.name)}
+                        aria-label="Log again"
+                        title="Log again today"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteWorkout(w._id as Id<"workouts">)}
+                        aria-label="Delete"
+                        title="Delete"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
             </Card>
           )
       )}
+
+      <EditLogModal kind="meal" entry={editMeal} onClose={() => setEditMeal(null)} />
+      <EditLogModal kind="workout" entry={editWorkout} onClose={() => setEditWorkout(null)} />
     </div>
   );
 }
@@ -208,6 +287,7 @@ export function HistoryPage() {
   const dateStr = toDateStr(selected);
   const data = useQuery(api.history.getDayHistory, { date: dateStr });
   const waterLogs = useQuery(api.wellness.getWater, { date: dateStr }) ?? [];
+  const sleepLog = useQuery(api.wellness.getSleep, { date: dateStr });
   const meals = data?.meals ?? [];
   const workouts = data?.workouts ?? [];
 
@@ -221,7 +301,7 @@ export function HistoryPage() {
   const statCards = [
     { label: "Calories", value: Math.round(macros.kcal), unit: "", sub: `${Math.round(macros.protein)}p · ${Math.round(macros.carbs)}c · ${Math.round(macros.fat)}f`, tone: "bg-peach" },
     { label: "Workout", value: workoutMin, unit: "min", sub: `${workouts.length} session${workouts.length !== 1 ? "s" : ""}`, tone: "bg-lavender" },
-    { label: "Sleep", value: "—", unit: "h", sub: "not tracked", tone: "bg-sky" },
+    { label: "Sleep", value: sleepLog ? sleepLog.hours.toFixed(1) : "—", unit: sleepLog ? "h" : "", sub: sleepLog ? sleepLog.quality : "not logged", tone: "bg-sky" },
     { label: "Water", value: waterLogs.length > 0 ? (waterLogs.reduce((s, w) => s + w.ml, 0) / 1000).toFixed(1) : "—", unit: waterLogs.length > 0 ? "L" : "", sub: `${waterLogs.length} glass${waterLogs.length !== 1 ? "es" : ""}`, tone: "bg-mint" },
   ];
 

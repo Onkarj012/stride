@@ -119,6 +119,24 @@ function MealCard({
           ))}
         </ul>
       )}
+
+      {/* Confidence + source badge */}
+      {(draft as any).confidence != null && (
+        <div className="flex items-center gap-2 px-1">
+          <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
+            <div
+              className="h-full rounded-full bg-mint transition-all"
+              style={{ width: `${Math.round((draft as any).confidence * 100)}%` }}
+            />
+          </div>
+          <span className="text-[10.5px] text-text-muted whitespace-nowrap">
+            {Math.round((draft as any).confidence * 100)}% confidence
+            {(draft as any).nutritionSource && (
+              <> · <span className="capitalize">{(draft as any).nutritionSource === "database" ? "USDA data" : (draft as any).nutritionSource === "mixed" ? "DB + AI" : "AI estimate"}</span></>
+            )}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -188,6 +206,21 @@ function WorkoutCard({
           </>
         )}
       </div>
+
+      {/* Calorie range from deterministic engine */}
+      {(draft as any).calorieResult && (
+        <div className="flex items-center gap-2 px-1">
+          <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
+            <div
+              className="h-full rounded-full bg-lavender transition-all"
+              style={{ width: `${Math.round((draft as any).calorieResult.confidence * 100)}%` }}
+            />
+          </div>
+          <span className="text-[10.5px] text-text-muted whitespace-nowrap">
+            {Math.round((draft as any).calorieResult.confidence * 100)}% · range {(draft as any).calorieResult.range_low}–{(draft as any).calorieResult.range_high} kcal
+          </span>
+        </div>
+      )}
     </div>
   );
 }

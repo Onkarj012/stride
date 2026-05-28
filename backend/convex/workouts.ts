@@ -104,6 +104,42 @@ export const deleteWorkout = mutation({
   },
 });
 
+/**
+ * Re-log an existing workout as today (or a specified date).
+ *
+ * Mirrors `meals.relogMeal` for the History page's "log again" button.
+ */
+export const relogWorkout = mutation({
+  args: {
+    id: v.id("workouts"),
+    date: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, date }) => {
+    const userId = await requireUserId(ctx);
+    const src = await ctx.db.get(id);
+    if (!src || src.userId !== userId) throw new Error("Not found");
+    const targetDate = date ?? new Date().toISOString().split("T")[0];
+    return ctx.db.insert("workouts", {
+      userId,
+      date: targetDate,
+      name: src.name,
+      sets: src.sets,
+      reps: src.reps,
+      weight: src.weight,
+      duration: src.duration,
+      intensity: src.intensity,
+      exercises: src.exercises,
+      rationale: src.rationale,
+      caloriesBurned: src.caloriesBurned,
+      calorieConfidence: src.calorieConfidence,
+      calorieRangeLow: src.calorieRangeLow,
+      calorieRangeHigh: src.calorieRangeHigh,
+      calorieBreakdown: src.calorieBreakdown,
+      calculationVersion: src.calculationVersion,
+    });
+  },
+});
+
 // ─── Internal (called by AI action) ──────────────────────────────────────────
 
 export const getWorkoutsForContext = internalQuery({

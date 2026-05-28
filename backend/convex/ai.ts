@@ -1454,19 +1454,54 @@ export const transcribe = action({
  * Example: "Had chicken salad and drank 1L of water" → [meal draft, water draft]
  * Example: "Slept 6.5h last night, woke up at 7" → [sleep draft]
  */
+/**
+ * Heuristic: detect whether a free-text message looks like a log report
+ * vs. a question. Used as a pre-check AND as a sanity check on the LLM's
+ * intent classification — fixes the "coin flip" where the LLM occasionally
+ * mis-classifies a meal log as a question and skips the confirm modal.
+ */
+const QUESTION_RE = /(\?$|\?\s|\b(how|what|why|when|where|which|who|should|can you|could you|will|would|do you|did i|am i|are you|tell me|explain|recommend|suggest|advice|tip|help me|do i)\b)/i;
+const LOG_RE = new RegExp([
+  // First-person past/present action + food/drink/workout
+  "\\b(i|i'?ve|i've|just)\\s+(had|ate|drank|drank|consumed|finished|did|completed|ran|ran|walked|jogged|biked|cycled|lifted|swam|hit|trained|crushed|knocked out|got in|squeezed in)\\b",
+  // Direct activity reports without subject
+  "\\b(had|ate|drank|finished|did|ran|walked|jogged|biked|cycled|lifted|swam)\\b\\s+(a|an|some|my|the|\\d+|breakfast|lunch|dinner|snack)",
+  // Sleep reports
+  "\\bslept\\b|\\bwent to bed\\b|\\bwoke up\\b|\\bjust woke\\b|\\bbed time\\b",
+  // Workout indicators
+  "\\b(workout|workouts|reps?|sets?|miles?|km|kilometers?|minutes? of)\\b",
+  // Quick logging shortcuts
+  "^(log\\s+|logged\\s+|track\\s+|add\\s+|record\\s+)",
+  // Common food/drink words paired with quantity-ish hints
+  "\\b(\\d+\\s*(g|grams?|oz|ml|l|cups?|tbsp|tsp|pieces?|slices?|servings?))\\b",
+  // Mood: "feeling X / mood Y"
+  "\\b(feeling|mood)\\b",
+  // Steps and water
+  "\\b(\\d{2,}\\s*steps|\\d+\\s*ml|\\d+\\s*l(itres?)?\\s+water|\\d+\\s*glasses?)\\b",
+].join("|"), "i");
+
+function looksLikeLog(message: string): boolean {
+  const m = message.trim();
+  if (m.length === 0) return false;
+  if (QUESTION_RE.test(m)) return false;
+  return LOG_RE.test(m);
+}
+
 export const homepageInput = action({
   args: {
     message: v.string(),
     image: v.optional(v.string()),
     today: v.optional(v.string()),
+    sessionId: v.optional(v.id("chat_sessions")),
   },
-  handler: async (ctx, { message, image, today: todayArg }): Promise<{
+  handler: async (ctx, { message, image, today: todayArg, sessionId }): Promise<{
     drafts: any[];
     tier1Summary: string;
     tier2Detail: string;
     isQuestion: boolean;
     reply?: string;
     coachType?: CoachType;
+    sessionId?: any;
   }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
@@ -1479,40 +1514,75 @@ export const homepageInput = action({
     const visionModel = settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL;
     const intentModel = image ? visionModel : settingsModel;
 
+    // Make sure we have a homepage session to persist into
+    const activeSessionId = sessionId
+      ?? (await ctx.runMutation(internal.chat.getOrCreateHomepageSession, { userId }));
+
+    // Save user message immediately
+    await ctx.runMutation(internal.chat.addMessage, {
+      userId,
+      sessionId: activeSessionId,
+      role: "user",
+      content: message,
+    });
+
+    // Heuristic pre-check
+    const heuristicSaysLog = !!image || looksLikeLog(message);
+
     // Step 1: Extract ALL loggable items from the message in one LLM call.
-    // Returns a JSON array of items to log, or "question" if it's a chat message.
+    const yesterdayStr = new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0];
+    const twoDaysAgoStr = new Date(new Date(today).getTime() - 2 * 86400000).toISOString().split("T")[0];
     const extractSystem = `You are a wellness tracking assistant. Extract ALL loggable items from the user's message.
 
 Today's date is ${today}.
 
-Return a JSON object with:
+Return a JSON object:
 {
-  "isQuestion": boolean,  // true if the user is asking a question or chatting, not reporting activities
-  "items": [             // array of items to log (can be empty if isQuestion=true)
+  "isQuestion": boolean,
+  "items": [
     {
       "type": "meal" | "workout" | "sleep" | "water" | "mood" | "steps",
-      "description": "what the user said about this item",
-      "date": "YYYY-MM-DD"  // the date this entry is for. Default to today (${today}) unless the user mentions another day.
+      "description": "what the user said about this item (verbatim chunk)",
+      "date": "YYYY-MM-DD"
     }
   ]
 }
 
+CRITICAL CLASSIFICATION RULES:
+- "isQuestion" is TRUE only when the user is asking a question, requesting advice, or chatting WITHOUT mentioning anything they did/ate/drank/slept.
+- ANY mention of food/drink consumed, exercise performed, sleep, mood, or steps is a LOG report — set isQuestion=false and add an item.
+- If the user reports activities AND asks a question, set isQuestion=false and still add the items (we'll handle the question separately).
+- "I had X" / "I ate X" / "just had X" / "had X for breakfast" / "X for lunch/dinner/snack" → meal log, isQuestion=false
+- "I drank X" / "X glasses of water" / "Xml of water" / "had Xl of water" → water log, isQuestion=false
+- "Did/ran/walked/biked/lifted X" / "30 min run" / "5km run" / "leg day" → workout log, isQuestion=false
+- "Slept X" / "went to bed at X" / "woke up at Y" → sleep log, isQuestion=false
+- "Feeling X/Y" / "mood is X" / "X out of 5" → mood log, isQuestion=false
+- "X steps" / "walked X steps" → steps log, isQuestion=false
+- Pure questions ("how am I doing?", "what should I eat?", "explain X") → isQuestion=true, items=[]
+
 Date inference rules:
-- "yesterday" → ${new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0]}
-- "2 days ago" → subtract 2 days from ${today}
-- "last night" → ${new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0]} (sleep entries should usually be the morning AFTER, so for sleep "last night" → today; for meals "last night" → yesterday)
+- "yesterday" → ${yesterdayStr}
+- "2 days ago" → ${twoDaysAgoStr}
+- "last night" for SLEEP → ${today} (the wake-up day)
+- "last night" for MEAL/WORKOUT → ${yesterdayStr}
 - "this morning", "today", no day mentioned → ${today}
-- Specific weekdays ("on Monday") → resolve to most recent past Monday
-- For SLEEP entries: the date is the wake-up day (so "slept 6h last night" with today=${today} → date=${today})
+- For SLEEP entries: the date is the wake-up day, so "slept 6h last night" → ${today}
 
 Examples (assume today=${today}):
-- "I had chicken salad" → date=${today}
-- "Yesterday I had pizza for dinner" → date=${new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0]}
-- "Did a 30 min run" → date=${today}
-- "I forgot to log my workout from 2 days ago" → date=${new Date(new Date(today).getTime() - 2 * 86400000).toISOString().split("T")[0]}
-- "Slept 7h last night" → date=${today} (sleep wake-up day)
+- USER: "I had chicken salad for lunch"
+  → {"isQuestion": false, "items": [{"type": "meal", "description": "chicken salad for lunch", "date": "${today}"}]}
+- USER: "had pizza"
+  → {"isQuestion": false, "items": [{"type": "meal", "description": "pizza", "date": "${today}"}]}
+- USER: "Yesterday I had pizza for dinner"
+  → {"isQuestion": false, "items": [{"type": "meal", "description": "pizza for dinner", "date": "${yesterdayStr}"}]}
+- USER: "Did a 30 min run and drank a litre of water"
+  → {"isQuestion": false, "items": [{"type": "workout", "description": "30 min run", "date": "${today}"},{"type": "water", "description": "1 litre of water", "date": "${today}"}]}
+- USER: "Slept 7h last night"
+  → {"isQuestion": false, "items": [{"type": "sleep", "description": "slept 7h", "date": "${today}"}]}
+- USER: "How am I doing today?"
+  → {"isQuestion": true, "items": []}
 
-IMPORTANT: Sleep descriptions like "slept X hours", "went to bed at X", "woke up at Y" are type "sleep", NOT "workout".
+Sleep descriptions like "slept X hours", "went to bed at X", "woke up at Y" are type="sleep", NOT "workout".
 Return ONLY valid JSON, no markdown.`;
 
     const extractMessages: AIMessage[] = [
@@ -1522,39 +1592,85 @@ Return ONLY valid JSON, no markdown.`;
         : { role: "user", content: message },
     ];
 
-    const extractRaw = await callAI(extractMessages, 300, intentModel, apiKey);
-    const extracted = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
+    const extractRaw = await callAI(extractMessages, 400, intentModel, apiKey);
+    let extracted = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
       extractRaw,
       { isQuestion: true, items: [] },
     );
 
+    // Sanity check: if our heuristic strongly suggests this is a log but the LLM
+    // returned isQuestion=true with no items, force a second extraction pass.
+    if (heuristicSaysLog && (extracted.isQuestion || (extracted.items?.length ?? 0) === 0)) {
+      const forcePrompt = `The user message below IS a log report (food, drink, workout, sleep, mood, or steps).
+Today's date is ${today}.
+Extract every item as JSON. NEVER return isQuestion=true here.
+
+USER MESSAGE:
+"""
+${message}
+"""
+
+Return ONLY:
+{"isQuestion": false, "items": [{"type":"meal|workout|sleep|water|mood|steps","description":"...","date":"YYYY-MM-DD"}]}`;
+      const forcedRaw = await callAI([{ role: "user", content: forcePrompt }], 300, intentModel, apiKey).catch(() => "");
+      if (forcedRaw) {
+        const forced = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
+          forcedRaw,
+          { isQuestion: true, items: [] },
+        );
+        if (forced.items && forced.items.length > 0) {
+          extracted = { isQuestion: false, items: forced.items };
+        }
+      }
+    }
+
     // Validate date strings — fall back to today if invalid
     const isValidDate = (d: any) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
+    const allowedTypes = new Set(["meal", "workout", "sleep", "water", "mood", "steps"]);
+    extracted.items = (extracted.items ?? []).filter((it) => allowedTypes.has(it.type));
     for (const item of extracted.items) {
       if (!isValidDate(item.date)) item.date = today;
     }
 
-    // If it's a question, route to chat coach
+    // If it's a question, route to chat coach (with chat history)
     if (extracted.isQuestion || extracted.items.length === 0) {
       const coachType: CoachType = classifyCoachType(message);
       const coach = getCoach(coachType);
-      const [todayMealsList, todayWorkoutsList, profile] = await Promise.all([
+      const [todayMealsList, todayWorkoutsList, profile, history] = await Promise.all([
         ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
         ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
         ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+        ctx.runQuery(internal.chat.getMessagesForContext, { userId, sessionId: activeSessionId }),
       ]);
       const userName = identity.name ?? "Athlete";
       let context = `USER: ${userName}\n`;
       if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
       context += `Today: ${todayMealsList.length} meals, ${todayWorkoutsList.length} workouts logged.\n`;
+
+      // Drop the trailing user message (we already saved it) when injecting history
+      const trimmedHistory = (history as { role: string; content: string }[])
+        .slice(0, -1)
+        .slice(-12) // keep only last ~12 turns to stay within context
+        .map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content }));
+
       const replyMessages: AIMessage[] = [
         { role: "system", content: `${coach.systemPrompt}\n\n${context}\n\nKeep your reply concise — under 60 words.` },
+        ...trimmedHistory,
         image
           ? { role: "user", content: [{ type: "text", text: message }, { type: "image_url", image_url: { url: image } }] }
           : { role: "user", content: message },
       ];
       const reply = await callAI(replyMessages, 250, image ? visionModel : settingsModel, apiKey);
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType };
+
+      // Persist AI reply
+      await ctx.runMutation(internal.chat.addMessage, {
+        userId,
+        sessionId: activeSessionId,
+        role: "ai",
+        content: reply,
+      });
+
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId };
     }
 
     // Step 2: Parse each item in parallel
@@ -1661,7 +1777,10 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
     if (drafts.length === 0) {
       // Fallback to question path
       const reply = "I couldn't parse that. Could you be more specific?";
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall" };
+      await ctx.runMutation(internal.chat.addMessage, {
+        userId, sessionId: activeSessionId, role: "ai", content: reply,
+      });
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId };
     }
 
     // If any draft has a date != today, mention it in the summary
@@ -1673,7 +1792,13 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
     const tier2Prompt = `Give a brief, encouraging analysis (2-3 sentences) of what the user just logged: ${summaryParts.join(", ")}. Be specific and actionable.`;
     const tier2Detail = await callAI([{ role: "user", content: tier2Prompt }], 150, settingsModel, apiKey).catch(() => "");
 
-    return { drafts, tier1Summary, tier2Detail, isQuestion: false };
+    // Persist the assistant's response (tier1 + tier2) so the chat thread stays meaningful
+    const persistedReply = tier2Detail ? `${tier1Summary}\n\n${tier2Detail}` : tier1Summary;
+    await ctx.runMutation(internal.chat.addMessage, {
+      userId, sessionId: activeSessionId, role: "ai", content: persistedReply,
+    });
+
+    return { drafts, tier1Summary, tier2Detail, isQuestion: false, sessionId: activeSessionId };
   },
 });
 

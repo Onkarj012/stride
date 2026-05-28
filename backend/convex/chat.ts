@@ -143,3 +143,76 @@ export const touchSession = internalMutation({
     await ctx.db.patch(sessionId, { updatedAt: Date.now() });
   },
 });
+
+// ─── Homepage chat session ─────────────────────────────────────────────────
+//
+// The homepage uses ONE persistent chat session per user, identified by the
+// title prefix "__HOMEPAGE__". This keeps history continuous across reloads
+// without leaking the homepage thread into the user's named coach sessions.
+
+const HOMEPAGE_TITLE = "__HOMEPAGE__";
+
+export const getOrCreateHomepageSession = internalMutation({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const existing = await ctx.db
+      .query("chat_sessions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("title"), HOMEPAGE_TITLE))
+      .first();
+    if (existing) return existing._id;
+    return ctx.db.insert("chat_sessions", {
+      userId,
+      title: HOMEPAGE_TITLE,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Public query for the homepage to fetch its persistent chat thread.
+ * Returns messages in chronological order, capped at the most recent 30
+ * (the homepage UI doesn't need long history; the agent keeps last 12 in context).
+ */
+export const getHomepageMessages = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const session = await ctx.db
+      .query("chat_sessions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("title"), HOMEPAGE_TITLE))
+      .first();
+    if (!session) return { sessionId: null, messages: [] as { role: string; content: string; ts: number }[] };
+    const messages = await ctx.db
+      .query("chat_messages")
+      .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+      .collect();
+    const sorted = messages
+      .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))
+      .slice(-30)
+      .map((m) => ({ role: m.role, content: m.content, ts: m._creationTime ?? 0 }));
+    return { sessionId: session._id, messages: sorted };
+  },
+});
+
+/**
+ * Clear the homepage chat thread. Useful for "start fresh" UX.
+ */
+export const clearHomepageMessages = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const session = await ctx.db
+      .query("chat_sessions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("title"), HOMEPAGE_TITLE))
+      .first();
+    if (!session) return;
+    const messages = await ctx.db
+      .query("chat_messages")
+      .withIndex("by_session", (q) => q.eq("sessionId", session._id))
+      .collect();
+    await Promise.all(messages.map((m) => ctx.db.delete(m._id)));
+  },
+});
