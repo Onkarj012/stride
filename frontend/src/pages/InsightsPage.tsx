@@ -10,6 +10,7 @@ import { MacroBars } from "@/components/charts/MacroBars";
 import { MilestoneList } from "@/components/insights/MilestoneList";
 import { PeriodSwitcher, type Period } from "@/components/insights/PeriodSwitcher";
 import { useLogs } from "@/hooks/useLogs";
+import { localDateStr } from "@/lib/utils";
 
 function periodDays(period: Period): number {
   return period === "today" ? 1 : period === "week" ? 7 : 30;
@@ -20,7 +21,7 @@ export function InsightsPage() {
   const days = periodDays(period);
 
   // Convex progress data (7 or 30 days)
-  const progressRows = useQuery(api.progress.getProgress, { days }) ?? [];
+  const progressRows = useQuery(api.progress.getProgress, { days, today: localDateStr() }) ?? [];
 
   // Today's data from useLogs (for "today" view)
   const { logs } = useLogs();
@@ -54,7 +55,7 @@ export function InsightsPage() {
   const activeDays = new Set(progressRows.filter((r) => r.calories > 0 || r.workouts > 0).map((r) => r.date)).size;
 
   // Daily insights from Convex
-  const today = new Date().toISOString().split("T")[0];
+  const today = localDateStr();
   const insightsData = useQuery(api.insights.getDailyInsights, { date: today });
   const weeklySummary = useQuery(api.insights.getWeeklySummary);
 

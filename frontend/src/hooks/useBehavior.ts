@@ -1,3 +1,4 @@
+import { localDateStr } from "@/lib/utils";
 import { useCallback, useEffect, useState } from "react";
 
 type BehaviorState = {
@@ -40,7 +41,7 @@ export function useBehavior() {
 
   const dismiss = useCallback((window: keyof BehaviorState["dismissals"]) => {
     const next = read();
-    const date = new Date().toISOString().split("T")[0];
+    const date = localDateStr();
     const arr = next.dismissals[window] ?? [];
     if (!arr.includes(date)) arr.push(date);
     next.dismissals[window] = arr.slice(-30);

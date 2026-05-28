@@ -16,7 +16,7 @@ import { useBehavior } from "@/hooks/useBehavior";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useToast } from "@/context/ToastContext";
 import { recordSuggestion } from "@/lib/behavior";
-import { cn } from "@/lib/utils";
+import { cn, localDateStr } from "@/lib/utils";
 import type { Agent } from "@/lib/storage";
 import type { LogDraft } from "@/data/mock";
 
@@ -148,7 +148,7 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
     // Remove the confirmed draft from the queue
     setPendingDrafts((prev) => prev.slice(1));
     const time = new Date().toTimeString().slice(0, 5);
-    const date = new Date().toISOString().split("T")[0];
+    const date = localDateStr();
     const tier2 = pendingTier2Ref.current;
 
     try {
@@ -202,7 +202,7 @@ export function AssistantConsole({ inputRef }: AssistantConsoleProps) {
       const result = await homepageInput({
         message: v,
         image,
-        today: new Date().toISOString().split("T")[0],
+        today: localDateStr(),
       });
 
       setThinking(false);

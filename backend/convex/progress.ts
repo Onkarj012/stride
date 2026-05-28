@@ -10,13 +10,13 @@ async function requireUserId(ctx: any): Promise<string> {
 const DAY_NAMES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 export const getProgress = query({
-  args: { days: v.optional(v.number()) },
-  handler: async (ctx, { days }) => {
+  args: { days: v.optional(v.number()), today: v.optional(v.string()) },
+  handler: async (ctx, { days, today: todayArg }) => {
     const userId = await requireUserId(ctx);
     const numDays = days ?? 7;
 
-    const endDate = new Date().toISOString().split("T")[0];
-    const startDate = new Date(Date.now() - (numDays - 1) * 86400000)
+    const endDate = todayArg ?? new Date().toISOString().split("T")[0];
+    const startDate = new Date(new Date(endDate).getTime() - (numDays - 1) * 86400000)
       .toISOString()
       .split("T")[0];
 
@@ -55,8 +55,9 @@ export const getProgress = query({
     }
 
     const result = [];
+    const endMs = new Date(endDate + "T00:00:00").getTime();
     for (let i = numDays - 1; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000);
+      const d = new Date(endMs - i * 86400000);
       const date = d.toISOString().split("T")[0];
       const m = mealsByDate.get(date);
       result.push({

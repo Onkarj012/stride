@@ -17,7 +17,7 @@ import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
 import { todaySuggestions, coachingPersonalities, DRAFT_TRIGGERS } from "@/data/mock";
 import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import type { Agent, CoachingStyle } from "@/lib/storage";
-import { cn } from "@/lib/utils";
+import { cn, localDateStr } from "@/lib/utils";
 
 function coachToAgent(coachType?: string): Agent {
   switch (coachType) {
@@ -255,7 +255,7 @@ export function CoachPage() {
         image,
         sessionId,
         coachType: "auto",
-        today: new Date().toISOString().split("T")[0],
+        today: localDateStr(),
       });
       const r = result as Record<string, unknown>;
       const reply = typeof r.reply === "string" ? r.reply : String(result);

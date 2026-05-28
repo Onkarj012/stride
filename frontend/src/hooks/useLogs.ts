@@ -12,9 +12,10 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import type { LogCategory, LogEntry } from "@/lib/storage";
 import { mealToLogEntry, workoutToLogEntry } from "@/lib/normalizers";
+import { localDateStr } from "@/lib/utils";
 
 function todayDate(): string {
-  return new Date().toISOString().split("T")[0];
+  return localDateStr();
 }
 
 export function useLogs(date?: string) {
