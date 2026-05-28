@@ -11,11 +11,12 @@ export const getSessions = query({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
-    const sessions = await ctx.db
+    const allSessions = await ctx.db
       .query("chat_sessions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
-    return sessions
+    return allSessions
+      .filter((s) => !s.title.startsWith("__"))
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .map((s) => ({ id: s._id, title: s.title, updatedAt: s.updatedAt }));
   },

@@ -50,7 +50,9 @@ function coachToAgent(coachType?: string): Agent {
     case "diet": return "diet";
     case "workout": return "workout";
     case "recovery": return "sleep";
-    case "mindset": return "habit";
+    case "water": return "water";
+    case "habit": return "habit";
+    case "mindset": return "wellness";
     default: return "main";
   }
 }

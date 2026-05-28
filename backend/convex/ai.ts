@@ -1463,7 +1463,7 @@ export const transcribe = action({
 const QUESTION_RE = /(\?$|\?\s|\b(how|what|why|when|where|which|who|should|can you|could you|will|would|do you|did i|am i|are you|tell me|explain|recommend|suggest|advice|tip|help me|do i)\b)/i;
 const LOG_RE = new RegExp([
   // First-person past/present action + food/drink/workout
-  "\\b(i|i'?ve|i've|just)\\s+(had|ate|drank|drank|consumed|finished|did|completed|ran|ran|walked|jogged|biked|cycled|lifted|swam|hit|trained|crushed|knocked out|got in|squeezed in)\\b",
+  "\\b(i|i'?ve|i've|just)\\s+(had|ate|drank|consumed|finished|did|completed|ran|walked|jogged|biked|cycled|lifted|swam|hit|trained|crushed|knocked out|got in|squeezed in)\\b",
   // Direct activity reports without subject
   "\\b(had|ate|drank|finished|did|ran|walked|jogged|biked|cycled|lifted|swam)\\b\\s+(a|an|some|my|the|\\d+|breakfast|lunch|dinner|snack)",
   // Sleep reports
