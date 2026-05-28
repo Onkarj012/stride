@@ -141,6 +141,10 @@ export const addMealFromAI = internalMutation({
     aiSuggestion: v.optional(v.string()),
     mealType: v.optional(v.string()),
     components: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    nutritionSource: v.optional(v.string()),
+    structuredItems: v.optional(v.string()),
+    ingredientBreakdown: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return ctx.db.insert("meals", {
@@ -155,6 +159,10 @@ export const addMealFromAI = internalMutation({
       aiSuggestion: args.aiSuggestion,
       mealType: args.mealType ?? "unspecified",
       components: args.components,
+      confidence: args.confidence,
+      nutritionSource: args.nutritionSource,
+      structuredItems: args.structuredItems,
+      ingredientBreakdown: args.ingredientBreakdown,
     });
   },
 });

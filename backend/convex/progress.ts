@@ -10,13 +10,13 @@ async function requireUserId(ctx: any): Promise<string> {
 const DAY_NAMES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 export const getProgress = query({
-  args: { days: v.optional(v.number()) },
-  handler: async (ctx, { days }) => {
+  args: { days: v.optional(v.number()), today: v.optional(v.string()) },
+  handler: async (ctx, { days, today: todayArg }) => {
     const userId = await requireUserId(ctx);
     const numDays = days ?? 7;
 
-    const endDate = new Date().toISOString().split("T")[0];
-    const startDate = new Date(Date.now() - (numDays - 1) * 86400000)
+    const endDate = todayArg ?? new Date().toISOString().split("T")[0];
+    const startDate = new Date(new Date(endDate).getTime() - (numDays - 1) * 86400000)
       .toISOString()
       .split("T")[0];
 
@@ -38,10 +38,10 @@ export const getProgress = query({
         .collect(),
     ]);
 
-    const mealsByDate = new Map<string, { cals: number; prot: number }>();
+    const mealsByDate = new Map<string, { cals: number; prot: number; carbs: number; fat: number }>();
     for (const m of allMeals) {
-      const e = mealsByDate.get(m.date) ?? { cals: 0, prot: 0 };
-      mealsByDate.set(m.date, { cals: e.cals + m.calories, prot: e.prot + m.protein });
+      const e = mealsByDate.get(m.date) ?? { cals: 0, prot: 0, carbs: 0, fat: 0 };
+      mealsByDate.set(m.date, { cals: e.cals + m.calories, prot: e.prot + m.protein, carbs: e.carbs + m.carbs, fat: e.fat + m.fat });
     }
 
     const workoutsByDate = new Map<string, number>();
@@ -55,8 +55,9 @@ export const getProgress = query({
     }
 
     const result = [];
+    const endMs = new Date(endDate + "T00:00:00").getTime();
     for (let i = numDays - 1; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000);
+      const d = new Date(endMs - i * 86400000);
       const date = d.toISOString().split("T")[0];
       const m = mealsByDate.get(date);
       result.push({
@@ -64,6 +65,8 @@ export const getProgress = query({
         dayLabel: DAY_NAMES[d.getDay()],
         calories: Math.round(m?.cals ?? 0),
         protein: Math.round(m?.prot ?? 0),
+        carbs: Math.round(m?.carbs ?? 0),
+        fat: Math.round(m?.fat ?? 0),
         workouts: workoutsByDate.get(date) ?? 0,
         goal: goalsByDate.get(date) ?? 2400,
       });
