@@ -26,5 +26,6 @@
       "@convex/*": ["../backend/convex/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["../backend"]
 }

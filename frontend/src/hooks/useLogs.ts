@@ -156,10 +156,10 @@ export function useLogs(date?: string) {
 
   const clear = useCallback(async () => {
     await Promise.all([
-      ...(meals ?? []).map((m) => deleteMeal({ id: m._id })),
-      ...(workouts ?? []).map((w) => deleteWorkout({ id: w._id })),
-      ...(water ?? []).map((w) => deleteWater({ id: w._id })),
-      ...((mood ?? []).map((m) => deleteMood({ id: m._id }))),
+      ...(meals ?? []).map((m: { _id: Id<"meals"> }) => deleteMeal({ id: m._id })),
+      ...(workouts ?? []).map((w: { _id: Id<"workouts"> }) => deleteWorkout({ id: w._id })),
+      ...(water ?? []).map((w: { _id: Id<"water_logs"> }) => deleteWater({ id: w._id })),
+      ...((mood ?? []).map((m: { _id: Id<"mood_logs"> }) => deleteMood({ id: m._id }))),
       ...(sleep ? [deleteSleep({ id: sleep._id })] : []),
     ]);
   }, [meals, workouts, water, sleep, mood, deleteMeal, deleteWorkout, deleteWater, deleteSleep, deleteMood]);
