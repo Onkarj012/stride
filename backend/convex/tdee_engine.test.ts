@@ -51,11 +51,11 @@ describe("calculateTDEE", () => {
   test("example profile breakdown is sane", () => {
     const t = calculateTDEE(EXAMPLE);
     expect(t.bmr).toBe(1778);
-    expect(t.neatJob).toBe(320);
-    expect(t.neatLifestyle).toBe(256);
+    expect(t.neatJob).toBe(128); // desk 1.2 MET, net 0.2 × 80kg × 8h
+    expect(t.neatLifestyle).toBe(117); // moderate 0.2 MET × 80kg × ~7.29 leisure h
     expect(t.eat).toBe(320);
-    expect(t.finalTDEE).toBeGreaterThan(2800);
-    expect(t.finalTDEE).toBeLessThan(3100);
+    expect(t.finalTDEE).toBeGreaterThan(2400);
+    expect(t.finalTDEE).toBeLessThan(2700);
     expect(t.plannedDailyEAT).toBe(320);
   });
 });

@@ -14,18 +14,18 @@
 export type Sex = "male" | "female";
 
 export const OCCUPATION_MET = {
-  desk: 1.5,
-  mixed: 2.0,
-  standing: 2.5,
-  physical: 3.5,
+  desk: 1.2,
+  mixed: 1.5,
+  standing: 1.8,
+  physical: 2.6,
 } as const;
 export type OccupationType = keyof typeof OCCUPATION_MET;
 
 export const LIFESTYLE_MET_EXTRA = {
   sedentary: 0.0,
-  light: 0.2,
-  moderate: 0.4,
-  active: 0.6,
+  light: 0.1,
+  moderate: 0.2,
+  active: 0.35,
 } as const;
 export type LifestyleActivity = keyof typeof LIFESTYLE_MET_EXTRA;
 
@@ -139,11 +139,20 @@ export function calculateTDEE(input: PlanInput): TdeeBreakdown {
   const bmr = getBMR(weightKg, input.heightCm, input.age, input.sex === "female" ? "female" : "male", input.bodyFat);
 
   const occMet = OCCUPATION_MET[(input.occupationType as OccupationType)] ?? OCCUPATION_MET.desk;
-  const workHours = Math.min(16, pos(input.workHoursPerDay, 8));
+  // Allow 0 work hours (retired/unemployed) — only fall back to 8 when unset.
+  const wh = input.workHoursPerDay;
+  const workHours = Math.min(16, Math.max(0, typeof wh === "number" && isFinite(wh) ? wh : 8));
   const neatJob = calcMETCalories(occMet, weightKg, workHours, true);
 
+  const weeklyWorkoutMinutes = (input.weeklyWorkouts ?? []).reduce(
+    (s, w) => s + Math.max(0, w.durationMin ?? 0) * Math.max(0, w.sessionsPerWeek ?? 0),
+    0,
+  );
+  const avgWorkoutHours = weeklyWorkoutMinutes / 60 / 7;
+
   const lifeMet = LIFESTYLE_MET_EXTRA[(input.lifestyleActivity as LifestyleActivity)] ?? LIFESTYLE_MET_EXTRA.light;
-  const wakingLeisureHours = Math.max(0, 16 - workHours);
+  // Leisure NEAT spans waking hours not at work or training (avoid double-counting).
+  const wakingLeisureHours = Math.max(0, 16 - workHours - avgWorkoutHours);
   const neatLifestyle = lifeMet * weightKg * wakingLeisureHours;
 
   const weeklyEat = (input.weeklyWorkouts ?? []).reduce((sum, w) => {
