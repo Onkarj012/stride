@@ -1,18 +1,33 @@
 /**
  * usePrefs — UI preferences hook.
  *
- * The Convex backend stores user_profiles (fitness data) and user_settings
- * (API keys). UI-only prefs (units, notifications, coachingStyle, reduceMotion)
- * are not in the Convex schema, so they remain in localStorage.
- *
- * If the backend schema is extended to include these fields, this hook can be
- * updated to call api.profile.upsertSettings without changing any call sites.
+ * Source of truth is Convex `user_settings` (units, notifications,
+ * coachingStyle, reduceMotion). localStorage is kept as an instant/offline
+ * cache with write-through. The public API ({ prefs, update }) is unchanged,
+ * so call sites need no changes.
  */
 import { useCallback, useEffect, useState } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "@convex/_generated/api";
 import { type Preferences, readPrefs, writePrefs } from "@/lib/storage";
 
 export function usePrefs() {
   const [prefs, setPrefs] = useState<Preferences>(() => readPrefs());
+  const server = useQuery(api.profile.getSettings, {});
+  const upsert = useMutation(api.profile.upsertSettings);
+
+  // Hydrate from server once it loads; write-through to localStorage cache.
+  useEffect(() => {
+    if (!server) return;
+    const next: Preferences = {
+      units: (server.units as Preferences["units"]) ?? "metric",
+      notifications: server.notifications ?? true,
+      coachingStyle: (server.coachingStyle as Preferences["coachingStyle"]) ?? "gentle",
+      reduceMotion: server.reduceMotion ?? false,
+    };
+    writePrefs(next);
+    setPrefs(next);
+  }, [server]);
 
   useEffect(() => {
     const sync = () => setPrefs(readPrefs());
@@ -24,11 +39,17 @@ export function usePrefs() {
     };
   }, []);
 
-  const update = useCallback((patch: Partial<Preferences>) => {
-    const next = { ...readPrefs(), ...patch };
-    writePrefs(next);
-    setPrefs(next);
-  }, []);
+  const update = useCallback(
+    (patch: Partial<Preferences>) => {
+      const next = { ...readPrefs(), ...patch };
+      writePrefs(next); // instant local + cross-tab
+      setPrefs(next);
+      void upsert(patch).catch(() => {
+        /* offline: localStorage already holds the value */
+      });
+    },
+    [upsert],
+  );
 
   return { prefs, update };
 }

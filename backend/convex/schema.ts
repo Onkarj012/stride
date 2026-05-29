@@ -92,12 +92,29 @@ export default defineSchema({
     allergies: v.optional(v.string()),
     // NEW
     fitnessLevel: v.optional(v.string()),
+    // Task 2: richer profile inputs (all optional, comma-separated strings)
+    dislikedFoods: v.optional(v.string()),
+    cuisines: v.optional(v.string()),
+    equipment: v.optional(v.string()),
+    scheduleNote: v.optional(v.string()),
+    // Task 17: 4-component TDEE engine inputs + persisted transparency breakdown
+    occupationType: v.optional(v.string()), // desk | mixed | standing | physical
+    workHoursPerDay: v.optional(v.number()),
+    lifestyleActivity: v.optional(v.string()), // sedentary | light | moderate | active
+    weeklyWorkouts: v.optional(v.string()), // JSON: [{type,durationMin,sessionsPerWeek}]
+    goalWeightKg: v.optional(v.number()),
+    planBreakdown: v.optional(v.string()), // JSON: engine NutritionPlan breakdown
   }).index("by_user", ["userId"]),
 
   user_settings: defineTable({
     userId: v.string(),
     openRouterKey: v.optional(v.string()),
     openRouterModel: v.optional(v.string()),
+    // UI preferences (synced from usePrefs)
+    units: v.optional(v.string()), // metric | imperial
+    notifications: v.optional(v.boolean()),
+    coachingStyle: v.optional(v.string()), // gentle | motivating | analytical
+    reduceMotion: v.optional(v.boolean()),
   }).index("by_user", ["userId"]),
 
   chat_sessions: defineTable({
@@ -200,5 +217,46 @@ export default defineSchema({
     feedback: v.string(),
     date: v.string(),
     metabolicFactorSnapshot: v.number(),
+  }).index("by_user", ["userId"]),
+
+  // ─── Behavioral Memory (server-side) ───────────────────────────────────────
+
+  user_behavior: defineTable({
+    userId: v.string(),
+    kind: v.string(), // engagement | nudge_dismiss | suggestion | coach | log
+    key: v.string(),
+    value: v.optional(v.string()),
+    date: v.string(), // YYYY-MM-DD
+    ts: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_kind", ["userId", "kind"]),
+
+  // ─── Proactive Nudges (in-app inbox; push-ready) ───────────────────────────
+
+  nudges: defineTable({
+    userId: v.string(),
+    type: v.string(),
+    title: v.string(),
+    body: v.string(),
+    window: v.optional(v.string()),
+    status: v.string(), // active | dismissed
+    delivery: v.string(), // in_app | push
+    deepLink: v.optional(v.string()),
+    date: v.string(), // YYYY-MM-DD (dedupe scope)
+    createdAt: v.number(),
+    dismissedAt: v.optional(v.number()),
+  }).index("by_user_status", ["userId", "status"]),
+
+  // ─── Recipes (hybrid macro builder) ────────────────────────────────────────
+
+  recipes: defineTable({
+    userId: v.string(),
+    name: v.string(),
+    servings: v.number(),
+    ingredients: v.string(), // JSON: [{name,grams,caloriesPer100g,proteinPer100g,carbsPer100g,fatPer100g,source?}]
+    perServing: v.object({ kcal: v.number(), p: v.number(), c: v.number(), f: v.number() }),
+    total: v.object({ kcal: v.number(), p: v.number(), c: v.number(), f: v.number() }),
+    source: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 });

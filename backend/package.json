@@ -7,7 +7,9 @@
     "dev": "tsx --watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "convex": "npx convex dev"
+    "convex": "npx convex dev",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@clerk/express": "^2.1.10",
@@ -19,12 +21,15 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
+    "convex-test": "^0.0.53",
     "tsx": "^4.21.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.7"
   }
 }

@@ -60,7 +60,7 @@ Thumbs.db
 temp/
 
 # Internal docs (assessments, reports — not for version control)
-docs/
+# docs/
 
 # Graphify cache
 graphify-out/cache/

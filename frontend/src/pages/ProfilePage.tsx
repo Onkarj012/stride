@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
+import { Link } from "react-router-dom";
 import {
   User as UserIcon, Activity, Target, Settings as SettingsIcon,
   Bell, Ruler, Download, Trash2, LogOut, Moon, Sun, Sparkles, Eye, EyeOff, Check,
@@ -122,6 +123,66 @@ function ActivityTab() {
   );
 }
 
+function ProfileDetailsCard() {
+  const profile = useQuery(api.profile.getProfile);
+  const upsert = useMutation(api.profile.upsertProfile);
+  const toast = useToast();
+  const [form, setForm] = useState({ dislikedFoods: "", cuisines: "", equipment: "", scheduleNote: "" });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!profile) return;
+    setForm({
+      dislikedFoods: profile.dislikedFoods ?? "",
+      cuisines: profile.cuisines ?? "",
+      equipment: profile.equipment ?? "",
+      scheduleNote: profile.scheduleNote ?? "",
+    });
+  }, [profile]);
+
+  const FIELDS = [
+    { key: "dislikedFoods", label: "Disliked foods", placeholder: "mushrooms, olives" },
+    { key: "cuisines", label: "Favorite cuisines", placeholder: "indian, thai" },
+    { key: "equipment", label: "Available equipment", placeholder: "dumbbells, bands" },
+    { key: "scheduleNote", label: "Schedule note", placeholder: "trains at 6am, busy weekdays" },
+  ] as const;
+
+  async function save() {
+    setSaving(true);
+    try {
+      await upsert(form);
+      toast.success("Preferences saved");
+    } catch (e) {
+      toast.error("Couldn't save", e instanceof Error ? e.message : undefined);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card tone="card" radius="lg" padding="lg" className="space-y-4">
+      <div>
+        <h3 className="text-h3 text-text">Personalization</h3>
+        <p className="text-[13px] text-text-muted mt-0.5">Helps Stry tailor food and workout suggestions.</p>
+      </div>
+      {FIELDS.map((f) => (
+        <label key={f.key} className="flex flex-col gap-1">
+          <span className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">{f.label}</span>
+          <input
+            value={form[f.key]} placeholder={f.placeholder}
+            onChange={(e) => setForm((s) => ({ ...s, [f.key]: e.target.value }))}
+            className="bg-input border border-border rounded-lg px-3 py-2.5 text-[14px] text-text focus:outline-none focus:border-lavender"
+          />
+        </label>
+      ))}
+      <button type="button" onClick={save} disabled={saving}
+        className="inline-flex items-center justify-center rounded-lg bg-ink text-text-on-ink px-4 py-2.5 text-[14px] font-bold disabled:opacity-60">
+        {saving ? "Saving…" : "Save preferences"}
+      </button>
+    </Card>
+  );
+}
+
 function GoalsTab() {
   const { logs } = useLogs();
   const profile = useQuery(api.profile.getProfile);
@@ -146,12 +207,17 @@ function GoalsTab() {
               </li>
             ))}
           </ul>
+          <Link to="/onboarding"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3.5 py-2 text-[13px] font-semibold text-text hover:border-lavender">
+            Recalculate plan
+          </Link>
         </Card>
       )}
       <section className="space-y-3">
         <h3 className="text-h3 text-text">Milestones</h3>
         <MilestoneList logs={logs} />
       </section>
+      <ProfileDetailsCard />
     </div>
   );
 }

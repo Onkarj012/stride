@@ -76,16 +76,67 @@ export function getCoach(type?: string): CoachConfig {
   return COACHES[(type as CoachType) ?? "overall"] ?? COACHES.overall;
 }
 
-export function classifyCoachType(message: string): CoachType {
+/** Tone instruction derived from the user's coachingStyle preference. */
+export function toneInstruction(coachingStyle?: string | null): string {
+  switch (coachingStyle) {
+    case "motivating":
+      return "Tone: high-energy and motivating — celebrate wins and push with encouragement.";
+    case "analytical":
+      return "Tone: analytical and data-first — lead with the numbers and the reasoning.";
+    case "gentle":
+      return "Tone: gentle and supportive — be patient, low-pressure, and reassuring.";
+    default:
+      return "";
+  }
+}
+
+/** Compact behavior summary line to inject into the AI system context. */
+export function behaviorSummary(profile?: {
+  preferredCoach?: string | null;
+  engagedWindows?: string[];
+  topSuggestions?: string[];
+} | null): string {
+  if (!profile) return "";
+  const parts: string[] = [];
+  if (profile.preferredCoach) parts.push(`most-used specialist: ${profile.preferredCoach}`);
+  if (profile.engagedWindows?.length) parts.push(`most active: ${profile.engagedWindows.join("/")}`);
+  if (profile.topSuggestions?.length) parts.push(`acts on: ${profile.topSuggestions.slice(0, 3).join(", ")}`);
+  return parts.length ? `Behavioral signals — ${parts.join("; ")}.` : "";
+}
+
+function scoreCoaches(message: string): Record<CoachType, number> {
   const text = message.toLowerCase();
-  let best: CoachType = "overall";
-  let bestScore = 0;
+  const scores: Record<string, number> = {};
   for (const [type, words] of Object.entries(KEYWORDS) as [CoachType, string[]][]) {
     if (type === "overall") continue;
     let score = 0;
-    for (const word of words) {
-      if (text.includes(word)) score++;
-    }
+    for (const word of words) if (text.includes(word)) score++;
+    scores[type] = score;
+  }
+  return scores as Record<CoachType, number>;
+}
+
+/**
+ * Bias keyword scores toward the user's preferred coach. The boost (0.5) only
+ * changes the outcome on ambiguous messages (ties or no keyword signal); a clear
+ * keyword winner still wins. No preferred coach → scores unchanged.
+ */
+export function applyBehaviorBias(
+  scores: Record<CoachType, number>,
+  preferredCoach?: string | null,
+): Record<CoachType, number> {
+  if (preferredCoach && preferredCoach in COACHES && preferredCoach !== "overall") {
+    return { ...scores, [preferredCoach]: (scores[preferredCoach as CoachType] ?? 0) + 0.5 };
+  }
+  return scores;
+}
+
+export function classifyCoachType(message: string, preferredCoach?: string | null): CoachType {
+  const scores = applyBehaviorBias(scoreCoaches(message), preferredCoach);
+  let best: CoachType = "overall";
+  let bestScore = 0;
+  for (const [type, score] of Object.entries(scores) as [CoachType, number][]) {
+    if (type === "overall") continue;
     if (score > bestScore) { bestScore = score; best = type; }
   }
   return best;

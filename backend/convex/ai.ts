@@ -1,7 +1,7 @@
-import { action, query } from "./_generated/server";
+import { action, query, internalAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
-import { getCoach, classifyCoachType, COACHES, type CoachType } from "./coaches";
+import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import {
   calculateWorkoutCalories,
   scoreDensity,
@@ -718,12 +718,13 @@ export const chat = action({
     const today = todayArg ?? new Date().toISOString().split("T")[0];
 
     // Gather context
-    const [profile, todayMeals, todayWorkouts, recentCals, settings] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
       ctx.runQuery(internal.meals.getRecentCalories, { userId }),
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
+      ctx.runQuery(internal.behavior.getBehaviorProfileForContext, { userId }),
     ]);
 
     const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
@@ -804,13 +805,18 @@ Rules:
     // Save user message
     await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "user", content: message });
 
-    // Detect coach
+    // Detect coach (keyword routing, biased toward the user's preferred coach)
     let detectedCoach: CoachType = (coachType as CoachType) ?? "overall";
-    if (!coachType || coachType === "auto") detectedCoach = classifyCoachType(message);
+    if (!coachType || coachType === "auto") detectedCoach = classifyCoachType(message, behavior?.preferredCoach);
     const coach = getCoach(detectedCoach);
 
+    // Behavioral memory + tone layer (no behavior → unchanged baseline)
+    const behaviorLine = behaviorSummary(behavior);
+    const toneLine = toneInstruction(settings?.coachingStyle);
+    const personaSuffix = [behaviorLine, toneLine].filter(Boolean).join("\n");
+
     const messages: AIMessage[] = [
-      { role: "system", content: `${coach.systemPrompt}\n\n${contextBlock}${loggingPrompt}` },
+      { role: "system", content: `${coach.systemPrompt}${personaSuffix ? `\n\n${personaSuffix}` : ""}\n\n${contextBlock}${loggingPrompt}` },
       ...history.map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content })),
       image
         ? {
@@ -981,8 +987,29 @@ export const generateDailyInsights = action({
   handler: async (ctx, { date }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    const userId = identity.subject;
+    return runDailyInsights(ctx, identity.subject, date);
+  },
+});
 
+export const generateDailyInsightsForUser = internalAction({
+  args: { userId: v.string(), date: v.string() },
+  handler: async (ctx, { userId, date }) => runDailyInsights(ctx, userId, date),
+});
+
+/** Cron: generate today's insights for every active user. */
+export const cronDailyInsights = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const date = new Date().toISOString().slice(0, 10);
+    const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 3 })) as string[];
+    for (const userId of users) {
+      try { await runDailyInsights(ctx, userId, date); } catch { /* skip user on error */ }
+    }
+    return { users: users.length };
+  },
+});
+
+async function runDailyInsights(ctx: any, userId: string, date: string) {
     const [meals, workouts, goal, settings, profile] = await Promise.all([
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date }),
@@ -1029,16 +1056,35 @@ Give 3 short, punchy insights (one sentence each) about their day. Tailor advice
 
     await ctx.runMutation(internal.insights.saveInsights, { userId, date, insights });
     return { insights };
-  },
-});
+}
 
 export const generateWeeklySummary = action({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    const userId = identity.subject;
+    return runWeeklySummary(ctx, identity.subject);
+  },
+});
 
+export const generateWeeklySummaryForUser = internalAction({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => runWeeklySummary(ctx, userId),
+});
+
+/** Cron: generate weekly summaries for every active user. */
+export const cronWeeklySummary = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 7 })) as string[];
+    for (const userId of users) {
+      try { await runWeeklySummary(ctx, userId); } catch { /* skip user on error */ }
+    }
+    return { users: users.length };
+  },
+});
+
+async function runWeeklySummary(ctx: any, userId: string) {
     const now = new Date();
     const day = now.getDay();
     const monday = new Date(now);
@@ -1085,8 +1131,7 @@ Give a brief (2-3 sentences) weekly summary and recommendation tailored to their
     const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
     await ctx.runMutation(internal.insights.saveWeeklySummary, { userId, weekStart, content });
     return { content };
-  },
-});
+}
 
 export const suggestWorkout = action({
   args: {},

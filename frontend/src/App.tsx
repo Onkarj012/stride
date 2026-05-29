@@ -8,6 +8,7 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { SidebarProvider } from "@/context/SidebarContext";
 import { ToastProvider } from "@/context/ToastContext";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { FloatingTabBar } from "@/components/layout/FloatingTabBar";
 import { HomePage } from "@/pages/HomePage";
 import { InsightsPage } from "@/pages/InsightsPage";
@@ -15,6 +16,7 @@ import { HistoryPage } from "@/pages/HistoryPage";
 import { SettingsPage } from "@/pages/ProfilePage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { CoachPage } from "@/pages/CoachPage";
+import { RecipesPage } from "@/pages/RecipesPage";
 import { SignInPage, SignUpPage } from "@/pages/AuthPages";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 
@@ -26,6 +28,8 @@ const pageVariants = { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 
 const pageTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] };
 
 function PageWrapper({ children }: { children: React.ReactNode }) {
+  const reduce = useReducedMotion();
+  if (reduce) return <div className="min-h-full">{children}</div>;
   return (
     <motion.div variants={pageVariants} initial="initial" animate="animate" exit="exit" transition={pageTransition} className="min-h-full">
       {children}
@@ -66,6 +70,7 @@ function MainAppRoutes() {
           <Route path="/settings" element={<PageWrapper><SettingsPage /></PageWrapper>} />
           <Route path="/profile" element={<PageWrapper><ProfilePage /></PageWrapper>} />
           <Route path="/coach" element={<PageWrapper><CoachPage /></PageWrapper>} />
+          <Route path="/recipes" element={<PageWrapper><RecipesPage /></PageWrapper>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AnimatePresence>
