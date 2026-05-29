@@ -98,6 +98,45 @@ export const deleteMeal = mutation({
   },
 });
 
+/**
+ * Re-log an existing meal as today (or a specified date).
+ *
+ * Used by the History page's "log again" button so a user can repeat a
+ * common breakfast/lunch with a single tap instead of asking the agent.
+ * All nutrition fields are preserved as-is.
+ */
+export const relogMeal = mutation({
+  args: {
+    id: v.id("meals"),
+    date: v.optional(v.string()),
+    time: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, date, time }) => {
+    const userId = await requireUserId(ctx);
+    const src = await ctx.db.get(id);
+    if (!src || src.userId !== userId) throw new Error("Not found");
+    const targetDate = date ?? new Date().toISOString().split("T")[0];
+    const targetTime = time ?? new Date().toISOString().slice(11, 16);
+    return ctx.db.insert("meals", {
+      userId,
+      date: targetDate,
+      name: src.name,
+      calories: src.calories,
+      protein: src.protein,
+      carbs: src.carbs,
+      fat: src.fat,
+      time: targetTime,
+      aiSuggestion: src.aiSuggestion,
+      mealType: src.mealType ?? "unspecified",
+      components: src.components,
+      confidence: src.confidence,
+      nutritionSource: src.nutritionSource,
+      structuredItems: src.structuredItems,
+      ingredientBreakdown: src.ingredientBreakdown,
+    });
+  },
+});
+
 // ─── Internal (called by AI action) ──────────────────────────────────────────
 
 export const getMealsForContext = internalQuery({

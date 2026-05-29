@@ -59,6 +59,9 @@ Thumbs.db
 # Temporary / scratchpad
 temp/
 
+# Internal docs (assessments, reports — not for version control)
+docs/
+
 # Graphify cache
 graphify-out/cache/
 .graphify_*

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, MicOff, RotateCcw, Plus, ChevronLeft, Copy, Check, Trash2, Camera, Barcode, ImagePlus, X, Loader2 } from "lucide-react";
+import { ArrowUp, Mic, MicOff, RotateCcw, Plus, ChevronLeft, Copy, Check, Trash2, Pencil, Camera, Barcode, ImagePlus, X, Loader2 } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -8,7 +8,7 @@ import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { VoxelAgent } from "@/components/voxel/VoxelAgent";
 import { AgentBadge } from "@/components/insights/AgentBadge";
-import { useTypewriter } from "@/hooks/useTypewriter";
+import { Markdown } from "@/components/primitives/Markdown";
 import { useLogs } from "@/hooks/useLogs";
 import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
@@ -24,7 +24,9 @@ function coachToAgent(coachType?: string): Agent {
     case "diet": return "diet";
     case "workout": return "workout";
     case "recovery": return "sleep";
-    case "mindset": return "habit";
+    case "water": return "water";
+    case "habit": return "habit";
+    case "mindset": return "wellness";
     default: return "main";
   }
 }
@@ -41,30 +43,27 @@ const GREETING: Record<CoachingStyle, string> = {
   analytical: "Hi, I'm Stry. I'll help you track patterns. What would you like to log?",
 };
 
-/* ── Streaming assistant bubble ── */
-function AssistantBubble({ text, agent, isLast }: { text: string; agent?: Agent; isLast: boolean }) {
-  const { displayed, done } = useTypewriter(text, 18, isLast);
-  const content = isLast ? displayed : text;
+/* ── Assistant bubble — renders markdown immediately, no typewriter ── */
+function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast: boolean }) {
   const [copied, setCopied] = useState(false);
 
   return (
-    <div className="flex items-end gap-2.5 max-w-[85%] group">
-      <div className="shrink-0 w-7 h-7 rounded-full overflow-hidden border border-border bg-card-elev relative">
+    <div className="flex items-start gap-2.5 max-w-[85%] group">
+      <div className="shrink-0 w-7 h-7 mt-1 rounded-full overflow-hidden border border-border bg-card-elev relative">
         <div style={{ position: "absolute", top: -14, left: -14, width: 56, height: 56 }}>
           <VoxelAgent agent={agent ?? "main"} size={56} />
         </div>
       </div>
       <div className="flex flex-col gap-1 min-w-0">
-        <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-2.5 text-[14px] leading-relaxed text-text">
-          {content}
-          {isLast && !done && <span className="ml-0.5 inline-block h-3.5 w-0.5 align-middle animate-pulse bg-lavender" />}
+        <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-2.5 text-text">
+          <Markdown>{text}</Markdown>
         </div>
-        <div className="flex items-center gap-2 ml-1">
-          {agent && agent !== "main" && done && <AgentBadge agent={agent} />}
+        <div className="flex items-center gap-3 ml-1">
+          {agent && agent !== "main" && <AgentBadge agent={agent} />}
           <button
             type="button"
             onClick={() => { navigator.clipboard.writeText(text).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-            className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text"
+            className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors"
           >
             {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
             {copied ? "Copied" : "Copy"}
@@ -75,11 +74,30 @@ function AssistantBubble({ text, agent, isLast }: { text: string; agent?: Agent;
   );
 }
 
-function UserBubble({ text }: { text: string }) {
+function UserBubble({ text, onEdit }: { text: string; onEdit: () => void }) {
+  const [copied, setCopied] = useState(false);
   return (
-    <div className="self-end max-w-[85%]">
-      <div className="rounded-2xl rounded-br-sm bg-ink text-text-on-ink px-4 py-2.5 text-[14px] leading-relaxed">
+    <div className="flex flex-col items-end gap-1 max-w-[85%]">
+      <div className="rounded-2xl rounded-br-sm bg-ink text-text-on-ink px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap">
         {text}
+      </div>
+      <div className="flex items-center gap-3 mr-1">
+        <button
+          type="button"
+          onClick={() => { navigator.clipboard.writeText(text).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors"
+        >
+          {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors"
+        >
+          <Pencil className="h-3 w-3" strokeWidth={2} />
+          Edit
+        </button>
       </div>
     </div>
   );
@@ -87,8 +105,8 @@ function UserBubble({ text }: { text: string }) {
 
 function ThinkingBubble() {
   return (
-    <div className="flex items-end gap-2.5">
-      <div className="shrink-0 w-7 h-7 rounded-full overflow-hidden border border-border bg-card-elev relative">
+    <div className="flex items-start gap-2.5">
+      <div className="shrink-0 w-7 h-7 mt-1 rounded-full overflow-hidden border border-border bg-card-elev relative">
         <div style={{ position: "absolute", top: -14, left: -14, width: 56, height: 56 }}>
           <VoxelAgent agent="main" size={56} />
         </div>
@@ -131,6 +149,13 @@ export function CoachPage() {
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  // Pending hydration: set when the user navigates to an existing session via
+  // the sidebar. The hydration effect waits for convexMessages to load, then
+  // replaces local state once. We can't react to (activeSessionId, convexMessages)
+  // unconditionally because the in-place send flow ALSO updates convexMessages
+  // (via persisted user/AI messages) and we don't want that to overwrite the
+  // optimistic local state with a typewriter mid-flight.
+  const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const { add } = useLogs();
   const inputRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -170,20 +195,43 @@ export function CoachPage() {
     return () => document.removeEventListener("paste", onPaste);
   }, [onPickImage]);
 
-  // Hydrate messages when loading a session
+  // Hydrate messages when loading a session. Only runs when the user
+  // explicitly navigates via the sidebar (pendingHydrateRef === activeSessionId).
+  // This prevents the new-session create-on-send flow from overwriting the
+  // optimistic local state with the persisted DB copy.
   useEffect(() => {
-    if (!convexMessages || !activeSessionId) return;
+    if (!activeSessionId) return;
+    if (pendingHydrateRef.current !== activeSessionId) return;
+    if (!convexMessages) return; // still loading
     const hydrated: Message[] = convexMessages.map((m, i) => ({
       kind: "text" as const, id: `cx-${i}`,
-      role: m.role as "user" | "assistant", text: m.content, streamed: false,
+      role: m.role === "ai" ? "assistant" as const : "user" as const, text: m.content, streamed: false,
     }));
     setMessages(hydrated.length > 0 ? hydrated : [{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
+    pendingHydrateRef.current = null;
+    // Auto-scroll to bottom of newly-loaded thread
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "auto" }), 50);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId, convexMessages]);
+
+  /** User clicked an old chat in the sidebar — request hydration. */
+  const loadSession = useCallback((id: Id<"chat_sessions">) => {
+    if (id === activeSessionId) {
+      // Already on this session; if they tapped it again, just close the panel.
+      setPanelOpen(false);
+      return;
+    }
+    pendingHydrateRef.current = id;
+    setActiveSessionId(id);
+    // Show a placeholder while we wait for messages so it's clear something
+    // happened. The hydrate effect will replace this momentarily.
+    setMessages([{ kind: "text", id: "loading", role: "assistant", text: "Loading…", streamed: false }]);
   }, [activeSessionId]);
 
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
 
   const newChat = useCallback(() => {
+    pendingHydrateRef.current = null;
     setActiveSessionId(null);
     setMessages([{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
     setPanelOpen(false);
@@ -300,7 +348,7 @@ export function CoachPage() {
   }, [activeSessionId, createSession, sendToAI, scroll, toast]);
 
   return (
-    <div className="flex h-[calc(100dvh-2rem)] lg:h-[calc(100dvh-5rem)] max-w-5xl mx-auto gap-0">
+    <div className="flex h-[calc(100dvh-2rem)] lg:h-[calc(100dvh-2rem)] w-full -mx-4 lg:-mx-10 lg:-my-10 px-0">
 
       {/* Hidden file input */}
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
@@ -309,7 +357,7 @@ export function CoachPage() {
       {/* Barcode modal */}
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
-      {/* LEFT: Session sidebar — always visible, collapsible */}
+      {/* LEFT: Session sidebar */}
       <AnimatePresence initial={false}>
         {panelOpen && (
           <motion.div
@@ -318,14 +366,10 @@ export function CoachPage() {
             animate={{ width: 220, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ type: "spring", stiffness: 300, damping: 32 }}
-            className="shrink-0 flex flex-col gap-2 overflow-hidden border-r border-border pr-3 mr-3"
+            className="shrink-0 flex flex-col gap-2 overflow-hidden border-r border-border px-3"
           >
-            <div className="flex items-center justify-between pt-1 pb-2">
+            <div className="flex items-center justify-between pt-3 pb-2">
               <span className="text-[13px] font-bold text-text">Chats</span>
-              <button type="button" onClick={() => setPanelOpen(false)} aria-label="Close sidebar"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-                <ChevronLeft className="h-4 w-4" strokeWidth={2} />
-              </button>
             </div>
             <button type="button" onClick={newChat}
               className="flex items-center gap-2 rounded-[12px] border border-border bg-card px-3 py-2.5 text-[13px] font-semibold text-text hover:bg-card-elev transition-colors">
@@ -335,7 +379,7 @@ export function CoachPage() {
               {sessions.length === 0 && <p className="text-[12px] text-text-muted px-2 py-3">No previous chats yet.</p>}
               {sessions.map((s) => (
                 <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeSessionId ? "bg-card-elev" : "hover:bg-card-elev")}>
-                  <button type="button" onClick={() => { setActiveSessionId(s.id); }} className="flex-1 text-left px-3 py-2 min-w-0">
+                  <button type="button" onClick={() => loadSession(s.id)} className="flex-1 text-left px-3 py-2 min-w-0">
                     <div className="text-[12px] font-medium text-text truncate">{s.title}</div>
                     <div className="text-[10px] text-text-subtle">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
                   </button>
@@ -350,11 +394,11 @@ export function CoachPage() {
         )}
       </AnimatePresence>
 
-      {/* RIGHT: Chat column — centered, fills remaining space */}
-      <div className="flex flex-col flex-1 min-w-0">
-        {/* Header */}
+      {/* RIGHT: Chat column */}
+      <div className="flex flex-col flex-1 min-w-0 px-4 lg:px-8 py-4 lg:py-6">
+        {/* Header — toggle always at left edge */}
         <div className="flex items-center gap-3 pb-3 shrink-0">
-          {/* Sidebar toggle */}
+          {/* Sidebar toggle — fixed position so it never moves */}
           <button type="button" onClick={() => setPanelOpen((o) => !o)} aria-label="Toggle chat history"
             className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors shrink-0",
               panelOpen ? "bg-card-elev text-text border-border-strong" : "border-border text-text-muted hover:bg-card-elev")}>
@@ -411,7 +455,7 @@ export function CoachPage() {
                 className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
                 {m.role === "assistant"
                   ? <AssistantBubble text={m.text} agent={m.agent} isLast={i === lastTextIdx && !!m.streamed} />
-                  : <UserBubble text={m.text} />}
+                  : <UserBubble text={m.text} onEdit={() => { setInput(m.text); inputRef.current?.focus(); }} />}
               </motion.div>
             );
           })}

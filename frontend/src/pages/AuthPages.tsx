@@ -97,18 +97,21 @@ export function SignInPage() {
     setError(null);
     setLoading(true);
     try {
-      const { error: createErr } = await signIn.create({ identifier: email });
-      if (createErr) { setError(createErr.message); return; }
+      const { error: err } = await signIn.password({ emailAddress: email, password });
+      if (err) { setError(err.message); return; }
 
-      const { error: pwErr } = await signIn.password({ password });
-      if (pwErr) { setError(pwErr.message); return; }
-
-      const { error: finalErr } = await signIn.finalize();
-      if (finalErr) { setError(finalErr.message); return; }
-
-      navigate("/");
+      if (signIn.status === "complete") {
+        await signIn.finalize({ navigate: ({ decorateUrl }) => { window.location.href = decorateUrl("/"); } });
+      } else if (signIn.status === "needs_second_factor" || signIn.status === "needs_client_trust") {
+        // Send email code for MFA / client trust verification
+        const { error: mfaErr } = await signIn.mfa.sendEmailCode();
+        if (mfaErr) { setError(mfaErr.message); return; }
+        setError("A verification code was sent to your email. MFA is required — please use the Clerk hosted sign-in page for now.");
+      } else {
+        setError("Sign-in incomplete. Please try again.");
+      }
     } catch (err: any) {
-      setError(err?.message ?? "Couldn't sign in");
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't sign in");
     } finally {
       setLoading(false);
     }
@@ -116,12 +119,15 @@ export function SignInPage() {
 
   async function onGoogle() {
     if (!signIn) return;
-    const { error: err } = await signIn.sso({
-      strategy: "oauth_google",
-      redirectUrl: `${window.location.origin}/sso-callback`,
-      redirectCallbackUrl: "/",
-    });
-    if (err) setError(err.message);
+    try {
+      await signIn.sso({
+        strategy: "oauth_google",
+        redirectCallbackUrl: `${window.location.origin}/sso-callback`,
+        redirectUrl: "/",
+      });
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Google sign-in failed");
+    }
   }
 
   return (
@@ -186,13 +192,12 @@ export function SignUpPage() {
     setError(null);
     setLoading(true);
     try {
-      const { error: err } = await signUp.create({ emailAddress: email, password, firstName });
+      const { error: err } = await signUp.password({ emailAddress: email, password, firstName });
       if (err) { setError(err.message); return; }
-      const { error: verifyErr } = await (signUp as any).sendEmailCode();
-      if (verifyErr) { setError(verifyErr.message); return; }
+      await signUp.verifications.sendEmailCode();
       setStep("verify");
     } catch (err: any) {
-      setError(err?.message ?? "Couldn't sign up");
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't sign up");
     } finally {
       setLoading(false);
     }
@@ -204,12 +209,12 @@ export function SignUpPage() {
     setError(null);
     setLoading(true);
     try {
-      const result = await (signUp as any).attemptEmailAddressVerification({ code });
-      if (result.status !== "complete") {
+      await signUp.verifications.verifyEmailCode({ code });
+      if (signUp.status === "complete") {
+        await signUp.finalize({ navigate: ({ decorateUrl }) => { window.location.href = decorateUrl("/onboarding"); } });
+      } else {
         setError("Verification incomplete — please try again");
-        return;
       }
-      navigate("/onboarding");
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't verify code");
     } finally {
@@ -219,12 +224,15 @@ export function SignUpPage() {
 
   async function onGoogle() {
     if (!signUp) return;
-    const { error: err } = await signUp.sso({
-      strategy: "oauth_google",
-      redirectUrl: `${window.location.origin}/sso-callback`,
-      redirectCallbackUrl: "/onboarding",
-    });
-    if (err) setError(err.message);
+    try {
+      await signUp.sso({
+        strategy: "oauth_google",
+        redirectCallbackUrl: `${window.location.origin}/sso-callback`,
+        redirectUrl: "/onboarding",
+      });
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Google sign-in failed");
+    }
   }
 
   return (

@@ -1,6 +1,6 @@
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { ArrowRight, Sparkles, Lightbulb, Droplets, Plus, Minus } from "lucide-react";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -36,98 +36,87 @@ function relTime(ts: number): string {
   return `${day}d ago`;
 }
 
-const TONE_TO_BG: Record<string, string> = {
-  peach: "bg-peach",
-  lavender: "bg-lavender",
-  sky: "bg-sky",
-  mint: "bg-mint",
-  bubblegum: "bg-bubblegum",
-};
 
-/* ── Today's Pulse — used in hero side-rail on desktop, full-width on mobile ── */
+/* ── Today's Pulse — auto-cycling detailed grid ── */
 function TodaysPulse({ logs, compact = false }: { logs: LogEntry[]; compact?: boolean }) {
   const today = todayLogs(logs);
+  const [slide, setSlide] = useState(0);
 
   const kcal = today.reduce((s, l) => s + (l.meal?.kcal ?? 0), 0);
+  const protein = today.reduce((s, l) => s + (l.meal?.protein ?? 0), 0);
+  const carbs = today.reduce((s, l) => s + (l.meal?.carbs ?? 0), 0);
+  const fat = today.reduce((s, l) => s + (l.meal?.fat ?? 0), 0);
   const water = today.reduce((s, l) => s + (l.water?.ml ?? 0), 0);
   const moveMin = today.reduce((s, l) => s + (l.workout?.duration ?? 0), 0);
+  const kcalBurned = today.reduce((s, l) => s + (l.workout?.kcal ?? 0), 0);
   const lastSleep = logs.find((l) => l.sleep)?.sleep;
 
-  const tiles = [
-    {
-      key: "kcal",
-      label: "Calories",
-      value: kcal > 0 ? Math.round(kcal).toLocaleString() : "—",
-      unit: "kcal",
-      pct: Math.min(1, kcal / dailyTargets.kcal),
-      tone: "peach",
-    },
-    {
-      key: "water",
-      label: "Water",
-      value: water > 0 ? (water / 1000).toFixed(1) : "—",
-      unit: "L",
-      pct: Math.min(1, water / dailyTargets.water),
-      tone: "sky",
-    },
-    {
-      key: "move",
-      label: "Movement",
-      value: moveMin > 0 ? String(moveMin) : "—",
-      unit: "min",
-      pct: Math.min(1, moveMin / dailyTargets.workoutMinutes),
-      tone: "mint",
-    },
-    {
-      key: "sleep",
-      label: "Sleep",
-      value: lastSleep ? lastSleep.hours.toFixed(1) : "—",
-      unit: "h",
-      pct: lastSleep ? Math.min(1, lastSleep.hours / dailyTargets.sleepHours) : 0,
-      tone: "lavender",
-    },
+  // Two "views" of the same 4-cell grid — cycle every 4s
+  const views = [
+    [
+      { label: "Calories", value: kcal > 0 ? Math.round(kcal).toLocaleString() : "—", unit: "kcal", pct: Math.min(1, kcal / dailyTargets.kcal), tone: "peach" },
+      { label: "Water", value: water > 0 ? (water / 1000).toFixed(1) : "—", unit: "L", pct: Math.min(1, water / dailyTargets.water), tone: "sky" },
+      { label: "Movement", value: moveMin > 0 ? String(moveMin) : "—", unit: "min", pct: Math.min(1, moveMin / dailyTargets.workoutMinutes), tone: "mint" },
+      { label: "Sleep", value: lastSleep ? lastSleep.hours.toFixed(1) : "—", unit: "h", pct: lastSleep ? Math.min(1, lastSleep.hours / dailyTargets.sleepHours) : 0, tone: "lavender" },
+    ],
+    [
+      { label: "Protein", value: protein > 0 ? `${Math.round(protein)}g` : "—", unit: "", pct: Math.min(1, protein / dailyTargets.protein), tone: "peach" },
+      { label: "Carbs", value: carbs > 0 ? `${Math.round(carbs)}g` : "—", unit: "", pct: Math.min(1, carbs / dailyTargets.carbs), tone: "sky" },
+      { label: "Fat", value: fat > 0 ? `${Math.round(fat)}g` : "—", unit: "", pct: Math.min(1, fat / dailyTargets.fat), tone: "mint" },
+      { label: "Burned", value: kcalBurned > 0 ? Math.round(kcalBurned).toLocaleString() : "—", unit: "kcal", pct: Math.min(1, kcalBurned / dailyTargets.kcalBurned), tone: "lavender" },
+    ],
   ];
+
+  const TONE_BAR: Record<string, string> = { peach: "bg-peach", sky: "bg-sky", mint: "bg-mint", lavender: "bg-lavender" };
+
+  // Auto-cycle
+  useEffect(() => {
+    const t = setInterval(() => setSlide((s) => (s + 1) % views.length), 4000);
+    return () => clearInterval(t);
+  }, [views.length]);
+
+  const tiles = views[slide];
 
   return (
     <Card tone="card" radius="lg" padding="none" className="overflow-hidden">
       <div className="flex items-baseline justify-between px-4 pt-3.5">
-        <h3 className="text-[12px] font-bold uppercase tracking-wider text-text-muted">
-          Today's pulse
-        </h3>
-        <Link
-          to="/insights"
-          className="inline-flex items-center gap-1 text-[12px] font-medium text-text-muted hover:text-text"
-        >
-          More
-          <ArrowRight className="h-3 w-3" strokeWidth={2} />
+        <h3 className="text-[12px] font-bold uppercase tracking-wider text-text-muted">Today's pulse</h3>
+        <Link to="/insights" className="inline-flex items-center gap-1 text-[12px] font-medium text-text-muted hover:text-text">
+          More <ArrowRight className="h-3 w-3" strokeWidth={2} />
         </Link>
       </div>
-      <div
-        className={cn(
-          "grid gap-px bg-border mt-3",
-          compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4",
-        )}
-      >
-        {tiles.map((t) => (
-          <div key={t.key} className="flex flex-col gap-1.5 p-4 bg-card">
-            <span className="text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">
-              {t.label}
-            </span>
-            <div className="flex items-baseline gap-1">
-              <span className="text-[22px] font-extrabold text-text leading-none">
-                {t.value}
-              </span>
-              <span className="text-[12px] font-medium text-text-muted">{t.unit}</span>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={slide}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -6 }}
+          transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+          className={cn("grid gap-px bg-border mt-3", compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4")}
+        >
+          {tiles.map((t) => (
+            <div key={t.label} className="flex flex-col gap-1.5 p-4 bg-card">
+              <span className="text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">{t.label}</span>
+              <div className="flex items-baseline gap-1">
+                <span className="text-[22px] font-extrabold text-text leading-none">{t.value}</span>
+                {t.unit && <span className="text-[12px] font-medium text-text-muted">{t.unit}</span>}
+              </div>
+              <div className="h-1 w-full rounded-full bg-border overflow-hidden">
+                <motion.div
+                  className={cn("h-full rounded-full", TONE_BAR[t.tone])}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${t.pct * 100}%` }}
+                  transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                />
+              </div>
             </div>
-            <div className="h-1 w-full rounded-full bg-border overflow-hidden">
-              <motion.div
-                className={cn("h-full rounded-full", TONE_TO_BG[t.tone] ?? "bg-text-muted")}
-                initial={{ width: 0 }}
-                animate={{ width: `${t.pct * 100}%` }}
-                transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-              />
-            </div>
-          </div>
+          ))}
+        </motion.div>
+      </AnimatePresence>
+      {/* Dot indicators */}
+      <div className="flex justify-center gap-1.5 py-2">
+        {views.map((_, i) => (
+          <div key={i} className={cn("h-1 rounded-full transition-all", i === slide ? "w-4 bg-text-muted" : "w-1 bg-border")} />
         ))}
       </div>
     </Card>
@@ -136,7 +125,14 @@ function TodaysPulse({ logs, compact = false }: { logs: LogEntry[]; compact?: bo
 
 /* ── Compact recent strip ── */
 function RecentStrip({ logs }: { logs: LogEntry[] }) {
-  const items = logs.slice(0, 6);
+  // Hide noise: water quick-tap logs are already shown by the WaterTracker,
+  // so they shouldn't clutter "recent" — users typically log 1L+ across
+  // multiple taps and don't want each glass surfaced separately. We also
+  // skip notes (legacy category).
+  const meaningful = logs.filter(
+    (l) => l.category !== "water" && l.category !== "note",
+  );
+  const items = meaningful.slice(0, 6);
   if (items.length === 0) return null;
 
   return (
@@ -323,7 +319,7 @@ export function HomePage() {
           <DailyGuidanceCard />
           <CoachingNudgeCard />
           <TodaysPulse logs={sortedLogs} compact />
-          <StreakCard logs={sortedLogs} />
+          <StreakCard />
         </aside>
       </div>
 
