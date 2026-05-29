@@ -97,11 +97,19 @@ export function SignInPage() {
     setError(null);
     setLoading(true);
     try {
-      const { error: err } = await (signIn as any).password({ emailAddress: email, password });
+      const { error: err } = await signIn.password({ emailAddress: email, password });
       if (err) { setError(err.message); return; }
-      const { error: finalErr } = await (signIn as any).finalize();
-      if (finalErr) { setError(finalErr.message); return; }
-      navigate("/");
+
+      if (signIn.status === "complete") {
+        await signIn.finalize({ navigate: ({ decorateUrl }) => { window.location.href = decorateUrl("/"); } });
+      } else if (signIn.status === "needs_second_factor" || signIn.status === "needs_client_trust") {
+        // Send email code for MFA / client trust verification
+        const { error: mfaErr } = await signIn.mfa.sendEmailCode();
+        if (mfaErr) { setError(mfaErr.message); return; }
+        setError("A verification code was sent to your email. MFA is required — please use the Clerk hosted sign-in page for now.");
+      } else {
+        setError("Sign-in incomplete. Please try again.");
+      }
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't sign in");
     } finally {
@@ -112,7 +120,7 @@ export function SignInPage() {
   async function onGoogle() {
     if (!signIn) return;
     try {
-      await (signIn as any).sso({
+      await signIn.sso({
         strategy: "oauth_google",
         redirectCallbackUrl: `${window.location.origin}/sso-callback`,
         redirectUrl: "/",
@@ -184,9 +192,9 @@ export function SignUpPage() {
     setError(null);
     setLoading(true);
     try {
-      const { error: err } = await (signUp as any).password({ emailAddress: email, password, firstName });
+      const { error: err } = await signUp.password({ emailAddress: email, password, firstName });
       if (err) { setError(err.message); return; }
-      await (signUp as any).verifications.sendEmailCode();
+      await signUp.verifications.sendEmailCode();
       setStep("verify");
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't sign up");
@@ -201,9 +209,9 @@ export function SignUpPage() {
     setError(null);
     setLoading(true);
     try {
-      await (signUp as any).verifications.verifyEmailCode({ code });
-      if ((signUp as any).status === "complete") {
-        await (signUp as any).finalize({ navigate: ({ decorateUrl }: any) => { window.location.href = decorateUrl("/onboarding"); } });
+      await signUp.verifications.verifyEmailCode({ code });
+      if (signUp.status === "complete") {
+        await signUp.finalize({ navigate: ({ decorateUrl }) => { window.location.href = decorateUrl("/onboarding"); } });
       } else {
         setError("Verification incomplete — please try again");
       }
@@ -217,7 +225,7 @@ export function SignUpPage() {
   async function onGoogle() {
     if (!signUp) return;
     try {
-      await (signUp as any).sso({
+      await signUp.sso({
         strategy: "oauth_google",
         redirectCallbackUrl: `${window.location.origin}/sso-callback`,
         redirectUrl: "/onboarding",
