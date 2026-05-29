@@ -27,6 +27,11 @@ export function usePrefs() {
     };
     writePrefs(next);
     setPrefs(next);
+    // Sync browser timezone offset so nudge dispatch uses local time.
+    const offset = new Date().getTimezoneOffset();
+    if (server.timezoneOffsetMinutes !== offset) {
+      void upsert({ timezoneOffsetMinutes: offset }).catch(() => {});
+    }
   }, [server]);
 
   useEffect(() => {

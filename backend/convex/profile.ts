@@ -49,6 +49,7 @@ export const getProfile = query({
       weeklyWorkouts: p.weeklyWorkouts ?? null,
       goalWeightKg: p.goalWeightKg ?? null,
       planBreakdown: p.planBreakdown ?? null,
+      waterTarget: p.waterTarget ?? null,
     };
   },
 });
@@ -86,9 +87,10 @@ export const upsertProfile = mutation({
     weeklyWorkouts: v.optional(v.string()),
     goalWeightKg: v.optional(v.number()),
     planBreakdown: v.optional(v.string()),
+    waterTarget: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const numericFields = ["weight", "height", "age", "calorieTarget", "proteinTarget", "carbTarget", "fatTarget", "bodyFat", "leanMass", "dailySteps", "trainingDays", "cardioMinutes", "workHoursPerDay", "goalWeightKg"] as const;
+    const numericFields = ["weight", "height", "age", "calorieTarget", "proteinTarget", "carbTarget", "fatTarget", "bodyFat", "leanMass", "dailySteps", "trainingDays", "cardioMinutes", "workHoursPerDay", "goalWeightKg", "waterTarget"] as const;
     for (const field of numericFields) {
       const val = args[field as keyof typeof args];
       if (typeof val === "number" && val < 0) {
@@ -111,7 +113,7 @@ export const upsertProfile = mutation({
       "dietaryPreference", "allergies", "fitnessLevel",
       "dislikedFoods", "cuisines", "equipment", "scheduleNote",
       "occupationType", "workHoursPerDay", "lifestyleActivity", "weeklyWorkouts",
-      "goalWeightKg", "planBreakdown",
+      "goalWeightKg", "planBreakdown", "waterTarget",
     ] as const;
     for (const field of optionalFields) {
       const val = args[field as keyof typeof args];
@@ -250,6 +252,7 @@ export const getSettings = query({
       notifications: s?.notifications ?? true,
       coachingStyle: s?.coachingStyle ?? "gentle",
       reduceMotion: s?.reduceMotion ?? false,
+      timezoneOffsetMinutes: s?.timezoneOffsetMinutes ?? null,
     };
   },
 });
@@ -265,6 +268,7 @@ export const upsertSettings = mutation({
     notifications: v.optional(v.boolean()),
     coachingStyle: v.optional(v.string()),
     reduceMotion: v.optional(v.boolean()),
+    timezoneOffsetMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     if (args.units !== undefined && !UNITS.includes(args.units))
@@ -283,6 +287,7 @@ export const upsertSettings = mutation({
     if (args.notifications !== undefined) patch.notifications = args.notifications;
     if (args.coachingStyle !== undefined) patch.coachingStyle = args.coachingStyle;
     if (args.reduceMotion !== undefined) patch.reduceMotion = args.reduceMotion;
+    if (args.timezoneOffsetMinutes !== undefined) patch.timezoneOffsetMinutes = args.timezoneOffsetMinutes;
 
     if (existing) {
       await ctx.db.patch(existing._id, patch);
@@ -348,7 +353,10 @@ function mapLegacyGoal(goal?: string): string | undefined {
 /** Pure compute — returns full plan + transparency breakdown (no persistence). */
 export const calculateNutritionPlan = query({
   args: planArgs,
-  handler: async (_ctx, args) => computePlan(toPlanInput(args)),
+  handler: async (ctx, args) => {
+    await requireUserId(ctx);
+    return computePlan(toPlanInput(args));
+  },
 });
 
 /** Compute + persist targets to user_profiles and seed today's daily_goals. */

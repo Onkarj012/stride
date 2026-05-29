@@ -14,8 +14,6 @@ crons.weekly(
   {},
 );
 
-// Window nudges — hourly tick; the dispatcher picks the active window, dedupes
-// per day, and skips users who have grown fatigued of that window.
 crons.hourly("window nudges", { minuteUTC: 0 }, internal.nudges.dispatchWindowNudges, {});
 
 export default crons;

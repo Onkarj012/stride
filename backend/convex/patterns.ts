@@ -140,7 +140,7 @@ export const getPatterns = query({
       sleep: sleep.map((s: any) => ({ date: s.date, hours: s.hours })),
       water: water.map((w: any) => ({ date: w.date, ml: w.ml })),
       proteinTarget: profile?.proteinTarget ?? 90,
-      waterTarget: 2000,
+      waterTarget: profile?.waterTarget ?? 2000,
     });
   },
 });

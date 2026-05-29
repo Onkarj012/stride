@@ -112,15 +112,14 @@ export const getBehaviorProfileForContext = internalQuery({
   handler: async (ctx, { userId }) => loadProfile(ctx, userId),
 });
 
-/** Distinct userIds with a meal or workout logged in the last `days` days. */
+/** Distinct userIds with behavior recorded in the last `days` days (indexed scan). */
 export async function activeUserIds(ctx: any, days: number): Promise<string[]> {
   const start = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-  const ids = new Set<string>();
-  for (const table of ["meals", "workouts"] as const) {
-    const rows = await ctx.db.query(table).filter((q: any) => q.gte(q.field("date"), start)).collect();
-    for (const r of rows) ids.add(r.userId);
-  }
-  return Array.from(ids);
+  const rows = await ctx.db
+    .query("user_behavior")
+    .withIndex("by_date", (q: any) => q.gte("date", start))
+    .collect();
+  return Array.from(new Set(rows.map((r: any) => r.userId)));
 }
 
 export const listActiveUsers = internalQuery({

@@ -6,6 +6,8 @@ import { windowForHour } from "./nudges";
 
 const modules = import.meta.glob("./**/*.*s");
 const today = new Date().toISOString().slice(0, 10);
+// Use the current UTC window so the fatigue key matches what dispatchWindowNudges will pick.
+const currentWindow = windowForHour(new Date().getUTCHours());
 
 describe("windowForHour", () => {
   test("maps hours to windows", () => {
@@ -24,20 +26,19 @@ test("dispatchWindowNudges creates for active users, dedupes, skips fatigued", a
   // Make both users "active" by logging a meal today.
   await u1.mutation(api.meals.addMeal, { name: "Eggs", calories: 200, protein: 20, carbs: 1, fat: 12, time: "08:00", date: today });
   await u2.mutation(api.meals.addMeal, { name: "Eggs", calories: 200, protein: 20, carbs: 1, fat: 12, time: "08:00", date: today });
-  // u2 is fatigued of the morning window.
-  await u2.mutation(api.behavior.recordBehavior, { kind: "nudge_dismiss", key: "morning" });
+  // u2 is fatigued of the current window.
+  await u2.mutation(api.behavior.recordBehavior, { kind: "nudge_dismiss", key: currentWindow });
 
-  const res = await t.mutation(internal.nudges.dispatchWindowNudges, { hour: 8, date: today });
-  expect(res.window).toBe("morning");
+  const res = await t.mutation(internal.nudges.dispatchWindowNudges, { date: today });
   expect(res.created).toBe(1); // u1 only; u2 fatigued
 
   // Re-run dedupes (no new nudges).
-  const res2 = await t.mutation(internal.nudges.dispatchWindowNudges, { hour: 8, date: today });
+  const res2 = await t.mutation(internal.nudges.dispatchWindowNudges, { date: today });
   expect(res2.created).toBe(0);
 
   const u1Nudges = await u1.query(api.nudges.getActiveNudges, {});
   expect(u1Nudges).toHaveLength(1);
-  expect(u1Nudges[0].type).toBe("window_morning");
+  expect(u1Nudges[0].type).toMatch(/^window_/);
   const u2Nudges = await u2.query(api.nudges.getActiveNudges, {});
   expect(u2Nudges).toHaveLength(0);
 });

@@ -104,6 +104,7 @@ export default defineSchema({
     weeklyWorkouts: v.optional(v.string()), // JSON: [{type,durationMin,sessionsPerWeek}]
     goalWeightKg: v.optional(v.number()),
     planBreakdown: v.optional(v.string()), // JSON: engine NutritionPlan breakdown
+    waterTarget: v.optional(v.number()), // ml/day, default 2000
   }).index("by_user", ["userId"]),
 
   user_settings: defineTable({
@@ -115,6 +116,7 @@ export default defineSchema({
     notifications: v.optional(v.boolean()),
     coachingStyle: v.optional(v.string()), // gentle | motivating | analytical
     reduceMotion: v.optional(v.boolean()),
+    timezoneOffsetMinutes: v.optional(v.number()), // new Date().getTimezoneOffset() from browser
   }).index("by_user", ["userId"]),
 
   chat_sessions: defineTable({
@@ -230,7 +232,8 @@ export default defineSchema({
     ts: v.number(),
   })
     .index("by_user", ["userId"])
-    .index("by_user_kind", ["userId", "kind"]),
+    .index("by_user_kind", ["userId", "kind"])
+    .index("by_date", ["date"]),
 
   // ─── Proactive Nudges (in-app inbox; push-ready) ───────────────────────────
 

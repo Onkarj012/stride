@@ -109,21 +109,31 @@ export function windowForHour(hour: number): Window {
  * have recently dismissed that window (behavioral fatigue). Deduped per day.
  */
 export const dispatchWindowNudges = internalMutation({
-  args: { hour: v.optional(v.number()), date: v.optional(v.string()) },
-  handler: async (ctx, { hour, date }) => {
-    const window = windowForHour(hour ?? new Date().getUTCHours());
+  args: { date: v.optional(v.string()) },
+  handler: async (ctx, { date }) => {
     const today = date ?? utcDate(Date.now());
-    const content = WINDOW_NUDGES[window];
     const users = await activeUserIds(ctx, 3);
     let created = 0;
 
     for (const userId of users) {
+      // Determine the user's local hour from their stored timezone offset.
+      // timezoneOffsetMinutes = new Date().getTimezoneOffset() (negative east of UTC).
+      const settings = await ctx.db
+        .query("user_settings")
+        .withIndex("by_user", (q: any) => q.eq("userId", userId))
+        .first();
+      const offsetMin: number = settings?.timezoneOffsetMinutes ?? 0;
+      const localHour = Math.floor(((Date.now() - offsetMin * 60_000) / 3_600_000) % 24 + 24) % 24;
+      const window = windowForHour(localHour);
+      const content = WINDOW_NUDGES[window];
+
       const rows = await ctx.db
         .query("user_behavior")
         .withIndex("by_user", (q: any) => q.eq("userId", userId))
         .collect();
       const profile = deriveBehaviorProfile(rows);
-      if (profile.dismissedNudges.includes(window)) continue; // fatigued → skip
+      if (profile.dismissedNudges.includes(window)) continue;
+
       const id = await createNudgeRow(ctx, {
         userId,
         type: `window_${window}`,
@@ -135,6 +145,6 @@ export const dispatchWindowNudges = internalMutation({
       });
       if (id) created++;
     }
-    return { window, created };
+    return { created };
   },
 });

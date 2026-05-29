@@ -45,16 +45,22 @@ export function QuickLogBar() {
       list.push({
         key: `f-${f.name}`,
         label: f.name,
-        kcal: Math.round(f.caloriesPer100g),
+        kcal: Math.round(f.caloriesPer100g), // per 100g — shown as "X kcal / 100g"
         run: async () => {
           const time = new Date().toTimeString().slice(0, 5);
+          // Log exactly 100g; label makes the portion explicit.
           await addMeal({
-            name: f.name, calories: f.caloriesPer100g, protein: f.proteinPer100g,
-            carbs: f.carbsPer100g, fat: f.fatPer100g, time, date: localDateStr(),
+            name: f.name,
+            calories: Math.round(f.caloriesPer100g),
+            protein: Math.round(f.proteinPer100g * 10) / 10,
+            carbs: Math.round(f.carbsPer100g * 10) / 10,
+            fat: Math.round(f.fatPer100g * 10) / 10,
+            time,
+            date: localDateStr(),
           });
           await recordActivity({ type: "meal" }).catch(() => {});
           await recordBehavior({ kind: "suggestion", key: f.name }).catch(() => {});
-          toast.success(`Logged ${f.name}`, "100g");
+          toast.success(`Logged ${f.name}`, "100g portion");
         },
       });
     }
@@ -82,7 +88,9 @@ export function QuickLogBar() {
             className="shrink-0 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3.5 py-2 text-[13px] font-semibold text-text hover:border-peach focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-peach transition-colors"
           >
             <span className="truncate max-w-[140px]">{it.label}</span>
-            <span className="text-[11px] font-medium text-text-muted">{it.kcal} kcal</span>
+            <span className="text-[11px] font-medium text-text-muted">
+              {it.kcal} kcal{it.key.startsWith("f-") ? " / 100g" : ""}
+            </span>
           </button>
         ))}
       </div>
