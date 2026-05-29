@@ -28,6 +28,7 @@ import type * as patterns from "../patterns.js";
 import type * as profile from "../profile.js";
 import type * as progress from "../progress.js";
 import type * as recipes from "../recipes.js";
+import type * as seed from "../seed.js";
 import type * as tdee_engine from "../tdee_engine.js";
 import type * as unit_converter from "../unit_converter.js";
 import type * as users from "../users.js";
@@ -62,6 +63,7 @@ declare const fullApi: ApiFromModules<{
   profile: typeof profile;
   progress: typeof progress;
   recipes: typeof recipes;
+  seed: typeof seed;
   tdee_engine: typeof tdee_engine;
   unit_converter: typeof unit_converter;
   users: typeof users;

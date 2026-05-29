@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   User as UserIcon, Activity, Target, Settings as SettingsIcon,
-  Bell, Ruler, Download, Trash2, LogOut, Moon, Sun, Sparkles, Eye, EyeOff, Check,
+  Bell, Ruler, Download, Trash2, LogOut, Moon, Sun, Sparkles, Eye, EyeOff, Check, RotateCcw,
 } from "lucide-react";
 import { useQuery, useMutation } from "convex/react";
 import { useUser, useClerk } from "@clerk/react";
@@ -464,7 +464,9 @@ function SettingsTab() {
   const { theme, toggle } = useTheme();
   const { prefs, update } = usePrefs();
   const { signOut } = useClerk();
+  const navigate = useNavigate();
   const clearAllData = useMutation(api.users.clearAllData);
+  const upsertProfile = useMutation(api.profile.upsertProfile);
 
   return (
     <div className="space-y-5">
@@ -546,6 +548,17 @@ function SettingsTab() {
         <ListDivider />
         <ListRow icon={<Trash2 />} title="Clear all entries" meta="Permanently remove every log"
           onClick={() => { if (confirm("Delete all your data? This cannot be undone.")) clearAllData(); }} />
+      </Card>
+
+      <Card tone="card" radius="lg" padding="none" className="overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <h3 className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Onboarding</h3>
+        </div>
+        <ListRow icon={<RotateCcw />} title="Replay onboarding" meta="Redo your profile setup and recalculate your plan"
+          onClick={async () => {
+            await upsertProfile({ onboardingComplete: false });
+            navigate("/onboarding");
+          }} />
       </Card>
 
       <Card tone="card" radius="lg" padding="none" className="overflow-hidden">
