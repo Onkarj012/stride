@@ -448,6 +448,40 @@ async function runNutritionEngine(
 
 // ─── Public actions ───────────────────────────────────────────────────────────
 
+export const parseOnboarding = action({
+  args: { field: v.string(), text: v.string() },
+  handler: async (ctx, { field, text }): Promise<Record<string, unknown>> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
+
+    const SCHEMAS: Record<string, string> = {
+      stats: `{"age": number|null, "weightKg": number|null, "heightCm": number|null, "sex": "male"|"female"|null, "bodyFat": number|null}. Convert lbs→kg (÷2.205), ft/in→cm. Example: "28yo male, 176lb, 5'10\\"" → {"age":28,"weightKg":79.8,"heightCm":177.8,"sex":"male","bodyFat":null}`,
+      goal: `{"goal": one of "aggressive_loss"|"moderate_loss"|"mild_loss"|"maintain"|"recomp"|"lean_gain"|"muscle_gain"}. "lose fat fast"→aggressive_loss, "lose weight"→moderate_loss, "tone up / build muscle while losing fat"→recomp, "bulk / gain muscle"→muscle_gain, "lean bulk"→lean_gain, "stay the same"→maintain.`,
+      work: `{"occupationType": "desk"|"mixed"|"standing"|"physical"|null, "workHoursPerDay": number|null, "lifestyleActivity": "sedentary"|"light"|"moderate"|"active"|null}. "office job 9 hours, lazy otherwise" → {"occupationType":"desk","workHoursPerDay":9,"lifestyleActivity":"sedentary"}`,
+      training: `{"weeklyWorkouts": [{"type": one of "strength"|"run_slow"|"run_fast"|"cycling"|"hiit"|"yoga"|"swim"|"walk"|"sport", "durationMin": number, "sessionsPerWeek": number}]}. "lift 4x/week ~1h, run twice for 30min" → {"weeklyWorkouts":[{"type":"strength","durationMin":60,"sessionsPerWeek":4},{"type":"run_slow","durationMin":30,"sessionsPerWeek":2}]}`,
+      diet: `{"dietaryPreference": "none"|"vegetarian"|"vegan"|"pescatarian"|"keto"|null, "allergies": string|null}. "veggie, allergic to peanuts and shellfish" → {"dietaryPreference":"vegetarian","allergies":"peanuts, shellfish"}`,
+      name: `{"firstName": string}. Extract just the first name.`,
+    };
+    const schema = SCHEMAS[field];
+    if (!schema) throw new Error(`Unknown field: ${field}`);
+
+    const prompt = `Extract structured data from the user's message. Return ONLY a JSON object matching this schema, no prose:\n${schema}\n\nUser message: "${text}"\n\nUse null for anything not mentioned. Return only valid JSON.`;
+    const content = await callAI(
+      [{ role: "user", content: prompt }],
+      300,
+      settings?.openRouterModel ?? undefined,
+      settings?.openRouterKey ?? undefined,
+    );
+    try {
+      const match = content.match(/\{[\s\S]*\}/);
+      return JSON.parse(match ? match[0] : content) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  },
+});
+
 export const estimateMeal = action({
   args: { mealName: v.string() },
   handler: async (ctx, { mealName }) => {

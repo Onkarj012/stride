@@ -1,94 +1,85 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useUser } from "@clerk/react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
-import { ArrowRight, ArrowLeft, Check, Loader2, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, Check, Loader2, Plus, Trash2, Sparkles, Send } from "lucide-react";
 import { VoxelAgent } from "@/components/voxel/VoxelAgent";
 import { MacroDonut } from "@/components/charts/MacroDonut";
 import { cn } from "@/lib/utils";
 
-const SPRING = { type: "spring", stiffness: 280, damping: 28 } as const;
+type Phase = "name" | "stats" | "goal" | "work" | "training" | "diet" | "style" | "plan";
 
-type Step = "intro" | "name" | "stats" | "goal" | "work" | "training" | "diet" | "style" | "plan" | "wrap";
-const STEPS: Step[] = ["intro", "name", "stats", "goal", "work", "training", "diet", "style", "plan", "wrap"];
-
-type Goal = "aggressive_loss" | "moderate_loss" | "maintain" | "recomp" | "lean_gain" | "muscle_gain";
+type Goal = "aggressive_loss" | "moderate_loss" | "mild_loss" | "maintain" | "recomp" | "lean_gain" | "muscle_gain";
 type WorkoutRow = { type: string; durationMin: number; sessionsPerWeek: number };
-
 const WORKOUT_TYPES = ["strength", "run_slow", "run_fast", "cycling", "hiit", "yoga", "swim", "walk", "sport"];
 
 type State = {
-  firstName: string;
-  age: string;
-  sex: "" | "male" | "female";
-  weight: string;
-  height: string;
-  bodyFat: string;
+  firstName: string; age: string; sex: "" | "male" | "female"; weight: string; height: string; bodyFat: string;
   goal: "" | Goal;
-  occupationType: "" | "desk" | "mixed" | "standing" | "physical";
-  workHoursPerDay: string;
+  occupationType: "" | "desk" | "mixed" | "standing" | "physical"; workHoursPerDay: string;
   lifestyleActivity: "" | "sedentary" | "light" | "moderate" | "active";
   weeklyWorkouts: WorkoutRow[];
-  dietaryPreference: "" | "none" | "vegetarian" | "vegan" | "pescatarian" | "keto";
-  allergies: string;
+  dietaryPreference: "" | "none" | "vegetarian" | "vegan" | "pescatarian" | "keto"; allergies: string;
   coachingStyle: "gentle" | "motivating" | "analytical";
 };
 
-function StepShell({ progress, children }: { progress: number; children: ReactNode }) {
+type Msg = { id: number; role: "bot" | "user"; node: ReactNode };
+
+/* ── Free-text input that LLM-parses into structured fields ── */
+function FreeText({ field, placeholder, onParsed }: {
+  field: string; placeholder: string; onParsed: (data: Record<string, unknown>) => void;
+}) {
+  const parse = useAction(api.ai.parseOnboarding);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    try {
+      const data = await parse({ field, text: text.trim() });
+      onParsed(data);
+      setText("");
+    } catch { /* keep text so user can retry / use widgets */ }
+    finally { setBusy(false); }
+  }
+
   return (
-    <div className="min-h-dvh w-full bg-bg flex flex-col">
-      <div className="sticky top-0 z-10 bg-bg/95 backdrop-blur-sm border-b border-border">
-        <div className="max-w-xl mx-auto px-5 py-4 flex items-center gap-3">
-          <span className="text-[12px] font-bold uppercase tracking-wider text-text-muted">Stride</span>
-          <div className="flex-1 h-1.5 rounded-full bg-border overflow-hidden">
-            <motion.div className="h-full bg-ink rounded-full" initial={false} animate={{ width: `${progress * 100}%` }} transition={SPRING} />
-          </div>
-          <span className="text-[12px] font-semibold text-text-muted">{Math.round(progress * 100)}%</span>
-        </div>
-      </div>
-      <div className="flex-1 flex items-center justify-center p-5 lg:p-8">
-        <div className="w-full max-w-md">{children}</div>
-      </div>
+    <div className="flex items-center gap-2 rounded-2xl border border-border bg-card-elev px-3 py-2">
+      <Sparkles className="h-4 w-4 text-lavender shrink-0" strokeWidth={2} />
+      <input
+        value={text} onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+        placeholder={placeholder}
+        aria-label="Describe in your own words"
+        className="flex-1 min-w-0 bg-transparent outline-none text-[14px] text-text placeholder:text-text-subtle"
+      />
+      <button type="button" onClick={submit} disabled={busy || !text.trim()} aria-label="Send"
+        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:opacity-40">
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-3.5 w-3.5" strokeWidth={2.5} />}
+      </button>
     </div>
   );
 }
 
-function NavRow({ canBack, canNext, nextLabel, loading, onBack, onNext }: {
-  canBack: boolean; canNext: boolean; nextLabel?: string; loading?: boolean;
-  onBack: () => void; onNext: () => void;
+function Choices<T extends string>({ options, value, onPick, cols = 2 }: {
+  options: { value: T; label: string; sub?: string }[]; value: T | ""; onPick: (v: T) => void; cols?: 2 | 3;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 pt-4">
-      <button type="button" onClick={onBack} disabled={!canBack}
-        className={cn("inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-[13px] font-semibold transition-colors", canBack ? "text-text hover:bg-card-elev" : "text-text-subtle cursor-not-allowed")}>
-        <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} /> Back
-      </button>
-      <button type="button" onClick={onNext} disabled={!canNext || loading}
-        className={cn("inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-2.5 text-[14px] font-semibold transition-opacity", (!canNext || loading) && "opacity-50")}>
-        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <>{nextLabel ?? "Next"} {!nextLabel && <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />}</>}
-      </button>
-    </div>
-  );
-}
-
-function ChoiceGrid<T extends string>({ options, value, onChange, cols = 2 }: {
-  options: { value: T; label: string; sub?: string }[];
-  value: T | ""; onChange: (v: T) => void; cols?: 2 | 3;
-}) {
-  return (
-    <div className={cn("grid gap-2.5", cols === 2 ? "grid-cols-2" : "grid-cols-3")}>
+    <div className={cn("grid gap-2", cols === 2 ? "grid-cols-2" : "grid-cols-3")}>
       {options.map((o) => {
         const active = value === o.value;
         return (
-          <button key={o.value} type="button" onClick={() => onChange(o.value)} aria-pressed={active}
-            className={cn("rounded-2xl border p-4 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lavender", active ? "bg-lavender/15 border-lavender" : "bg-card border-border hover:border-border-strong")}>
-            <div className="flex items-center justify-between">
-              <span className="text-[14px] font-bold text-text">{o.label}</span>
-              {active && <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-lavender"><Check className="h-3 w-3 text-ink" strokeWidth={2.5} /></span>}
+          <button key={o.value} type="button" onClick={() => onPick(o.value)} aria-pressed={active}
+            className={cn("rounded-2xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lavender",
+              active ? "bg-lavender/15 border-lavender" : "bg-card border-border hover:border-border-strong")}>
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[13.5px] font-bold text-text">{o.label}</span>
+              {active && <Check className="h-3.5 w-3.5 text-lavender shrink-0" strokeWidth={2.5} />}
             </div>
-            {o.sub && <p className="text-[12px] text-text-muted mt-1">{o.sub}</p>}
+            {o.sub && <p className="text-[11.5px] text-text-muted mt-0.5">{o.sub}</p>}
           </button>
         );
       })}
@@ -96,12 +87,20 @@ function ChoiceGrid<T extends string>({ options, value, onChange, cols = 2 }: {
   );
 }
 
-function BreakdownRow({ label, value }: { label: string; value: string | number }) {
+const FieldInput = ({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) => (
+  <label className="flex flex-col gap-1">
+    <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{label}</span>
+    <input type="number" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      className="w-full rounded-xl bg-card border border-border focus:border-lavender outline-none px-3 py-2 text-[14px]" />
+  </label>
+);
+
+function PrimaryBtn({ onClick, disabled, children }: { onClick: () => void; disabled?: boolean; children: ReactNode }) {
   return (
-    <div className="flex items-baseline justify-between py-1.5 border-b border-border last:border-0">
-      <span className="text-[13px] text-text-muted">{label}</span>
-      <span className="text-[13px] font-semibold text-text">{value}</span>
-    </div>
+    <button type="button" onClick={onClick} disabled={disabled}
+      className={cn("inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-2.5 text-[14px] font-semibold transition-opacity", disabled && "opacity-40")}>
+      {children} <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
+    </button>
   );
 }
 
@@ -111,313 +110,296 @@ export function OnboardingPage() {
   const upsertPlan = useMutation(api.profile.upsertPlanFromOnboarding);
   const upsertSettings = useMutation(api.profile.upsertSettings);
 
-  const [step, setStep] = useState<Step>("intro");
+  const [phase, setPhase] = useState<Phase>("name");
   const [state, setState] = useState<State>({
     firstName: user?.firstName ?? "", age: "", sex: "", weight: "", height: "", bodyFat: "",
     goal: "", occupationType: "", workHoursPerDay: "8", lifestyleActivity: "", weeklyWorkouts: [],
     dietaryPreference: "", allergies: "", coachingStyle: "gentle",
   });
-  const [submitting, setSubmitting] = useState(false);
-
-  const idx = STEPS.indexOf(step);
-  const progress = (idx + 1) / STEPS.length;
   const set = <K extends keyof State>(k: K, v: State[K]) => setState((s) => ({ ...s, [k]: v }));
-  const next = () => { const i = STEPS.indexOf(step); if (i < STEPS.length - 1) setStep(STEPS[i + 1]); };
-  const back = () => { const i = STEPS.indexOf(step); if (i > 0) setStep(STEPS[i - 1]); };
 
+  const [thread, setThread] = useState<Msg[]>([]);
+  const [typing, setTyping] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const idRef = useRef(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const started = useRef(false);
+
+  const QUESTIONS: Record<Phase, (s: State) => string> = {
+    name: () => "Hey, I'm Stry 👋 I'll build you a science-based nutrition plan. First — what should I call you?",
+    stats: (s) => `Nice to meet you, ${s.firstName || "friend"}! Tell me your age, weight, height and sex — type it naturally or use the fields.`,
+    goal: () => "What are you aiming for right now?",
+    work: () => "What's a typical day like? Your job, and how active you are outside of workouts.",
+    training: () => "How do you train in a normal week? (Skip if you don't yet.)",
+    diet: () => "Any dietary preferences or things to avoid?",
+    style: () => "Last thing — how should I talk to you?",
+    plan: () => "Amazing. Here's your personalized plan 👇",
+  };
+
+  function botSay(node: ReactNode) {
+    setTyping(true);
+    setTimeout(() => {
+      setTyping(false);
+      setThread((t) => [...t, { id: idRef.current++, role: "bot", node }]);
+    }, 550);
+  }
+  function userSay(node: ReactNode) {
+    setThread((t) => [...t, { id: idRef.current++, role: "user", node }]);
+  }
+  function advance(next: Phase, summary: ReactNode) {
+    userSay(summary);
+    setPhase(next);
+    botSay(QUESTIONS[next](state));
+  }
+
+  // Kick off the conversation once.
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    botSay(QUESTIONS.name(state));
+  }, []);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [thread, typing]);
+
+  // Live plan preview for the final step.
   const statsValid = !!(state.weight && state.height && state.age && state.sex);
-  const planArgs = statsValid
-    ? {
-        weightKg: parseFloat(state.weight),
-        heightCm: parseFloat(state.height),
-        age: parseInt(state.age, 10),
-        sex: state.sex as string,
-        bodyFat: state.bodyFat ? parseFloat(state.bodyFat) : undefined,
-        occupationType: state.occupationType || undefined,
-        workHoursPerDay: state.workHoursPerDay ? parseFloat(state.workHoursPerDay) : undefined,
-        lifestyleActivity: state.lifestyleActivity || undefined,
-        weeklyWorkouts: state.weeklyWorkouts.length ? state.weeklyWorkouts : undefined,
-        goal: state.goal || undefined,
-      }
-    : "skip";
-  // Live transparency preview (reactive, no persistence).
+  const planArgs = statsValid && phase === "plan" ? {
+    weightKg: parseFloat(state.weight), heightCm: parseFloat(state.height), age: parseInt(state.age, 10),
+    sex: state.sex as string, bodyFat: state.bodyFat ? parseFloat(state.bodyFat) : undefined,
+    occupationType: state.occupationType || undefined, workHoursPerDay: state.workHoursPerDay ? parseFloat(state.workHoursPerDay) : undefined,
+    lifestyleActivity: state.lifestyleActivity || undefined, weeklyWorkouts: state.weeklyWorkouts.length ? state.weeklyWorkouts : undefined,
+    goal: state.goal || undefined,
+  } : "skip";
   const plan = useQuery(api.profile.calculateNutritionPlan, planArgs as any) as any;
-
-  function addWorkout() {
-    set("weeklyWorkouts", [...state.weeklyWorkouts, { type: "strength", durationMin: 60, sessionsPerWeek: 3 }]);
-  }
-  function updateWorkout(i: number, patch: Partial<WorkoutRow>) {
-    set("weeklyWorkouts", state.weeklyWorkouts.map((w, k) => (k === i ? { ...w, ...patch } : w)));
-  }
 
   async function finish() {
     setSubmitting(true);
     try {
       if (statsValid) {
         await upsertPlan({
-          ...(planArgs as object),
-          date: new Date().toISOString().slice(0, 10),
-          dietaryPreference: state.dietaryPreference || undefined,
-          allergies: state.allergies || undefined,
+          weightKg: parseFloat(state.weight), heightCm: parseFloat(state.height), age: parseInt(state.age, 10),
+          sex: state.sex as string, bodyFat: state.bodyFat ? parseFloat(state.bodyFat) : undefined,
+          occupationType: state.occupationType || undefined, workHoursPerDay: state.workHoursPerDay ? parseFloat(state.workHoursPerDay) : undefined,
+          lifestyleActivity: state.lifestyleActivity || undefined, weeklyWorkouts: state.weeklyWorkouts.length ? state.weeklyWorkouts : undefined,
+          goal: state.goal || undefined, date: new Date().toISOString().slice(0, 10),
+          dietaryPreference: state.dietaryPreference || undefined, allergies: state.allergies || undefined,
         } as any);
       }
       await upsertSettings({ coachingStyle: state.coachingStyle }).catch(() => {});
-      localStorage.setItem("stride.prefs.v1", JSON.stringify({ units: "metric", notifications: true, reduceMotion: false, coachingStyle: state.coachingStyle }));
       navigate("/");
-    } catch (err) {
-      console.error("Onboarding plan save failed:", err);
+    } catch (e) {
+      console.error("Onboarding save failed", e);
       navigate("/");
     } finally { setSubmitting(false); }
   }
 
-  return (
-    <StepShell progress={progress}>
-      <AnimatePresence mode="wait">
-        <motion.div key={step} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={SPRING} className="space-y-6">
+  function addWorkout() { set("weeklyWorkouts", [...state.weeklyWorkouts, { type: "strength", durationMin: 60, sessionsPerWeek: 3 }]); }
+  function updateWorkout(i: number, patch: Partial<WorkoutRow>) {
+    set("weeklyWorkouts", state.weeklyWorkouts.map((w, k) => (k === i ? { ...w, ...patch } : w)));
+  }
 
-          {step === "intro" && (
-            <div className="space-y-5 text-center">
-              <div className="w-40 h-40 mx-auto rounded-full bg-lavender overflow-hidden relative">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <VoxelAgent agent="main" size={160} state="idle" />
+  const GOALS: { value: Goal; label: string; sub: string }[] = [
+    { value: "aggressive_loss", label: "Lose fat fast", sub: "~25% deficit" },
+    { value: "moderate_loss", label: "Lose fat", sub: "~18% deficit" },
+    { value: "maintain", label: "Maintain", sub: "Stay here" },
+    { value: "recomp", label: "Recomp", sub: "Lose fat, build muscle" },
+    { value: "lean_gain", label: "Lean gain", sub: "~10% surplus" },
+    { value: "muscle_gain", label: "Build muscle", sub: "~18% surplus" },
+  ];
+
+  return (
+    <div className="min-h-dvh w-full bg-bg flex flex-col">
+      {/* Thread */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto" aria-live="polite">
+        <div className="max-w-xl mx-auto px-4 py-6 space-y-3">
+          <AnimatePresence initial={false}>
+            {thread.map((m) => (
+              <motion.div key={m.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                className={cn("flex items-end gap-2", m.role === "user" ? "justify-end" : "justify-start")}>
+                {m.role === "bot" && (
+                  <div className="h-8 w-8 shrink-0 rounded-full bg-lavender overflow-hidden grid place-items-center">
+                    <VoxelAgent agent="main" size={32} state="idle" />
+                  </div>
+                )}
+                <div className={cn("max-w-[80%] rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed",
+                  m.role === "user" ? "bg-ink text-text-on-ink rounded-br-md" : "bg-card border border-border text-text rounded-bl-md")}>
+                  {m.node}
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+          {typing && (
+            <div className="flex items-end gap-2">
+              <div className="h-8 w-8 shrink-0 rounded-full bg-lavender overflow-hidden grid place-items-center">
+                <VoxelAgent agent="main" size={32} state="idle" />
+              </div>
+              <div className="rounded-2xl rounded-bl-md bg-card border border-border px-4 py-3 flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <motion.span key={i} className="h-1.5 w-1.5 rounded-full bg-text-muted"
+                    animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Composer — changes per phase */}
+      {!typing && (
+        <div className="border-t border-border bg-bg/95 backdrop-blur-sm">
+          <div className="max-w-xl mx-auto px-4 py-4 space-y-3">
+            {phase === "name" && (
+              <div className="flex items-center gap-2">
+                <input autoFocus value={state.firstName} onChange={(e) => set("firstName", e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && state.firstName.trim()) advance("stats", state.firstName); }}
+                  placeholder="Your name" aria-label="Your name"
+                  className="flex-1 rounded-2xl bg-card border border-border focus:border-lavender outline-none px-4 py-3 text-[15px]" />
+                <PrimaryBtn onClick={() => advance("stats", state.firstName)} disabled={!state.firstName.trim()}>Next</PrimaryBtn>
+              </div>
+            )}
+
+            {phase === "stats" && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <FieldInput label="Age" value={state.age} onChange={(v) => set("age", v)} placeholder="28" />
+                  <FieldInput label="Weight (kg)" value={state.weight} onChange={(v) => set("weight", v)} placeholder="65" />
+                  <FieldInput label="Height (cm)" value={state.height} onChange={(v) => set("height", v)} placeholder="170" />
+                  <FieldInput label="Body fat % (opt)" value={state.bodyFat} onChange={(v) => set("bodyFat", v)} placeholder="18" />
+                </div>
+                <Choices options={[{ value: "female", label: "Female" }, { value: "male", label: "Male" }]} value={state.sex} onPick={(v) => set("sex", v)} />
+                <FreeText field="stats" placeholder="…or: 28yo male, 80kg, 178cm" onParsed={(d) => {
+                  if (d.age != null) set("age", String(d.age));
+                  if (d.weightKg != null) set("weight", String(Math.round(Number(d.weightKg) * 10) / 10));
+                  if (d.heightCm != null) set("height", String(Math.round(Number(d.heightCm))));
+                  if (d.sex === "male" || d.sex === "female") set("sex", d.sex);
+                  if (d.bodyFat != null) set("bodyFat", String(d.bodyFat));
+                }} />
+                <div className="flex justify-end">
+                  <PrimaryBtn onClick={() => advance("goal", `${state.age}y · ${state.weight}kg · ${state.height}cm · ${state.sex}`)} disabled={!statsValid}>Continue</PrimaryBtn>
                 </div>
               </div>
-              <div className="space-y-2">
-                <h1 className="text-display text-text leading-[1.05]">Hi, I'm Stry.</h1>
-                <p className="text-[16px] text-text-muted leading-relaxed max-w-[34ch] mx-auto">
-                  A few quick questions and I'll build your science-based calorie + macro plan.
-                </p>
+            )}
+
+            {phase === "goal" && (
+              <>
+                <Choices cols={3} options={GOALS} value={state.goal} onPick={(v) => { set("goal", v); advance("work", GOALS.find((g) => g.value === v)!.label); }} />
+                <FreeText field="goal" placeholder="…or describe your goal" onParsed={(d) => {
+                  const g = d.goal as Goal; if (g && GOALS.some((x) => x.value === g)) { set("goal", g); advance("work", GOALS.find((x) => x.value === g)!.label); }
+                }} />
+              </>
+            )}
+
+            {phase === "work" && (
+              <div className="space-y-3">
+                <Choices options={[
+                  { value: "desk", label: "Desk", sub: "Mostly seated" }, { value: "mixed", label: "Mixed", sub: "Sit + move" },
+                  { value: "standing", label: "Standing", sub: "On feet" }, { value: "physical", label: "Physical", sub: "Manual labor" },
+                ]} value={state.occupationType} onPick={(v) => set("occupationType", v)} />
+                <div className="grid grid-cols-2 gap-2 items-end">
+                  <FieldInput label="Work hrs/day" value={state.workHoursPerDay} onChange={(v) => set("workHoursPerDay", v)} placeholder="8" />
+                </div>
+                <Choices options={[
+                  { value: "sedentary", label: "Sedentary" }, { value: "light", label: "Light" },
+                  { value: "moderate", label: "Moderate" }, { value: "active", label: "Active" },
+                ]} value={state.lifestyleActivity} onPick={(v) => set("lifestyleActivity", v)} />
+                <FreeText field="work" placeholder="…or: desk job 9h, fairly lazy otherwise" onParsed={(d) => {
+                  if (d.occupationType) set("occupationType", d.occupationType as State["occupationType"]);
+                  if (d.workHoursPerDay != null) set("workHoursPerDay", String(d.workHoursPerDay));
+                  if (d.lifestyleActivity) set("lifestyleActivity", d.lifestyleActivity as State["lifestyleActivity"]);
+                }} />
+                <div className="flex justify-end">
+                  <PrimaryBtn onClick={() => advance("training", `${state.occupationType || "desk"} job · ${state.lifestyleActivity || "moderate"}`)} disabled={!state.occupationType || !state.lifestyleActivity}>Continue</PrimaryBtn>
+                </div>
               </div>
-              <button type="button" onClick={next} className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-6 py-3 text-[14px] font-semibold mx-auto">
-                Let's start <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>
-            </div>
-          )}
+            )}
 
-          {step === "name" && (
-            <div className="space-y-5">
-              <div><h2 className="text-h1 text-text">What should I call you?</h2><p className="text-[14px] text-text-muted mt-1">Just a first name is fine.</p></div>
-              <input autoFocus type="text" value={state.firstName} onChange={(e) => set("firstName", e.target.value)} placeholder="Sandra"
-                className="w-full rounded-2xl bg-card border border-border focus:border-lavender outline-none px-4 py-3.5 text-[16px] text-text placeholder:text-text-subtle" />
-              <NavRow canBack canNext={state.firstName.trim().length >= 1} onBack={back} onNext={next} />
-            </div>
-          )}
-
-          {step === "stats" && (
-            <div className="space-y-5">
-              <div><h2 className="text-h1 text-text">A few basics</h2><p className="text-[14px] text-text-muted mt-1">Required for accurate targets. Body fat is optional (enables a more precise formula).</p></div>
-              <div className="grid grid-cols-2 gap-2.5">
-                {[
-                  { label: "Age", key: "age" as const, placeholder: "28" },
-                  { label: "Weight (kg)", key: "weight" as const, placeholder: "65" },
-                  { label: "Height (cm)", key: "height" as const, placeholder: "170" },
-                  { label: "Body fat % (optional)", key: "bodyFat" as const, placeholder: "18" },
-                ].map(({ label, key, placeholder }) => (
-                  <label key={key} className="block space-y-1.5">
-                    <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">{label}</span>
-                    <input type="number" value={state[key]} onChange={(e) => set(key, e.target.value)} placeholder={placeholder}
-                      className="w-full rounded-2xl bg-card border border-border focus:border-lavender outline-none px-4 py-3 text-[15px]" />
-                  </label>
-                ))}
-                <label className="block space-y-1.5 col-span-2">
-                  <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Sex</span>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(["female", "male"] as const).map((s) => (
-                      <button key={s} type="button" onClick={() => set("sex", s)} aria-pressed={state.sex === s}
-                        className={cn("rounded-2xl border py-3 text-[13px] font-semibold capitalize transition-colors", state.sex === s ? "bg-lavender/15 border-lavender text-text" : "bg-card border-border text-text-muted")}>
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                </label>
-              </div>
-              <NavRow canBack canNext={statsValid} onBack={back} onNext={next} />
-            </div>
-          )}
-
-          {step === "goal" && (
-            <div className="space-y-5">
-              <div><h2 className="text-h1 text-text">What's your goal?</h2><p className="text-[14px] text-text-muted mt-1">I'll set your calorie adjustment around this.</p></div>
-              <ChoiceGrid<Goal> value={state.goal} onChange={(v) => set("goal", v)} options={[
-                { value: "aggressive_loss", label: "Lose fat fast", sub: "~25% deficit" },
-                { value: "moderate_loss", label: "Lose fat", sub: "~18% deficit" },
-                { value: "maintain", label: "Maintain", sub: "Stay where I am" },
-                { value: "recomp", label: "Recomp", sub: "Slight deficit, build muscle" },
-                { value: "lean_gain", label: "Lean gain", sub: "~10% surplus" },
-                { value: "muscle_gain", label: "Build muscle", sub: "~18% surplus" },
-              ]} />
-              <NavRow canBack canNext={!!state.goal} onBack={back} onNext={next} />
-            </div>
-          )}
-
-          {step === "work" && (
-            <div className="space-y-5">
-              <div><h2 className="text-h1 text-text">Your typical day</h2><p className="text-[14px] text-text-muted mt-1">Work and lifestyle drive non-exercise burn (NEAT).</p></div>
-              <div className="space-y-1.5">
-                <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Occupation</span>
-                <ChoiceGrid<NonNullable<State["occupationType"]>> value={state.occupationType} onChange={(v) => set("occupationType", v)} options={[
-                  { value: "desk", label: "Desk", sub: "Mostly seated" },
-                  { value: "mixed", label: "Mixed", sub: "Sit + move" },
-                  { value: "standing", label: "Standing", sub: "On feet" },
-                  { value: "physical", label: "Physical", sub: "Manual labor" },
-                ]} />
-              </div>
-              <label className="block space-y-1.5">
-                <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Work hours / day</span>
-                <input type="number" min={0} max={16} value={state.workHoursPerDay} onChange={(e) => set("workHoursPerDay", e.target.value)} placeholder="8"
-                  className="w-full rounded-2xl bg-card border border-border focus:border-lavender outline-none px-4 py-3 text-[15px]" />
-              </label>
-              <div className="space-y-1.5">
-                <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Off-work lifestyle</span>
-                <ChoiceGrid<NonNullable<State["lifestyleActivity"]>> value={state.lifestyleActivity} onChange={(v) => set("lifestyleActivity", v)} options={[
-                  { value: "sedentary", label: "Sedentary" },
-                  { value: "light", label: "Light" },
-                  { value: "moderate", label: "Moderate" },
-                  { value: "active", label: "Active" },
-                ]} />
-              </div>
-              <NavRow canBack canNext={!!state.occupationType && !!state.lifestyleActivity} onBack={back} onNext={next} />
-            </div>
-          )}
-
-          {step === "training" && (
-            <div className="space-y-5">
-              <div><h2 className="text-h1 text-text">Weekly training</h2><p className="text-[14px] text-text-muted mt-1">Add the workouts you do most weeks. Drives exercise burn (EAT).</p></div>
+            {phase === "training" && (
               <div className="space-y-2">
                 {state.weeklyWorkouts.map((w, i) => (
-                  <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] items-end gap-1.5 rounded-2xl border border-border p-2.5">
-                    <label className="flex flex-col gap-0.5">
-                      <span className="text-[10px] text-text-muted">Type</span>
-                      <select value={w.type} onChange={(e) => updateWorkout(i, { type: e.target.value })}
-                        className="bg-input border border-border rounded-lg px-2 py-1.5 text-[13px] text-text focus:outline-none focus:border-lavender">
-                        {WORKOUT_TYPES.map((t) => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
-                      </select>
-                    </label>
-                    <label className="flex flex-col gap-0.5 w-16">
-                      <span className="text-[10px] text-text-muted">Min</span>
-                      <input type="number" min={1} value={w.durationMin} onChange={(e) => updateWorkout(i, { durationMin: Math.max(1, Number(e.target.value) || 0) })}
-                        className="bg-input border border-border rounded-lg px-2 py-1.5 text-[13px] text-text focus:outline-none focus:border-lavender" />
-                    </label>
-                    <label className="flex flex-col gap-0.5 w-16">
-                      <span className="text-[10px] text-text-muted">×/wk</span>
-                      <input type="number" min={1} max={14} value={w.sessionsPerWeek} onChange={(e) => updateWorkout(i, { sessionsPerWeek: Math.max(1, Number(e.target.value) || 0) })}
-                        className="bg-input border border-border rounded-lg px-2 py-1.5 text-[13px] text-text focus:outline-none focus:border-lavender" />
-                    </label>
-                    <button type="button" aria-label="Remove workout" onClick={() => set("weeklyWorkouts", state.weeklyWorkouts.filter((_, k) => k !== i))}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
-                      <Trash2 className="h-4 w-4" strokeWidth={2} />
-                    </button>
+                  <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] items-end gap-1.5 rounded-xl border border-border p-2">
+                    <select value={w.type} onChange={(e) => updateWorkout(i, { type: e.target.value })} aria-label="Workout type"
+                      className="bg-input border border-border rounded-lg px-2 py-1.5 text-[13px] focus:outline-none focus:border-lavender">
+                      {WORKOUT_TYPES.map((t) => <option key={t} value={t}>{t.replace("_", " ")}</option>)}
+                    </select>
+                    <input type="number" min={1} value={w.durationMin} aria-label="Minutes" onChange={(e) => updateWorkout(i, { durationMin: Math.max(1, +e.target.value || 0) })}
+                      className="w-14 bg-input border border-border rounded-lg px-2 py-1.5 text-[13px] focus:outline-none focus:border-lavender" />
+                    <input type="number" min={1} value={w.sessionsPerWeek} aria-label="Sessions per week" onChange={(e) => updateWorkout(i, { sessionsPerWeek: Math.max(1, +e.target.value || 0) })}
+                      className="w-14 bg-input border border-border rounded-lg px-2 py-1.5 text-[13px] focus:outline-none focus:border-lavender" />
+                    <button type="button" aria-label="Remove" onClick={() => set("weeklyWorkouts", state.weeklyWorkouts.filter((_, k) => k !== i))}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:text-bubblegum"><Trash2 className="h-4 w-4" strokeWidth={2} /></button>
                   </div>
                 ))}
-                <button type="button" onClick={addWorkout}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-4 py-2 text-[13px] font-semibold text-text hover:border-lavender">
+                <button type="button" onClick={addWorkout} className="inline-flex items-center gap-1 text-[13px] font-semibold text-text-muted hover:text-text">
                   <Plus className="h-3.5 w-3.5" strokeWidth={2} /> Add workout
                 </button>
-              </div>
-              <NavRow canBack canNext onBack={back} onNext={next} />
-            </div>
-          )}
-
-          {step === "diet" && (
-            <div className="space-y-5">
-              <div><h2 className="text-h1 text-text">Any dietary preferences?</h2><p className="text-[14px] text-text-muted mt-1">I won't suggest foods that don't fit.</p></div>
-              <ChoiceGrid<NonNullable<State["dietaryPreference"]>> value={state.dietaryPreference} onChange={(v) => set("dietaryPreference", v)} options={[
-                { value: "none", label: "No preference" },
-                { value: "vegetarian", label: "Vegetarian" },
-                { value: "vegan", label: "Vegan" },
-                { value: "pescatarian", label: "Pescatarian" },
-                { value: "keto", label: "Keto" },
-              ]} />
-              <label className="block space-y-1.5">
-                <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Allergies / avoid (optional)</span>
-                <input type="text" value={state.allergies} onChange={(e) => set("allergies", e.target.value)} placeholder="peanuts, shellfish, gluten…"
-                  className="w-full rounded-2xl bg-card border border-border focus:border-lavender outline-none px-4 py-3 text-[15px]" />
-              </label>
-              <NavRow canBack canNext={!!state.dietaryPreference} onBack={back} onNext={next} />
-            </div>
-          )}
-
-          {step === "style" && (
-            <div className="space-y-5">
-              <div><h2 className="text-h1 text-text">How should I talk to you?</h2><p className="text-[14px] text-text-muted mt-1">You can change this anytime.</p></div>
-              <div className="grid grid-cols-1 gap-2.5">
-                {[
-                  { value: "gentle", label: "Gentle", sub: "Warm, low-pressure", example: "Got it — that's a good step." },
-                  { value: "motivating", label: "Motivating", sub: "High-energy, celebrates wins", example: "Logged it — you're on fire!" },
-                  { value: "analytical", label: "Analytical", sub: "Data-first, precise", example: "Logged. 3rd entry today, +22% pace." },
-                ].map((p) => {
-                  const active = state.coachingStyle === p.value;
-                  return (
-                    <button key={p.value} type="button" onClick={() => set("coachingStyle", p.value as State["coachingStyle"])} aria-pressed={active}
-                      className={cn("rounded-2xl border p-4 text-left transition-all", active ? "bg-lavender/15 border-lavender" : "bg-card border-border hover:border-border-strong")}>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[14px] font-bold text-text">{p.label}</span>
-                        {active && <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-lavender"><Check className="h-3 w-3 text-ink" strokeWidth={2.5} /></span>}
-                      </div>
-                      <p className="text-[12px] text-text-muted mt-0.5">{p.sub}</p>
-                      <p className="text-[12.5px] italic text-text mt-1.5">"{p.example}"</p>
-                    </button>
-                  );
-                })}
-              </div>
-              <NavRow canBack canNext onBack={back} onNext={next} />
-            </div>
-          )}
-
-          {step === "plan" && (
-            <div className="space-y-5">
-              <div><h2 className="text-h1 text-text">Your plan</h2><p className="text-[14px] text-text-muted mt-1">Built from your inputs — fully transparent.</p></div>
-              {!plan ? (
-                <div className="py-10 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-text-muted" /></div>
-              ) : (
-                <>
-                  <div className="flex flex-col items-center gap-3 rounded-2xl bg-card border border-border p-5">
-                    <span className="text-[40px] font-extrabold text-text leading-none">{plan.calories}</span>
-                    <span className="text-[13px] text-text-muted -mt-2">kcal / day</span>
-                    <MacroDonut kcal={plan.calories} protein={plan.protein} carbs={plan.carbs} fat={plan.fat} />
-                    <div className="flex gap-4 text-[13px]">
-                      <span className="text-text"><b>{plan.protein}g</b> <span className="text-text-muted">P · {plan.percentages.protein}%</span></span>
-                      <span className="text-text"><b>{plan.carbs}g</b> <span className="text-text-muted">C · {plan.percentages.carbs}%</span></span>
-                      <span className="text-text"><b>{plan.fat}g</b> <span className="text-text-muted">F · {plan.percentages.fat}%</span></span>
-                    </div>
-                  </div>
-                  <div className="rounded-2xl bg-card border border-border p-4">
-                    <p className="text-[12px] font-bold uppercase tracking-wider text-text-muted mb-1">About this calculation</p>
-                    <BreakdownRow label="BMR (resting)" value={`${plan.breakdown.bmr} kcal`} />
-                    <BreakdownRow label="NEAT — job" value={`+${plan.breakdown.neatJob} kcal`} />
-                    <BreakdownRow label="NEAT — lifestyle" value={`+${plan.breakdown.neatLifestyle} kcal`} />
-                    <BreakdownRow label="EAT — workouts (avg/day)" value={`+${plan.breakdown.eat} kcal`} />
-                    <BreakdownRow label="Thermic effect of food" value={`+${plan.breakdown.tef} kcal`} />
-                    <BreakdownRow label="Maintenance (TDEE)" value={`${plan.breakdown.finalTDEE} kcal`} />
-                    <BreakdownRow label="Goal adjustment" value={`${plan.breakdown.goalAdjustment >= 0 ? "+" : ""}${plan.breakdown.goalAdjustment} kcal`} />
-                  </div>
-                </>
-              )}
-              <NavRow canBack canNext={!!plan} onBack={back} onNext={next} nextLabel="Looks good" />
-            </div>
-          )}
-
-          {step === "wrap" && (
-            <div className="space-y-6 text-center">
-              <div className="w-32 h-32 mx-auto rounded-full bg-mint overflow-hidden relative">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <VoxelAgent agent="main" size={120} state="idle" />
+                <FreeText field="training" placeholder="…or: lift 4x/week ~1h, run twice 30min" onParsed={(d) => {
+                  const ws = d.weeklyWorkouts as WorkoutRow[]; if (Array.isArray(ws) && ws.length) set("weeklyWorkouts", ws);
+                }} />
+                <div className="flex justify-end">
+                  <PrimaryBtn onClick={() => advance("diet", state.weeklyWorkouts.length ? `${state.weeklyWorkouts.reduce((s, w) => s + w.sessionsPerWeek, 0)} sessions/wk` : "No regular training")}>Continue</PrimaryBtn>
                 </div>
               </div>
-              <div className="space-y-2">
-                <h2 className="text-h1 text-text">All set, {state.firstName || "friend"}.</h2>
-                <p className="text-[15px] text-text-muted leading-relaxed max-w-[34ch] mx-auto">
-                  Your plan is saved. Log a meal, paste a photo, or just say what's on your mind.
-                </p>
+            )}
+
+            {phase === "diet" && (
+              <div className="space-y-3">
+                <Choices cols={3} options={[
+                  { value: "none", label: "No pref" }, { value: "vegetarian", label: "Vegetarian" }, { value: "vegan", label: "Vegan" },
+                  { value: "pescatarian", label: "Pescatarian" }, { value: "keto", label: "Keto" },
+                ]} value={state.dietaryPreference} onPick={(v) => set("dietaryPreference", v)} />
+                <input value={state.allergies} onChange={(e) => set("allergies", e.target.value)} placeholder="Allergies / avoid (optional)"
+                  className="w-full rounded-2xl bg-card border border-border focus:border-lavender outline-none px-4 py-2.5 text-[14px]" />
+                <FreeText field="diet" placeholder="…or: vegetarian, allergic to peanuts" onParsed={(d) => {
+                  if (d.dietaryPreference) set("dietaryPreference", d.dietaryPreference as State["dietaryPreference"]);
+                  if (d.allergies) set("allergies", String(d.allergies));
+                }} />
+                <div className="flex justify-end">
+                  <PrimaryBtn onClick={() => advance("style", `${state.dietaryPreference || "no pref"}${state.allergies ? ` · avoid ${state.allergies}` : ""}`)} disabled={!state.dietaryPreference}>Continue</PrimaryBtn>
+                </div>
               </div>
-              <button type="button" onClick={finish} disabled={submitting}
-                className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-6 py-3 text-[14px] font-semibold disabled:opacity-50 mx-auto">
-                {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <>Take me home <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} /></>}
-              </button>
-            </div>
-          )}
-        </motion.div>
-      </AnimatePresence>
-    </StepShell>
+            )}
+
+            {phase === "style" && (
+              <Choices cols={3} options={[
+                { value: "gentle", label: "Gentle", sub: "Warm" }, { value: "motivating", label: "Motivating", sub: "High-energy" }, { value: "analytical", label: "Analytical", sub: "Data-first" },
+              ]} value={state.coachingStyle} onPick={(v) => { set("coachingStyle", v as State["coachingStyle"]); advance("plan", `${v} coaching`); }} />
+            )}
+
+            {phase === "plan" && (
+              <div className="space-y-3">
+                {!plan ? (
+                  <div className="py-6 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-text-muted" /></div>
+                ) : (
+                  <div className="rounded-2xl border border-border bg-card p-4 space-y-3">
+                    <div className="flex items-center gap-4">
+                      <MacroDonut kcal={plan.calories} protein={plan.protein} carbs={plan.carbs} fat={plan.fat} />
+                      <div>
+                        <p className="text-[28px] font-extrabold text-text leading-none">{plan.calories}</p>
+                        <p className="text-[12px] text-text-muted">kcal / day</p>
+                        <p className="text-[12px] text-text mt-1">P {plan.protein}g · C {plan.carbs}g · F {plan.fat}g</p>
+                      </div>
+                    </div>
+                    <details className="text-[12px] text-text-muted">
+                      <summary className="cursor-pointer font-semibold text-text">About this calculation</summary>
+                      <div className="mt-1 space-y-0.5">
+                        <div>BMR {plan.breakdown.bmr} · NEAT job +{plan.breakdown.neatJob} · NEAT lifestyle +{plan.breakdown.neatLifestyle}</div>
+                        <div>Workouts +{plan.breakdown.eat} · TEF +{plan.breakdown.tef} → TDEE {plan.breakdown.finalTDEE}</div>
+                        <div>Goal adjustment {plan.breakdown.goalAdjustment >= 0 ? "+" : ""}{plan.breakdown.goalAdjustment}</div>
+                      </div>
+                    </details>
+                  </div>
+                )}
+                <button type="button" onClick={finish} disabled={submitting || !plan}
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-3 text-[14px] font-semibold disabled:opacity-50">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Start using Stride <ArrowRight className="h-4 w-4" strokeWidth={2} /></>}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
