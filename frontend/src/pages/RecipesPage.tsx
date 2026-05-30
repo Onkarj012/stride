@@ -6,7 +6,7 @@ import { api } from "@convex/_generated/api";
 import { Plus, Trash2, Utensils, ChefHat, X, Sparkles, Loader2 } from "lucide-react";
 import { Card } from "@/components/primitives/Card";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { FoodSearch, type PickedFood } from "@/components/food/FoodSearch";
+import { type PickedFood } from "@/components/food/FoodSearch";
 import { useToast } from "@/context/ToastContext";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { localDateStr } from "@/lib/utils";
@@ -60,7 +60,7 @@ function Modal({ open, onClose, children }: { open: boolean; onClose: () => void
             animate={isLarge ? { opacity: 1, scale: 1, y: 0 } : { y: 0 }}
             exit={isLarge ? { opacity: 0, scale: 0.96, y: 4 } : { y: "100%" }}
             transition={{ type: "spring", stiffness: 320, damping: 30 }}
-            className="w-full md:max-w-lg max-h-[90dvh] overflow-y-auto rounded-t-3xl md:rounded-3xl bg-card border border-border shadow-[var(--shadow-elev)]">
+            className="w-full md:max-w-2xl max-h-[90dvh] overflow-y-auto rounded-t-3xl md:rounded-3xl bg-card border border-border shadow-[var(--shadow-elev)]">
             {children}
           </motion.div>
         </motion.div>
@@ -94,16 +94,62 @@ function StepsEditor({ steps, onChange }: { steps: string[]; onChange: (s: strin
   );
 }
 
-/* ── Editable ingredient list (remove + search add + custom) ── */
+/* ── AI natural-language ingredient input (no DB lookups, handles real portions) ── */
+function AIIngredientInput({ onAdd }: { onAdd: (items: PickedFood[]) => void }) {
+  const parse = useAction(api.ai.parseIngredients);
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    const v = text.trim();
+    if (!v || busy) return;
+    setBusy(true);
+    try {
+      const items = await parse({ text: v });
+      if (items.length === 0) toast.error("Couldn't read that — try rephrasing");
+      else { onAdd(items); setText(""); }
+    } catch (e) {
+      toast.error("Couldn't reach AI", e instanceof Error ? e.message : undefined);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="relative">
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); } }}
+          placeholder="Add ingredients in plain language — “2 eggs, a banana, 50g oats, a tbsp peanut butter”"
+          className="w-full resize-none bg-input border border-border rounded-xl px-3 py-2.5 text-[14px] text-text placeholder:text-text-subtle focus:outline-none focus:border-lavender" />
+      </div>
+      <button type="button" onClick={add} disabled={busy || !text.trim()}
+        className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-text-on-ink px-3 py-2 text-[13px] font-bold disabled:opacity-50">
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />}
+        {busy ? "Estimating…" : "Add with AI"}
+      </button>
+    </div>
+  );
+}
+
+/* ── Editable ingredient list (AI add + custom + inline gram tweak) ── */
 function IngredientEditor({ ingredients, onChange }: { ingredients: PickedFood[]; onChange: (i: PickedFood[]) => void }) {
+  const setGrams = (idx: number, grams: number) =>
+    onChange(ingredients.map((x, k) => k === idx ? { ...x, grams: Math.max(0, grams) } : x));
   return (
     <div className="space-y-3">
       {ingredients.length > 0 && (
         <ul className="divide-y divide-border rounded-lg border border-border">
           {ingredients.map((i, idx) => (
-            <li key={idx} className="flex items-center gap-3 px-3 py-2">
-              <span className="flex-1 text-[14px] text-text truncate">{i.name} <span className="text-text-muted">· {i.grams}g</span></span>
-              <span className="text-[12px] text-text-muted">{Math.round(i.caloriesPer100g * i.grams / 100)} kcal</span>
+            <li key={idx} className="flex items-center gap-2 px-3 py-2">
+              <span className="flex-1 text-[14px] text-text truncate">{i.name}</span>
+              <label className="flex items-center gap-1">
+                <span className="sr-only">Grams of {i.name}</span>
+                <input type="number" min={0} value={i.grams} aria-label={`Grams of ${i.name}`}
+                  onChange={(e) => setGrams(idx, Number(e.target.value) || 0)}
+                  className="w-16 bg-input border border-border rounded-lg px-2 py-1 text-[13px] text-text text-right focus:outline-none focus:border-lavender" />
+                <span className="text-[12px] text-text-muted">g</span>
+              </label>
+              <span className="w-14 text-right text-[12px] text-text-muted">{Math.round(i.caloriesPer100g * i.grams / 100)} kcal</span>
               <button type="button" aria-label={`Remove ${i.name}`} onClick={() => onChange(ingredients.filter((_, k) => k !== idx))}
                 className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
                 <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
@@ -112,7 +158,7 @@ function IngredientEditor({ ingredients, onChange }: { ingredients: PickedFood[]
           ))}
         </ul>
       )}
-      <FoodSearch onAdd={(f) => onChange([...ingredients, f])} ctaLabel="Add ingredient" />
+      <AIIngredientInput onAdd={(items) => onChange([...ingredients, ...items])} />
       <CustomIngredient onAdd={(f) => onChange([...ingredients, f])} />
     </div>
   );
@@ -206,14 +252,16 @@ function RecipeBuilder({ onClose }: { onClose: () => void }) {
         </label>
       </div>
 
-      <div className="space-y-2">
-        <span className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Ingredients</span>
-        <IngredientEditor ingredients={ingredients} onChange={setIngredients} />
-      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <span className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Ingredients</span>
+          <IngredientEditor ingredients={ingredients} onChange={setIngredients} />
+        </div>
 
-      <div className="space-y-2">
-        <span className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Steps <span className="font-normal normal-case text-text-subtle">(optional)</span></span>
-        <StepsEditor steps={steps} onChange={setSteps} />
+        <div className="space-y-2">
+          <span className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Steps <span className="font-normal normal-case text-text-subtle">(optional)</span></span>
+          <StepsEditor steps={steps} onChange={setSteps} />
+        </div>
       </div>
 
       <div className="flex items-center justify-between rounded-lg bg-card-elev px-4 py-3">
@@ -329,8 +377,11 @@ function RecipeDetailModal({ recipe, onClose }: { recipe: any; onClose: () => vo
         </div>
       </div>
 
-      {/* Macro chips */}
-      <div className="grid grid-cols-4 gap-px bg-border rounded-lg overflow-hidden">
+      {/* Body: 2-col on desktop — recipe content | log panel */}
+      <div className="md:grid md:grid-cols-2 md:gap-5 md:items-start space-y-4 md:space-y-0">
+        <div className="space-y-4">
+          {/* Macro chips */}
+          <div className="grid grid-cols-4 gap-px bg-border rounded-lg overflow-hidden">
         {([["kcal", recipe.perServing.kcal], ["P", `${recipe.perServing.p}g`], ["C", `${recipe.perServing.c}g`], ["F", `${recipe.perServing.f}g`]] as const).map(([lbl, val]) => (
           <div key={lbl} className="bg-card px-2 py-2 text-center">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">{lbl}</p>
@@ -369,9 +420,10 @@ function RecipeDetailModal({ recipe, onClose }: { recipe: any; onClose: () => vo
           </ol>
         </div>
       )}
+        </div>
 
-      {/* Log panel */}
-      <div className="space-y-3 rounded-xl border border-border bg-card-elev p-4">
+      {/* Log panel (right column on desktop) */}
+      <div className="space-y-3 rounded-xl border border-border bg-card-elev p-4 md:sticky md:top-0">
         <div className="flex items-center justify-between">
           <label className="flex items-center gap-2">
             <span className="text-[13px] font-semibold text-text">Servings to log</span>
@@ -401,6 +453,7 @@ function RecipeDetailModal({ recipe, onClose }: { recipe: any; onClose: () => vo
           className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink text-text-on-ink px-3 py-2.5 text-[14px] font-bold disabled:opacity-60">
           {logging ? "Logging…" : `Log ${portions} serving${portions !== 1 ? "s" : ""}`}
         </button>
+      </div>
       </div>
     </div>
   );
