@@ -41,8 +41,13 @@ function FreeText({ field, placeholder, onParsed }: {
   async function submit() {
     if (!text.trim() || busy) return;
     setBusy(true);
-    try { onParsed(await parse({ field, text: text.trim() })); setText(""); }
-    catch { /* keep text; widgets still work */ }
+    try {
+      const data = await parse({ field, text: text.trim() });
+      if (Object.keys(data).length > 0) {
+        onParsed(data);
+        setText("");
+      }
+    } catch { /* keep text; widgets still work */ }
     finally { setBusy(false); }
   }
   return (
@@ -154,6 +159,7 @@ export function OnboardingPage() {
   const [thread, setThread] = useState<Msg[]>([]);
   const [typing, setTyping] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const idRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const started = useRef(false);
@@ -190,7 +196,13 @@ export function OnboardingPage() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: reduce ? "auto" : "smooth" });
   }, [thread, typing, phase, reduce]);
 
-  const statsValid = !!(state.weight && state.height && state.age && state.sex);
+  const statsValid = (() => {
+    const age = parseFloat(state.age), w = parseFloat(state.weight), h = parseFloat(state.height);
+    return state.sex !== "" &&
+      Number.isFinite(age) && age >= 10 && age <= 120 &&
+      Number.isFinite(w) && w > 0 && w < 500 &&
+      Number.isFinite(h) && h > 0 && h < 300;
+  })();
   const planArgs = statsValid && phase === "plan" ? {
     weightKg: parseFloat(state.weight), heightCm: parseFloat(state.height), age: parseInt(state.age, 10),
     sex: state.sex as string, bodyFat: state.bodyFat ? parseFloat(state.bodyFat) : undefined,
@@ -202,6 +214,7 @@ export function OnboardingPage() {
 
   async function finish() {
     setSubmitting(true);
+    setSaveError(null);
     try {
       if (statsValid) {
         await upsertPlan({
@@ -213,10 +226,11 @@ export function OnboardingPage() {
           dietaryPreference: state.dietaryPreference || undefined, allergies: state.allergies || undefined,
         } as any);
       }
-      await upsertSettings({ coachingStyle: state.coachingStyle }).catch(() => {});
+      await upsertSettings({ coachingStyle: state.coachingStyle });
       navigate("/");
-    } catch (e) { console.error("Onboarding save failed", e); navigate("/"); }
-    finally { setSubmitting(false); }
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : "Something went wrong. Tap to retry.");
+    } finally { setSubmitting(false); }
   }
 
   const GOALS: { value: Goal; label: string; sub: string }[] = [
@@ -280,6 +294,9 @@ export function OnboardingPage() {
             className="w-full inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-3.5 text-[15px] font-semibold disabled:opacity-50">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Start using Stride <ArrowRight className="h-4 w-4" strokeWidth={2} /></>}
           </button>
+          {saveError && (
+            <p className="text-[13px] text-bubblegum text-center">{saveError}</p>
+          )}
         </div>
       </motion.div>
     );

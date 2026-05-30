@@ -1030,14 +1030,17 @@ export const generateDailyInsightsForUser = internalAction({
   handler: async (ctx, { userId, date }) => runDailyInsights(ctx, userId, date),
 });
 
-/** Cron: generate today's insights for every active user. */
+/** Cron: fan out daily insights to each active user via the scheduler. */
 export const cronDailyInsights = internalAction({
   args: {},
   handler: async (ctx) => {
-    const date = new Date().toISOString().slice(0, 10);
     const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 3 })) as string[];
     for (const userId of users) {
-      try { await runDailyInsights(ctx, userId, date); } catch { /* skip user on error */ }
+      // Derive the user's local date from their stored timezone offset.
+      const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
+      const offsetMin: number = settings?.timezoneOffsetMinutes ?? 0;
+      const localDate = new Date(Date.now() - offsetMin * 60_000).toISOString().slice(0, 10);
+      await ctx.scheduler.runAfter(0, internal.ai.generateDailyInsightsForUser, { userId, date: localDate });
     }
     return { users: users.length };
   },
@@ -1106,24 +1109,26 @@ export const generateWeeklySummaryForUser = internalAction({
   handler: async (ctx, { userId }) => runWeeklySummary(ctx, userId),
 });
 
-/** Cron: generate weekly summaries for every active user. */
+/** Cron: fan out weekly summaries to each active user via the scheduler. */
 export const cronWeeklySummary = internalAction({
   args: {},
   handler: async (ctx) => {
     const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 7 })) as string[];
     for (const userId of users) {
-      try { await runWeeklySummary(ctx, userId); } catch { /* skip user on error */ }
+      await ctx.scheduler.runAfter(0, internal.ai.generateWeeklySummaryForUser, { userId });
     }
     return { users: users.length };
   },
 });
 
 async function runWeeklySummary(ctx: any, userId: string) {
-    const now = new Date();
-    const day = now.getDay();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - day + (day === 0 ? -6 : 1));
-    const weekStart = monday.toISOString().split("T")[0];
+    const _settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    const offsetMin: number = _settings?.timezoneOffsetMinutes ?? 0;
+    const localNow = new Date(Date.now() - offsetMin * 60_000);
+    const day = localNow.getUTCDay();
+    const monday = new Date(localNow);
+    monday.setUTCDate(localNow.getUTCDate() - day + (day === 0 ? -6 : 1));
+    const weekStart = monday.toISOString().slice(0, 10);
 
     const history = [];
     for (let i = 0; i < 7; i++) {
