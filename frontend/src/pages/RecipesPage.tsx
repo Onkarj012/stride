@@ -78,7 +78,7 @@ function AIIngredientInput({ onAdd }: { onAdd: (items: PickedFood[]) => void }) 
   );
 }
 
-/* ── A single ingredient row: grams always editable, macros editable on expand ── */
+/* ── A single ingredient cell: grams always editable, macros editable on expand ── */
 function IngredientRow({ ing, onChange, onRemove }: { ing: PickedFood; onChange: (next: PickedFood) => void; onRemove: () => void }) {
   const [open, setOpen] = useState(false);
   const num = (v: string) => Math.max(0, Number(v) || 0);
@@ -87,55 +87,54 @@ function IngredientRow({ ing, onChange, onRemove }: { ing: PickedFood; onChange:
     ["carbsPer100g", "C/100g"], ["fatPer100g", "F/100g"],
   ] as const;
   return (
-    <li className="bg-card">
-      <div className="flex items-center gap-3 px-4 py-3">
+    <div className="rounded-xl border border-border bg-card p-3 space-y-2">
+      <div className="flex items-center gap-1">
         <input value={ing.name} onChange={(e) => onChange({ ...ing, name: e.target.value })} aria-label="Ingredient name"
-          className="flex-1 min-w-0 bg-transparent text-[15px] text-text focus:outline-none" />
-        <label className="flex items-center gap-1.5">
-          <span className="sr-only">Grams of {ing.name}</span>
-          <input type="number" min={0} value={ing.grams} aria-label={`Grams of ${ing.name}`}
-            onChange={(e) => onChange({ ...ing, grams: num(e.target.value) })}
-            className="w-20 bg-input border border-border rounded-lg px-2.5 py-1.5 text-[14px] text-text text-right focus:outline-none focus:border-lavender" />
-          <span className="text-[13px] text-text-muted">g</span>
-        </label>
-        <span className="w-16 text-right text-[13px] font-medium text-text-muted">{Math.round(ing.caloriesPer100g * ing.grams / 100)} kcal</span>
+          className="flex-1 min-w-0 bg-transparent text-[14px] font-medium text-text focus:outline-none" />
         <button type="button" aria-label={`Edit macros for ${ing.name}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}
-          className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${open ? "bg-lavender/15 text-lavender" : "text-text-muted hover:text-text"}`}>
+          className={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${open ? "bg-lavender/15 text-lavender" : "text-text-muted hover:text-text"}`}>
           <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
         <button type="button" aria-label={`Remove ${ing.name}`} onClick={onRemove}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
-          <Trash2 className="h-4 w-4" strokeWidth={2} />
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
+          <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
       </div>
+      <div className="flex items-center gap-1.5">
+        <input type="number" min={0} value={ing.grams} aria-label={`Grams of ${ing.name}`}
+          onChange={(e) => onChange({ ...ing, grams: num(e.target.value) })}
+          className="w-16 bg-input border border-border rounded-lg px-2 py-1 text-[13px] text-text text-right focus:outline-none focus:border-lavender" />
+        <span className="text-[12px] text-text-muted">g</span>
+        <span className="ml-auto text-[12px] font-semibold text-text-muted">{Math.round(ing.caloriesPer100g * ing.grams / 100)} kcal</span>
+      </div>
       {open && (
-        <div className="grid grid-cols-4 gap-2 px-4 pb-3">
+        <div className="grid grid-cols-2 gap-2 pt-1">
           {macroFields.map(([k, lbl]) => (
-            <label key={k} className="flex flex-col gap-1">
+            <label key={k} className="flex flex-col gap-0.5">
               <span className="text-[10px] text-text-muted">{lbl}</span>
               <input type="number" min={0} value={(ing as any)[k]} aria-label={`${lbl} for ${ing.name}`}
                 onChange={(e) => onChange({ ...ing, [k]: num(e.target.value) })}
-                className="w-full bg-input border border-border rounded-lg px-2.5 py-1.5 text-[13px] text-text focus:outline-none focus:border-lavender" />
+                className="w-full bg-input border border-border rounded-lg px-2 py-1 text-[13px] text-text focus:outline-none focus:border-lavender" />
             </label>
           ))}
         </div>
       )}
-    </li>
+    </div>
   );
 }
 
 /* ── Editable ingredient list (AI add + custom + inline gram & macro tweak) ── */
-function IngredientEditor({ ingredients, onChange }: { ingredients: PickedFood[]; onChange: (i: PickedFood[]) => void }) {
+function IngredientEditor({ ingredients, onChange, grid = false }: { ingredients: PickedFood[]; onChange: (i: PickedFood[]) => void; grid?: boolean }) {
   return (
     <div className="space-y-4">
       {ingredients.length > 0 && (
-        <ul className="divide-y divide-border rounded-2xl border border-border overflow-hidden">
+        <div className={grid ? "grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3" : "grid gap-2.5"}>
           {ingredients.map((i, idx) => (
             <IngredientRow key={idx} ing={i}
               onChange={(next) => onChange(ingredients.map((x, k) => k === idx ? next : x))}
               onRemove={() => onChange(ingredients.filter((_, k) => k !== idx))} />
           ))}
-        </ul>
+        </div>
       )}
       <AIIngredientInput onAdd={(items) => onChange([...ingredients, ...items])} />
       <CustomIngredient onAdd={(f) => onChange([...ingredients, f])} />
@@ -249,21 +248,14 @@ function StepsEditor({ steps, onChange }: { steps: string[]; onChange: (s: strin
   );
 }
 
-/* ── Live totals card ── */
+/* ── Compact live totals card (sits top-right beside the name) ── */
 function TotalsCard({ ingredients, servings }: { ingredients: PickedFood[]; servings: number }) {
   const { total, perServing } = useMemo(() => totals(ingredients, servings), [ingredients, servings]);
   return (
-    <Card tone="lavender" radius="xl" padding="lg" className="space-y-3">
-      <span className="text-[12px] font-bold uppercase tracking-wider text-ink/60">Nutrition</span>
-      <div>
-        <p className="text-[12px] font-semibold uppercase tracking-wider text-ink/55">Per serving</p>
-        <p className="text-[32px] font-extrabold text-ink leading-none mt-1">{perServing.kcal} <span className="text-[16px] font-bold">kcal</span></p>
-        <p className="text-[13px] text-ink/75 mt-1">P {perServing.p}g · C {perServing.c}g · F {perServing.f}g</p>
-      </div>
-      <div className="border-t border-ink/10 pt-3">
-        <p className="text-[12px] font-semibold uppercase tracking-wider text-ink/55">Whole recipe</p>
-        <p className="text-[18px] font-extrabold text-ink">{total.kcal} kcal</p>
-      </div>
+    <Card tone="lavender" radius="xl" padding="lg" className="flex flex-col justify-center">
+      <span className="text-[12px] font-bold uppercase tracking-wider text-ink/60">Per serving</span>
+      <p className="text-[30px] font-extrabold text-ink leading-none mt-1">{perServing.kcal} <span className="text-[15px] font-bold">kcal</span></p>
+      <p className="text-[13px] text-ink/75 mt-1.5">P {perServing.p}g · C {perServing.c}g · F {perServing.f}g · {total.kcal} kcal total</p>
     </Card>
   );
 }
@@ -346,10 +338,10 @@ function RecipeBuilderView({ onDone }: { onDone: () => void }) {
   return (
     <div className="w-full max-w-7xl mx-auto">
       <TopBar onBack={onDone} title="New recipe" actions={SaveBtn} />
-      <div className="grid gap-6 lg:grid-cols-3 items-start">
-        {/* Main */}
-        <div className="lg:col-span-2 space-y-6">
-          <Card tone="card" radius="xl" padding="lg" className="grid gap-4 sm:grid-cols-[1fr_140px]">
+      <div className="space-y-6">
+        {/* Top row: name/servings (wide) + compact per-serving card */}
+        <div className="grid gap-6 lg:grid-cols-3 items-start">
+          <Card tone="card" radius="xl" padding="lg" className="lg:col-span-2 grid gap-4 sm:grid-cols-[1fr_140px]">
             <label className="flex flex-col gap-1.5">
               <span className={labelCls}>Recipe name</span>
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Overnight oats" className={fieldCls} autoFocus />
@@ -359,23 +351,22 @@ function RecipeBuilderView({ onDone }: { onDone: () => void }) {
               <input type="number" min={1} value={servings} onChange={(e) => setServings(Math.max(1, Number(e.target.value) || 1))} className={fieldCls} />
             </label>
           </Card>
-
-          <Card tone="card" radius="xl" padding="lg" className="space-y-4">
-            <h3 className="text-h3 text-text">Ingredients</h3>
-            <IngredientEditor ingredients={ingredients} onChange={setIngredients} />
-          </Card>
-
-          <Card tone="card" radius="xl" padding="lg" className="space-y-4">
-            <h3 className="text-h3 text-text">Steps <span className="text-[13px] font-normal text-text-subtle">(optional)</span></h3>
-            <StepsEditor steps={steps} onChange={setSteps} />
-          </Card>
-        </div>
-
-        {/* Side */}
-        <div className="space-y-6 lg:sticky lg:top-6">
           <TotalsCard ingredients={ingredients} servings={servings} />
-          {SaveBtn}
         </div>
+
+        {/* Ingredients — full width, items in a responsive grid */}
+        <Card tone="card" radius="xl" padding="lg" className="space-y-4">
+          <h3 className="text-h3 text-text">Ingredients</h3>
+          <IngredientEditor ingredients={ingredients} onChange={setIngredients} grid />
+        </Card>
+
+        {/* Steps — full width below */}
+        <Card tone="card" radius="xl" padding="lg" className="space-y-4">
+          <h3 className="text-h3 text-text">Steps <span className="text-[13px] font-normal text-text-subtle">(optional)</span></h3>
+          <StepsEditor steps={steps} onChange={setSteps} />
+        </Card>
+
+        <div className="flex justify-end">{SaveBtn}</div>
       </div>
     </div>
   );
