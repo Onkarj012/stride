@@ -287,8 +287,8 @@ export function OnboardingPage() {
 
   // ── Chat ────────────────────────────────────────────────────────────────
   return (
-    <div ref={scrollRef} className="min-h-dvh w-full bg-bg overflow-y-auto">
-      <div className="max-w-xl mx-auto px-2.5 sm:px-4 py-6 space-y-3" aria-live="polite">
+    <div ref={scrollRef} className="w-full bg-bg overflow-y-auto">
+      <div className="max-w-xl mx-auto px-2.5 sm:px-4 pt-6 pb-24 space-y-3" aria-live="polite">
         <AnimatePresence initial={false}>
           {thread.map((m) => (
             <motion.div key={m.id} initial={reduce ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
