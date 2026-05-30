@@ -25,10 +25,10 @@ export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: n
   const total = ingredients.reduce(
     (acc, ing) => {
       const ratio = Math.max(0, ing.grams) / 100;
-      acc.kcal += (ing.caloriesPer100g || 0) * ratio;
-      acc.p += (ing.proteinPer100g || 0) * ratio;
-      acc.c += (ing.carbsPer100g || 0) * ratio;
-      acc.f += (ing.fatPer100g || 0) * ratio;
+      acc.kcal += Math.max(0, ing.caloriesPer100g || 0) * ratio;
+      acc.p += Math.max(0, ing.proteinPer100g || 0) * ratio;
+      acc.c += Math.max(0, ing.carbsPer100g || 0) * ratio;
+      acc.f += Math.max(0, ing.fatPer100g || 0) * ratio;
       return acc;
     },
     { kcal: 0, p: 0, c: 0, f: 0 },
