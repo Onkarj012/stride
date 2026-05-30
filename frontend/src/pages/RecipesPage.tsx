@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
-import { Plus, Trash2, Utensils, ChefHat, Sparkles, Loader2, ArrowLeft } from "lucide-react";
+import { Plus, Trash2, Utensils, ChefHat, Sparkles, Loader2, ArrowLeft, Pencil } from "lucide-react";
 import { Card } from "@/components/primitives/Card";
 import { type PickedFood } from "@/components/food/FoodSearch";
 import { useToast } from "@/context/ToastContext";
@@ -78,30 +78,62 @@ function AIIngredientInput({ onAdd }: { onAdd: (items: PickedFood[]) => void }) 
   );
 }
 
-/* ── Editable ingredient list (AI add + custom + inline gram tweak) ── */
+/* ── A single ingredient row: grams always editable, macros editable on expand ── */
+function IngredientRow({ ing, onChange, onRemove }: { ing: PickedFood; onChange: (next: PickedFood) => void; onRemove: () => void }) {
+  const [open, setOpen] = useState(false);
+  const num = (v: string) => Math.max(0, Number(v) || 0);
+  const macroFields = [
+    ["caloriesPer100g", "kcal/100g"], ["proteinPer100g", "P/100g"],
+    ["carbsPer100g", "C/100g"], ["fatPer100g", "F/100g"],
+  ] as const;
+  return (
+    <li className="bg-card">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <input value={ing.name} onChange={(e) => onChange({ ...ing, name: e.target.value })} aria-label="Ingredient name"
+          className="flex-1 min-w-0 bg-transparent text-[15px] text-text focus:outline-none" />
+        <label className="flex items-center gap-1.5">
+          <span className="sr-only">Grams of {ing.name}</span>
+          <input type="number" min={0} value={ing.grams} aria-label={`Grams of ${ing.name}`}
+            onChange={(e) => onChange({ ...ing, grams: num(e.target.value) })}
+            className="w-20 bg-input border border-border rounded-lg px-2.5 py-1.5 text-[14px] text-text text-right focus:outline-none focus:border-lavender" />
+          <span className="text-[13px] text-text-muted">g</span>
+        </label>
+        <span className="w-16 text-right text-[13px] font-medium text-text-muted">{Math.round(ing.caloriesPer100g * ing.grams / 100)} kcal</span>
+        <button type="button" aria-label={`Edit macros for ${ing.name}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}
+          className={`inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors ${open ? "bg-lavender/15 text-lavender" : "text-text-muted hover:text-text"}`}>
+          <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
+        </button>
+        <button type="button" aria-label={`Remove ${ing.name}`} onClick={onRemove}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
+          <Trash2 className="h-4 w-4" strokeWidth={2} />
+        </button>
+      </div>
+      {open && (
+        <div className="grid grid-cols-4 gap-2 px-4 pb-3">
+          {macroFields.map(([k, lbl]) => (
+            <label key={k} className="flex flex-col gap-1">
+              <span className="text-[10px] text-text-muted">{lbl}</span>
+              <input type="number" min={0} value={(ing as any)[k]} aria-label={`${lbl} for ${ing.name}`}
+                onChange={(e) => onChange({ ...ing, [k]: num(e.target.value) })}
+                className="w-full bg-input border border-border rounded-lg px-2.5 py-1.5 text-[13px] text-text focus:outline-none focus:border-lavender" />
+            </label>
+          ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
+/* ── Editable ingredient list (AI add + custom + inline gram & macro tweak) ── */
 function IngredientEditor({ ingredients, onChange }: { ingredients: PickedFood[]; onChange: (i: PickedFood[]) => void }) {
-  const setGrams = (idx: number, grams: number) =>
-    onChange(ingredients.map((x, k) => k === idx ? { ...x, grams: Math.max(0, grams) } : x));
   return (
     <div className="space-y-4">
       {ingredients.length > 0 && (
         <ul className="divide-y divide-border rounded-2xl border border-border overflow-hidden">
           {ingredients.map((i, idx) => (
-            <li key={idx} className="flex items-center gap-3 px-4 py-3 bg-card">
-              <span className="flex-1 text-[15px] text-text truncate">{i.name}</span>
-              <label className="flex items-center gap-1.5">
-                <span className="sr-only">Grams of {i.name}</span>
-                <input type="number" min={0} value={i.grams} aria-label={`Grams of ${i.name}`}
-                  onChange={(e) => setGrams(idx, Number(e.target.value) || 0)}
-                  className="w-20 bg-input border border-border rounded-lg px-2.5 py-1.5 text-[14px] text-text text-right focus:outline-none focus:border-lavender" />
-                <span className="text-[13px] text-text-muted">g</span>
-              </label>
-              <span className="w-20 text-right text-[13px] font-medium text-text-muted">{Math.round(i.caloriesPer100g * i.grams / 100)} kcal</span>
-              <button type="button" aria-label={`Remove ${i.name}`} onClick={() => onChange(ingredients.filter((_, k) => k !== idx))}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
-                <Trash2 className="h-4 w-4" strokeWidth={2} />
-              </button>
-            </li>
+            <IngredientRow key={idx} ing={i}
+              onChange={(next) => onChange(ingredients.map((x, k) => k === idx ? next : x))}
+              onRemove={() => onChange(ingredients.filter((_, k) => k !== idx))} />
           ))}
         </ul>
       )}
@@ -147,24 +179,71 @@ function CustomIngredient({ onAdd }: { onAdd: (f: PickedFood) => void }) {
   );
 }
 
+/* ── AI natural-language steps input (describe the method → ordered steps) ── */
+function AIStepsInput({ onAdd }: { onAdd: (steps: string[]) => void }) {
+  const parse = useAction(api.ai.parseSteps);
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    const v = text.trim();
+    if (!v || busy) return;
+    setBusy(true);
+    try {
+      const steps = await parse({ text: v });
+      if (steps.length === 0) toast.error("Couldn't read that — try rephrasing");
+      else { onAdd(steps); setText(""); }
+    } catch (e) {
+      toast.error("Couldn't reach AI", e instanceof Error ? e.message : undefined);
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="rounded-2xl border border-lavender/40 bg-lavender/5 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-lavender" strokeWidth={2} />
+        <span className="text-[13px] font-bold text-text">Add steps with AI</span>
+      </div>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3}
+        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); add(); } }}
+        placeholder="Describe how you make it — “mix oats and milk, refrigerate overnight, top with banana”"
+        className={`${fieldCls} resize-none`} />
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-text-muted">AI splits it into clear, ordered steps.</span>
+        <button type="button" onClick={add} disabled={busy || !text.trim()}
+          className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-4 py-2 text-[13px] font-bold disabled:opacity-50">
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />}
+          {busy ? "Writing…" : "Add"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ── Editable steps list ── */
 function StepsEditor({ steps, onChange }: { steps: string[]; onChange: (s: string[]) => void }) {
   return (
-    <div className="space-y-2.5">
-      {steps.map((s, i) => (
-        <div key={i} className="flex items-start gap-2.5">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-card-elev text-[13px] font-bold text-text-muted">{i + 1}</span>
-          <textarea value={s} onChange={(e) => onChange(steps.map((x, k) => k === i ? e.target.value : x))} rows={1}
-            placeholder={`Step ${i + 1}`} className={`${fieldCls} resize-none py-2.5`} />
-          <button type="button" aria-label={`Remove step ${i + 1}`} onClick={() => onChange(steps.filter((_, k) => k !== i))}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
-            <Trash2 className="h-4 w-4" strokeWidth={2} />
-          </button>
+    <div className="space-y-4">
+      {steps.length > 0 && (
+        <div className="space-y-2.5">
+          {steps.map((s, i) => (
+            <div key={i} className="flex items-start gap-2.5">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-card-elev text-[13px] font-bold text-text-muted">{i + 1}</span>
+              <textarea value={s} onChange={(e) => onChange(steps.map((x, k) => k === i ? e.target.value : x))} rows={1}
+                placeholder={`Step ${i + 1}`} className={`${fieldCls} resize-none py-2.5`} />
+              <button type="button" aria-label={`Remove step ${i + 1}`} onClick={() => onChange(steps.filter((_, k) => k !== i))}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
+                <Trash2 className="h-4 w-4" strokeWidth={2} />
+              </button>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+      <AIStepsInput onAdd={(s) => onChange([...steps, ...s])} />
       <button type="button" onClick={() => onChange([...steps, ""])}
         className="inline-flex items-center gap-1 text-[13px] font-semibold text-text-muted hover:text-text">
-        <Plus className="h-3.5 w-3.5" strokeWidth={2} /> Add step
+        <Plus className="h-3.5 w-3.5" strokeWidth={2} /> Add step manually
       </button>
     </div>
   );
@@ -285,15 +364,16 @@ function RecipeBuilderView({ onDone }: { onDone: () => void }) {
             <h3 className="text-h3 text-text">Ingredients</h3>
             <IngredientEditor ingredients={ingredients} onChange={setIngredients} />
           </Card>
+
+          <Card tone="card" radius="xl" padding="lg" className="space-y-4">
+            <h3 className="text-h3 text-text">Steps <span className="text-[13px] font-normal text-text-subtle">(optional)</span></h3>
+            <StepsEditor steps={steps} onChange={setSteps} />
+          </Card>
         </div>
 
         {/* Side */}
         <div className="space-y-6 lg:sticky lg:top-6">
           <TotalsCard ingredients={ingredients} servings={servings} />
-          <Card tone="card" radius="xl" padding="lg" className="space-y-4">
-            <h3 className="text-h3 text-text">Steps <span className="text-[13px] font-normal text-text-subtle">(optional)</span></h3>
-            <StepsEditor steps={steps} onChange={setSteps} />
-          </Card>
           {SaveBtn}
         </div>
       </div>

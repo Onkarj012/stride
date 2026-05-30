@@ -538,6 +538,31 @@ export const parseIngredients = action({
 });
 
 
+/** Turn a free-text method into clean, ordered recipe steps. */
+export const parseSteps = action({
+  args: { text: v.string() },
+  handler: async (ctx, { text }): Promise<string[]> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
+    const prompt = `Turn this cooking method into clear, concise, ordered recipe steps. One action per step, imperative voice, no numbering or prose. Return ONLY a JSON array of strings.\n\nMethod: "${text}"`;
+    const content = await callAI(
+      [{ role: "user", content: prompt }],
+      500,
+      settings?.openRouterModel ?? undefined,
+      settings?.openRouterKey ?? undefined,
+    );
+    try {
+      const match = content.match(/\[[\s\S]*\]/);
+      const raw = JSON.parse(match ? match[0] : content) as any[];
+      return raw.map((s) => String(s).trim()).filter(Boolean);
+    } catch {
+      return [];
+    }
+  },
+});
+
+
 export const estimateMeal = action({
   args: { mealName: v.string() },
   handler: async (ctx, { mealName }) => {
