@@ -1,5 +1,6 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { recordBehaviorRow } from "./behavior";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -38,7 +39,7 @@ export const addMeal = mutation({
     }
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
-    return ctx.db.insert("meals", {
+    const id = await ctx.db.insert("meals", {
       userId,
       date,
       name: args.name,
@@ -51,6 +52,8 @@ export const addMeal = mutation({
       mealType: args.mealType ?? "unspecified",
       components: args.components,
     });
+    await recordBehaviorRow(ctx, userId, "log", "meal", undefined, date);
+    return id;
   },
 });
 

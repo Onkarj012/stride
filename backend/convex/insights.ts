@@ -1,5 +1,6 @@
 import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -132,6 +133,17 @@ export const getTodayBrief = query({
     const waterMl = water.reduce((s, w) => s + w.ml, 0);
     const waterTarget = 2000;
 
+    // Task 19: dynamic per-day target from base plan + today's actual burn.
+    let plan: NutritionPlan | null = null;
+    try {
+      const p = profile?.planBreakdown ? JSON.parse(profile.planBreakdown) : null;
+      if (p && typeof p.plannedDailyEAT === "number") plan = p as NutritionPlan;
+    } catch { /* no plan */ }
+    const todayBurn = todayWorkouts.reduce((s, w) => s + (w.caloriesBurned ?? 0), 0);
+    const dayAdj = plan ? adjustCaloriesForDay(plan, todayBurn) : null;
+    const adjustedCalorieTarget = dayAdj?.calorieGoal ?? calorieTarget;
+    const adjustmentNote = dayAdj && dayAdj.calorieGoal !== plan!.calories ? dayAdj.note : null;
+
     const hour = new Date().getHours();
     const window: "morning" | "day" | "evening" | "night" =
       hour >= 5 && hour < 11 ? "morning" :
@@ -195,6 +207,8 @@ export const getTodayBrief = query({
       stats: {
         todayCals: Math.round(todayCals),
         calorieTarget,
+        adjustedCalorieTarget,
+        adjustmentNote,
         todayProtein: Math.round(todayProtein),
         proteinTarget,
         waterMl,

@@ -339,6 +339,27 @@ function TodaysInsightsMini({ date }: { date: string }) {
   );
 }
 
+function PatternsCard() {
+  const patterns = useQuery(api.patterns.getPatterns, {}) as string[] | undefined;
+  if (!patterns || patterns.length === 0) return null;
+  return (
+    <Card tone="card" radius="lg" padding="lg" className="space-y-3">
+      <div className="flex items-center gap-2">
+        <TrendingUp className="h-4 w-4 text-lavender" strokeWidth={2} />
+        <h3 className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Patterns we noticed</h3>
+      </div>
+      <ul className="space-y-2">
+        {patterns.map((p, i) => (
+          <li key={i} className="flex gap-2 text-[14px] leading-relaxed text-text">
+            <Lightbulb className="h-4 w-4 text-peach shrink-0 mt-0.5" strokeWidth={2} />
+            <span>{p}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export function InsightsPage() {
   const [period, setPeriod] = useState<Period>("today");
   const days = periodDays(period);
@@ -400,6 +421,9 @@ export function InsightsPage() {
       <div className="flex justify-center">
         <PeriodSwitcher value={period} onChange={setPeriod} />
       </div>
+
+      {/* Correlation / pattern insights */}
+      <PatternsCard />
 
       {/* Weekly/monthly AI summary */}
       {period !== "today" && weeklySummary && (

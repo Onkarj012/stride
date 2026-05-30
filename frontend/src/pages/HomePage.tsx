@@ -6,6 +6,8 @@ import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { AssistantConsole } from "@/components/home/AssistantConsole";
 import { SpecialistDock } from "@/components/home/SpecialistDock";
+import { NudgeInbox } from "@/components/home/NudgeInbox";
+import { QuickLogBar } from "@/components/home/QuickLogBar";
 import { Card } from "@/components/primitives/Card";
 import { StreakCard } from "@/components/insights/StreakCard";
 import { useShortcut } from "@/hooks/useShortcut";
@@ -211,6 +213,11 @@ function DailyGuidanceCard() {
         <span className="text-[12px] font-bold uppercase tracking-wider text-ink/60">{brief.headline}</span>
       </div>
       <p className="text-[15px] leading-relaxed text-ink/85">{brief.priority}</p>
+      {brief.stats?.adjustmentNote && (
+        <p className="text-[12.5px] font-semibold text-ink/75 rounded-lg bg-ink/10 px-2.5 py-1.5">
+          🎯 Today's target adjusted to {brief.stats.adjustedCalorieTarget} kcal — {brief.stats.adjustmentNote}
+        </p>
+      )}
     </Card>
   );
 }
@@ -316,12 +323,16 @@ export function HomePage() {
 
         {/* Right: just enough context — what matters now */}
         <aside className="lg:col-span-5 flex flex-col gap-4">
+          <NudgeInbox />
           <DailyGuidanceCard />
           <CoachingNudgeCard />
           <TodaysPulse logs={sortedLogs} compact />
           <StreakCard />
         </aside>
       </div>
+
+      {/* One-tap quick log */}
+      <QuickLogBar />
 
       {/* Specialist agents — full width */}
       <SpecialistDock />

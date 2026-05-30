@@ -1,7 +1,7 @@
-import { action, query } from "./_generated/server";
+import { action, query, internalAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
-import { getCoach, classifyCoachType, COACHES, type CoachType } from "./coaches";
+import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import {
   calculateWorkoutCalories,
   scoreDensity,
@@ -448,6 +448,40 @@ async function runNutritionEngine(
 
 // ─── Public actions ───────────────────────────────────────────────────────────
 
+export const parseOnboarding = action({
+  args: { field: v.string(), text: v.string() },
+  handler: async (ctx, { field, text }): Promise<Record<string, unknown>> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
+
+    const SCHEMAS: Record<string, string> = {
+      stats: `{"age": number|null, "weightKg": number|null, "heightCm": number|null, "sex": "male"|"female"|null, "bodyFat": number|null}. Convert lbs→kg (÷2.205), ft/in→cm. Example: "28yo male, 176lb, 5'10\\"" → {"age":28,"weightKg":79.8,"heightCm":177.8,"sex":"male","bodyFat":null}`,
+      goal: `{"goal": one of "aggressive_loss"|"moderate_loss"|"mild_loss"|"maintain"|"recomp"|"lean_gain"|"muscle_gain"}. "lose fat fast"→aggressive_loss, "lose weight"→moderate_loss, "tone up / build muscle while losing fat"→recomp, "bulk / gain muscle"→muscle_gain, "lean bulk"→lean_gain, "stay the same"→maintain.`,
+      work: `{"occupationType": "desk"|"mixed"|"standing"|"physical"|null, "workHoursPerDay": number|null, "lifestyleActivity": "sedentary"|"light"|"moderate"|"active"|null}. "office job 9 hours, lazy otherwise" → {"occupationType":"desk","workHoursPerDay":9,"lifestyleActivity":"sedentary"}`,
+      training: `{"weeklyWorkouts": [{"type": one of "strength"|"run_slow"|"run_fast"|"cycling"|"hiit"|"yoga"|"swim"|"walk"|"sport", "durationMin": number, "sessionsPerWeek": number}]}. "lift 4x/week ~1h, run twice for 30min" → {"weeklyWorkouts":[{"type":"strength","durationMin":60,"sessionsPerWeek":4},{"type":"run_slow","durationMin":30,"sessionsPerWeek":2}]}`,
+      diet: `{"dietaryPreference": "none"|"vegetarian"|"vegan"|"pescatarian"|"keto"|null, "allergies": string|null}. "veggie, allergic to peanuts and shellfish" → {"dietaryPreference":"vegetarian","allergies":"peanuts, shellfish"}`,
+      name: `{"firstName": string}. Extract just the first name.`,
+    };
+    const schema = SCHEMAS[field];
+    if (!schema) throw new Error(`Unknown field: ${field}`);
+
+    const prompt = `Extract structured data from the user's message. Return ONLY a JSON object matching this schema, no prose:\n${schema}\n\nUser message: "${text}"\n\nUse null for anything not mentioned. Return only valid JSON.`;
+    const content = await callAI(
+      [{ role: "user", content: prompt }],
+      300,
+      settings?.openRouterModel ?? undefined,
+      settings?.openRouterKey ?? undefined,
+    );
+    try {
+      const match = content.match(/\{[\s\S]*\}/);
+      return JSON.parse(match ? match[0] : content) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  },
+});
+
 export const estimateMeal = action({
   args: { mealName: v.string() },
   handler: async (ctx, { mealName }) => {
@@ -718,12 +752,13 @@ export const chat = action({
     const today = todayArg ?? new Date().toISOString().split("T")[0];
 
     // Gather context
-    const [profile, todayMeals, todayWorkouts, recentCals, settings] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
       ctx.runQuery(internal.meals.getRecentCalories, { userId }),
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
+      ctx.runQuery(internal.behavior.getBehaviorProfileForContext, { userId }),
     ]);
 
     const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
@@ -804,13 +839,18 @@ Rules:
     // Save user message
     await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "user", content: message });
 
-    // Detect coach
+    // Detect coach (keyword routing, biased toward the user's preferred coach)
     let detectedCoach: CoachType = (coachType as CoachType) ?? "overall";
-    if (!coachType || coachType === "auto") detectedCoach = classifyCoachType(message);
+    if (!coachType || coachType === "auto") detectedCoach = classifyCoachType(message, behavior?.preferredCoach);
     const coach = getCoach(detectedCoach);
 
+    // Behavioral memory + tone layer (no behavior → unchanged baseline)
+    const behaviorLine = behaviorSummary(behavior);
+    const toneLine = toneInstruction(settings?.coachingStyle);
+    const personaSuffix = [behaviorLine, toneLine].filter(Boolean).join("\n");
+
     const messages: AIMessage[] = [
-      { role: "system", content: `${coach.systemPrompt}\n\n${contextBlock}${loggingPrompt}` },
+      { role: "system", content: `${coach.systemPrompt}${personaSuffix ? `\n\n${personaSuffix}` : ""}\n\n${contextBlock}${loggingPrompt}` },
       ...history.map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content })),
       image
         ? {
@@ -981,8 +1021,32 @@ export const generateDailyInsights = action({
   handler: async (ctx, { date }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    const userId = identity.subject;
+    return runDailyInsights(ctx, identity.subject, date);
+  },
+});
 
+export const generateDailyInsightsForUser = internalAction({
+  args: { userId: v.string(), date: v.string() },
+  handler: async (ctx, { userId, date }) => runDailyInsights(ctx, userId, date),
+});
+
+/** Cron: fan out daily insights to each active user via the scheduler. */
+export const cronDailyInsights = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 3 })) as string[];
+    for (const userId of users) {
+      // Derive the user's local date from their stored timezone offset.
+      const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
+      const offsetMin: number = settings?.timezoneOffsetMinutes ?? 0;
+      const localDate = new Date(Date.now() - offsetMin * 60_000).toISOString().slice(0, 10);
+      await ctx.scheduler.runAfter(0, internal.ai.generateDailyInsightsForUser, { userId, date: localDate });
+    }
+    return { users: users.length };
+  },
+});
+
+async function runDailyInsights(ctx: any, userId: string, date: string) {
     const [meals, workouts, goal, settings, profile] = await Promise.all([
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date }),
@@ -1029,21 +1093,42 @@ Give 3 short, punchy insights (one sentence each) about their day. Tailor advice
 
     await ctx.runMutation(internal.insights.saveInsights, { userId, date, insights });
     return { insights };
-  },
-});
+}
 
 export const generateWeeklySummary = action({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    const userId = identity.subject;
+    return runWeeklySummary(ctx, identity.subject);
+  },
+});
 
-    const now = new Date();
-    const day = now.getDay();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - day + (day === 0 ? -6 : 1));
-    const weekStart = monday.toISOString().split("T")[0];
+export const generateWeeklySummaryForUser = internalAction({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => runWeeklySummary(ctx, userId),
+});
+
+/** Cron: fan out weekly summaries to each active user via the scheduler. */
+export const cronWeeklySummary = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 7 })) as string[];
+    for (const userId of users) {
+      await ctx.scheduler.runAfter(0, internal.ai.generateWeeklySummaryForUser, { userId });
+    }
+    return { users: users.length };
+  },
+});
+
+async function runWeeklySummary(ctx: any, userId: string) {
+    const _settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    const offsetMin: number = _settings?.timezoneOffsetMinutes ?? 0;
+    const localNow = new Date(Date.now() - offsetMin * 60_000);
+    const day = localNow.getUTCDay();
+    const monday = new Date(localNow);
+    monday.setUTCDate(localNow.getUTCDate() - day + (day === 0 ? -6 : 1));
+    const weekStart = monday.toISOString().slice(0, 10);
 
     const history = [];
     for (let i = 0; i < 7; i++) {
@@ -1085,8 +1170,7 @@ Give a brief (2-3 sentences) weekly summary and recommendation tailored to their
     const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
     await ctx.runMutation(internal.insights.saveWeeklySummary, { userId, weekStart, content });
     return { content };
-  },
-});
+}
 
 export const suggestWorkout = action({
   args: {},

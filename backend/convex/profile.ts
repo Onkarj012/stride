@@ -1,5 +1,6 @@
 import { query, mutation, internalQuery, action } from "./_generated/server";
 import { v } from "convex/values";
+import { calculateNutritionPlan as computePlan, type PlanInput } from "./tdee_engine";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -38,6 +39,17 @@ export const getProfile = query({
       dietaryPreference: p.dietaryPreference ?? null,
       allergies: p.allergies ?? null,
       fitnessLevel: p.fitnessLevel ?? null,
+      dislikedFoods: p.dislikedFoods ?? null,
+      cuisines: p.cuisines ?? null,
+      equipment: p.equipment ?? null,
+      scheduleNote: p.scheduleNote ?? null,
+      occupationType: p.occupationType ?? null,
+      workHoursPerDay: p.workHoursPerDay ?? null,
+      lifestyleActivity: p.lifestyleActivity ?? null,
+      weeklyWorkouts: p.weeklyWorkouts ?? null,
+      goalWeightKg: p.goalWeightKg ?? null,
+      planBreakdown: p.planBreakdown ?? null,
+      waterTarget: p.waterTarget ?? null,
     };
   },
 });
@@ -65,12 +77,23 @@ export const upsertProfile = mutation({
     dietaryPreference: v.optional(v.string()),
     allergies: v.optional(v.string()),
     fitnessLevel: v.optional(v.string()),
+    dislikedFoods: v.optional(v.string()),
+    cuisines: v.optional(v.string()),
+    equipment: v.optional(v.string()),
+    scheduleNote: v.optional(v.string()),
+    occupationType: v.optional(v.string()),
+    workHoursPerDay: v.optional(v.number()),
+    lifestyleActivity: v.optional(v.string()),
+    weeklyWorkouts: v.optional(v.string()),
+    goalWeightKg: v.optional(v.number()),
+    planBreakdown: v.optional(v.string()),
+    waterTarget: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const numericFields = ["weight", "height", "age", "calorieTarget", "proteinTarget", "carbTarget", "fatTarget", "bodyFat", "leanMass", "dailySteps", "trainingDays", "cardioMinutes"] as const;
+    const numericFields = ["weight", "height", "age", "calorieTarget", "proteinTarget", "carbTarget", "fatTarget", "bodyFat", "leanMass", "dailySteps", "trainingDays", "cardioMinutes", "workHoursPerDay", "goalWeightKg", "waterTarget"] as const;
     for (const field of numericFields) {
       const val = args[field as keyof typeof args];
-      if (val !== undefined && val !== null && val < 0) {
+      if (typeof val === "number" && val < 0) {
         throw new Error(`Invalid ${field}: must be >= 0`);
       }
     }
@@ -88,6 +111,9 @@ export const upsertProfile = mutation({
       "carbTarget", "fatTarget", "bodyFat", "leanMass", "dailySteps",
       "trainingDays", "cardioMinutes", "jobType", "goal", "trainingStyle", "onboardingComplete",
       "dietaryPreference", "allergies", "fitnessLevel",
+      "dislikedFoods", "cuisines", "equipment", "scheduleNote",
+      "occupationType", "workHoursPerDay", "lifestyleActivity", "weeklyWorkouts",
+      "goalWeightKg", "planBreakdown", "waterTarget",
     ] as const;
     for (const field of optionalFields) {
       const val = args[field as keyof typeof args];
@@ -104,6 +130,8 @@ export const upsertProfile = mutation({
   },
 });
 
+/** @deprecated Legacy activity-multiplier TDEE. Use calculateNutritionPlan /
+ *  upsertPlanFromOnboarding (4-component engine). Kept until the UI migrates. */
 export const calculateTDEE = action({
   args: {
     weight: v.number(),
@@ -219,17 +247,35 @@ export const getSettings = query({
       .first();
     return {
       openRouterKey: s?.openRouterKey ?? null,
+      hasOpenRouterKey: !!(s?.openRouterKey),
       openRouterModel: s?.openRouterModel ?? "openai/gpt-4o-mini",
+      units: s?.units ?? "metric",
+      notifications: s?.notifications ?? true,
+      coachingStyle: s?.coachingStyle ?? "gentle",
+      reduceMotion: s?.reduceMotion ?? false,
+      timezoneOffsetMinutes: s?.timezoneOffsetMinutes ?? null,
     };
   },
 });
+
+const UNITS = ["metric", "imperial"];
+const COACHING_STYLES = ["gentle", "motivating", "analytical"];
 
 export const upsertSettings = mutation({
   args: {
     openRouterKey: v.optional(v.string()),
     openRouterModel: v.optional(v.string()),
+    units: v.optional(v.string()),
+    notifications: v.optional(v.boolean()),
+    coachingStyle: v.optional(v.string()),
+    reduceMotion: v.optional(v.boolean()),
+    timezoneOffsetMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    if (args.units !== undefined && !UNITS.includes(args.units))
+      throw new Error(`Invalid units: ${args.units}`);
+    if (args.coachingStyle !== undefined && !COACHING_STYLES.includes(args.coachingStyle))
+      throw new Error(`Invalid coachingStyle: ${args.coachingStyle}`);
     const userId = await requireUserId(ctx);
     const existing = await ctx.db
       .query("user_settings")
@@ -238,6 +284,11 @@ export const upsertSettings = mutation({
     const patch: any = {};
     if (args.openRouterKey !== undefined) patch.openRouterKey = args.openRouterKey || undefined;
     if (args.openRouterModel !== undefined) patch.openRouterModel = args.openRouterModel;
+    if (args.units !== undefined) patch.units = args.units;
+    if (args.notifications !== undefined) patch.notifications = args.notifications;
+    if (args.coachingStyle !== undefined) patch.coachingStyle = args.coachingStyle;
+    if (args.reduceMotion !== undefined) patch.reduceMotion = args.reduceMotion;
+    if (args.timezoneOffsetMinutes !== undefined) patch.timezoneOffsetMinutes = args.timezoneOffsetMinutes;
 
     if (existing) {
       await ctx.db.patch(existing._id, patch);
@@ -254,5 +305,127 @@ export const getSettingsForContext = internalQuery({
       .query("user_settings")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
+  },
+});
+
+// ─── 4-component nutrition plan (Task 17) ───────────────────────────────────
+
+const planArgs = {
+  weightKg: v.number(),
+  heightCm: v.number(),
+  age: v.number(),
+  sex: v.string(),
+  bodyFat: v.optional(v.number()),
+  occupationType: v.optional(v.string()),
+  workHoursPerDay: v.optional(v.number()),
+  lifestyleActivity: v.optional(v.string()),
+  weeklyWorkouts: v.optional(
+    v.array(v.object({ type: v.string(), durationMin: v.number(), sessionsPerWeek: v.number() })),
+  ),
+  goal: v.optional(v.string()),
+};
+
+function toPlanInput(a: any): PlanInput {
+  return {
+    weightKg: a.weightKg,
+    heightCm: a.heightCm,
+    age: a.age,
+    sex: a.sex === "female" ? "female" : "male",
+    bodyFat: a.bodyFat,
+    occupationType: a.occupationType,
+    workHoursPerDay: a.workHoursPerDay,
+    lifestyleActivity: a.lifestyleActivity,
+    weeklyWorkouts: a.weeklyWorkouts,
+    goal: mapLegacyGoal(a.goal),
+  };
+}
+
+/** Map legacy goal strings to the 7 engine goals. */
+function mapLegacyGoal(goal?: string): string | undefined {
+  switch (goal) {
+    case "cut": return "moderate_loss";
+    case "bulk": return "muscle_gain";
+    case "lose": return "moderate_loss";
+    case "gain": return "lean_gain";
+    default: return goal; // already an engine goal or undefined
+  }
+}
+
+/** Pure compute — returns full plan + transparency breakdown (no persistence). */
+export const calculateNutritionPlan = query({
+  args: planArgs,
+  handler: async (ctx, args) => {
+    await requireUserId(ctx);
+    return computePlan(toPlanInput(args));
+  },
+});
+
+/** Compute + persist targets to user_profiles and seed today's daily_goals. */
+export const upsertPlanFromOnboarding = mutation({
+  args: {
+    ...planArgs,
+    date: v.string(),
+    goalWeightKg: v.optional(v.number()),
+    dietaryPreference: v.optional(v.string()),
+    allergies: v.optional(v.string()),
+    dislikedFoods: v.optional(v.string()),
+    cuisines: v.optional(v.string()),
+    equipment: v.optional(v.string()),
+    scheduleNote: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    const plan = computePlan(toPlanInput(args));
+
+    const patch: any = {
+      weight: args.weightKg,
+      height: args.heightCm,
+      age: args.age,
+      sex: args.sex,
+      bodyFat: args.bodyFat,
+      occupationType: args.occupationType,
+      workHoursPerDay: args.workHoursPerDay,
+      lifestyleActivity: args.lifestyleActivity,
+      goal: mapLegacyGoal(args.goal),
+      goalWeightKg: args.goalWeightKg,
+      weeklyWorkouts: args.weeklyWorkouts ? JSON.stringify(args.weeklyWorkouts) : undefined,
+      activityLevel: args.lifestyleActivity ?? "moderate",
+      calorieTarget: plan.calories,
+      proteinTarget: plan.protein,
+      carbTarget: plan.carbs,
+      fatTarget: plan.fat,
+      planBreakdown: JSON.stringify(plan),
+      onboardingComplete: true,
+      dietaryPreference: args.dietaryPreference,
+      allergies: args.allergies,
+      dislikedFoods: args.dislikedFoods,
+      cuisines: args.cuisines,
+      equipment: args.equipment,
+      scheduleNote: args.scheduleNote,
+    };
+    for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
+
+    const existing = await ctx.db
+      .query("user_profiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    if (existing) await ctx.db.patch(existing._id, patch);
+    else await ctx.db.insert("user_profiles", { userId, ...patch });
+
+    // Seed today's daily_goals from the computed plan.
+    const goalRow = await ctx.db
+      .query("daily_goals")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
+      .first();
+    const goals = {
+      calorieGoal: plan.calories,
+      proteinGoal: plan.protein,
+      carbGoal: plan.carbs,
+      fatGoal: plan.fat,
+    };
+    if (goalRow) await ctx.db.patch(goalRow._id, goals);
+    else await ctx.db.insert("daily_goals", { userId, date: args.date, ...goals });
+
+    return plan;
   },
 });

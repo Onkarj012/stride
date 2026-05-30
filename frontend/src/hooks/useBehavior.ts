@@ -1,5 +1,7 @@
 import { localDateStr } from "@/lib/utils";
 import { useCallback, useEffect, useState } from "react";
+import { useMutation } from "convex/react";
+import { api } from "@convex/_generated/api";
 
 type BehaviorState = {
   /** ISO date strings of dismissed window prompts, by window */
@@ -32,6 +34,15 @@ function write(s: BehaviorState) {
 
 export function useBehavior() {
   const [state, setState] = useState<BehaviorState>(() => read());
+  const record = useMutation(api.behavior.recordBehavior);
+  const writeThrough = useCallback(
+    (kind: string, key: string) => {
+      void record({ kind, key, date: localDateStr() }).catch(() => {
+        /* offline: localStorage already holds the value */
+      });
+    },
+    [record],
+  );
 
   useEffect(() => {
     const sync = () => setState(read());
@@ -46,19 +57,22 @@ export function useBehavior() {
     if (!arr.includes(date)) arr.push(date);
     next.dismissals[window] = arr.slice(-30);
     write(next); setState(next);
-  }, []);
+    writeThrough("nudge_dismiss", window);
+  }, [writeThrough]);
 
   const recordEngagement = useCallback((window: keyof BehaviorState["lastEngaged"]) => {
     const next = read();
     next.lastEngaged[window] = Date.now();
     write(next); setState(next);
-  }, []);
+    writeThrough("engagement", window);
+  }, [writeThrough]);
 
   const recordSuggestion = useCallback((label: string) => {
     const next = read();
     next.suggestionClicks[label] = (next.suggestionClicks[label] ?? 0) + 1;
     write(next); setState(next);
-  }, []);
+    writeThrough("suggestion", label);
+  }, [writeThrough]);
 
   /** Has the user dismissed this window's prompt on 3 consecutive calendar days? */
   const isWindowFatigued = useCallback((window: keyof BehaviorState["dismissals"]): boolean => {

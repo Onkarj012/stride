@@ -1,5 +1,6 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { applyDayAdjustment } from "./goals";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -47,7 +48,7 @@ export const addWorkout = mutation({
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
-    return ctx.db.insert("workouts", {
+    const id = await ctx.db.insert("workouts", {
       userId,
       date,
       name: args.name,
@@ -60,6 +61,8 @@ export const addWorkout = mutation({
       rationale: args.rationale,
       caloriesBurned: args.caloriesBurned,
     });
+    await applyDayAdjustment(ctx, userId, date);
+    return id;
   },
 });
 
