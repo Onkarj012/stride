@@ -481,6 +481,26 @@ export const parseOnboarding = action({
     }
   },
 });
+export const recipeInsight = action({
+  args: {
+    name: v.string(),
+    perServing: v.object({ kcal: v.number(), p: v.number(), c: v.number(), f: v.number() }),
+    ingredients: v.array(v.string()),
+  },
+  handler: async (ctx, { name, perServing, ingredients }): Promise<string> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
+    const prompt = `You are a friendly nutrition coach. In 1-2 short sentences, give one specific, encouraging insight about this recipe — name a nutritional strength and (optionally) one small tweak. No preamble.\nRecipe: ${name}\nPer serving: ${perServing.kcal} kcal, ${perServing.p}g protein, ${perServing.c}g carbs, ${perServing.f}g fat\nIngredients: ${ingredients.join(", ")}`;
+    return callAI(
+      [{ role: "user", content: prompt }],
+      140,
+      settings?.openRouterModel ?? undefined,
+      settings?.openRouterKey ?? undefined,
+    );
+  },
+});
+
 
 export const estimateMeal = action({
   args: { mealName: v.string() },
