@@ -247,6 +247,7 @@ export const getSettings = query({
       .first();
     return {
       openRouterKey: s?.openRouterKey ?? null,
+      hasOpenRouterKey: !!(s?.openRouterKey),
       openRouterModel: s?.openRouterModel ?? "openai/gpt-4o-mini",
       units: s?.units ?? "metric",
       notifications: s?.notifications ?? true,

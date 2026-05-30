@@ -263,7 +263,7 @@ function AIProviderCard() {
   useEffect(() => {
     if (!settings) return;
     setModel(settings.openRouterModel ?? "openai/gpt-4o-mini");
-    if (settings.openRouterKey) {
+    if (settings.hasOpenRouterKey) {
       setHasSavedKey(true);
     }
   }, [settings]);
