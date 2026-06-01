@@ -260,6 +260,7 @@ export default defineSchema({
     ingredients: v.string(), // JSON: [{name,grams,caloriesPer100g,proteinPer100g,carbsPer100g,fatPer100g,source?}]
     perServing: v.object({ kcal: v.number(), p: v.number(), c: v.number(), f: v.number() }),
     total: v.object({ kcal: v.number(), p: v.number(), c: v.number(), f: v.number() }),
+    steps: v.optional(v.array(v.string())),
     source: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 });

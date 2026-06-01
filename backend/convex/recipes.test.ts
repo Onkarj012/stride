@@ -46,6 +46,24 @@ test("updateRecipe recomputes; logRecipe scales into a meal", async () => {
   expect(meals[0].nutritionSource).toBe("recipe");
 });
 
+test("logRecipe appends user note to components, not aiSuggestion", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const id = await asUser.mutation(api.recipes.createRecipe, { name: "Oats", servings: 1, ingredients: INGREDIENTS });
+  await asUser.mutation(api.recipes.logRecipe, {
+    id,
+    date: "2026-05-30",
+    note: "extra cheese, skipped the oil",
+  });
+  const meals = await asUser.query(api.meals.getMeals, { date: "2026-05-30" });
+  expect(meals[0].aiSuggestion).toBeUndefined();
+  expect(meals[0].components).toContain("extra cheese, skipped the oil");
+  const breakdown = JSON.parse(meals[0].ingredientBreakdown!);
+  expect(breakdown.items).toBeInstanceOf(Array);
+  expect(breakdown.calories_kcal).toBeGreaterThan(0);
+  expect(JSON.parse(meals[0].structuredItems!)).toEqual(breakdown.items);
+});
+
 test("ownership enforced on update/delete/log", async () => {
   const t = convexTest(schema, modules);
   const id = await t.withIdentity({ subject: "owner" }).mutation(api.recipes.createRecipe, {

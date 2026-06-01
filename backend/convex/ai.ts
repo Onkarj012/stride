@@ -481,6 +481,89 @@ export const parseOnboarding = action({
     }
   },
 });
+export const recipeInsight = action({
+  args: {
+    name: v.string(),
+    perServing: v.object({ kcal: v.number(), p: v.number(), c: v.number(), f: v.number() }),
+    ingredients: v.array(v.string()),
+  },
+  handler: async (ctx, { name, perServing, ingredients }): Promise<string> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
+    const prompt = `You are a friendly nutrition coach. In 1-2 short sentences, give one specific, encouraging insight about this recipe — name a nutritional strength and (optionally) one small tweak. No preamble.\nRecipe: ${name}\nPer serving: ${perServing.kcal} kcal, ${perServing.p}g protein, ${perServing.c}g carbs, ${perServing.f}g fat\nIngredients: ${ingredients.join(", ")}`;
+    return callAI(
+      [{ role: "user", content: prompt }],
+      140,
+      settings?.openRouterModel ?? undefined,
+      settings?.openRouterKey ?? undefined,
+    );
+  },
+});
+
+/** Frictionless recipe ingredient entry: parse a free-text ingredient list
+ *  (natural portions, any units) into structured per-100g ingredients with an
+ *  AI-estimated gram weight for each portion. One AI round-trip, no DB lookups. */
+export const parseIngredients = action({
+  args: { text: v.string() },
+  handler: async (ctx, { text }): Promise<Array<{ name: string; grams: number; caloriesPer100g: number; proteinPer100g: number; carbsPer100g: number; fatPer100g: number; source: string }>> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
+    const prompt = `You are a nutrition database. Parse this ingredient list (natural language, any units or portions) into structured JSON. For EACH ingredient: estimate the realistic edible weight in grams of the stated portion (e.g. "1 large banana"≈120, "1 tbsp olive oil"≈14, "2 eggs"≈100, "a handful of almonds"≈30, "1 cup cooked rice"≈195), and give standard per-100g macros. Return ONLY a JSON array, no prose:\n[{"name": string, "grams": number, "caloriesPer100g": number, "proteinPer100g": number, "carbsPer100g": number, "fatPer100g": number}]\n\nIngredients: "${text}"`;
+    const content = await callAI(
+      [{ role: "user", content: prompt }],
+      700,
+      settings?.openRouterModel ?? undefined,
+      settings?.openRouterKey ?? undefined,
+    );
+    try {
+      const match = content.match(/\[[\s\S]*\]/);
+      const raw = JSON.parse(match ? match[0] : content) as any[];
+      return raw
+        .filter((r) => r && typeof r.name === "string" && r.name.trim())
+        .map((r) => ({
+          name: String(r.name).trim(),
+          grams: Math.max(0, Number(r.grams) || 0),
+          caloriesPer100g: Math.max(0, Number(r.caloriesPer100g) || 0),
+          proteinPer100g: Math.max(0, Number(r.proteinPer100g) || 0),
+          carbsPer100g: Math.max(0, Number(r.carbsPer100g) || 0),
+          fatPer100g: Math.max(0, Number(r.fatPer100g) || 0),
+          source: "ai",
+        }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Malformed AI output parsing ingredients: ${message} - content: ${content}`);
+    }
+  },
+});
+
+
+/** Turn a free-text method into clean, ordered recipe steps. */
+export const parseSteps = action({
+  args: { text: v.string() },
+  handler: async (ctx, { text }): Promise<string[]> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
+    const prompt = `Turn this cooking method into clear, concise, ordered recipe steps. One action per step, imperative voice, no numbering or prose. Return ONLY a JSON array of strings.\n\nMethod: "${text}"`;
+    const content = await callAI(
+      [{ role: "user", content: prompt }],
+      500,
+      settings?.openRouterModel ?? undefined,
+      settings?.openRouterKey ?? undefined,
+    );
+    try {
+      const match = content.match(/\[[\s\S]*\]/);
+      const raw = JSON.parse(match ? match[0] : content) as any[];
+      return raw.map((s) => String(s).trim()).filter(Boolean);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Malformed AI output parsing steps: ${message} - content: ${content}`);
+    }
+  },
+});
+
 
 export const estimateMeal = action({
   args: { mealName: v.string() },

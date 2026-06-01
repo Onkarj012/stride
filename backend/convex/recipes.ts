@@ -1,5 +1,11 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import {
+  buildNutritionResult,
+  computeNutrition,
+  type ItemBreakdown,
+  type NutritionResult,
+} from "./nutrition_engine";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -18,6 +24,37 @@ export interface RecipeIngredient {
 }
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
+
+/** Match meals written by ai.ts: NutritionResult + structuredItems = items[]. */
+function nutritionBreakdownFromRecipeIngredients(
+  ings: RecipeIngredient[],
+  scale = 1,
+): NutritionResult {
+  const items: ItemBreakdown[] = ings.map((ing) => {
+    const grams = Math.max(0, ing.grams) * scale;
+    const n = computeNutrition(
+      {
+        caloriesPer100g: ing.caloriesPer100g,
+        proteinPer100g: ing.proteinPer100g,
+        carbsPer100g: ing.carbsPer100g,
+        fatPer100g: ing.fatPer100g,
+      },
+      grams,
+    );
+    return {
+      food_text: ing.name,
+      matched_food_name: ing.name,
+      grams,
+      calories_kcal: n.calories_kcal,
+      protein_g: n.protein_g,
+      carbs_g: n.carbs_g,
+      fat_g: n.fat_g,
+      source: ing.source ?? "recipe",
+      confidence: 0.85,
+    };
+  });
+  return buildNutritionResult(items, []);
+}
 
 /** Pure: sum ingredient macros (total) and divide by servings (per-serving). */
 export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: number) {
@@ -60,14 +97,25 @@ export const getRecipes = query({
   },
 });
 
+export const getRecipe = query({
+  args: { id: v.id("recipes") },
+  handler: async (ctx, { id }) => {
+    const userId = await requireUserId(ctx);
+    const recipe = await ctx.db.get(id);
+    if (!recipe || recipe.userId !== userId) return null;
+    return recipe;
+  },
+});
+
 export const createRecipe = mutation({
   args: {
     name: v.string(),
     servings: v.number(),
     ingredients: ingredientValidator,
+    steps: v.optional(v.array(v.string())),
     source: v.optional(v.string()),
   },
-  handler: async (ctx, { name, servings, ingredients, source }) => {
+  handler: async (ctx, { name, servings, ingredients, steps, source }) => {
     const userId = await requireUserId(ctx);
     const { total, perServing } = computeRecipeTotals(ingredients, servings);
     return ctx.db.insert("recipes", {
@@ -77,6 +125,7 @@ export const createRecipe = mutation({
       ingredients: JSON.stringify(ingredients),
       total,
       perServing,
+      steps: steps?.filter((s) => s.trim()),
       source,
     });
   },
@@ -88,8 +137,9 @@ export const updateRecipe = mutation({
     name: v.optional(v.string()),
     servings: v.optional(v.number()),
     ingredients: v.optional(ingredientValidator),
+    steps: v.optional(v.array(v.string())),
   },
-  handler: async (ctx, { id, name, servings, ingredients }) => {
+  handler: async (ctx, { id, name, servings, ingredients, steps }) => {
     const userId = await requireUserId(ctx);
     const existing = await ctx.db.get(id);
     if (!existing || existing.userId !== userId) throw new Error("Not found");
@@ -102,6 +152,7 @@ export const updateRecipe = mutation({
       ingredients: JSON.stringify(nextIngredients),
       total,
       perServing,
+      steps: steps ? steps.filter((s) => s.trim()) : existing.steps,
     });
   },
 });
@@ -116,21 +167,32 @@ export const deleteRecipe = mutation({
   },
 });
 
-/** Task 11: log a saved recipe as a meal, scaled to chosen servings. */
+/** Task 11: log a saved recipe as a meal, scaled to chosen servings.
+ *  Optional `ingredients` override + `note` let the user tweak this one log
+ *  for accuracy without mutating the saved recipe. */
 export const logRecipe = mutation({
   args: {
     id: v.id("recipes"),
     servings: v.optional(v.number()),
     date: v.optional(v.string()),
     time: v.optional(v.string()),
+    ingredients: v.optional(ingredientValidator),
+    note: v.optional(v.string()),
   },
-  handler: async (ctx, { id, servings, date, time }) => {
+  handler: async (ctx, { id, servings, date, time, ingredients, note }) => {
     const userId = await requireUserId(ctx);
     const recipe = await ctx.db.get(id);
     if (!recipe || recipe.userId !== userId) throw new Error("Not found");
     const portions = Math.max(0.25, servings ?? 1);
-    const ps = recipe.perServing;
-    const ingredients: RecipeIngredient[] = JSON.parse(recipe.ingredients);
+    const ings: RecipeIngredient[] = ingredients ?? JSON.parse(recipe.ingredients);
+    const { perServing: ps } = computeRecipeTotals(ings, recipe.servings);
+    const ingredientList = ings.map((i) => `${i.name} (${i.grams}g)`).join(", ");
+    const trimmedNote = note?.trim();
+    const components = trimmedNote
+      ? `${ingredientList} — ${trimmedNote}`
+      : ingredientList;
+    const scale = portions / recipe.servings;
+    const breakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
 
     return ctx.db.insert("meals", {
       userId,
@@ -143,9 +205,9 @@ export const logRecipe = mutation({
       time: time ?? new Date().toISOString().slice(11, 16),
       mealType: "unspecified",
       nutritionSource: "recipe",
-      components: ingredients.map((i) => `${i.name} (${i.grams}g)`).join(", "),
-      structuredItems: JSON.stringify({ recipeId: id, servings: portions }),
-      ingredientBreakdown: recipe.ingredients,
+      components,
+      structuredItems: JSON.stringify(breakdown.items),
+      ingredientBreakdown: JSON.stringify(breakdown),
     });
   },
 });
