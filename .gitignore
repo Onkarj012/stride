@@ -58,10 +58,7 @@ Thumbs.db
 
 # Temporary / scratchpad
 temp/
-
-# Kiro session exports (chat transcripts — may contain secrets)
-kiro.json
-*.kiro.json
+docs/
 
 # Internal docs (assessments, reports — not for version control)
 # docs/
