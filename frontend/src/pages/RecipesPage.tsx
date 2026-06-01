@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
+import type { Id } from "@convex/_generated/dataModel";
 import { Plus, Trash2, Utensils, ChefHat, Sparkles, Loader2, ArrowLeft, Pencil } from "lucide-react";
 import { Card } from "@/components/primitives/Card";
 import { type PickedFood } from "@/components/food/FoodSearch";
@@ -373,7 +374,11 @@ function RecipeBuilderView({ onDone }: { onDone: () => void }) {
 }
 
 /* ── Detail + logging (full page) ── */
-function RecipeDetailView({ recipe, onBack }: { recipe: any; onBack: () => void }) {
+function RecipeDetailView({ recipe: initialRecipe, onBack }: { recipe: any; onBack: () => void }) {
+  const recipeId = initialRecipe._id as Id<"recipes">;
+  const liveRecipe = useQuery(api.recipes.getRecipe, { id: recipeId });
+  const recipe = liveRecipe ?? initialRecipe;
+
   const logRecipe = useMutation(api.recipes.logRecipe);
   const deleteRecipe = useMutation(api.recipes.deleteRecipe);
   const recordActivity = useMutation(api.gamification.recordActivity);
@@ -387,6 +392,11 @@ function RecipeDetailView({ recipe, onBack }: { recipe: any; onBack: () => void 
   const [editIngs, setEditIngs] = useState<PickedFood[]>(baseIngs);
   const [note, setNote] = useState("");
   const [logging, setLogging] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => {
+    if (liveRecipe === null) onBack();
+  }, [liveRecipe, onBack]);
 
   const ingsForLog = adjust ? editIngs : baseIngs;
   const ps = useMemo(() => totals(ingsForLog, recipe.servings).perServing, [ingsForLog, recipe.servings]);
@@ -403,10 +413,24 @@ function RecipeDetailView({ recipe, onBack }: { recipe: any; onBack: () => void 
     finally { setLogging(false); }
   }
 
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await deleteRecipe({ id: recipeId });
+      toast.success("Recipe deleted");
+      onBack();
+    } catch (e) {
+      toast.error("Couldn't delete recipe", e instanceof Error ? e.message : undefined);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const DeleteBtn = (
     <button type="button" aria-label={`Delete ${recipe.name}`}
-      onClick={() => { deleteRecipe({ id: recipe._id }); toast.success("Recipe deleted"); onBack(); }}
-      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border text-text-muted hover:text-bubblegum shrink-0">
+      onClick={() => void handleDelete()}
+      disabled={deleting}
+      className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border text-text-muted hover:text-bubblegum shrink-0 disabled:opacity-50">
       <Trash2 className="h-4 w-4" strokeWidth={2} />
     </button>
   );
