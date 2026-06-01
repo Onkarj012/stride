@@ -58,6 +58,10 @@ test("logRecipe appends user note to components, not aiSuggestion", async () => 
   const meals = await asUser.query(api.meals.getMeals, { date: "2026-05-30" });
   expect(meals[0].aiSuggestion).toBeUndefined();
   expect(meals[0].components).toContain("extra cheese, skipped the oil");
+  const breakdown = JSON.parse(meals[0].ingredientBreakdown!);
+  expect(breakdown.items).toBeInstanceOf(Array);
+  expect(breakdown.calories_kcal).toBeGreaterThan(0);
+  expect(JSON.parse(meals[0].structuredItems!)).toEqual(breakdown.items);
 });
 
 test("ownership enforced on update/delete/log", async () => {

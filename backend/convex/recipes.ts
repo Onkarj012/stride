@@ -1,5 +1,11 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import {
+  buildNutritionResult,
+  computeNutrition,
+  type ItemBreakdown,
+  type NutritionResult,
+} from "./nutrition_engine";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -18,6 +24,37 @@ export interface RecipeIngredient {
 }
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
+
+/** Match meals written by ai.ts: NutritionResult + structuredItems = items[]. */
+function nutritionBreakdownFromRecipeIngredients(
+  ings: RecipeIngredient[],
+  scale = 1,
+): NutritionResult {
+  const items: ItemBreakdown[] = ings.map((ing) => {
+    const grams = Math.max(0, ing.grams) * scale;
+    const n = computeNutrition(
+      {
+        caloriesPer100g: ing.caloriesPer100g,
+        proteinPer100g: ing.proteinPer100g,
+        carbsPer100g: ing.carbsPer100g,
+        fatPer100g: ing.fatPer100g,
+      },
+      grams,
+    );
+    return {
+      food_text: ing.name,
+      matched_food_name: ing.name,
+      grams,
+      calories_kcal: n.calories_kcal,
+      protein_g: n.protein_g,
+      carbs_g: n.carbs_g,
+      fat_g: n.fat_g,
+      source: ing.source ?? "recipe",
+      confidence: 0.85,
+    };
+  });
+  return buildNutritionResult(items, []);
+}
 
 /** Pure: sum ingredient macros (total) and divide by servings (per-serving). */
 export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: number) {
@@ -154,6 +191,8 @@ export const logRecipe = mutation({
     const components = trimmedNote
       ? `${ingredientList} — ${trimmedNote}`
       : ingredientList;
+    const scale = portions / recipe.servings;
+    const breakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
 
     return ctx.db.insert("meals", {
       userId,
@@ -167,8 +206,8 @@ export const logRecipe = mutation({
       mealType: "unspecified",
       nutritionSource: "recipe",
       components,
-      structuredItems: JSON.stringify({ recipeId: id, servings: portions }),
-      ingredientBreakdown: JSON.stringify(ings),
+      structuredItems: JSON.stringify(breakdown.items),
+      ingredientBreakdown: JSON.stringify(breakdown),
     });
   },
 });

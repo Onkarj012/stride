@@ -531,8 +531,9 @@ export const parseIngredients = action({
           fatPer100g: Math.max(0, Number(r.fatPer100g) || 0),
           source: "ai",
         }));
-    } catch {
-      return [];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Malformed AI output parsing ingredients: ${message} - content: ${content}`);
     }
   },
 });
@@ -556,8 +557,9 @@ export const parseSteps = action({
       const match = content.match(/\[[\s\S]*\]/);
       const raw = JSON.parse(match ? match[0] : content) as any[];
       return raw.map((s) => String(s).trim()).filter(Boolean);
-    } catch {
-      return [];
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Malformed AI output parsing steps: ${message} - content: ${content}`);
     }
   },
 });

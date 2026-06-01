@@ -37,6 +37,12 @@ function parseIngs(json: string): PickedFood[] {
 const fieldCls = "w-full bg-input border border-border rounded-xl px-4 py-3 text-[15px] text-text focus:outline-none focus:border-lavender";
 const labelCls = "text-[12px] font-semibold uppercase tracking-wider text-text-muted";
 
+/** Trim names and drop blank rows before persisting or logging. */
+function normalizeIngredients(list: PickedFood[]): PickedFood[] | null {
+  const cleaned = list.map((i) => ({ ...i, name: i.name.trim() })).filter((i) => i.name);
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 /* ── AI natural-language ingredient input (no DB lookups, handles real portions) ── */
 function AIIngredientInput({ onAdd }: { onAdd: (items: PickedFood[]) => void }) {
   const parse = useAction(api.ai.parseIngredients);
@@ -319,10 +325,19 @@ function RecipeBuilderView({ onDone }: { onDone: () => void }) {
   const [saving, setSaving] = useState(false);
 
   async function save() {
-    if (!name.trim() || ingredients.length === 0) { toast.error("Add a name and at least one ingredient"); return; }
+    const cleaned = normalizeIngredients(ingredients);
+    if (!name.trim() || !cleaned) {
+      toast.error("Add a name and at least one ingredient with a name");
+      return;
+    }
     setSaving(true);
     try {
-      await createRecipe({ name: name.trim(), servings: Math.max(1, servings), ingredients, steps: steps.filter((s) => s.trim()) });
+      await createRecipe({
+        name: name.trim(),
+        servings: Math.max(1, servings),
+        ingredients: cleaned,
+        steps: steps.filter((s) => s.trim()),
+      });
       toast.success("Recipe saved");
       onDone();
     } catch (e) { toast.error("Couldn't save", e instanceof Error ? e.message : undefined); }
@@ -403,9 +418,20 @@ function RecipeDetailView({ recipe: initialRecipe, onBack }: { recipe: any; onBa
   const logKcal = Math.round(ps.kcal * portions);
 
   async function log() {
+    const cleaned = adjust ? normalizeIngredients(editIngs) : undefined;
+    if (adjust && !cleaned) {
+      toast.error("Every ingredient needs a name");
+      return;
+    }
     setLogging(true);
     try {
-      await logRecipe({ id: recipe._id, servings: portions, date: localDateStr(), ingredients: adjust ? editIngs : undefined, note: note.trim() || undefined });
+      await logRecipe({
+        id: recipe._id,
+        servings: portions,
+        date: localDateStr(),
+        ingredients: cleaned,
+        note: note.trim() || undefined,
+      });
       await recordActivity({ type: "meal" }).catch(() => {});
       toast.success(`Logged ${recipe.name}`, `${logKcal} kcal`);
       onBack();
