@@ -18,7 +18,7 @@ type MarkdownProps = {
  */
 export function Markdown({ children, className }: MarkdownProps) {
   return (
-    <div className={cn("markdown-body text-[14px] leading-relaxed text-text break-words", className)}>
+    <div className={cn("markdown-body text-sm leading-relaxed text-text break-words", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         disallowedElements={["img"]}
@@ -36,7 +36,7 @@ export function Markdown({ children, className }: MarkdownProps) {
             <h3 className="text-[15px] font-bold mt-2 mb-1 first:mt-0" {...props} />
           ),
           h4: ({ node: _node, ...props }) => (
-            <h4 className="text-[14px] font-bold mt-2 mb-1 first:mt-0" {...props} />
+            <h4 className="text-sm font-bold mt-2 mb-1 first:mt-0" {...props} />
           ),
           ul: ({ node: _node, ...props }) => (
             <ul className="my-1.5 pl-5 list-disc space-y-0.5" {...props} />
