@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useSignIn, useSignUp } from "@clerk/react";
-import { Eye, EyeOff, Loader2, Mail, Lock, User } from "lucide-react";
+import { Eye, EyeOff, Loader2, Mail, Lock, User, KeyRound } from "lucide-react";
 import { VoxelAgent } from "@/components/voxel/VoxelAgent";
 import { Brand } from "@/components/layout/Brand";
 import { cn } from "@/lib/utils";
@@ -84,10 +84,13 @@ function Divider() {
 /* ── Sign In ── */
 export function SignInPage() {
   const { signIn } = useSignIn();
-  const navigate = useNavigate();
+  const [view, setView] = useState<"signin" | "forgot_email" | "forgot_code" | "forgot_newpwd">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
+  const [code, setCode] = useState("");
+  const [newPwd, setNewPwd] = useState("");
+  const [showNewPwd, setShowNewPwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -99,11 +102,9 @@ export function SignInPage() {
     try {
       const { error: err } = await signIn.password({ emailAddress: email, password });
       if (err) { setError(err.message); return; }
-
       if (signIn.status === "complete") {
         await signIn.finalize({ navigate: ({ decorateUrl }) => { window.location.href = decorateUrl("/"); } });
       } else if (signIn.status === "needs_second_factor" || signIn.status === "needs_client_trust") {
-        // Send email code for MFA / client trust verification
         const { error: mfaErr } = await signIn.mfa.sendEmailCode();
         if (mfaErr) { setError(mfaErr.message); return; }
         setError("A verification code was sent to your email. MFA is required — please use the Clerk hosted sign-in page for now.");
@@ -120,55 +121,184 @@ export function SignInPage() {
   async function onGoogle() {
     if (!signIn) return;
     try {
-      await signIn.sso({
-        strategy: "oauth_google",
-        redirectCallbackUrl: `${window.location.origin}/sso-callback`,
-        redirectUrl: "/",
-      });
+      await signIn.sso({ strategy: "oauth_google", redirectCallbackUrl: `${window.location.origin}/sso-callback`, redirectUrl: "/" });
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Google sign-in failed");
     }
   }
 
+  async function onForgotSendCode(e: FormEvent) {
+    e.preventDefault();
+    if (!signIn) return;
+    setError(null);
+    setLoading(true);
+    try {
+      // Identify the account, then request the reset code
+      await signIn.create({ identifier: email });
+      const { error: err } = await signIn.resetPasswordEmailCode.sendCode();
+      if (err) { setError(err.message); return; }
+      setView("forgot_code");
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't send code");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onForgotVerifyCode(e: FormEvent) {
+    e.preventDefault();
+    if (!signIn) return;
+    setError(null);
+    setLoading(true);
+    try {
+      const { error: err } = await signIn.resetPasswordEmailCode.verifyCode({ code });
+      if (err) { setError(err.message); return; }
+      // status becomes 'needs_new_password' — proceed to next step
+      setView("forgot_newpwd");
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Invalid code");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onForgotSetPassword(e: FormEvent) {
+    e.preventDefault();
+    if (!signIn) return;
+    setError(null);
+    setLoading(true);
+    try {
+      const { error: err } = await signIn.resetPasswordEmailCode.submitPassword({ password: newPwd });
+      if (err) { setError(err.message); return; }
+      if (signIn.status === "complete") {
+        await signIn.finalize({ navigate: ({ decorateUrl }) => { window.location.href = decorateUrl("/"); } });
+      } else {
+        setError("Password reset incomplete. Please try signing in.");
+        setView("signin");
+      }
+    } catch (err: any) {
+      setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't reset password");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <AuthShell hero={{ headline: "Welcome back. Let's pick up where you left off.", sub: "Your wellness companion remembers your habits, not just your data." }}>
-      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={SPRING} className="space-y-6">
-        <div className="space-y-1">
-          <h1 className="text-h1 text-text">Sign in</h1>
-          <p className="text-[14px] text-text-muted">
-            New here?{" "}
-            <Link to="/sign-up" className="font-semibold text-text underline-offset-4 hover:underline">Create an account</Link>
-          </p>
-        </div>
-
-        <form onSubmit={onSubmit} className="space-y-4">
-          <Field icon={Mail} label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
-          <label className="block space-y-1.5">
-            <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Password</span>
-            <div className="flex items-center gap-2 rounded-2xl bg-card border border-border focus-within:border-lavender transition-colors px-4 py-3">
-              <Lock className="h-4 w-4 text-text-muted shrink-0" strokeWidth={1.75} />
-              <input type={showPwd ? "text" : "password"} autoComplete="current-password" required value={password}
-                onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
-                className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none" />
-              <button type="button" onClick={() => setShowPwd((s) => !s)} className="text-text-muted hover:text-text">
-                {showPwd ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
-              </button>
+      <AnimatePresence mode="wait">
+        {view === "signin" && (
+          <motion.div key="signin" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="space-y-6">
+            <div className="space-y-1">
+              <h1 className="text-h1 text-text">Sign in</h1>
+              <p className="text-[14px] text-text-muted">
+                New here?{" "}
+                <Link to="/sign-up" className="font-semibold text-text underline-offset-4 hover:underline">Create an account</Link>
+              </p>
             </div>
-          </label>
+            <form onSubmit={onSubmit} className="space-y-4">
+              <Field icon={Mail} label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+              <label className="block space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Password</span>
+                  <button type="button" onClick={() => { setError(null); setView("forgot_email"); }}
+                    className="text-[12px] font-medium text-text-muted hover:text-text underline-offset-2 hover:underline">
+                    Forgot password?
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 rounded-2xl bg-card border border-border focus-within:border-lavender transition-colors px-4 py-3">
+                  <Lock className="h-4 w-4 text-text-muted shrink-0" strokeWidth={1.75} />
+                  <input type={showPwd ? "text" : "password"} autoComplete="current-password" required value={password}
+                    onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+                    className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none" />
+                  <button type="button" onClick={() => setShowPwd((s) => !s)} className="text-text-muted hover:text-text">
+                    {showPwd ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
+                  </button>
+                </div>
+              </label>
+              <AnimatePresence>
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-bubblegum">{error}</motion.p>}
+              </AnimatePresence>
+              <button type="submit" disabled={loading || !email || !password}
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || !email || !password) && "opacity-50")}>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
+              </button>
+            </form>
+            <Divider />
+            <GoogleButton onClick={onGoogle} />
+          </motion.div>
+        )}
 
-          <AnimatePresence>
-            {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-bubblegum">{error}</motion.p>}
-          </AnimatePresence>
+        {view === "forgot_email" && (
+          <motion.div key="forgot_email" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="space-y-6">
+            <div className="space-y-1">
+              <h1 className="text-h1 text-text">Reset password</h1>
+              <p className="text-[14px] text-text-muted">Enter your email and we'll send a reset code.</p>
+            </div>
+            <form onSubmit={onForgotSendCode} className="space-y-4">
+              <Field icon={Mail} label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+              <AnimatePresence>
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-bubblegum">{error}</motion.p>}
+              </AnimatePresence>
+              <button type="submit" disabled={loading || !email}
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || !email) && "opacity-50")}>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send reset code"}
+              </button>
+            </form>
+            <button type="button" onClick={() => { setError(null); setView("signin"); }} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back to sign in</button>
+          </motion.div>
+        )}
 
-          <button type="submit" disabled={loading || !email || !password}
-            className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || !email || !password) && "opacity-50")}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
-          </button>
-        </form>
+        {view === "forgot_code" && (
+          <motion.div key="forgot_code" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="space-y-6">
+            <div className="space-y-1">
+              <h1 className="text-h1 text-text">Check your email</h1>
+              <p className="text-[14px] text-text-muted">We sent a code to <span className="font-semibold text-text">{email}</span>.</p>
+            </div>
+            <form onSubmit={onForgotVerifyCode} className="space-y-4">
+              <Field icon={KeyRound} label="Reset code" type="text" inputMode="numeric" maxLength={6} required
+                value={code} onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))} placeholder="123456" />
+              <AnimatePresence>
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-bubblegum">{error}</motion.p>}
+              </AnimatePresence>
+              <button type="submit" disabled={loading || code.length < 6}
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || code.length < 6) && "opacity-50")}>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify code"}
+              </button>
+            </form>
+            <button type="button" onClick={() => { setError(null); setView("forgot_email"); }} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back</button>
+          </motion.div>
+        )}
 
-        <Divider />
-        <GoogleButton onClick={onGoogle} />
-      </motion.div>
+        {view === "forgot_newpwd" && (
+          <motion.div key="forgot_newpwd" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="space-y-6">
+            <div className="space-y-1">
+              <h1 className="text-h1 text-text">New password</h1>
+              <p className="text-[14px] text-text-muted">Choose a strong password you haven't used before.</p>
+            </div>
+            <form onSubmit={onForgotSetPassword} className="space-y-4">
+              <label className="block space-y-1.5">
+                <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">New password</span>
+                <div className="flex items-center gap-2 rounded-2xl bg-card border border-border focus-within:border-lavender transition-colors px-4 py-3">
+                  <Lock className="h-4 w-4 text-text-muted shrink-0" strokeWidth={1.75} />
+                  <input type={showNewPwd ? "text" : "password"} autoComplete="new-password" required minLength={8} value={newPwd}
+                    onChange={(e) => setNewPwd(e.target.value)} placeholder="At least 8 characters"
+                    className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none" />
+                  <button type="button" onClick={() => setShowNewPwd((s) => !s)} className="text-text-muted hover:text-text">
+                    {showNewPwd ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
+                  </button>
+                </div>
+              </label>
+              <AnimatePresence>
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-bubblegum">{error}</motion.p>}
+              </AnimatePresence>
+              <button type="submit" disabled={loading || newPwd.length < 8}
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || newPwd.length < 8) && "opacity-50")}>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Set new password"}
+              </button>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </AuthShell>
   );
 }

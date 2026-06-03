@@ -16,6 +16,16 @@ function currentWeekStart(): string {
   return monday.toISOString().split("T")[0];
 }
 
+function localNowFromOffset(offsetMinutes: number) {
+  return new Date(Date.now() - offsetMinutes * 60_000);
+}
+
+function dateBefore(date: string): string {
+  const d = new Date(`${date}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().split("T")[0];
+}
+
 export const getDailyInsights = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
@@ -97,8 +107,13 @@ export const getTodayBrief = query({
   args: { today: v.optional(v.string()) },
   handler: async (ctx, { today: todayArg }) => {
     const userId = await requireUserId(ctx);
-    const today = todayArg ?? new Date().toISOString().split("T")[0];
-    const yesterday = new Date(Date.now() - 86_400_000).toISOString().split("T")[0];
+    const settings = await ctx.db.query("user_settings")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .first();
+    const offsetMin = settings?.timezoneOffsetMinutes ?? 0;
+    const localNow = localNowFromOffset(offsetMin);
+    const today = todayArg ?? localNow.toISOString().split("T")[0];
+    const yesterday = dateBefore(today);
 
     const [profile, todayMeals, todayWorkouts, yMeals, yWorkouts, water, sleep] = await Promise.all([
       ctx.db.query("user_profiles")
@@ -126,12 +141,33 @@ export const getTodayBrief = query({
 
     const calorieTarget = profile?.calorieTarget ?? 2000;
     const proteinTarget = profile?.proteinTarget ?? 90;
+    const carbTarget = profile?.carbTarget ?? 250;
+    const fatTarget = profile?.fatTarget ?? 65;
     const todayCals = todayMeals.reduce((s, m) => s + m.calories, 0);
     const todayProtein = todayMeals.reduce((s, m) => s + m.protein, 0);
+    const todayCarbs = todayMeals.reduce((s, m) => s + m.carbs, 0);
+    const todayFat = todayMeals.reduce((s, m) => s + m.fat, 0);
     const yCals = yMeals.reduce((s, m) => s + m.calories, 0);
     const yProtein = yMeals.reduce((s, m) => s + m.protein, 0);
     const waterMl = water.reduce((s, w) => s + w.ml, 0);
-    const waterTarget = 2000;
+    const waterTarget = profile?.waterTarget ?? 2000;
+
+    // Suppress check-in questions if the user has already chatted on the homepage today
+    const homepageSession = await ctx.db
+      .query("chat_sessions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("title"), "__HOMEPAGE__"))
+      .first();
+    const todayStartMs = new Date(today + "T00:00:00.000Z").getTime();
+    let hasHomepageMessagesToday = false;
+    if (homepageSession) {
+      const recentMsg = await ctx.db
+        .query("chat_messages")
+        .withIndex("by_session", (q) => q.eq("sessionId", homepageSession._id))
+        .order("desc")
+        .first();
+      hasHomepageMessagesToday = !!recentMsg && (recentMsg._creationTime ?? 0) >= todayStartMs;
+    }
 
     // Task 19: dynamic per-day target from base plan + today's actual burn.
     let plan: NutritionPlan | null = null;
@@ -144,7 +180,7 @@ export const getTodayBrief = query({
     const adjustedCalorieTarget = dayAdj?.calorieGoal ?? calorieTarget;
     const adjustmentNote = dayAdj && dayAdj.calorieGoal !== plan!.calories ? dayAdj.note : null;
 
-    const hour = new Date().getHours();
+    const hour = localNow.getUTCHours();
     const window: "morning" | "day" | "evening" | "night" =
       hour >= 5 && hour < 11 ? "morning" :
       hour >= 11 && hour < 18 ? "day" :
@@ -199,11 +235,239 @@ export const getTodayBrief = query({
       nudgeReason = "I'll mark sleep started now";
     }
 
+    type CommandCategory = "meal" | "workout" | "recovery" | "water" | "reflection";
+    type CommandTone = "steady" | "recovery" | "momentum" | "light";
+
+    let doToday: { title: string; action: string; reason: string; category: CommandCategory };
+    let recoverFrom: { title: string; action: string } | null = null;
+    let ignoreToday: { title: string; reason: string } | null = null;
+    let tone: CommandTone = "steady";
+
+    const proteinBehind = todayProtein < proteinTarget * Math.min(1, Math.max(0.15, (hour - 7) / 12));
+    const noLogsYesterday = yMeals.length === 0 && yWorkouts.length === 0;
+    const shortSleep = !!sleep && sleep.hours < 6.5;
+    const waterBehind = waterMl < waterTarget * Math.min(1, Math.max(0.2, (hour - 7) / 12));
+    const mealsMissingLate = todayMeals.length === 0 && hour >= 13;
+
+    if (shortSleep) {
+      tone = "recovery";
+      doToday = {
+        title: "Keep today recovery-first",
+        action: "Choose a lighter workout or a 20-minute walk.",
+        reason: `Sleep came in at ${sleep.hours.toFixed(1)}h, so consistency beats intensity today.`,
+        category: "recovery",
+      };
+      recoverFrom = {
+        title: "Short sleep",
+        action: "Aim for steady meals, extra water, and an earlier wind-down.",
+      };
+      ignoreToday = {
+        title: "A perfect training day",
+        reason: "Pushing hard after short sleep usually costs more than it gives back.",
+      };
+    } else if (proteinBehind && (todayMeals.length > 0 || window !== "morning")) {
+      tone = "steady";
+      const needed = Math.max(20, Math.round(Math.min(45, proteinTarget - todayProtein)));
+      doToday = {
+        title: "Make the next meal protein-forward",
+        action: `Get about ${needed}g protein in your next meal or snack.`,
+        reason: `${Math.round(todayProtein)}g of ${proteinTarget}g logged so far.`,
+        category: "meal",
+      };
+      if (yProtein > 0 && yProtein < proteinTarget * 0.7) {
+        recoverFrom = {
+          title: "Low protein yesterday",
+          action: "Front-load protein once today instead of trying to fix everything later.",
+        };
+      }
+      ignoreToday = {
+        title: "Macro perfection",
+        reason: "Hit the protein anchor first; the rest can stay flexible.",
+      };
+    } else if (mealsMissingLate) {
+      tone = "light";
+      doToday = {
+        title: "Log one real meal",
+        action: "Estimate lunch or your last meal in plain language.",
+        reason: "One useful log is enough to restart the day.",
+        category: "meal",
+      };
+      recoverFrom = noLogsYesterday ? {
+        title: "A quiet logging streak",
+        action: "Start small: one meal, no backfilling needed.",
+      } : null;
+      ignoreToday = {
+        title: "Catching up perfectly",
+        reason: "Do not spend energy reconstructing the whole day.",
+      };
+    } else if (waterBehind && window !== "night") {
+      tone = "light";
+      doToday = {
+        title: "Fix hydration the easy way",
+        action: "Drink one glass of water now.",
+        reason: `${Math.round(waterMl / 250)} of 8 glasses logged today.`,
+        category: "water",
+      };
+      ignoreToday = {
+        title: "Big habit overhaul",
+        reason: "A single glass is the right-sized next step.",
+      };
+    } else if (window === "evening" || window === "night") {
+      tone = todayMeals.length > 0 || todayWorkouts.length > 0 ? "momentum" : "light";
+      doToday = {
+        title: "Close the loop",
+        action: "Rate today from 1 to 5 and leave one note for tomorrow.",
+        reason: "A short reflection gives tomorrow's guidance better context.",
+        category: "reflection",
+      };
+      recoverFrom = noLogsYesterday ? {
+        title: "Missed context",
+        action: "No need to backfill; just mark how today felt.",
+      } : null;
+      ignoreToday = {
+        title: "More dashboard checking",
+        reason: "You have enough data for today. Capture the feeling and move on.",
+      };
+    } else {
+      tone = noLogsYesterday ? "light" : "momentum";
+      doToday = {
+        title: noLogsYesterday ? "Restart with one easy log" : "Keep the rhythm simple",
+        action: noLogsYesterday ? "Log breakfast or your first drink." : "Log the next meal when it happens.",
+        reason: noLogsYesterday ? "Yesterday was quiet, so the win is showing up lightly." : "Your recent activity gives today enough momentum.",
+        category: "meal",
+      };
+      recoverFrom = noLogsYesterday ? {
+        title: "No logs yesterday",
+        action: "One small entry is the whole comeback.",
+      } : null;
+      ignoreToday = {
+        title: "Doing everything at once",
+        reason: "One clear action is better than opening five trackers.",
+      };
+    }
+
+    const checkInOptions = {
+      skip: { label: "Skip", value: "skip" },
+      done: { label: "Done for now", value: "done" },
+    };
+    const checkInQuestions: Array<{ id: string; title: string; body?: string; options: Array<{ label: string; value: string; prompt?: string }> }> = [];
+    if (window === "morning") {
+      if (!sleep) {
+        checkInQuestions.push({
+          id: "morning_sleep",
+          title: "How did you sleep?",
+          body: "Quick sleep context helps me shape today's plan.",
+          options: [
+            { label: "Poor", value: "poor" },
+            { label: "Okay", value: "ok" },
+            { label: "Good", value: "good" },
+            checkInOptions.skip,
+          ],
+        });
+      }
+      checkInQuestions.push({
+        id: "morning_energy",
+        title: "How's your energy this morning?",
+        options: [
+          { label: "Low", value: "low" },
+          { label: "Okay", value: "ok" },
+          { label: "Good", value: "good" },
+          checkInOptions.done,
+        ],
+      });
+      if (todayMeals.length === 0) {
+        checkInQuestions.push({
+          id: "morning_breakfast",
+          title: "Have you had breakfast?",
+          options: [
+            { label: "Not yet", value: "not_yet", prompt: "I have not had breakfast yet" },
+            { label: "Yes, log it", value: "log_breakfast", prompt: "Help me log breakfast" },
+            { label: "Suggest one", value: "suggest_breakfast", prompt: "Suggest a simple breakfast" },
+            checkInOptions.skip,
+          ],
+        });
+      }
+    } else if (window === "day") {
+      if (todayMeals.length === 0 || (todayMeals.length === 1 && hour >= 13)) {
+        checkInQuestions.push({
+          id: "lunch_check",
+          title: "What did lunch look like?",
+          body: "A rough answer is enough.",
+          options: [
+            { label: "Log lunch", value: "log_lunch", prompt: "Help me log lunch" },
+            { label: "Skipped it", value: "skipped_lunch", prompt: "I skipped lunch" },
+            { label: "Not yet", value: "not_yet", prompt: "I have not had lunch yet" },
+            checkInOptions.skip,
+          ],
+        });
+      }
+      checkInQuestions.push({
+        id: "day_energy",
+        title: "Where's your energy now?",
+        options: [
+          { label: "Low", value: "low" },
+          { label: "Steady", value: "steady" },
+          { label: "High", value: "high" },
+          checkInOptions.done,
+        ],
+      });
+    } else if (window === "evening") {
+      checkInQuestions.push({
+        id: "evening_mood",
+        title: "How was today, 1 to 5?",
+        options: [
+          { label: "1", value: "1", prompt: "Today was a 1 out of 5" },
+          { label: "3", value: "3", prompt: "Today was a 3 out of 5" },
+          { label: "5", value: "5", prompt: "Today was a 5 out of 5" },
+          checkInOptions.skip,
+        ],
+      });
+      if (todayWorkouts.length === 0) {
+        checkInQuestions.push({
+          id: "evening_workout",
+          title: "Did movement happen today?",
+          options: [
+            { label: "Yes, log it", value: "log_workout", prompt: "Help me log today's workout" },
+            { label: "No workout", value: "no_workout", prompt: "No workout today" },
+            { label: "Light walk", value: "walk", prompt: "I did a light walk today" },
+            checkInOptions.done,
+          ],
+        });
+      }
+    } else {
+      checkInQuestions.push({
+        id: "night_winddown",
+        title: "What do you need for wind-down?",
+        options: [
+          { label: "Log sleep plan", value: "sleep_plan", prompt: "Help me set a sleep plan" },
+          { label: "Stress is high", value: "stress_high", prompt: "Stress is high tonight" },
+          { label: "I'm good", value: "good", prompt: "I am good for tonight" },
+          checkInOptions.done,
+        ],
+      });
+    }
+    const checkIn = checkInQuestions.slice(0, 3);
+
     return {
       window,
       headline,
       priority,
       nudge: { action: nudgeAction, reason: nudgeReason },
+      command: {
+        doToday,
+        recoverFrom,
+        ignoreToday,
+        why: doToday.reason,
+        tone,
+      },
+      checkIn: (checkIn.length && !hasHomepageMessagesToday) ? {
+        type: "quick_question",
+        id: checkIn[0].id,
+        title: checkIn[0].title,
+        body: checkIn[0].body,
+        options: checkIn[0].options,
+        queue: checkIn,
+      } : null,
       stats: {
         todayCals: Math.round(todayCals),
         calorieTarget,
@@ -211,6 +475,10 @@ export const getTodayBrief = query({
         adjustmentNote,
         todayProtein: Math.round(todayProtein),
         proteinTarget,
+        todayCarbs: Math.round(todayCarbs),
+        carbTarget,
+        todayFat: Math.round(todayFat),
+        fatTarget,
         waterMl,
         waterTarget,
         mealsLogged: todayMeals.length,

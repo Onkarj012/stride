@@ -1,5 +1,6 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { recordBehaviorRow } from "./behavior";
 
 async function requireUserId(ctx: any): Promise<string> {
@@ -32,6 +33,9 @@ export const addMeal = mutation({
     aiSuggestion: v.optional(v.string()),
     mealType: v.optional(v.string()),
     components: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    nutritionSource: v.optional(v.string()),
+    foodMemoryId: v.optional(v.id("food_memory")),
   },
   handler: async (ctx, args) => {
     if (args.calories < 0 || args.protein < 0 || args.carbs < 0 || args.fat < 0) {
@@ -51,8 +55,23 @@ export const addMeal = mutation({
       aiSuggestion: args.aiSuggestion,
       mealType: args.mealType ?? "unspecified",
       components: args.components,
+      confidence: args.confidence,
+      nutritionSource: args.nutritionSource,
+      foodMemoryId: args.foodMemoryId,
     });
     await recordBehaviorRow(ctx, userId, "log", "meal", undefined, date);
+    // Learn from this meal (fire-and-forget; don't block the mutation)
+    ctx.scheduler.runAfter(0, internal.food_memory.recordFromMeal, {
+      userId,
+      name: args.name,
+      kcal: args.calories,
+      protein: args.protein,
+      carbs: args.carbs,
+      fat: args.fat,
+      components: args.components,
+      date,
+      source: "learned",
+    }).catch(() => {});
     return id;
   },
 });
@@ -88,6 +107,31 @@ export const updateMeal = mutation({
       aiSuggestion: fields.aiSuggestion ?? undefined,
       components: fields.components ?? undefined,
     });
+    // Feed correction back to diet memory
+    const today = new Date().toISOString().split("T")[0];
+    if (meal.foodMemoryId) {
+      ctx.scheduler.runAfter(0, internal.food_memory.updateFromCorrection, {
+        foodMemoryId: meal.foodMemoryId,
+        kcal: fields.calories,
+        protein: fields.protein,
+        carbs: fields.carbs,
+        fat: fields.fat,
+        date: meal.date ?? today,
+      }).catch(() => {});
+    } else {
+      // Meal not memory-linked: still learn the corrected values by name
+      ctx.scheduler.runAfter(0, internal.food_memory.recordFromMeal, {
+        userId,
+        name: fields.name,
+        kcal: fields.calories,
+        protein: fields.protein,
+        carbs: fields.carbs,
+        fat: fields.fat,
+        components: fields.components ?? meal.components ?? undefined,
+        date: meal.date ?? today,
+        source: "corrected",
+      }).catch(() => {});
+    }
   },
 });
 
@@ -187,9 +231,10 @@ export const addMealFromAI = internalMutation({
     nutritionSource: v.optional(v.string()),
     structuredItems: v.optional(v.string()),
     ingredientBreakdown: v.optional(v.string()),
+    foodMemoryId: v.optional(v.id("food_memory")),
   },
   handler: async (ctx, args) => {
-    return ctx.db.insert("meals", {
+    const id = await ctx.db.insert("meals", {
       userId: args.userId,
       date: args.date,
       name: args.name,
@@ -205,7 +250,23 @@ export const addMealFromAI = internalMutation({
       nutritionSource: args.nutritionSource,
       structuredItems: args.structuredItems,
       ingredientBreakdown: args.ingredientBreakdown,
+      foodMemoryId: args.foodMemoryId,
     });
+    // Learn from AI-logged meal too (fire-and-forget)
+    if (!args.foodMemoryId) {
+      ctx.scheduler.runAfter(0, internal.food_memory.recordFromMeal, {
+        userId: args.userId,
+        name: args.name,
+        kcal: args.calories,
+        protein: args.protein,
+        carbs: args.carbs,
+        fat: args.fat,
+        components: args.components,
+        date: args.date,
+        source: "learned",
+      }).catch(() => {});
+    }
+    return id;
   },
 });
 

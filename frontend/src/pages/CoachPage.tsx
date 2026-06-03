@@ -380,7 +380,12 @@ export function CoachPage() {
               {sessions.map((s) => (
                 <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeSessionId ? "bg-card-elev" : "hover:bg-card-elev")}>
                   <button type="button" onClick={() => loadSession(s.id)} className="flex-1 text-left px-3 py-2 min-w-0">
-                    <div className="text-[12px] font-medium text-text truncate">{s.title}</div>
+                    <div className="flex items-center gap-1.5">
+                      {(s as any).isHome && (
+                        <span className="shrink-0 inline-flex items-center rounded-full bg-lavender/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-lavender">Home</span>
+                      )}
+                      <div className="text-[12px] font-medium text-text truncate">{s.title}</div>
+                    </div>
                     <div className="text-[10px] text-text-subtle">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
                   </button>
                   <button type="button" onClick={() => deleteSession({ id: s.id })} aria-label="Delete"

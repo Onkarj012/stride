@@ -57,7 +57,7 @@ function FreeText({ field, placeholder, onParsed }: {
         placeholder={placeholder} aria-label="Describe in your own words"
         className="flex-1 min-w-0 bg-transparent outline-none text-[14px] text-text placeholder:text-text-subtle" />
       <button type="button" onClick={submit} disabled={busy || !text.trim()} aria-label="Send"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:opacity-40">
+        className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:opacity-40">
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-3.5 w-3.5" strokeWidth={2.5} />}
       </button>
     </div>

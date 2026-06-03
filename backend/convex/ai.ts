@@ -2,6 +2,7 @@ import { action, query, internalAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
+import { findBestMatch, AUTO_APPLY_MIN_LOGGED } from "./food_memory_match";
 import {
   calculateWorkoutCalories,
   scoreDensity,
@@ -40,11 +41,25 @@ const FALLBACK_MODEL = "anthropic/claude-3-haiku";
 
 const VISION_MODELS = new Set([
   "openai/gpt-4o", "openai/gpt-4o-mini", "openai/gpt-4-turbo",
+  "openai/gpt-5-mini",
   "anthropic/claude-3-opus", "anthropic/claude-3-sonnet", "anthropic/claude-3-haiku",
   "anthropic/claude-3.5-sonnet", "anthropic/claude-3.5-haiku",
   "google/gemini-1.5-pro", "google/gemini-1.5-flash", "google/gemini-2.0-flash",
+  "google/gemini-3.5-flash", "google/gemini-3.1-flash-lite",
+  "google/gemini-2.5-flash-lite-preview-09-2025",
   "meta-llama/llama-3.2-11b-vision", "meta-llama/llama-3.2-90b-vision",
+  "x-ai/grok-build-0.1",
 ]);
+
+const NUTRITION_ACCURACY_RULES = `Nutrition accuracy rules:
+- Extract portions before calories. Prefer explicit grams/ml/servings over generic meal-size guesses.
+- If the user gives "bowl", "plate", "serving", "handful", "scoop", or "piece", convert to a realistic edible gram estimate and set confidence <= 0.65 unless the size is specified.
+- Distinguish cooked vs dry weights. Cooked rice/pasta/oats are much lower kcal per 100g than dry.
+- Include calorie-dense additions: oil, ghee, butter, cream, cheese, nuts, nut butter, avocado, sauces, dressings, sugar, honey.
+- For Indian foods, include tadka/cooking oil unless explicitly oil-free; estimate conservatively but do not ignore it.
+- Do not use restaurant/large portions unless the user says restaurant, takeaway, large, extra, or similar.
+- Macro calories should be plausible: calories should roughly match protein*4 + carbs*4 + fat*9 within 25%.
+- If key portion details are missing, put the missing fields in missing_fields and use a middle-of-range estimate, not an extreme low/high.`;
 
 interface AIMessage { role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }
 
@@ -127,6 +142,8 @@ User's description:
 ${description}
 """
 
+${NUTRITION_ACCURACY_RULES}
+
 Instructions:
 1. Identify EVERY ingredient, condiment, and cooking addition (oils, butter, ghee, sauces, etc.).
 2. For each ingredient, extract: food_text (the ingredient name), amount (number), unit ("g", "ml", "tbsp", "cup", "piece", etc.), and flag is_oil_or_fat (true for oils, butter, ghee, etc.).
@@ -135,7 +152,8 @@ Instructions:
 5. Estimate total_recipe_servings if mentioned.
 6. In "components", list the key ingredients detected (e.g. "paneer, rice, ghee"). Be specific.
 7. In "suggestion", give ONE forward-looking sentence about what the user should focus on in their NEXT meal (not criticism of this meal).
-8. ALSO estimate total calories, protein (g), carbs (g), and fat (g) for the entire meal. These serve as fallback values when the food database doesn't have complete data for every ingredient.
+8. ALSO estimate total calories, protein (g), carbs (g), and fat (g) for the user's consumed portion. These serve as fallback values when the food database doesn't have complete data for every ingredient.
+9. If the portion is ambiguous, choose a realistic middle estimate and add the ambiguity to missing_fields (for example "rice_amount", "oil_amount", "serving_size").
 
 Return ONLY a JSON object (no other text, no markdown):
 {"name":"short descriptive name (max 4 words)","calories":450,"protein":35,"carbs":40,"fat":18,"components":"comma-separated ingredient list","suggestion":"one forward-looking next-meal tip (max 20 words)","ingredients":[{"food_text":"paneer","amount":150,"unit":"g","is_oil_or_fat":false,"confidence":0.9}],"cooking_method":"fried","portion_scale":1.0,"total_recipe_servings":2,"missing_fields":["oil_amount"]}`;
@@ -209,7 +227,7 @@ async function parseWorkoutDescription(description: string, duration?: string, i
     ? `\nUser physique: ${userPhysique.weight}kg${userPhysique.height ? `, ${userPhysique.height}cm` : ""}${userPhysique.age ? `, ${userPhysique.age}yo` : ""}${userPhysique.sex ? `, ${userPhysique.sex}` : ""}${userPhysique.fitnessLevel ? `, fitness: ${userPhysique.fitnessLevel}` : ""}`
     : "";
 
-  const prompt = `You are a professional fitness trainer. Parse this workout log precisely. Do NOT estimate calories.
+  const prompt = `You are a professional fitness trainer. Parse this workout log precisely.
 
 User's workout:
 """
@@ -221,23 +239,36 @@ User-provided intensity: ${intensity || "not specified"}${physiqueInfo}
 
 Rules:
 1. Extract EVERY exercise. Each exercise gets its own entry in "exercises".
-2. For each exercise, create one entry in "sets" per set with exact weight and reps. Use the specific weight/reps the user provided.
-3. For cardio, use a single set with duration and calories as the reps field.
-4. Estimate total session duration if not provided. Determine intensity from volume/load.
-5. Do NOT estimate calories burned. Set caloriesBurned to 0.
-6. Use the exact exercise names the user typed (preserve capitalization and spelling).
-7. Session name: max 3 words.
-8. Look for rest pattern clues: "giant set", "superset", "circuit", "minimal rest", "heavy rest", "EMOM", "AMRAP".
+2. For each exercise, create one entry in "sets" per set with exact weight and reps.
+3. Include "muscle_group": primary muscle targeted (e.g. "chest", "triceps", "back", "legs", "shoulders", "cardio", "core").
+4. Include "weight_unit": "kg" | "lbs" | "bodyweight" | "machine_kg" | "machine_lbs".
+5. For cardio, use a single set with "distance_km", "duration_min", "incline", "pace", "calories_per_hr" fields instead of weight/reps.
+6. Estimate total session duration if not provided. Determine intensity from volume/load.
+7. If the user explicitly states calories burned (e.g. "75 kcal burned", "75cal burned"), set caloriesBurned to that value. Otherwise set caloriesBurned to 0 — do NOT estimate.
+8. Use the exact exercise names the user typed.
+9. Session name: max 3 words.
+10. Look for rest pattern clues.
 
 Return ONLY valid JSON:
-{"name":"session name","exercises":[{"name":"exercise name","sets":[{"weight":"41kg","reps":"15"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":0,"rationale":"one coaching tip (max 15 words)","restClues":"any rest pattern info from description"}`;
+{"name":"session name","exercises":[{"name":"exercise name","muscle_group":"chest","weight_unit":"kg","sets":[{"weight":"12.5","reps":"15"}]},{"name":"cardio name","muscle_group":"cardio","weight_unit":"bodyweight","sets":[{"distance_km":"0.75","duration_min":"10","incline":"11","pace":"13.2","calories_per_hr":"425"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":0,"rationale":"one coaching tip (max 15 words)","restClues":"any rest pattern info"}`;
 
   const content = await callAI([{ role: "user", content: prompt }], 1200, model, apiKey);
   const result = parseJSON<any>(content, { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", caloriesBurned: 0, rationale: "", restClues: "" });
 
   const exercises = (result.exercises || []).map((ex: any) => ({
     name: ex.name || "Exercise",
-    sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({ weight: String(s.weight || ""), reps: String(s.reps || "") })) : [],
+    muscle_group: ex.muscle_group || "",
+    weight_unit: ex.weight_unit || "kg",
+    sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({
+      weight: String(s.weight || ""),
+      reps: String(s.reps || ""),
+      // cardio fields
+      distance_km: s.distance_km != null ? String(s.distance_km) : undefined,
+      duration_min: s.duration_min != null ? String(s.duration_min) : undefined,
+      incline: s.incline != null ? String(s.incline) : undefined,
+      pace: s.pace != null ? String(s.pace) : undefined,
+      calories_per_hr: s.calories_per_hr != null ? String(s.calories_per_hr) : undefined,
+    })) : [],
   }));
   const totalSets = exercises.reduce((sum: number, ex: any) => sum + ex.sets.length, 0);
   const setsVal = exercises.length > 0 ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets` : "–";
@@ -417,8 +448,12 @@ async function runNutritionEngine(
       finalConfidence = engine.confidence;
       finalSource = "database";
     } else {
-      // Some ingredients unresolved → blend: use engine for what matched, AI for missing macros
-      finalCalories = engine.calories_kcal > 0 ? Math.max(engine.calories_kcal, aiCals) : aiCals;
+      // Some ingredients unresolved → blend cautiously. The database total is
+      // trustworthy for matched ingredients; the AI fallback is only a guardrail
+      // for missing pieces, not an automatic override to a larger whole-meal guess.
+      const unresolvedShare = Math.min(0.45, Math.max(0.15, unresolved.length / Math.max(ingredients.length, 1)));
+      const aiMissingCalories = Math.max(0, aiCals - engine.calories_kcal) * unresolvedShare;
+      finalCalories = engine.calories_kcal > 0 ? engine.calories_kcal + aiMissingCalories : aiCals;
       finalProtein = engine.protein_g > 0 ? engine.protein_g : aiProtein;
       finalCarbs = engine.carbs_g > 0 ? engine.carbs_g : aiCarbs;
       finalFat = engine.fat_g > 0 ? engine.fat_g : aiFat;
@@ -577,7 +612,11 @@ export const estimateMeal = action({
       model = settings?.openRouterModel ?? undefined;
       apiKey = settings?.openRouterKey ?? undefined;
     }
-    const prompt = `Estimate the nutritional values for this meal: "${mealName}". Return ONLY a JSON object with keys: calories (number), protein (number in grams), carbs (number in grams), fat (number in grams). No explanation.`;
+    const prompt = `Estimate the nutritional values for this meal: "${mealName}".
+
+${NUTRITION_ACCURACY_RULES}
+
+Return ONLY a JSON object with keys: calories (number), protein (number in grams), carbs (number in grams), fat (number in grams). No explanation.`;
     const content = await callAI([{ role: "user", content: prompt }], 200, model, apiKey);
     const result = parseJSON<any>(content, { calories: 0, protein: 0, carbs: 0, fat: 0 });
     return { calories: result.calories || 0, protein: result.protein || 0, carbs: result.carbs || 0, fat: result.fat || 0 };
@@ -782,6 +821,7 @@ export const logWorkout = action({
         exercises: parsedData.exercises,
         rationale: parsedData.rationale,
         caloriesBurned: parsedData.caloriesBurned ?? (parsedData.calorieResult?.total_kcal ?? 0),
+        structuredSets: parsedData.exercises ? JSON.stringify(parsedData.exercises) : undefined,
         ...calorieFields,
       });
       data = { _id: id, ...parsedData };
@@ -796,13 +836,10 @@ export const logWorkout = action({
       } : {};
       const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
         userId, date: today,
-        name: parsed.name,
-        sets: parsed.sets,
-        duration: parsed.duration,
-        intensity: parsed.intensity,
-        exercises: parsed.exercises,
-        rationale: parsed.rationale,
+        name: parsed.name, sets: parsed.sets, duration: parsed.duration,
+        intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
         caloriesBurned: parsed.caloriesBurned,
+        structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
         ...calorieFields,
       });
       data = { _id: id, ...parsed };
@@ -835,13 +872,14 @@ export const chat = action({
     const today = todayArg ?? new Date().toISOString().split("T")[0];
 
     // Gather context
-    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
       ctx.runQuery(internal.meals.getRecentCalories, { userId }),
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
       ctx.runQuery(internal.behavior.getBehaviorProfileForContext, { userId }),
+      ctx.runQuery(internal.food_memory.getTopForContext, { userId, limit: 8 }),
     ]);
 
     const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
@@ -927,6 +965,14 @@ Rules:
     if (!coachType || coachType === "auto") detectedCoach = classifyCoachType(message, behavior?.preferredCoach);
     const coach = getCoach(detectedCoach);
 
+    // Known food memory context
+    if (Array.isArray(topMemories) && topMemories.length > 0) {
+      contextBlock += `\nUSER'S KNOWN FOODS (from memory — use these when the user mentions their usual meals):\n`;
+      for (const m of topMemories as any[]) {
+        contextBlock += `- ${m.name}: ~${m.kcal} kcal, P:${m.protein}g C:${m.carbs}g F:${m.fat}g (logged ${m.timesLogged}×${m.components ? `, ingredients: ${m.components}` : ""})\n`;
+      }
+    }
+
     // Behavioral memory + tone layer (no behavior → unchanged baseline)
     const behaviorLine = behaviorSummary(behavior);
     const toneLine = toneInstruction(settings?.coachingStyle);
@@ -1010,7 +1056,9 @@ Rules:
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
           userId, date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
           intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
-          caloriesBurned: parsed.caloriesBurned, ...calorieFields,
+          caloriesBurned: parsed.caloriesBurned,
+          structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
+          ...calorieFields,
         });
         loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed } });
       } catch (err) { console.error("Failed to log workout from AI:", err); }
@@ -1377,7 +1425,11 @@ export const parseNutritionImage = action({
       ? ` The user says they have: "${userDescription}". If possible, estimate userPortionGrams for this description.`
       : "";
 
-    const prompt = `This is a nutrition label image.${portionClause} Extract nutritional values per 100g (convert from per-serving using serving size if needed). Return ONLY a JSON object, no markdown:
+    const prompt = `This is a nutrition label image.${portionClause}
+
+${NUTRITION_ACCURACY_RULES}
+
+Extract nutritional values per 100g. If the label is per serving, convert using the serving size; if serving size is unclear, keep servingSize null and avoid guessing userPortionGrams. Return ONLY a JSON object, no markdown:
 {"name":"product name","caloriesPer100g":number,"proteinPer100g":number,"carbsPer100g":number,"fatPer100g":number,"servingSize":number_or_null,"servingUnit":"g","userPortionGrams":number_or_null}`;
 
     const controller = new AbortController();
@@ -1647,11 +1699,69 @@ const LOG_RE = new RegExp([
   "\\b(\\d{2,}\\s*steps|\\d+\\s*ml|\\d+\\s*l(itres?)?\\s+water|\\d+\\s*glasses?)\\b",
 ].join("|"), "i");
 
+const FOOD_WORD_RE = /\b(milk|whey|biscuit|biscuits|marie|rice|roti|chapati|bread|oats|egg|eggs|chicken|paneer|dal|curd|yogurt|banana|apple|snack|meal|breakfast|lunch|dinner|food|eat|eating)\b/i;
+const FOOD_ESTIMATE_RE = /\b(how many calories|how much calories|calorie|calories|kcal|macros?|estimate|can i (eat|have|take)|should i (eat|have|take)|would .* fit|might have|planning to have)\b/i;
+
 function looksLikeLog(message: string): boolean {
   const m = message.trim();
   if (m.length === 0) return false;
   if (QUESTION_RE.test(m)) return false;
   return LOG_RE.test(m);
+}
+
+function looksLikeFoodEstimate(message: string): boolean {
+  return FOOD_WORD_RE.test(message) && FOOD_ESTIMATE_RE.test(message);
+}
+
+function extractUserMacros(message: string): { calories?: number; protein?: number; carbs?: number; fat?: number } {
+  const text = message.toLowerCase();
+  const macros: { calories?: number; protein?: number; carbs?: number; fat?: number } = {};
+  const kcal = text.match(/(?:around|about|approx(?:imately)?\s*)?(\d{2,4})\s*(?:kcal|calories|cals|cal)\b/);
+  if (kcal) macros.calories = Number(kcal[1]);
+  const protein = text.match(/(\d{1,3}(?:\.\d+)?)\s*g\s*(?:of\s*)?(?:protein|prot|p)\b|\bprotein\s*(?:is|:|=)?\s*(\d{1,3}(?:\.\d+)?)/);
+  if (protein) macros.protein = Number(protein[1] ?? protein[2]);
+  const carbs = text.match(/(\d{1,3}(?:\.\d+)?)\s*g\s*(?:of\s*)?(?:carbs?|c)\b|\bcarbs?\s*(?:is|:|=)?\s*(\d{1,3}(?:\.\d+)?)/);
+  if (carbs) macros.carbs = Number(carbs[1] ?? carbs[2]);
+  const fat = text.match(/(\d{1,3}(?:\.\d+)?)\s*g\s*(?:of\s*)?(?:fat|f)\b|\bfat\s*(?:is|:|=)?\s*(\d{1,3}(?:\.\d+)?)/);
+  if (fat) macros.fat = Number(fat[1] ?? fat[2]);
+  return macros;
+}
+
+function applyUserMacros(draft: any, userMacros: { calories?: number; protein?: number; carbs?: number; fat?: number }) {
+  const engineCalories = Number(draft.kcal) || 0;
+  const userCalories = userMacros.calories;
+  const calorieDelta = userCalories != null ? Math.abs(userCalories - engineCalories) : 0;
+  const calorieConflict = userCalories != null && calorieDelta > 150 && calorieDelta / Math.max(engineCalories, 1) > 0.3;
+  const macroCalories =
+    (userMacros.protein ?? draft.protein ?? 0) * 4 +
+    (userMacros.carbs ?? draft.carbs ?? 0) * 4 +
+    (userMacros.fat ?? draft.fat ?? 0) * 9;
+  const macroImpossible = userCalories != null && macroCalories > 0 && Math.abs(macroCalories - userCalories) > Math.max(120, userCalories * 0.35);
+
+  const userDraft = {
+    ...draft,
+    kcal: userMacros.calories ?? draft.kcal,
+    protein: userMacros.protein ?? draft.protein,
+    carbs: userMacros.carbs ?? draft.carbs,
+    fat: userMacros.fat ?? draft.fat,
+    nutritionSource: calorieConflict || macroImpossible ? "macro_conflict" : "user_provided",
+    engineEstimate: {
+      kcal: draft.kcal,
+      protein: draft.protein,
+      carbs: draft.carbs,
+      fat: draft.fat,
+    },
+  };
+
+  return {
+    draft: userDraft,
+    conflict: calorieConflict || macroImpossible,
+    reason: calorieConflict
+      ? `Your calorie number differs from my estimate by ${Math.round(calorieDelta)} kcal.`
+      : macroImpossible
+        ? "The calories and macro grams do not line up cleanly."
+        : "",
+  };
 }
 
 export const homepageInput = action({
@@ -1666,6 +1776,7 @@ export const homepageInput = action({
     tier1Summary: string;
     tier2Detail: string;
     isQuestion: boolean;
+    actions?: any[];
     reply?: string;
     coachType?: CoachType;
     sessionId?: any;
@@ -1694,7 +1805,10 @@ export const homepageInput = action({
     });
 
     // Heuristic pre-check
-    const heuristicSaysLog = !!image || looksLikeLog(message);
+    const estimateMode = looksLikeFoodEstimate(message);
+    const userMacros = extractUserMacros(message);
+    const hasUserMacros = Object.values(userMacros).some((v) => v != null);
+    const heuristicSaysLog = !!image || looksLikeLog(message) || estimateMode;
 
     // Step 1: Extract ALL loggable items from the message in one LLM call.
     const yesterdayStr = new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0];
@@ -1722,10 +1836,12 @@ CRITICAL CLASSIFICATION RULES:
 - "I had X" / "I ate X" / "just had X" / "had X for breakfast" / "X for lunch/dinner/snack" → meal log, isQuestion=false
 - "I drank X" / "X glasses of water" / "Xml of water" / "had Xl of water" → water log, isQuestion=false
 - "Did/ran/walked/biked/lifted X" / "30 min run" / "5km run" / "leg day" → workout log, isQuestion=false
+- A list of exercises (e.g. "declined press: ..., incline press: ..., pec fly: ...") = ONE workout item, not multiple. Combine all into a single workout description.
 - "Slept X" / "went to bed at X" / "woke up at Y" → sleep log, isQuestion=false
 - "Feeling X/Y" / "mood is X" / "X out of 5" → mood log, isQuestion=false
 - "X steps" / "walked X steps" → steps log, isQuestion=false
 - Pure questions ("how am I doing?", "what should I eat?", "explain X") → isQuestion=true, items=[]
+- Food estimate questions ("how many calories is X?", "can I have X?", "would X fit?") → isQuestion=false and add a meal item, but the app may ask before logging.
 
 Date inference rules:
 - "yesterday" → ${yesterdayStr}
@@ -1748,6 +1864,8 @@ Examples (assume today=${today}):
   → {"isQuestion": false, "items": [{"type": "sleep", "description": "slept 7h", "date": "${today}"}]}
 - USER: "How am I doing today?"
   → {"isQuestion": true, "items": []}
+- USER: "Can I have 200ml milk, 3 biscuits, and whey? How many calories?"
+  → {"isQuestion": false, "items": [{"type": "meal", "description": "200ml milk, 3 biscuits, and whey", "date": "${today}"}]}
 
 Sleep descriptions like "slept X hours", "went to bed at X", "woke up at Y" are type="sleep", NOT "workout".
 Return ONLY valid JSON, no markdown.`;
@@ -1800,19 +1918,27 @@ Return ONLY:
     }
 
     // If it's a question, route to chat coach (with chat history)
+    if (estimateMode && (extracted.isQuestion || extracted.items.length === 0)) {
+      extracted = { isQuestion: false, items: [{ type: "meal", description: message, date: today }] };
+    }
+
     if (extracted.isQuestion || extracted.items.length === 0) {
       const coachType: CoachType = classifyCoachType(message);
       const coach = getCoach(coachType);
-      const [todayMealsList, todayWorkoutsList, profile, history] = await Promise.all([
+      const [todayMealsList, todayWorkoutsList, profile, history, topMemories] = await Promise.all([
         ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
         ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
         ctx.runQuery(internal.profile.getProfileForContext, { userId }),
         ctx.runQuery(internal.chat.getMessagesForContext, { userId, sessionId: activeSessionId }),
+        ctx.runQuery(internal.food_memory.getTopForContext, { userId, limit: 6 }),
       ]);
       const userName = identity.name ?? "Athlete";
       let context = `USER: ${userName}\n`;
       if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
       context += `Today: ${todayMealsList.length} meals, ${todayWorkoutsList.length} workouts logged.\n`;
+      if (Array.isArray(topMemories) && topMemories.length > 0) {
+        context += `Known foods: ${(topMemories as any[]).map((m: any) => `${m.name} (~${m.kcal} kcal)`).join(", ")}\n`;
+      }
 
       // Drop the trailing user message (we already saved it) when injecting history
       const trimmedHistory = (history as { role: string; content: string }[])
@@ -1860,9 +1986,41 @@ Return ONLY:
             const d = await callAI([{ role: "user", content: [{ type: "text", text: "Describe this food briefly." }, { type: "image_url", image_url: { url: image } }] }], 150, visionModel, apiKey);
             desc = d;
           }
+
+          // ── Diet memory: try to match before calling LLM ──────────────────
+          const memories = await ctx.runQuery(internal.food_memory.getForUser, { userId });
+          const memMatch = findBestMatch(desc, memories as any[]);
+          if (memMatch && memMatch.entry.timesLogged >= AUTO_APPLY_MIN_LOGGED) {
+            const mem = memMatch.entry;
+            const time = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+            const draft = {
+              kind: "meal",
+              date: item.date,
+              description: mem.displayName,
+              name: mem.displayName,
+              kcal: Math.round(mem.kcal),
+              protein: Math.round(mem.protein),
+              carbs: Math.round(mem.carbs),
+              fat: Math.round(mem.fat),
+              items: mem.components ? mem.components.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+              components: mem.components,
+              mealType: "unspecified",
+              time,
+              confidence: Math.min(0.95, 0.7 + memMatch.score * 0.25),
+              nutritionSource: "memory",
+              autoApplied: true,
+              memoryNote: `Used your usual ${mem.displayName}`,
+              foodMemoryId: mem._id,
+            };
+            drafts.push(draft);
+            summaryParts.push(`${mem.displayName} (~${draft.kcal} kcal, from memory)`);
+            continue;
+          }
+          // ── End memory match — fall through to LLM parse ──────────────────
+
           const parsed = await parseMealDescription(desc, "unspecified", "", settingsModel, apiKey);
           const nutrition = await runNutritionEngine(ctx, parsed);
-          drafts.push({
+          const baseDraft = {
             kind: "meal",
             date: item.date,
             description: parsed.name || desc,
@@ -1878,11 +2036,17 @@ Return ONLY:
             aiSuggestion: parsed.aiSuggestion,
             confidence: nutrition.confidence,
             nutritionSource: nutrition.nutritionSource,
-          });
-          summaryParts.push(`${parsed.name || "Meal"} (~${nutrition.calories} kcal)`);
+          };
+          const macroDecision = hasUserMacros ? applyUserMacros(baseDraft, userMacros) : { draft: baseDraft, conflict: false, reason: "" };
+          drafts.push(macroDecision.draft);
+          summaryParts.push(`${parsed.name || "Meal"} (~${macroDecision.draft.kcal} kcal)`);
 
         } else if (item.type === "workout") {
           const parsed = await parseWorkoutDescription(item.description, undefined, undefined, settingsModel, apiKey, userPhysique);
+          // Extract user-stated calories from description (e.g. "75 kcal burned", "75cal")
+          const statedKcalMatch = item.description.match(/(\d+(?:\.\d+)?)\s*(?:kcal|cal(?:ories?)?)(?:\s*burned)?/i);
+          const statedKcal = statedKcalMatch ? Math.round(parseFloat(statedKcalMatch[1])) : null;
+          const finalKcal = statedKcal ?? parsed.caloriesBurned ?? 0;
           drafts.push({
             kind: "workout",
             date: item.date,
@@ -1890,14 +2054,14 @@ Return ONLY:
             name: parsed.name,
             type: parsed.name,
             duration: parseDurationMinutes(parsed.duration ?? "30 min") || 30,
-            kcal: parsed.caloriesBurned ?? 0,
+            kcal: finalKcal,
             intensity: (parsed.intensity?.toLowerCase() === "high" ? "high" : parsed.intensity?.toLowerCase() === "low" ? "light" : "medium"),
             sets: parsed.sets,
             rationale: parsed.rationale,
             exercises: parsed.exercises,
             calorieResult: parsed.calorieResult,
           });
-          summaryParts.push(`${parsed.name} (~${parsed.caloriesBurned ?? 0} kcal burned)`);
+          summaryParts.push(`${parsed.name} (~${finalKcal} kcal burned)`);
 
         } else if (item.type === "sleep") {
           // Parse sleep: extract hours and quality from description
@@ -1965,7 +2129,44 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       userId, sessionId: activeSessionId, role: "ai", content: persistedReply,
     });
 
-    return { drafts, tier1Summary, tier2Detail, isQuestion: false, sessionId: activeSessionId };
+    const actions: any[] = [];
+    if (estimateMode) {
+      const mealDraft = drafts.find((d) => d.kind === "meal");
+      if (mealDraft && mealDraft.nutritionSource !== "macro_conflict") {
+        const rangeLow = Math.max(0, Math.round(mealDraft.kcal * 0.88));
+        const rangeHigh = Math.round(mealDraft.kcal * 1.12);
+        actions.push({
+          type: "log_draft",
+          source: hasUserMacros ? "user_macros" : "estimate",
+          draft: mealDraft,
+          title: hasUserMacros ? "Use these macros?" : "Estimated snack",
+          body: `${rangeLow}-${rangeHigh} kcal depending on portions. Confirm only if you eat it.`,
+        });
+      }
+    }
+    for (const draft of drafts.filter((d) => d.nutritionSource === "macro_conflict")) {
+      actions.push({
+        type: "macro_conflict",
+        title: "Macro check",
+        body: `${draft.engineEstimate ? `My estimate is ~${draft.engineEstimate.kcal} kcal. ` : ""}Your numbers are quite different. Which should I use?`,
+        draft,
+        buttons: [
+          { label: "Use my numbers", value: "use_user_macros", prompt: "Use my numbers and log this" },
+          { label: "Use estimate", value: "use_engine_estimate", prompt: "Use your estimate instead" },
+        ],
+      });
+    }
+    if (!estimateMode) {
+      actions.push({
+        type: "button_row",
+        buttons: [
+          { label: "Confirm log", value: "confirm_log" },
+          { label: "Edit first", value: "edit_log" },
+          { label: "Discard", value: "discard_log" },
+        ],
+      });
+    }
+
+    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId };
   },
 });
-

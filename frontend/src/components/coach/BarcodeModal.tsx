@@ -96,7 +96,7 @@ export function BarcodeModal({ open, onClose }: Props) {
               <Barcode className="h-4 w-4 text-text-muted" strokeWidth={1.75} />
               <h3 className="text-[15px] font-bold text-text flex-1">Scan barcode</h3>
               <button type="button" onClick={() => { reset(); onClose(); }} aria-label="Close"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev">
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev">
                 <X className="h-4 w-4" strokeWidth={2} />
               </button>
             </div>

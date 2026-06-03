@@ -25,6 +25,8 @@ export default defineSchema({
     nutritionSource: v.optional(v.string()),
     structuredItems: v.optional(v.string()),
     ingredientBreakdown: v.optional(v.string()),
+    // Diet memory: set when auto-applied from food_memory
+    foodMemoryId: v.optional(v.id("food_memory")),
   }).index("by_user_date", ["userId", "date"]),
 
   workouts: defineTable({
@@ -45,6 +47,8 @@ export default defineSchema({
     calorieRangeHigh: v.optional(v.number()),
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
+    // Structured exercise data — JSON: ExerciseEntry[]
+    structuredSets: v.optional(v.string()),
   }).index("by_user_date", ["userId", "date"]),
 
   daily_goals: defineTable({
@@ -123,6 +127,7 @@ export default defineSchema({
     userId: v.string(),
     title: v.string(),
     updatedAt: v.number(),
+    previewTitle: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 
   chat_messages: defineTable({
@@ -250,6 +255,25 @@ export default defineSchema({
     createdAt: v.number(),
     dismissedAt: v.optional(v.number()),
   }).index("by_user_status", ["userId", "status"]),
+
+  // ─── Diet Memory (auto-learned food profiles) ──────────────────────────────
+
+  food_memory: defineTable({
+    userId: v.string(),
+    normalizedName: v.string(),       // lowercased, stripped key for matching
+    displayName: v.string(),          // best user-facing name seen
+    aliases: v.array(v.string()),     // other names this meal has been logged as
+    kcal: v.number(),                 // smoothed average
+    protein: v.number(),
+    carbs: v.number(),
+    fat: v.number(),
+    components: v.optional(v.string()),
+    timesLogged: v.number(),
+    source: v.string(),               // "learned" | "corrected"
+    lastUsedDate: v.string(),         // YYYY-MM-DD
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_name", ["userId", "normalizedName"]),
 
   // ─── Recipes (hybrid macro builder) ────────────────────────────────────────
 

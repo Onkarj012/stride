@@ -99,11 +99,11 @@ function IngredientRow({ ing, onChange, onRemove }: { ing: PickedFood; onChange:
         <input value={ing.name} onChange={(e) => onChange({ ...ing, name: e.target.value })} aria-label="Ingredient name"
           className="flex-1 min-w-0 bg-transparent text-[14px] font-medium text-text focus:outline-none" />
         <button type="button" aria-label={`Edit macros for ${ing.name}`} aria-expanded={open} onClick={() => setOpen((o) => !o)}
-          className={`inline-flex h-7 w-7 items-center justify-center rounded-full transition-colors ${open ? "bg-lavender/15 text-lavender" : "text-text-muted hover:text-text"}`}>
+          className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors ${open ? "bg-lavender/15 text-lavender" : "text-text-muted hover:text-text"}`}>
           <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
         <button type="button" aria-label={`Remove ${ing.name}`} onClick={onRemove}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:text-bubblegum">
           <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
       </div>
@@ -470,7 +470,7 @@ function RecipeDetailView({ recipe: initialRecipe, onBack }: { recipe: any; onBa
         {/* Content */}
         <div className="lg:col-span-2 space-y-6">
           <Card tone="card" radius="xl" padding="lg" className="space-y-4">
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {([["Calories", `${recipe.perServing.kcal}`], ["Protein", `${recipe.perServing.p}g`], ["Carbs", `${recipe.perServing.c}g`], ["Fat", `${recipe.perServing.f}g`]] as const).map(([lbl, val]) => (
                 <div key={lbl} className="rounded-xl bg-card-elev px-3 py-3 text-center">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">{lbl}</p>

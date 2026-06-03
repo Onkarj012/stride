@@ -15,10 +15,18 @@ export const getSessions = query({
       .query("chat_sessions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
+
     return allSessions
-      .filter((s) => !s.title.startsWith("__"))
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((s) => ({ id: s._id, title: s.title, updatedAt: s.updatedAt }));
+      .map((s) => {
+        const isHome = s.title.startsWith("__");
+        // Use cached previewTitle if set (written by updateSessionTitleFromAI / touchSession)
+        // For legacy sessions with no preview, fall back to truncated title or "Home chat"
+        const title = isHome
+          ? s.previewTitle ?? "Home chat"
+          : s.title;
+        return { id: s._id, title, updatedAt: s.updatedAt, isHome };
+      });
   },
 });
 
@@ -127,7 +135,15 @@ export const addMessage = internalMutation({
     content: v.string(),
   },
   handler: async (ctx, args) => {
-    return ctx.db.insert("chat_messages", args);
+    const id = await ctx.db.insert("chat_messages", args);
+    // Cache first user message as previewTitle on homepage sessions (avoids N+1 in getSessions)
+    if (args.role === "user" && args.sessionId) {
+      const session = await ctx.db.get(args.sessionId);
+      if (session && session.title.startsWith("__") && !session.previewTitle) {
+        await ctx.db.patch(args.sessionId, { previewTitle: args.content.slice(0, 40).trim() });
+      }
+    }
+    return id;
   },
 });
 

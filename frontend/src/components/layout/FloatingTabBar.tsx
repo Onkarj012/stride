@@ -45,7 +45,7 @@ export function FloatingTabBar() {
               {i === activeIndex && (
                 <motion.div
                   layoutId="tab-indicator"
-                  className="h-16 w-16 rounded-full bg-card border-[6px] border-bg"
+                  className="h-16 w-16 rounded-full bg-lavender border-[6px] border-bg"
                   transition={SPRING}
                 />
               )}
@@ -74,7 +74,7 @@ export function FloatingTabBar() {
                     <Icon
                       className={cn(
                         "h-5 w-5 transition-colors duration-200",
-                        isActive ? "text-ink" : "text-text-on-ink/55",
+                        isActive ? "text-ink" : "text-white/50",
                       )}
                       strokeWidth={1.75}
                     />

@@ -46,7 +46,7 @@ export function NudgeInbox() {
                   type="button"
                   onClick={() => dismiss({ id: n._id })}
                   aria-label={`Dismiss: ${n.title}`}
-                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-text-muted hover:text-text hover:bg-card-elev focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lavender"
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-muted hover:text-text hover:bg-card-elev focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lavender"
                 >
                   <X className="h-4 w-4" strokeWidth={2} />
                 </button>

@@ -16,6 +16,8 @@ import type * as chat from "../chat.js";
 import type * as coaches from "../coaches.js";
 import type * as crons from "../crons.js";
 import type * as exercise_db from "../exercise_db.js";
+import type * as food_memory from "../food_memory.js";
+import type * as food_memory_match from "../food_memory_match.js";
 import type * as foods from "../foods.js";
 import type * as gamification from "../gamification.js";
 import type * as goals from "../goals.js";
@@ -51,6 +53,8 @@ declare const fullApi: ApiFromModules<{
   coaches: typeof coaches;
   crons: typeof crons;
   exercise_db: typeof exercise_db;
+  food_memory: typeof food_memory;
+  food_memory_match: typeof food_memory_match;
   foods: typeof foods;
   gamification: typeof gamification;
   goals: typeof goals;

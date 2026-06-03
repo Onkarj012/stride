@@ -44,22 +44,18 @@ export const addWorkout = mutation({
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
     caloriesBurned: v.optional(v.number()),
+    structuredSets: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
     const id = await ctx.db.insert("workouts", {
-      userId,
-      date,
-      name: args.name,
-      sets: args.sets,
-      reps: args.reps,
-      weight: args.weight,
-      duration: args.duration,
-      intensity: args.intensity || "HIGH",
-      exercises: args.exercises,
-      rationale: args.rationale,
+      userId, date,
+      name: args.name, sets: args.sets, reps: args.reps, weight: args.weight,
+      duration: args.duration, intensity: args.intensity || "HIGH",
+      exercises: args.exercises, rationale: args.rationale,
       caloriesBurned: args.caloriesBurned,
+      structuredSets: args.structuredSets,
     });
     await applyDayAdjustment(ctx, userId, date);
     return id;
@@ -139,6 +135,7 @@ export const relogWorkout = mutation({
       calorieRangeHigh: src.calorieRangeHigh,
       calorieBreakdown: src.calorieBreakdown,
       calculationVersion: src.calculationVersion,
+      structuredSets: src.structuredSets,
     });
   },
 });
@@ -202,23 +199,21 @@ export const addWorkoutFromAI = internalMutation({
     calorieRangeHigh: v.optional(v.number()),
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
+    structuredSets: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return ctx.db.insert("workouts", {
-      userId: args.userId,
-      date: args.date,
-      name: args.name,
-      sets: args.sets,
-      duration: args.duration,
+      userId: args.userId, date: args.date,
+      name: args.name, sets: args.sets, duration: args.duration,
       intensity: args.intensity || "HIGH",
-      exercises: args.exercises,
-      rationale: args.rationale,
+      exercises: args.exercises, rationale: args.rationale,
       caloriesBurned: args.caloriesBurned,
       calorieConfidence: args.calorieConfidence,
       calorieRangeLow: args.calorieRangeLow,
       calorieRangeHigh: args.calorieRangeHigh,
       calorieBreakdown: args.calorieBreakdown,
       calculationVersion: args.calculationVersion,
+      structuredSets: args.structuredSets,
     });
   },
 });
