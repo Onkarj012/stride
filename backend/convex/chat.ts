@@ -23,7 +23,7 @@ export const getSessions = query({
         // Use cached previewTitle if set (written by updateSessionTitleFromAI / touchSession)
         // For legacy sessions with no preview, fall back to truncated title or "Home chat"
         const title = isHome
-          ? (s as any).previewTitle ?? "Home chat"
+          ? s.previewTitle ?? "Home chat"
           : s.title;
         return { id: s._id, title, updatedAt: s.updatedAt, isHome };
       });
@@ -139,11 +139,8 @@ export const addMessage = internalMutation({
     // Cache first user message as previewTitle on homepage sessions (avoids N+1 in getSessions)
     if (args.role === "user" && args.sessionId) {
       const session = await ctx.db.get(args.sessionId);
-      if (session && session.title.startsWith("__") && !(session as any).previewTitle) {
-        await ctx.db.patch(args.sessionId, {
-          ...(session as any),
-          previewTitle: args.content.slice(0, 40).trim(),
-        } as any);
+      if (session && session.title.startsWith("__") && !session.previewTitle) {
+        await ctx.db.patch(args.sessionId, { previewTitle: args.content.slice(0, 40).trim() });
       }
     }
     return id;

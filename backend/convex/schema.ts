@@ -127,6 +127,7 @@ export default defineSchema({
     userId: v.string(),
     title: v.string(),
     updatedAt: v.number(),
+    previewTitle: v.optional(v.string()),
   }).index("by_user", ["userId"]),
 
   chat_messages: defineTable({
