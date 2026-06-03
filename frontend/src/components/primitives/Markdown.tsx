@@ -27,13 +27,13 @@ export function Markdown({ children, className }: MarkdownProps) {
             <p className="my-1 first:mt-0 last:mb-0 whitespace-pre-wrap" {...props} />
           ),
           h1: ({ node: _node, ...props }) => (
-            <h1 className="text-[18px] font-extrabold mt-3 mb-1.5 first:mt-0" {...props} />
+            <h1 className="text-[1.15rem] font-extrabold mt-3 mb-1.5 first:mt-0" {...props} />
           ),
           h2: ({ node: _node, ...props }) => (
-            <h2 className="text-[16px] font-bold mt-3 mb-1 first:mt-0" {...props} />
+            <h2 className="text-[1.05rem] font-bold mt-3 mb-1 first:mt-0" {...props} />
           ),
           h3: ({ node: _node, ...props }) => (
-            <h3 className="text-[15px] font-bold mt-2 mb-1 first:mt-0" {...props} />
+            <h3 className="text-[0.98rem] font-bold mt-2 mb-1 first:mt-0" {...props} />
           ),
           h4: ({ node: _node, ...props }) => (
             <h4 className="text-[0.95rem] font-bold mt-2 mb-1 first:mt-0" {...props} />
@@ -51,7 +51,7 @@ export function Markdown({ children, className }: MarkdownProps) {
             if (inline) {
               return (
                 <code
-                  className="rounded bg-card-elev border border-border px-1 py-0.5 font-mono text-[12.5px]"
+                  className="rounded bg-card-elev border border-border px-1 py-0.5 font-mono text-[0.8rem]"
                   {...props}
                 >
                   {children}
@@ -59,14 +59,14 @@ export function Markdown({ children, className }: MarkdownProps) {
               );
             }
             return (
-              <code className={cn("font-mono text-[12.5px]", className)} {...props}>
+              <code className={cn("font-mono text-[0.8rem]", className)} {...props}>
                 {children}
               </code>
             );
           },
           pre: ({ node: _node, ...props }) => (
             <pre
-              className="my-2 overflow-x-auto rounded-xl bg-card-elev border border-border p-3 text-[12.5px] leading-relaxed"
+              className="my-2 overflow-x-auto rounded-xl bg-card-elev border border-border p-3 text-[0.8rem] leading-relaxed"
               {...props}
             />
           ),
@@ -93,7 +93,7 @@ export function Markdown({ children, className }: MarkdownProps) {
           hr: () => <hr className="my-3 border-border" />,
           table: ({ node: _node, ...props }) => (
             <div className="my-2 overflow-x-auto">
-              <table className="min-w-full border-collapse text-[13px]" {...props} />
+              <table className="min-w-full border-collapse text-[0.85rem]" {...props} />
             </div>
           ),
           th: ({ node: _node, ...props }) => (
