@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip } from "lucide-react";
+import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip, Copy, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -49,30 +49,84 @@ function coachToAgent(coachType?: string): Agent {
   }
 }
 
-/* ── Single message bubble ── */
-function MessageBubble({ role, content, fresh }: { role: "user" | "ai"; content: string; fresh: boolean }) {
+/* ── Single message bubble with copy/edit/nav ── */
+function MessageBubble({
+  role, content, fresh, onEdit, onCopy,
+  branchIndex, branchTotal, onPrevBranch, onNextBranch,
+}: {
+  role: "user" | "ai"; content: string; fresh: boolean;
+  onEdit?: () => void; onCopy?: () => void;
+  branchIndex?: number; branchTotal?: number;
+  onPrevBranch?: () => void; onNextBranch?: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
   const { displayed, done } = useTypewriter(content, 18, fresh);
   const text = fresh ? displayed : content;
   const showMarkdown = !fresh || done;
 
+  const copyText = () => {
+    navigator.clipboard.writeText(content).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+    onCopy?.();
+  };
+
+  const ActionBtn = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
+    <button type="button" onClick={onClick}
+      className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
+      {children}
+    </button>
+  );
+
   if (role === "user") {
     return (
-      <div className="flex justify-end">
+      <div className="flex flex-col items-end gap-1">
         <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-lavender text-ink px-3.5 py-2.5 text-[14px] leading-relaxed break-words">
           {showMarkdown
             ? <Markdown className="text-[14px] leading-relaxed">{text}</Markdown>
             : <span className="whitespace-pre-wrap">{text}</span>}
+        </div>
+        <div className="flex items-center gap-2.5 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {branchTotal !== undefined && branchTotal > 1 && (
+            <span className="flex items-center gap-0.5">
+              <button type="button" onClick={onPrevBranch} disabled={branchIndex === 0}
+                className="inline-flex h-4 w-4 items-center justify-center rounded text-text-muted hover:text-text disabled:opacity-30 transition-colors">
+                <ChevronLeft className="h-3 w-3" strokeWidth={2.5} />
+              </button>
+              <span className="text-[10px] text-text-muted tabular-nums">{(branchIndex ?? 0) + 1}/{branchTotal}</span>
+              <button type="button" onClick={onNextBranch} disabled={branchIndex === branchTotal - 1}
+                className="inline-flex h-4 w-4 items-center justify-center rounded text-text-muted hover:text-text disabled:opacity-30 transition-colors">
+                <ChevronRight className="h-3 w-3" strokeWidth={2.5} />
+              </button>
+            </span>
+          )}
+          <ActionBtn onClick={copyText}>
+            {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
+            {copied ? "Copied" : "Copy"}
+          </ActionBtn>
+          {onEdit && (
+            <ActionBtn onClick={onEdit}>
+              <Pencil className="h-3 w-3" strokeWidth={2} />
+              Edit
+            </ActionBtn>
+          )}
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex justify-start">
+    <div className="flex flex-col items-start gap-1 group">
       <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card border border-border px-3.5 py-2.5 text-[14px] leading-relaxed text-text break-words">
         {showMarkdown
           ? <Markdown className="text-[14px] leading-relaxed">{text}</Markdown>
           : <span className="whitespace-pre-wrap">{text}</span>}
+      </div>
+      <div className="flex items-center gap-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <ActionBtn onClick={copyText}>
+          {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
+          {copied ? "Copied" : "Copy"}
+        </ActionBtn>
       </div>
     </div>
   );
@@ -101,6 +155,13 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // ConfirmModal queue
   const [pendingDrafts, setPendingDrafts] = useState<any[]>([]);
   const pendingTier2Ref = useRef<string>("");
+
+  // Branch navigation: when user edits a message, we snapshot the current
+  // conversation and create a new branch. branches[ts] = [{msgs, userText}, ...]
+  type Branch = { msgs: typeof messages; userText: string };
+  const [branches, setBranches] = useState<Map<number, Branch[]>>(new Map());
+  const [activeBranch, setActiveBranch] = useState<Map<number, number>>(new Map());
+  const editOriginTs = useRef<number | null>(null); // ts of user msg being edited
 
   // Auto-applied memory drafts → instant log + undo toast
   type AutoLogged = { mealId: Id<"meals">; draft: any };
@@ -298,6 +359,27 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       setFreshTs(Date.now());
       setAgentHint(coachToAgent(result.coachType));
       setAgentActions(Array.isArray(result.actions) ? result.actions : []);
+
+      // If this was an edit, save the resulting conversation as a new branch
+      if (editOriginTs.current !== null) {
+        const originTs = editOriginTs.current;
+        editOriginTs.current = null;
+        // After Convex updates messages, save as new branch (next tick)
+        setTimeout(() => {
+          setBranches(prev => {
+            const existing = prev.get(originTs) ?? [];
+            const next = new Map(prev);
+            next.set(originTs, [...existing, { msgs: [], userText: messageText }]);
+            return next;
+          });
+          setActiveBranch(prev => {
+            const existing = branches.get(originTs) ?? [];
+            const next = new Map(prev);
+            next.set(originTs, existing.length); // point to new branch
+            return next;
+          });
+        }, 200);
+      }
 
       const hasInlineDraft = Array.isArray(result.actions) && result.actions.some((a: any) => a.type === "log_draft" || a.type === "macro_conflict");
       if (!hasInlineDraft && !result.isQuestion && result.drafts && result.drafts.length > 0) {
@@ -625,10 +707,41 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           aria-live="polite" aria-label="Chat with Stry">
 
           {/* Messages top→bottom, newest at bottom */}
-          {messages.map((m) => (
-            <MessageBubble key={m.ts} role={m.role === "user" ? "user" : "ai"} content={m.content}
-              fresh={freshTs !== null && m.ts === lastAiTs} />
-          ))}
+          {messages.map((m, idx) => {
+            const isUser = m.role === "user";
+            const msgBranches = isUser ? (branches.get(m.ts) ?? []) : undefined;
+            const curBranch = isUser ? (activeBranch.get(m.ts) ?? 0) : undefined;
+            return (
+              <MessageBubble
+                key={`${m.ts}-${curBranch}`}
+                role={isUser ? "user" : "ai"}
+                content={m.content}
+                fresh={freshTs !== null && m.ts === lastAiTs}
+                onCopy={undefined}
+                onEdit={isUser ? () => {
+                  // Snapshot current conversation as a branch starting from this message
+                  setBranches(prev => {
+                    const next = new Map(prev);
+                    if (!next.has(m.ts)) next.set(m.ts, [{ msgs: messages.slice(0, idx + 1), userText: m.content }]);
+                    return next;
+                  });
+                  editOriginTs.current = m.ts;
+                  setTextValue(m.content);
+                  setTimeout(() => activeRef.current?.focus(), 50);
+                } : undefined}
+                branchIndex={curBranch}
+                branchTotal={msgBranches?.length}
+                onPrevBranch={isUser && (curBranch ?? 0) > 0 ? () => {
+                  const prev = (curBranch ?? 0) - 1;
+                  setActiveBranch(b => new Map(b).set(m.ts, prev));
+                } : undefined}
+                onNextBranch={isUser && msgBranches && (curBranch ?? 0) < msgBranches.length - 1 ? () => {
+                  const next = (curBranch ?? 0) + 1;
+                  setActiveBranch(b => new Map(b).set(m.ts, next));
+                } : undefined}
+              />
+            );
+          })}
 
           {/* Thinking dots */}
           {thinking && (

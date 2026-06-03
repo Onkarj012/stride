@@ -227,7 +227,7 @@ async function parseWorkoutDescription(description: string, duration?: string, i
     ? `\nUser physique: ${userPhysique.weight}kg${userPhysique.height ? `, ${userPhysique.height}cm` : ""}${userPhysique.age ? `, ${userPhysique.age}yo` : ""}${userPhysique.sex ? `, ${userPhysique.sex}` : ""}${userPhysique.fitnessLevel ? `, fitness: ${userPhysique.fitnessLevel}` : ""}`
     : "";
 
-  const prompt = `You are a professional fitness trainer. Parse this workout log precisely. Do NOT estimate calories.
+  const prompt = `You are a professional fitness trainer. Parse this workout log precisely.
 
 User's workout:
 """
@@ -244,7 +244,7 @@ Rules:
 4. Include "weight_unit": "kg" | "lbs" | "bodyweight" | "machine_kg" | "machine_lbs".
 5. For cardio, use a single set with "distance_km", "duration_min", "incline", "pace", "calories_per_hr" fields instead of weight/reps.
 6. Estimate total session duration if not provided. Determine intensity from volume/load.
-7. Do NOT estimate calories burned. Set caloriesBurned to 0.
+7. If the user explicitly states calories burned (e.g. "75 kcal burned", "75cal burned"), set caloriesBurned to that value. Otherwise set caloriesBurned to 0 — do NOT estimate.
 8. Use the exact exercise names the user typed.
 9. Session name: max 3 words.
 10. Look for rest pattern clues.
@@ -2043,6 +2043,10 @@ Return ONLY:
 
         } else if (item.type === "workout") {
           const parsed = await parseWorkoutDescription(item.description, undefined, undefined, settingsModel, apiKey, userPhysique);
+          // Extract user-stated calories from description (e.g. "75 kcal burned", "75cal")
+          const statedKcalMatch = item.description.match(/(\d+(?:\.\d+)?)\s*(?:kcal|cal(?:ories?)?)(?:\s*burned)?/i);
+          const statedKcal = statedKcalMatch ? Math.round(parseFloat(statedKcalMatch[1])) : null;
+          const finalKcal = statedKcal ?? parsed.caloriesBurned ?? 0;
           drafts.push({
             kind: "workout",
             date: item.date,
@@ -2050,14 +2054,14 @@ Return ONLY:
             name: parsed.name,
             type: parsed.name,
             duration: parseDurationMinutes(parsed.duration ?? "30 min") || 30,
-            kcal: parsed.caloriesBurned ?? 0,
+            kcal: finalKcal,
             intensity: (parsed.intensity?.toLowerCase() === "high" ? "high" : parsed.intensity?.toLowerCase() === "low" ? "light" : "medium"),
             sets: parsed.sets,
             rationale: parsed.rationale,
             exercises: parsed.exercises,
             calorieResult: parsed.calorieResult,
           });
-          summaryParts.push(`${parsed.name} (~${parsed.caloriesBurned ?? 0} kcal burned)`);
+          summaryParts.push(`${parsed.name} (~${finalKcal} kcal burned)`);
 
         } else if (item.type === "sleep") {
           // Parse sleep: extract hours and quality from description
