@@ -350,16 +350,17 @@ export function HomePage() {
               aria-label="Expand sidebar">
               <PanelRightOpen className="h-4 w-4" strokeWidth={1.75} />
             </button>
-            {/* Kcal arc */}
-            <div className="relative h-10 w-10">
-              <svg viewBox="0 0 40 40" className="h-10 w-10 -rotate-90">
-                <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" strokeWidth="3.5" className="text-border" />
-                <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" strokeWidth="3.5"
-                  strokeDasharray={`${kcalPct * 94.2} 94.2`} className="text-peach transition-all duration-500" strokeLinecap="round" />
-              </svg>
-              <span className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-text rotate-90">
-                {todayKcal > 0 ? `${Math.round(todayKcal / 100)}` : "—"}
-              </span>
+            {/* Kcal arc — decorative progress only, number shown below */}
+            <div className="flex flex-col items-center gap-1">
+              <div className="relative h-10 w-10">
+                <svg viewBox="0 0 40 40" className="h-10 w-10 -rotate-90">
+                  <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" strokeWidth="3.5" className="text-border" />
+                  <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" strokeWidth="3.5"
+                    strokeDasharray={`${kcalPct * 94.2} 94.2`} className="text-peach transition-all duration-500" strokeLinecap="round" />
+                </svg>
+              </div>
+              <span className="text-[13px] font-extrabold text-text leading-none">{todayKcal > 0 ? todayKcal.toLocaleString() : "—"}</span>
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-text-muted">kcal</span>
             </div>
             <div className="flex flex-col items-center gap-0.5">
               <span className="text-[18px] font-extrabold text-text leading-none">{streak}</span>

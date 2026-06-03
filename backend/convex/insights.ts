@@ -152,6 +152,23 @@ export const getTodayBrief = query({
     const waterMl = water.reduce((s, w) => s + w.ml, 0);
     const waterTarget = profile?.waterTarget ?? 2000;
 
+    // Suppress check-in questions if the user has already chatted on the homepage today
+    const homepageSession = await ctx.db
+      .query("chat_sessions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("title"), "__HOMEPAGE__"))
+      .first();
+    const todayStartMs = new Date(today + "T00:00:00.000Z").getTime();
+    let hasHomepageMessagesToday = false;
+    if (homepageSession) {
+      const recentMsg = await ctx.db
+        .query("chat_messages")
+        .withIndex("by_session", (q) => q.eq("sessionId", homepageSession._id))
+        .order("desc")
+        .first();
+      hasHomepageMessagesToday = !!recentMsg && (recentMsg._creationTime ?? 0) >= todayStartMs;
+    }
+
     // Task 19: dynamic per-day target from base plan + today's actual burn.
     let plan: NutritionPlan | null = null;
     try {
@@ -443,7 +460,7 @@ export const getTodayBrief = query({
         why: doToday.reason,
         tone,
       },
-      checkIn: checkIn.length ? {
+      checkIn: (checkIn.length && !hasHomepageMessagesToday) ? {
         type: "quick_question",
         id: checkIn[0].id,
         title: checkIn[0].title,

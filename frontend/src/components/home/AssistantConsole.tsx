@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, Camera, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip } from "lucide-react";
+import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -58,9 +58,9 @@ function MessageBubble({ role, content, fresh }: { role: "user" | "ai"; content:
   if (role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-ink text-text-on-ink px-3.5 py-2.5 text-[14px] leading-relaxed break-words">
+        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-lavender text-ink px-3.5 py-2.5 text-[14px] leading-relaxed break-words">
           {showMarkdown
-            ? <Markdown className="text-[14px] leading-relaxed prose-invert">{text}</Markdown>
+            ? <Markdown className="text-[14px] leading-relaxed">{text}</Markdown>
             : <span className="whitespace-pre-wrap">{text}</span>}
         </div>
       </div>
@@ -69,7 +69,7 @@ function MessageBubble({ role, content, fresh }: { role: "user" | "ai"; content:
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card-elev border border-border px-3.5 py-2.5 text-[14px] leading-relaxed text-text break-words">
+      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card border border-border px-3.5 py-2.5 text-[14px] leading-relaxed text-text break-words">
         {showMarkdown
           ? <Markdown className="text-[14px] leading-relaxed">{text}</Markdown>
           : <span className="whitespace-pre-wrap">{text}</span>}
@@ -438,7 +438,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           onClick={() => setMoreMenuOpen((o) => !o)}
           onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
           className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-          <Camera className="h-4 w-4" strokeWidth={1.75} />
+          <FileText className="h-4 w-4" strokeWidth={1.75} />
         </button>
         <AnimatePresence>
           {moreMenuOpen && (
@@ -489,10 +489,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     </form>
   );
 
-  // Inline action button — replaces SuggestionChip inside cards
+  // Inline action button — themed to design system
   const Btn = ({ label, onClick }: { label: string; onClick: () => void }) => (
     <button type="button" onClick={onClick}
-      className="inline-flex items-center rounded-full border border-border bg-card-elev hover:bg-card px-3 py-1.5 text-[13px] font-medium text-text transition-colors">
+      className="inline-flex items-center rounded-full bg-lavender/15 hover:bg-lavender/25 border border-lavender/20 px-3 py-1.5 text-[13px] font-semibold text-text transition-colors">
       {label}
     </button>
   );
@@ -506,19 +506,23 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       );
     }
     if (action.type === "coach_note") {
-      const tone = action.tone === "recovery" ? "border-l-sky" : action.tone === "momentum" ? "border-l-mint" : "border-l-lavender";
+      const toneStyle = action.tone === "recovery"
+        ? "border-l-sky bg-sky/8"
+        : action.tone === "momentum"
+        ? "border-l-mint bg-mint/8"
+        : "border-l-lavender bg-lavender/8";
       return (
-        <div className={cn("rounded-2xl border border-border border-l-4 bg-card-elev px-3.5 py-3 text-[13.5px] leading-relaxed text-text", tone)}>
+        <div className={`rounded-2xl border border-border border-l-4 px-3.5 py-3 text-[13.5px] leading-relaxed text-text ${toneStyle}`}>
           {action.text}
         </div>
       );
     }
     if (action.type === "log_draft") {
       return (
-        <div className="rounded-2xl border border-border bg-card-elev px-3.5 py-3 space-y-2.5">
+        <div className="rounded-2xl border border-mint/25 bg-mint/8 px-3.5 py-3 space-y-2.5">
           <p className="text-[13px] font-semibold text-text">{action.title ?? action.draft?.description ?? "Review this log"}</p>
           {action.draft?.kind === "meal" && (
-            <div className="flex gap-3 text-[12px] font-semibold">
+            <div className="flex gap-3 text-[12px] font-bold">
               <span className="text-peach">{action.draft.kcal} kcal</span>
               <span className="text-lavender">{action.draft.protein}g P</span>
               <span className="text-sky">{action.draft.carbs}g C</span>
@@ -527,15 +531,21 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           )}
           {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
-            <Btn label="Confirm" onClick={() => openDraft(action.draft)} />
-            <Btn label="Discard" onClick={() => setAgentActions([])} />
+            <button type="button" onClick={() => openDraft(action.draft)}
+              className="inline-flex items-center rounded-full bg-mint/20 hover:bg-mint/30 border border-mint/25 px-3 py-1.5 text-[13px] font-semibold text-text transition-colors">
+              Confirm
+            </button>
+            <button type="button" onClick={() => setAgentActions([])}
+              className="inline-flex items-center rounded-full bg-card-elev hover:bg-border border border-border px-3 py-1.5 text-[13px] font-medium text-text-muted transition-colors">
+              Discard
+            </button>
           </div>
         </div>
       );
     }
     if (action.type === "macro_conflict") {
       return (
-        <div className="rounded-2xl border border-border border-l-4 border-l-peach bg-card-elev px-3.5 py-3 space-y-2.5">
+        <div className="rounded-2xl border border-peach/25 bg-peach/8 border-l-4 border-l-peach px-3.5 py-3 space-y-2.5">
           <p className="text-[13px] font-semibold text-text">{action.title ?? "Macro check"}</p>
           {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
@@ -545,9 +555,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </div>
       );
     }
-    // quick_question
+    // quick_question — lavender tinted
     return (
-      <div className="rounded-2xl border border-border bg-card-elev px-3.5 py-3 space-y-2.5">
+      <div className="rounded-2xl border border-lavender/20 bg-lavender/8 px-3.5 py-3 space-y-2.5">
         <p className="text-[13.5px] font-semibold text-text">{action.title}</p>
         {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
         <div className="flex flex-wrap gap-2">
@@ -578,13 +588,17 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
               <p className="text-[13px] text-text-muted">{presenceLine ?? greeting.sub}</p>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-[14px] font-bold text-text">Stry</span>
+            <div className="flex items-center gap-2 min-w-0">
               <AgentBadge agent={agentHint} />
-              {(thinking || voice.recording || voice.transcribing) && (
-                <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse",
+              {(voice.recording || voice.transcribing) && (
+                <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse shrink-0",
                   voice.recording ? "bg-peach" : "bg-lavender")} />
               )}
+              {thinking
+                ? <span className="text-[12px] text-text-muted truncate">Thinking…</span>
+                : presenceLine
+                ? <span className="text-[12px] text-text-muted truncate">{presenceLine}</span>
+                : null}
             </div>
           )}
           {showHistory && (
