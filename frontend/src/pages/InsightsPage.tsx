@@ -85,7 +85,7 @@ function TodaysMealsCard({ date }: { date: string }) {
                     onClick={() => setEditing(m as EditableMeal)}
                     aria-label="Edit"
                     title="Edit"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
                   >
                     <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
                   </button>
@@ -94,7 +94,7 @@ function TodaysMealsCard({ date }: { date: string }) {
                     onClick={() => handleRelog(m._id as Id<"meals">, m.name)}
                     aria-label="Log again"
                     title="Log again"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors"
                   >
                     <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
                   </button>
@@ -103,7 +103,7 @@ function TodaysMealsCard({ date }: { date: string }) {
                     onClick={() => deleteMeal({ id: m._id as Id<"meals"> }).catch((err) => toast.error("Couldn't delete", err instanceof Error ? err.message : "Try again"))}
                     aria-label="Delete"
                     title="Delete"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
                   >
                     <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                   </button>
@@ -176,7 +176,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
                     onClick={() => setEditing(w as EditableWorkout)}
                     aria-label="Edit"
                     title="Edit"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
                   >
                     <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
                   </button>
@@ -185,7 +185,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
                     onClick={() => handleRelog(w._id as Id<"workouts">, w.name)}
                     aria-label="Log again"
                     title="Log again"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors"
                   >
                     <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
                   </button>
@@ -194,7 +194,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
                     onClick={() => deleteWorkout({ id: w._id as Id<"workouts"> }).catch((err) => toast.error("Couldn't delete", err instanceof Error ? err.message : "Try again"))}
                     aria-label="Delete"
                     title="Delete"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
                   >
                     <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                   </button>

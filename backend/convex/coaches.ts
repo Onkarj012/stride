@@ -8,7 +8,9 @@ export interface CoachConfig {
   systemPrompt: string;
 }
 
-const BASE_RULES = `Address the user by their name when appropriate. Be specific — reference their actual data, targets, and progress. Use markdown formatting: bold key numbers, use bullet lists for multi-step advice.`;
+const CALORIE_RULES = `Calorie accuracy rules: do not invent precision. When estimating food, anchor on explicit portions in grams/ml/servings, include cooking oils/sauces/ghee/butter/nuts/cheese/dressings, distinguish cooked vs dry weights, and state uncertainty when portions are vague. If the user did not give enough portion detail, ask one short follow-up or give a realistic range instead of a single confident number. For workouts, do not guess burn casually; use duration, body weight, intensity, and exercise type, and describe burn estimates as ranges.`;
+
+const BASE_RULES = `Address the user by their name when appropriate. Be specific — reference their actual data, targets, and progress. Use markdown formatting: bold key numbers, use bullet lists for multi-step advice. ${CALORIE_RULES}`;
 
 export const COACHES: Record<CoachType, CoachConfig> = {
   overall: {

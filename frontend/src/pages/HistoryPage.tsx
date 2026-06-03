@@ -69,14 +69,14 @@ function CalendarGrid({ calendarData, selected, onSelect }: {
     <div className="space-y-1">
       <div className="flex items-center justify-between">
         <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} aria-label="Previous month"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
           <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
         <span className="text-[13px] font-semibold text-text">
           {month.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
         </span>
         <button type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} aria-label="Next month"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
           <ChevronRight className="h-3.5 w-3.5" strokeWidth={2} />
         </button>
       </div>
@@ -195,7 +195,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         onClick={() => setEditMeal(m as EditableMeal)}
                         aria-label="Edit"
                         title="Edit"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
                       >
                         <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
                       </button>
@@ -205,7 +205,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         aria-label="Log again"
                         title="Log again today"
                         disabled={relogging === m._id}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors disabled:opacity-50"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors disabled:opacity-50"
                       >
                         <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
                       </button>
@@ -214,7 +214,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         onClick={() => onDeleteMeal(m._id as Id<"meals">)}
                         aria-label="Delete"
                         title="Delete"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
                       >
                         <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                       </button>
@@ -249,7 +249,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         onClick={() => setEditWorkout(w as EditableWorkout)}
                         aria-label="Edit"
                         title="Edit"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-text hover:bg-card-elev transition-colors"
                       >
                         <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
                       </button>
@@ -259,7 +259,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         aria-label="Log again"
                         title="Log again today"
                         disabled={relogging === w._id}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors disabled:opacity-50"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-lavender hover:bg-lavender/10 transition-colors disabled:opacity-50"
                       >
                         <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
                       </button>
@@ -268,7 +268,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                         onClick={() => onDeleteWorkout(w._id as Id<"workouts">)}
                         aria-label="Delete"
                         title="Delete"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum hover:bg-bubblegum/10 transition-colors"
                       >
                         <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                       </button>

@@ -17,21 +17,38 @@ const TONE_BG: Record<string, string> = {
 
 const SPRING = { type: "spring", stiffness: 280, damping: 22 } as const;
 
-export function SpecialistDock() {
+function specialistForCategory(category?: string): AgentKind | null {
+  switch (category) {
+    case "meal": return "diet";
+    case "workout": return "workout";
+    case "recovery": return "sleep";
+    case "water": return "water";
+    case "reflection": return "wellness";
+    default: return null;
+  }
+}
+
+export function SpecialistDock({ focusCategory }: { focusCategory?: string }) {
+  const featured = specialistForCategory(focusCategory);
+  const ordered = featured
+    ? [featured, ...SPECIALISTS.filter((kind) => kind !== featured)]
+    : SPECIALISTS;
+
   return (
     <section className="w-full">
       <header className="flex items-baseline justify-between mb-3 px-1">
         <div>
-          <h2 className="text-h3 text-text">Specialist agents</h2>
+          <h2 className="text-h3 text-text">Ask a specialist</h2>
           <p className="text-[13px] text-text-muted mt-0.5">
-            Each one focuses on a single area, working with Stry behind the scenes.
+            Optional depth when today's command needs a sharper lens.
           </p>
         </div>
       </header>
 
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
-        {SPECIALISTS.map((kind, i) => {
+        {ordered.map((kind, i) => {
           const meta = AGENT_META[kind];
+          const isFeatured = kind === featured;
           return (
             <motion.div
               key={kind}
@@ -48,8 +65,13 @@ export function SpecialistDock() {
                   radius="lg"
                   padding="md"
                   lift
-                  className="flex flex-col items-center gap-2 text-center h-full"
+                  className={`flex flex-col items-center gap-2 text-center h-full ${isFeatured ? "ring-2 ring-lavender/60" : ""}`}
                 >
+                  {isFeatured && (
+                    <span className="self-start rounded-full bg-lavender/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                      Relevant now
+                    </span>
+                  )}
                   <div className={`w-full aspect-square rounded-[14px] overflow-hidden relative ${TONE_BG[meta.tone] ?? "bg-card-elev"}`}>
                     <div className="absolute inset-0 flex items-center justify-center">
                       <VoxelAgent agent={kind} size={96} />

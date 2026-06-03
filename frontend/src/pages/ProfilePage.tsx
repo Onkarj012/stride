@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   User as UserIcon, Activity, Target, Settings as SettingsIcon,
-  Bell, Ruler, Download, Trash2, LogOut, Moon, Sun, Sparkles, Eye, EyeOff, Check, RotateCcw,
+  Bell, Ruler, Download, Trash2, LogOut, Moon, Sun, Sparkles, Eye, EyeOff, Check, RotateCcw, KeyRound, Loader2, X,
 } from "lucide-react";
 import { useQuery, useMutation } from "convex/react";
 import { useUser, useClerk } from "@clerk/react";
@@ -235,14 +235,20 @@ function GoalsTab() {
  */
 const OPENROUTER_MODELS = [
   { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", lab: "OpenAI" },
+  { id: "openai/gpt-5-mini", name: "GPT-5 Mini", lab: "OpenAI" },
   { id: "openai/gpt-5.5", name: "GPT-5.5", lab: "OpenAI" },
   { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", lab: "OpenAI" },
   { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6", lab: "Anthropic" },
   { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5", lab: "Anthropic" },
   { id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash", lab: "DeepSeek" },
   { id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro", lab: "DeepSeek" },
+  { id: "google/gemini-3.5-flash", name: "Gemini 3.5 Flash", lab: "Google" },
+  { id: "google/gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite", lab: "Google" },
+  { id: "google/gemini-2.5-flash-lite-preview-09-2025", name: "Gemini 2.5 Flash Lite Preview", lab: "Google" },
   { id: "google/gemma-4-31b-it", name: "Gemma 4 31B", lab: "Google" },
+  { id: "moonshotai/kimi-k2-thinking", name: "Kimi K2 Thinking", lab: "Moonshot AI" },
   { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6", lab: "Moonshot AI" },
+  { id: "x-ai/grok-build-0.1", name: "Grok Build 0.1", lab: "xAI" },
   { id: "qwen/qwen3.6-plus", name: "Qwen 3.6 Plus", lab: "Qwen" },
   { id: "z-ai/glm-5.1", name: "GLM 5.1", lab: "Z.AI" },
   { id: "minimax/minimax-m2.5", name: "MiniMax M2.5", lab: "MiniMax" },
@@ -255,6 +261,7 @@ function AIProviderCard() {
 
   const [model, setModel] = useState<string>("openai/gpt-4o-mini");
   const [apiKey, setApiKey] = useState<string>("");
+  const [customModel, setCustomModel] = useState<string>("");
   const [revealKey, setRevealKey] = useState(false);
   const [hasSavedKey, setHasSavedKey] = useState(false);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
@@ -263,6 +270,9 @@ function AIProviderCard() {
   useEffect(() => {
     if (!settings) return;
     setModel(settings.openRouterModel ?? "openai/gpt-4o-mini");
+    if (settings.openRouterModel && !OPENROUTER_MODELS.some((m) => m.id === settings.openRouterModel)) {
+      setCustomModel(settings.openRouterModel);
+    }
     if (settings.hasOpenRouterKey) {
       setHasSavedKey(true);
     }
@@ -294,6 +304,8 @@ function AIProviderCard() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const selectedModel = OPENROUTER_MODELS.find((m) => m.id === model);
+  const isCustomModel = !selectedModel;
+  const customModelValue = customModel.trim();
 
   // Click-outside handler for dropdown
   useEffect(() => {
@@ -332,7 +344,7 @@ function AIProviderCard() {
       </div>
 
       {/* Model selector — custom dropdown */}
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-2.5">
         <span className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">Model</span>
         <div className="relative" ref={dropdownRef}>
           <button
@@ -342,7 +354,7 @@ function AIProviderCard() {
           >
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="inline-flex h-6 items-center rounded-full bg-lavender/15 px-2 text-[10px] font-bold uppercase tracking-wider text-lavender">
-                {selectedModel?.lab ?? "—"}
+                {selectedModel?.lab ?? "Custom"}
               </span>
               <span className="text-[14px] font-semibold text-text truncate">
                 {selectedModel?.name ?? model}
@@ -398,6 +410,50 @@ function AIProviderCard() {
               ))}
             </div>
           )}
+        </div>
+        <div className={cn(
+          "rounded-[16px] border p-3 transition-colors",
+          isCustomModel ? "border-lavender bg-lavender/10" : "border-border bg-card-elev/60",
+        )}>
+          <div className="flex items-center justify-between gap-3">
+            <label htmlFor="custom-model" className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">
+              Custom model code
+            </label>
+            {isCustomModel && (
+              <span className="rounded-full bg-lavender/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-lavender">
+                Active
+              </span>
+            )}
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              id="custom-model"
+              type="text"
+              value={customModel}
+              onChange={(e) => setCustomModel(e.target.value)}
+              placeholder="provider/model-code"
+              autoComplete="off"
+              spellCheck={false}
+              className="min-w-0 flex-1 bg-input border border-border rounded-lg px-3 py-2.5 text-[13px] text-text font-mono focus:outline-none focus:border-lavender"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (!customModelValue) {
+                  toast.error("Add a model code", "Example: openai/gpt-5-mini");
+                  return;
+                }
+                setModel(customModelValue);
+                handleSave(customModelValue);
+              }}
+              className="shrink-0 rounded-lg bg-ink px-3 py-2.5 text-[12px] font-bold text-text-on-ink"
+            >
+              Use
+            </button>
+          </div>
+          <p className="mt-1.5 text-[11.5px] text-text-subtle">
+            Paste any OpenRouter model id. Presets above are just shortcuts.
+          </p>
         </div>
       </div>
 
@@ -457,6 +513,78 @@ function AIProviderCard() {
         </div>
       </label>
     </Card>
+  );
+}
+
+function ChangePasswordRow() {
+  const { user } = useUser();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNext, setShowNext] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!user) return;
+    setSaving(true);
+    try {
+      await (user as any).updatePassword({ currentPassword: current, newPassword: next });
+      toast.success("Password updated", "Sign in with your new password next time.");
+      setOpen(false);
+      setCurrent(""); setNext("");
+    } catch (err: any) {
+      toast.error("Couldn't update password", err?.errors?.[0]?.message ?? err?.message ?? "Try again");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <ListRow icon={<KeyRound />} title="Change password" meta="Update your account password"
+        onClick={() => setOpen(true)} />
+      {open && (
+        <div className="px-4 pb-4 pt-2 border-t border-border space-y-3">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <label className="block space-y-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Current password</span>
+              <div className="flex items-center gap-2 rounded-xl bg-input border border-border focus-within:border-lavender transition-colors px-3 py-2.5">
+                <input type={showCurrent ? "text" : "password"} required value={current}
+                  onChange={(e) => setCurrent(e.target.value)} placeholder="••••••••"
+                  className="min-w-0 flex-1 bg-transparent text-[13px] text-text placeholder:text-text-subtle focus:outline-none" />
+                <button type="button" onClick={() => setShowCurrent((s) => !s)} className="text-text-muted hover:text-text shrink-0">
+                  {showCurrent ? <EyeOff className="h-3.5 w-3.5" strokeWidth={1.75} /> : <Eye className="h-3.5 w-3.5" strokeWidth={1.75} />}
+                </button>
+              </div>
+            </label>
+            <label className="block space-y-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">New password</span>
+              <div className="flex items-center gap-2 rounded-xl bg-input border border-border focus-within:border-lavender transition-colors px-3 py-2.5">
+                <input type={showNext ? "text" : "password"} required minLength={8} value={next}
+                  onChange={(e) => setNext(e.target.value)} placeholder="At least 8 characters"
+                  className="min-w-0 flex-1 bg-transparent text-[13px] text-text placeholder:text-text-subtle focus:outline-none" />
+                <button type="button" onClick={() => setShowNext((s) => !s)} className="text-text-muted hover:text-text shrink-0">
+                  {showNext ? <EyeOff className="h-3.5 w-3.5" strokeWidth={1.75} /> : <Eye className="h-3.5 w-3.5" strokeWidth={1.75} />}
+                </button>
+              </div>
+            </label>
+            <div className="flex gap-2">
+              <button type="submit" disabled={saving || !current || next.length < 8}
+                className={cn("flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink py-2 text-[13px] font-semibold transition-opacity", (saving || !current || next.length < 8) && "opacity-50")}>
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Update password"}
+              </button>
+              <button type="button" onClick={() => { setOpen(false); setCurrent(""); setNext(""); }}
+                className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-border text-text-muted hover:text-text transition-colors">
+                <X className="h-4 w-4" strokeWidth={2} />
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -565,6 +693,8 @@ function SettingsTab() {
         <div className="px-4 py-3 border-b border-border">
           <h3 className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Account</h3>
         </div>
+        <ChangePasswordRow />
+        <ListDivider />
         <ListRow icon={<LogOut />} title="Sign out" meta="You'll need to sign in again to use Stry"
           onClick={() => signOut()} />
       </Card>
