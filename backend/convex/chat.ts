@@ -15,10 +15,23 @@ export const getSessions = query({
       .query("chat_sessions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
-    return allSessions
-      .filter((s) => !s.title.startsWith("__"))
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((s) => ({ id: s._id, title: s.title, updatedAt: s.updatedAt }));
+
+    const sorted = allSessions.sort((a, b) => b.updatedAt - a.updatedAt);
+
+    return Promise.all(sorted.map(async (s) => {
+      if (!s.title.startsWith("__")) {
+        return { id: s._id, title: s.title, updatedAt: s.updatedAt, isHome: false };
+      }
+      // Homepage session — derive a friendly name from the first user message
+      const firstMsg = await ctx.db
+        .query("chat_messages")
+        .withIndex("by_session", (q) => q.eq("sessionId", s._id))
+        .filter((q) => q.eq(q.field("role"), "user"))
+        .first();
+      const snippet = firstMsg?.content?.slice(0, 40).trim();
+      const title = snippet ? snippet : "Home chat";
+      return { id: s._id, title, updatedAt: s.updatedAt, isHome: true };
+    }));
   },
 });
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, Camera, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil } from "lucide-react";
+import { ArrowUp, Mic, Camera, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -90,6 +90,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const [textValue, setTextValue] = useState("");
   const [thinking, setThinking] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   // Track which message id was the fresh one (so only it animates)
@@ -112,6 +113,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const window = useDailyWindow();
   const internalRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const docRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeRef = inputRef ?? internalRef;
   const toast = useToast();
@@ -171,6 +173,27 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     const reader = new FileReader();
     reader.onload = () => setAttachedImage(reader.result as string);
     reader.readAsDataURL(file);
+  }, [toast]);
+
+  /* ── Document input (PDF / MD / TXT) ── */
+  const onPickFile = useCallback(async (file: File) => {
+    const allowed = ["application/pdf", "text/markdown", "text/plain", "text/x-markdown"];
+    const byExt = file.name.endsWith(".md") || file.name.endsWith(".pdf") || file.name.endsWith(".txt");
+    if (!allowed.includes(file.type) && !byExt) {
+      toast.error("Unsupported file", "Attach a PDF, MD, or TXT file");
+      return;
+    }
+    if (file.type === "application/pdf") {
+      // For PDF, just send the filename as a note — full text extraction requires a server-side PDF parser
+      setAttachedFile({ name: file.name, content: `[PDF attached: ${file.name}]` });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      setAttachedFile({ name: file.name, content: text.slice(0, 8000) }); // cap at 8k chars
+    };
+    reader.readAsText(file);
   }, [toast]);
 
   /* ── Cmd+V image paste (page-wide) ── */
@@ -250,16 +273,22 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   /* ── Send to backend ── */
   const send = useCallback(async (text: string, image?: string) => {
     const v = text.trim();
-    if (!v && !image) return;
+    if (!v && !image && !attachedFile) return;
+
+    // Prepend file content if attached
+    const messageText = attachedFile
+      ? `[File: ${attachedFile.name}]\n${attachedFile.content}\n\n${v}`.trim()
+      : v;
 
     setThinking(true);
     setTextValue("");
     setAttachedImage(null);
+    setAttachedFile(null);
     recordEngagement(window);
 
     try {
       const result = await homepageInput({
-        message: v,
+        message: messageText,
         image,
         today: localDateStr(),
       });
@@ -315,7 +344,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       const msg = err instanceof Error ? err.message : "Something went wrong";
       toast.error("Couldn't reach Stry", msg);
     }
-  }, [homepageInput, toast, recordEngagement, window]);
+  }, [homepageInput, toast, recordEngagement, window, attachedFile]);
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
     if (button.value === "skip" || button.value === "done") {
@@ -430,6 +459,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                 <Barcode className="h-4 w-4" strokeWidth={1.75} />
                 Scan barcode
               </button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); docRef.current?.click(); setMoreMenuOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                <Paperclip className="h-4 w-4" strokeWidth={1.75} />
+                Attach PDF / MD
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -446,8 +480,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       </button>
 
       <motion.button type="submit" aria-label="Send"
-        disabled={(!textValue.trim() && !attachedImage) || thinking}
-        animate={{ scale: (textValue.trim() || attachedImage) ? 1 : 0.9, opacity: (textValue.trim() || attachedImage) ? 1 : 0.5 }}
+        disabled={(!textValue.trim() && !attachedImage && !attachedFile) || thinking}
+        animate={{ scale: (textValue.trim() || attachedImage || attachedFile) ? 1 : 0.9, opacity: (textValue.trim() || attachedImage || attachedFile) ? 1 : 0.5 }}
         transition={SPRING}
         className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed">
         {thinking ? <Sparkles className="h-4 w-4 animate-pulse" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.25} />}
@@ -527,6 +561,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     <>
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickImage(f); e.target.value = ""; }} />
+      <input ref={docRef} type="file" accept=".pdf,.md,.txt,text/markdown,text/plain" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.target.value = ""; }} />
 
       {/* Full-height flex column — no card wrapper, page provides the container */}
       <div className="flex flex-col h-full min-h-0">
@@ -592,24 +628,36 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           ))}
         </div>
 
-        {/* Attachment preview */}
+        {/* Attachment previews */}
         <AnimatePresence>
-          {attachedImage && (
+          {(attachedImage || attachedFile) && (
             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-              className="shrink-0 px-4 lg:px-6 pb-2">
-              <div className="relative inline-block">
-                <img src={attachedImage} alt="Attached" className="h-14 w-14 rounded-xl object-cover border border-border" />
-                <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
-                  className="absolute -top-1.5 -right-1.5 h-5 w-5 flex items-center justify-center rounded-full bg-ink text-text-on-ink">
-                  <X className="h-3 w-3" strokeWidth={2.5} />
-                </button>
-              </div>
+              className="shrink-0 px-4 lg:px-6 pb-2 flex items-center gap-2">
+              {attachedImage && (
+                <div className="relative inline-block">
+                  <img src={attachedImage} alt="Attached" className="h-14 w-14 rounded-xl object-cover border border-border" />
+                  <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
+                    className="absolute -top-1.5 -right-1.5 h-5 w-5 flex items-center justify-center rounded-full bg-ink text-text-on-ink">
+                    <X className="h-3 w-3" strokeWidth={2.5} />
+                  </button>
+                </div>
+              )}
+              {attachedFile && (
+                <div className="relative inline-flex items-center gap-2 rounded-xl border border-lavender/30 bg-lavender/10 px-3 py-2">
+                  <Paperclip className="h-3.5 w-3.5 text-lavender shrink-0" strokeWidth={2} />
+                  <span className="text-[12px] font-medium text-text max-w-[140px] truncate">{attachedFile.name}</span>
+                  <button type="button" onClick={() => setAttachedFile(null)} aria-label="Remove file"
+                    className="h-4 w-4 flex items-center justify-center rounded-full bg-ink/10 hover:bg-ink/20 text-text-muted">
+                    <X className="h-2.5 w-2.5" strokeWidth={2.5} />
+                  </button>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Input — always at the bottom */}
-        <div className="shrink-0 px-4 lg:px-6 pb-4 pt-2 bg-bg border-t border-border">
+        <div className="shrink-0 px-4 lg:px-6 pb-[calc(env(safe-area-inset-bottom)+5rem)] lg:pb-4 pt-2 bg-bg border-t border-border">
           {Composer}
           {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
         </div>
