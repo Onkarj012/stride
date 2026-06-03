@@ -213,11 +213,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setAgentActions(initialActions);
   }, [initialActionKey, messages.length]);
 
-  // Scroll history to bottom on new message
+  // Scroll to bottom on new messages AND during streaming
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length, thinking, pendingDrafts.length]);
+  }, [messages.length, thinking, pendingDrafts.length, freshTs]);
 
   /* ── Voice (Groq Whisper) ── */
   const onTranscript = useCallback((t: string) => {
@@ -642,8 +642,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           <p className="text-[0.95rem] font-semibold text-text">{action.title ?? "Macro check"}</p>
           {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
-            <Btn label="Use my numbers" onClick={() => openDraft(action.draft)} />
-            <Btn label="Use estimate" onClick={() => useEngineEstimate(action.draft)} />
+            <Btn label="Use my numbers" onClick={() => { openDraft(action.draft); setAgentActions([]); }} />
+            <Btn label="Use estimate" onClick={() => { useEngineEstimate(action.draft); setAgentActions([]); }} />
           </div>
         </div>
       );
@@ -756,27 +756,35 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             </div>
           )}
 
-          {/* Inline action cards — appear as a message at bottom of stream */}
-          {agentActions.map((action, i) => (
-            <div key={`${action.type}-${i}`} className="flex justify-start">
-              <div className="max-w-[88%] lg:max-w-[70%]">
-                <AgentActionCard action={action} />
-              </div>
-            </div>
-          ))}
+          {/* Inline action cards — animated in/out */}
+          <AnimatePresence>
+            {agentActions.map((action, i) => (
+              <motion.div key={`${action.type}-${i}`}
+                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2 }} className="overflow-hidden flex justify-start">
+                <div className="max-w-[88%] lg:max-w-[70%] w-full">
+                  <AgentActionCard action={action} />
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
 
-          {/* Inline confirm cards — rendered in-stream, not as an overlay */}
-          {pendingDrafts.map((draft, i) => (
-            <div key={`draft-${i}`} className="flex justify-start">
-              <div className="w-full max-w-[88%] lg:max-w-[420px]">
-                <LogConfirmCard
-                  draft={draft}
-                  onConfirm={handleConfirm}
-                  onDiscard={() => setPendingDrafts((prev) => prev.filter((d) => d !== draft))}
-                />
-              </div>
-            </div>
-          ))}
+          {/* Inline confirm cards — animated in/out, no blank space on dismiss */}
+          <AnimatePresence>
+            {pendingDrafts.map((draft, i) => (
+              <motion.div key={`draft-${i}`}
+                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2 }} className="overflow-hidden flex justify-start">
+                <div className="w-full max-w-[88%] lg:max-w-[420px]">
+                  <LogConfirmCard
+                    draft={draft}
+                    onConfirm={handleConfirm}
+                    onDiscard={() => setPendingDrafts((prev) => prev.filter((d) => d !== draft))}
+                  />
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
         </div>
 
         {/* Attachment previews */}
