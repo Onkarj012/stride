@@ -8,7 +8,7 @@ import type { Id } from "@convex/_generated/dataModel";
 import { AgentBadge } from "@/components/insights/AgentBadge";
 import { Markdown } from "@/components/primitives/Markdown";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
-import { ConfirmModal } from "@/components/coach/ConfirmModal";
+import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
 import { useTypewriter } from "@/hooks/useTypewriter";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
@@ -156,7 +156,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length, thinking]);
+  }, [messages.length, thinking, pendingDrafts.length]);
 
   /* ── Voice (Groq Whisper) ── */
   const onTranscript = useCallback((t: string) => {
@@ -215,7 +215,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   /* ── Confirm draft → actually log ── */
   const handleConfirm = useCallback(async (draft: any) => {
-    setPendingDrafts((prev) => prev.slice(1));
+    setPendingDrafts((prev) => prev.filter((d) => d !== draft));
     const time = new Date().toTimeString().slice(0, 5);
     const today = localDateStr();
     const tier2 = pendingTier2Ref.current;
@@ -649,6 +649,19 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
               </div>
             </div>
           ))}
+
+          {/* Inline confirm cards — rendered in-stream, not as an overlay */}
+          {pendingDrafts.map((draft, i) => (
+            <div key={`draft-${i}`} className="flex justify-start">
+              <div className="w-full max-w-[88%] lg:max-w-[420px]">
+                <LogConfirmCard
+                  draft={draft}
+                  onConfirm={handleConfirm}
+                  onDiscard={() => setPendingDrafts((prev) => prev.filter((d) => d !== draft))}
+                />
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Attachment previews */}
@@ -687,7 +700,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       </div>
 
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
-      <ConfirmModal draft={pendingDrafts[0] ?? null} onConfirm={handleConfirm} onDiscard={handleDiscard} />
 
       {/* Memory auto-log undo toast */}
       <AnimatePresence>

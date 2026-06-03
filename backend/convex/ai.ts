@@ -1836,6 +1836,7 @@ CRITICAL CLASSIFICATION RULES:
 - "I had X" / "I ate X" / "just had X" / "had X for breakfast" / "X for lunch/dinner/snack" → meal log, isQuestion=false
 - "I drank X" / "X glasses of water" / "Xml of water" / "had Xl of water" → water log, isQuestion=false
 - "Did/ran/walked/biked/lifted X" / "30 min run" / "5km run" / "leg day" → workout log, isQuestion=false
+- A list of exercises (e.g. "declined press: ..., incline press: ..., pec fly: ...") = ONE workout item, not multiple. Combine all into a single workout description.
 - "Slept X" / "went to bed at X" / "woke up at Y" → sleep log, isQuestion=false
 - "Feeling X/Y" / "mood is X" / "X out of 5" → mood log, isQuestion=false
 - "X steps" / "walked X steps" → steps log, isQuestion=false
