@@ -133,8 +133,10 @@ export function SignInPage() {
     setError(null);
     setLoading(true);
     try {
-      // Creates the attempt and sends the code in one call
-      await signIn.create({ strategy: "reset_password_email_code", identifier: email });
+      // Identify the account, then request the reset code
+      await signIn.create({ identifier: email });
+      const { error: err } = await signIn.resetPasswordEmailCode.sendCode();
+      if (err) { setError(err.message); return; }
       setView("forgot_code");
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Couldn't send code");
@@ -149,12 +151,10 @@ export function SignInPage() {
     setError(null);
     setLoading(true);
     try {
-      const result = await signIn.attemptFirstFactor({ strategy: "reset_password_email_code", code });
-      if (result.status === "needs_new_password") {
-        setView("forgot_newpwd");
-      } else {
-        setError("Verification incomplete. Please try again.");
-      }
+      const { error: err } = await signIn.resetPasswordEmailCode.verifyCode({ code });
+      if (err) { setError(err.message); return; }
+      // status becomes 'needs_new_password' — proceed to next step
+      setView("forgot_newpwd");
     } catch (err: any) {
       setError(err?.errors?.[0]?.message ?? err?.message ?? "Invalid code");
     } finally {
@@ -168,8 +168,9 @@ export function SignInPage() {
     setError(null);
     setLoading(true);
     try {
-      const result = await signIn.resetPassword({ password: newPwd });
-      if (result.status === "complete") {
+      const { error: err } = await signIn.resetPasswordEmailCode.submitPassword({ password: newPwd });
+      if (err) { setError(err.message); return; }
+      if (signIn.status === "complete") {
         await signIn.finalize({ navigate: ({ decorateUrl }) => { window.location.href = decorateUrl("/"); } });
       } else {
         setError("Password reset incomplete. Please try signing in.");
