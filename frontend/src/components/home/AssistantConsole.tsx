@@ -79,7 +79,7 @@ function MessageBubble({ role, content, fresh }: { role: "user" | "ai"; content:
 }
 
 type AssistantConsoleProps = {
-  inputRef?: React.RefObject<HTMLInputElement | null>;
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   queuedPrompt?: string | null;
   onPromptConsumed?: () => void;
   presenceLine?: string;
@@ -111,7 +111,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const { user } = useUser();
   const { recordEngagement } = useBehavior();
   const window = useDailyWindow();
-  const internalRef = useRef<HTMLInputElement>(null);
+  const internalRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -243,7 +243,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
         if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
       } else if (d.kind === "workout") {
-        await addWorkout({ name: d.description, sets: "1", duration: String(d.duration), intensity: d.intensity.toUpperCase(), date, caloriesBurned: d.kcal, rationale: tier2 || undefined });
+        await addWorkout({ name: d.description, sets: d.sets || "1", duration: String(d.duration), intensity: d.intensity.toUpperCase(), date, caloriesBurned: d.kcal, rationale: tier2 || undefined, structuredSets: d.exercises ? JSON.stringify(d.exercises) : undefined });
         toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
         if (!isPastDay) await recordActivity({ type: "workout" }).catch(() => {});
       } else if (d.kind === "sleep") {
@@ -412,25 +412,34 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const Composer = (
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}
       className={cn(
-        "relative flex items-center gap-1.5 rounded-full bg-card border pl-5 pr-1.5 py-1.5 w-full transition-colors",
-        voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender",
+        "relative flex items-end gap-1.5 rounded-[20px] bg-card border px-4 py-1.5 w-full transition-colors",
+        voice.recording ? "border-peach" : attachedFile ? "border-lavender" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender",
       )}
     >
-      <input
-        ref={activeRef as React.RefObject<HTMLInputElement>}
-        type="text"
+      <textarea
+        ref={activeRef as React.RefObject<HTMLTextAreaElement>}
         value={textValue}
-        onChange={(e) => setTextValue(e.target.value)}
+        onChange={(e) => {
+          setTextValue(e.target.value);
+          // Auto-grow: reset height then set to scrollHeight, capped at ~5 lines (120px)
+          e.target.style.height = "auto";
+          e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+        }}
         placeholder={
           voice.recording ? "Listening…" :
           voice.transcribing ? "Transcribing…" :
           attachedImage ? "Add a note (optional)…" :
-          showHistory ? "Reply, log, or ask what to do next…" :
+          showHistory ? "Reply, log, or ask…" :
           "Ask Stry, paste an image, or speak…"
         }
         aria-label="Ask Stry"
         disabled={voice.recording || voice.transcribing}
-        className="min-w-0 flex-1 bg-transparent text-[15px] text-text placeholder:text-text-subtle focus:outline-none py-1.5 disabled:opacity-50"
+        rows={1}
+        style={{ resize: "none", height: "auto", maxHeight: 120, overflowY: "auto" }}
+        className="min-w-0 flex-1 bg-transparent text-[15px] text-text placeholder:text-text-subtle focus:outline-none py-2 disabled:opacity-50 leading-snug"
       />
 
       <div className="relative">

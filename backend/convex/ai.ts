@@ -239,23 +239,36 @@ User-provided intensity: ${intensity || "not specified"}${physiqueInfo}
 
 Rules:
 1. Extract EVERY exercise. Each exercise gets its own entry in "exercises".
-2. For each exercise, create one entry in "sets" per set with exact weight and reps. Use the specific weight/reps the user provided.
-3. For cardio, use a single set with duration and calories as the reps field.
-4. Estimate total session duration if not provided. Determine intensity from volume/load.
-5. Do NOT estimate calories burned. Set caloriesBurned to 0.
-6. Use the exact exercise names the user typed (preserve capitalization and spelling).
-7. Session name: max 3 words.
-8. Look for rest pattern clues: "giant set", "superset", "circuit", "minimal rest", "heavy rest", "EMOM", "AMRAP".
+2. For each exercise, create one entry in "sets" per set with exact weight and reps.
+3. Include "muscle_group": primary muscle targeted (e.g. "chest", "triceps", "back", "legs", "shoulders", "cardio", "core").
+4. Include "weight_unit": "kg" | "lbs" | "bodyweight" | "machine_kg" | "machine_lbs".
+5. For cardio, use a single set with "distance_km", "duration_min", "incline", "pace", "calories_per_hr" fields instead of weight/reps.
+6. Estimate total session duration if not provided. Determine intensity from volume/load.
+7. Do NOT estimate calories burned. Set caloriesBurned to 0.
+8. Use the exact exercise names the user typed.
+9. Session name: max 3 words.
+10. Look for rest pattern clues.
 
 Return ONLY valid JSON:
-{"name":"session name","exercises":[{"name":"exercise name","sets":[{"weight":"41kg","reps":"15"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":0,"rationale":"one coaching tip (max 15 words)","restClues":"any rest pattern info from description"}`;
+{"name":"session name","exercises":[{"name":"exercise name","muscle_group":"chest","weight_unit":"kg","sets":[{"weight":"12.5","reps":"15"}]},{"name":"cardio name","muscle_group":"cardio","weight_unit":"bodyweight","sets":[{"distance_km":"0.75","duration_min":"10","incline":"11","pace":"13.2","calories_per_hr":"425"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":0,"rationale":"one coaching tip (max 15 words)","restClues":"any rest pattern info"}`;
 
   const content = await callAI([{ role: "user", content: prompt }], 1200, model, apiKey);
   const result = parseJSON<any>(content, { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", caloriesBurned: 0, rationale: "", restClues: "" });
 
   const exercises = (result.exercises || []).map((ex: any) => ({
     name: ex.name || "Exercise",
-    sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({ weight: String(s.weight || ""), reps: String(s.reps || "") })) : [],
+    muscle_group: ex.muscle_group || "",
+    weight_unit: ex.weight_unit || "kg",
+    sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({
+      weight: String(s.weight || ""),
+      reps: String(s.reps || ""),
+      // cardio fields
+      distance_km: s.distance_km != null ? String(s.distance_km) : undefined,
+      duration_min: s.duration_min != null ? String(s.duration_min) : undefined,
+      incline: s.incline != null ? String(s.incline) : undefined,
+      pace: s.pace != null ? String(s.pace) : undefined,
+      calories_per_hr: s.calories_per_hr != null ? String(s.calories_per_hr) : undefined,
+    })) : [],
   }));
   const totalSets = exercises.reduce((sum: number, ex: any) => sum + ex.sets.length, 0);
   const setsVal = exercises.length > 0 ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets` : "–";
@@ -808,6 +821,7 @@ export const logWorkout = action({
         exercises: parsedData.exercises,
         rationale: parsedData.rationale,
         caloriesBurned: parsedData.caloriesBurned ?? (parsedData.calorieResult?.total_kcal ?? 0),
+        structuredSets: parsedData.exercises ? JSON.stringify(parsedData.exercises) : undefined,
         ...calorieFields,
       });
       data = { _id: id, ...parsedData };
@@ -822,13 +836,10 @@ export const logWorkout = action({
       } : {};
       const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
         userId, date: today,
-        name: parsed.name,
-        sets: parsed.sets,
-        duration: parsed.duration,
-        intensity: parsed.intensity,
-        exercises: parsed.exercises,
-        rationale: parsed.rationale,
+        name: parsed.name, sets: parsed.sets, duration: parsed.duration,
+        intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
         caloriesBurned: parsed.caloriesBurned,
+        structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
         ...calorieFields,
       });
       data = { _id: id, ...parsed };
@@ -1045,7 +1056,9 @@ Rules:
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
           userId, date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
           intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
-          caloriesBurned: parsed.caloriesBurned, ...calorieFields,
+          caloriesBurned: parsed.caloriesBurned,
+          structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
+          ...calorieFields,
         });
         loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed } });
       } catch (err) { console.error("Failed to log workout from AI:", err); }

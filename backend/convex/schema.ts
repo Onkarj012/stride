@@ -47,6 +47,8 @@ export default defineSchema({
     calorieRangeHigh: v.optional(v.number()),
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
+    // Structured exercise data — JSON: ExerciseEntry[]
+    structuredSets: v.optional(v.string()),
   }).index("by_user_date", ["userId", "date"]),
 
   daily_goals: defineTable({

@@ -281,7 +281,7 @@ function MemoryContextHint() {
 }
 
 export function HomePage() {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const { logs } = useLogs();
