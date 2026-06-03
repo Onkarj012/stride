@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowRight, CheckCircle2, Droplets, EyeOff, HeartPulse, Minus, Plus, Sparkles, Target, Zap, Brain, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowRight, Droplets, Minus, Plus, Target, Zap, Brain, ChevronDown, ChevronUp } from "lucide-react";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { AssistantConsole } from "@/components/home/AssistantConsole";
@@ -82,72 +82,92 @@ function relTime(ts: number): string {
 }
 
 
-/* ── Compact context — secondary to the command layer ── */
-function TodaysPulse({ logs, brief, compact = false }: { logs: LogEntry[]; brief?: TodayBrief | null; compact?: boolean }) {
+/* ── Collapsed stats summary bar — expandable on tap ── */
+function PulseSummary({ logs, brief }: { logs: LogEntry[]; brief?: TodayBrief | null }) {
+  const [open, setOpen] = useState(false);
   const today = todayLogs(logs);
-  const kcal = today.reduce((s, l) => s + (l.meal?.kcal ?? 0), 0);
-  const protein = today.reduce((s, l) => s + (l.meal?.protein ?? 0), 0);
-  const carbs = today.reduce((s, l) => s + (l.meal?.carbs ?? 0), 0);
-  const fat = today.reduce((s, l) => s + (l.meal?.fat ?? 0), 0);
+  const kcal = Math.round(today.reduce((s, l) => s + (l.meal?.kcal ?? 0), 0));
+  const protein = Math.round(today.reduce((s, l) => s + (l.meal?.protein ?? 0), 0));
   const water = today.reduce((s, l) => s + (l.water?.ml ?? 0), 0);
   const moveMin = today.reduce((s, l) => s + (l.workout?.duration ?? 0), 0);
-  const kcalBurned = today.reduce((s, l) => s + (l.workout?.kcal ?? 0), 0);
-  const lastSleep = logs.find((l) => l.sleep)?.sleep;
   const stats = brief?.stats;
-
-  const tiles = [
-    { label: "Calories", value: kcal > 0 ? Math.round(kcal).toLocaleString() : "-", unit: "kcal", pct: Math.min(1, kcal / (stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 2000)), tone: "peach" },
-    { label: "Protein", value: protein > 0 ? `${Math.round(protein)}g` : "-", unit: "", pct: Math.min(1, protein / (stats?.proteinTarget ?? 90)), tone: "mint" },
-    { label: "Water", value: water > 0 ? (water / 1000).toFixed(1) : "-", unit: "L", pct: Math.min(1, water / (stats?.waterTarget ?? 2000)), tone: "sky" },
-    { label: "Movement", value: moveMin > 0 ? String(moveMin) : "-", unit: "min", pct: Math.min(1, moveMin / 30), tone: "lavender" },
-  ];
-
-  const detailTiles = [
-    { label: "Carbs", value: carbs > 0 ? `${Math.round(carbs)}g` : "-", unit: "", pct: Math.min(1, carbs / (stats?.carbTarget ?? 250)), tone: "sky" },
-    { label: "Fat", value: fat > 0 ? `${Math.round(fat)}g` : "-", unit: "", pct: Math.min(1, fat / (stats?.fatTarget ?? 65)), tone: "peach" },
-    { label: "Burned", value: kcalBurned > 0 ? Math.round(kcalBurned).toLocaleString() : "-", unit: "kcal", pct: Math.min(1, kcalBurned / 300), tone: "mint" },
-    { label: "Sleep", value: lastSleep ? lastSleep.hours.toFixed(1) : "-", unit: "h", pct: lastSleep ? Math.min(1, lastSleep.hours / 8) : 0, tone: "lavender" },
-  ];
+  const kcalTarget = stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 2000;
+  const proteinTarget = stats?.proteinTarget ?? 90;
+  const kcalPct = Math.min(1, kcal / kcalTarget);
 
   const TONE_BAR: Record<string, string> = { peach: "bg-peach", sky: "bg-sky", mint: "bg-mint", lavender: "bg-lavender" };
+  const detailTiles = [
+    { label: "Calories", value: kcal > 0 ? kcal.toLocaleString() : "—", unit: "kcal", pct: kcalPct, tone: "peach" },
+    { label: "Protein", value: protein > 0 ? `${protein}g` : "—", unit: "", pct: Math.min(1, protein / proteinTarget), tone: "mint" },
+    { label: "Water", value: water > 0 ? (water >= 1000 ? `${(water / 1000).toFixed(1)}L` : `${water}ml`) : "—", unit: "", pct: Math.min(1, water / (stats?.waterTarget ?? 2000)), tone: "sky" },
+    { label: "Movement", value: moveMin > 0 ? `${moveMin}m` : "—", unit: "", pct: Math.min(1, moveMin / 30), tone: "lavender" },
+  ];
 
   return (
-    <Card tone="card" radius="lg" padding="none" className="overflow-hidden">
-      <div className="flex items-baseline justify-between px-4 pt-3.5">
-        <h3 className="text-[12px] font-bold uppercase tracking-wider text-text-muted">Quick context</h3>
-        <Link to="/insights" className="inline-flex items-center gap-1 text-[12px] font-medium text-text-muted hover:text-text">
-          Details <ArrowRight className="h-3 w-3" strokeWidth={2} />
-        </Link>
-      </div>
-      <AnimatePresence mode="wait">
-        <motion.div
-          key="quick-context"
-          initial={{ opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -6 }}
-          transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          className={cn("grid gap-px bg-border mt-3", compact ? "grid-cols-2" : "grid-cols-2 sm:grid-cols-4")}
-        >
-          {[...tiles, ...(!compact ? detailTiles : [])].map((t) => (
-            <div key={t.label} className="flex flex-col gap-1.5 p-4 bg-card">
-              <span className="text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">{t.label}</span>
-              <div className="flex items-baseline gap-1">
-                <span className="text-[22px] font-extrabold text-text leading-none">{t.value}</span>
-                {t.unit && <span className="text-[12px] font-medium text-text-muted">{t.unit}</span>}
-              </div>
-              <div className="h-1 w-full rounded-full bg-border overflow-hidden">
-                <motion.div
-                  className={cn("h-full rounded-full", TONE_BAR[t.tone])}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${t.pct * 100}%` }}
-                  transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                />
-              </div>
+    <div className="w-full rounded-2xl border border-border bg-card overflow-hidden">
+      {/* Summary line */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-card-elev transition-colors"
+      >
+        {/* Mini progress arc for calories */}
+        <div className="relative h-8 w-8 shrink-0">
+          <svg viewBox="0 0 32 32" className="h-8 w-8 -rotate-90">
+            <circle cx="16" cy="16" r="12" fill="none" stroke="currentColor" strokeWidth="3" className="text-border" />
+            <circle cx="16" cy="16" r="12" fill="none" stroke="currentColor" strokeWidth="3"
+              strokeDasharray={`${kcalPct * 75.4} 75.4`} className="text-peach transition-all duration-500" strokeLinecap="round" />
+          </svg>
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-3 flex-wrap">
+          <span className="text-[13px] font-semibold text-text">
+            {kcal > 0 ? `${kcal.toLocaleString()} kcal` : "Nothing logged yet"}
+          </span>
+          {protein > 0 && <span className="text-[12px] text-text-muted">{protein}g protein</span>}
+          {water > 0 && <span className="text-[12px] text-text-muted">{water >= 1000 ? `${(water / 1000).toFixed(1)}L` : `${water}ml`} water</span>}
+          {moveMin > 0 && <span className="text-[12px] text-text-muted">{moveMin}m movement</span>}
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Link to="/insights" onClick={(e) => e.stopPropagation()} className="text-[11px] font-medium text-text-muted hover:text-text">
+            Full →
+          </Link>
+          {open
+            ? <ChevronUp className="h-3.5 w-3.5 text-text-muted" strokeWidth={2} />
+            : <ChevronDown className="h-3.5 w-3.5 text-text-muted" strokeWidth={2} />}
+        </div>
+      </button>
+
+      {/* Expandable detail tiles */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            key="pulse-detail"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-border border-t border-border">
+              {detailTiles.map((t) => (
+                <div key={t.label} className="flex flex-col gap-1.5 p-4 bg-card">
+                  <span className="text-[10.5px] font-semibold uppercase tracking-wider text-text-muted">{t.label}</span>
+                  <span className="text-[20px] font-extrabold text-text leading-none">{t.value}</span>
+                  <div className="h-1 w-full rounded-full bg-border overflow-hidden">
+                    <motion.div
+                      className={cn("h-full rounded-full", TONE_BAR[t.tone])}
+                      initial={{ width: 0 }}
+                      animate={{ width: `${t.pct * 100}%` }}
+                      transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
-    </Card>
+    </div>
   );
 }
 
@@ -156,75 +176,36 @@ function TodayCommandCard({ brief }: { brief?: TodayBrief | null }) {
 
   if (!command) {
     return (
-      <Card tone="lavender" radius="xl" padding="lg" className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-ink/70" strokeWidth={2} />
-          <span className="text-[12px] font-bold uppercase tracking-wider text-ink/60">Today command</span>
+      <div className="w-full rounded-2xl border border-border bg-card px-4 py-3.5 flex items-center gap-3">
+        <div className="h-8 w-8 shrink-0 rounded-full bg-lavender/20 animate-pulse" />
+        <div className="flex-1 space-y-1.5">
+          <div className="h-3 w-28 bg-border rounded animate-pulse" />
+          <div className="h-4 w-48 bg-border rounded animate-pulse" />
         </div>
-        <div className="h-5 w-40 bg-ink/10 rounded animate-pulse" />
-        <div className="h-3 w-full bg-ink/10 rounded animate-pulse" />
-      </Card>
+      </div>
     );
   }
 
-  const toneClass = {
-    steady: "border-l-lavender",
-    recovery: "border-l-sky",
-    momentum: "border-l-mint",
-    light: "border-l-peach",
+  const toneColors = {
+    steady: { bg: "bg-lavender/15", icon: "text-lavender", border: "border-lavender/20" },
+    recovery: { bg: "bg-sky/15", icon: "text-sky", border: "border-sky/20" },
+    momentum: { bg: "bg-mint/15", icon: "text-mint", border: "border-mint/20" },
+    light: { bg: "bg-peach/15", icon: "text-peach", border: "border-peach/20" },
   }[command.tone];
 
   return (
-    <Card tone="card" radius="xl" padding="none" className={cn("overflow-hidden border-l-4", toneClass)}>
-      <div className="p-5 sm:p-6 space-y-5">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[12px] font-bold uppercase tracking-wider text-text-muted">Today command</p>
-            <h2 className="mt-1 text-[22px] font-extrabold tracking-tight text-text leading-tight">
-              {command.doToday.title}
-            </h2>
-          </div>
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-lavender/20">
-            <Target className="h-5 w-5 text-lavender" strokeWidth={2} />
-          </div>
-        </div>
-
-        <div className="rounded-[18px] bg-card-elev border border-border p-4">
-          <div className="flex items-start gap-3">
-            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-mint" strokeWidth={2} />
-            <div>
-              <p className="text-[12px] font-bold uppercase tracking-wider text-text-muted">Do today</p>
-              <p className="mt-1 text-[15px] font-semibold leading-snug text-text">{command.doToday.action}</p>
-              <p className="mt-1 text-[12.5px] leading-relaxed text-text-muted">{command.doToday.reason}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          {command.recoverFrom && (
-            <div className="rounded-[16px] border border-border bg-bg/40 p-3.5">
-              <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wider text-text-muted">
-                <HeartPulse className="h-4 w-4 text-sky" strokeWidth={2} />
-                Recover from
-              </div>
-              <p className="mt-1.5 text-[13.5px] font-semibold text-text">{command.recoverFrom.title}</p>
-              <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-muted">{command.recoverFrom.action}</p>
-            </div>
-          )}
-
-          {command.ignoreToday && (
-            <div className="rounded-[16px] border border-border bg-bg/40 p-3.5">
-              <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wider text-text-muted">
-                <EyeOff className="h-4 w-4 text-peach" strokeWidth={2} />
-                Ignore today
-              </div>
-              <p className="mt-1.5 text-[13.5px] font-semibold text-text">{command.ignoreToday.title}</p>
-              <p className="mt-0.5 text-[12.5px] leading-relaxed text-text-muted">{command.ignoreToday.reason}</p>
-            </div>
-          )}
-        </div>
+    <div className={cn("w-full rounded-2xl border px-4 py-3.5 flex items-start gap-3", toneColors.bg, toneColors.border)}>
+      <div className={cn("mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-white/20")}>
+        <Target className={cn("h-4 w-4", toneColors.icon)} strokeWidth={2} />
       </div>
-    </Card>
+      <div className="flex-1 min-w-0">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-text-muted">Today</p>
+        <p className="mt-0.5 text-[15px] font-bold text-text leading-snug">{command.doToday.action}</p>
+        {command.doToday.reason && (
+          <p className="mt-1 text-[12px] leading-relaxed text-text-muted">{command.doToday.reason}</p>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -448,44 +429,56 @@ export function HomePage() {
   const hasHomeConversation = (homepageChat?.messages?.length ?? 0) > 0;
 
   return (
-    <div className="w-full mx-auto max-w-7xl flex flex-col gap-6 lg:gap-8">
-      {/* Hero + side rail */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start">
-        {/* Left: the AI companion — this IS the product */}
-        <div className="lg:col-span-7 flex flex-col items-center gap-5">
-          <AssistantConsole
-            inputRef={inputRef}
-            queuedPrompt={queuedPrompt}
-            onPromptConsumed={() => setQueuedPrompt(null)}
-            presenceLine={presenceLine}
-            initialActions={brief?.checkIn ? [brief.checkIn] : []}
-          />
-          <MemoryContextHint />
-          {!hasHomeConversation && (
-            <>
-              <WaterTracker logs={sortedLogs} onAdd={addWater} onUndo={undoWater} />
-              <NextBestActions brief={brief} onPick={setQueuedPrompt} />
-            </>
-          )}
-        </div>
+    <div className="w-full mx-auto max-w-2xl lg:max-w-7xl flex flex-col gap-4 lg:gap-6">
 
-        {/* Right: just enough context — what matters now */}
-        <aside className="lg:col-span-5 flex flex-col gap-4">
-          <TodayCommandCard brief={brief} />
-          <NudgeInbox />
-          <TodaysPulse logs={sortedLogs} brief={brief} compact />
-          <StreakCard />
-        </aside>
+      {/* ── LAYER 1: Context engine — answers "what should I do right now?" ── */}
+      <div className="flex flex-col gap-3">
+        {/* 1a. The input — primary element */}
+        <AssistantConsole
+          inputRef={inputRef}
+          queuedPrompt={queuedPrompt}
+          onPromptConsumed={() => setQueuedPrompt(null)}
+          presenceLine={presenceLine}
+          initialActions={brief?.checkIn ? [brief.checkIn] : []}
+        />
+
+        {/* 1b. What matters today — directly below the input */}
+        <TodayCommandCard brief={brief} />
+
+        {/* 1c. Memory hint — what the system knows about you */}
+        <MemoryContextHint />
+
+        {/* 1d. Stats summary — collapsed by default, details on tap */}
+        <PulseSummary logs={sortedLogs} brief={brief} />
       </div>
 
-      {/* One-tap quick log */}
-      <QuickLogBar />
+      {/* ── LAYER 2: Supporting tools — below the fold ── */}
+      <div className="flex flex-col gap-4 pt-2 border-t border-border">
 
-      {/* Specialist agents — optional depth, after the daily action layer */}
-      <SpecialistDock focusCategory={brief?.command?.doToday.category} />
+        {/* Quick actions — only when no active conversation */}
+        {!hasHomeConversation && (
+          <div className="flex flex-col gap-3">
+            <WaterTracker logs={sortedLogs} onAdd={addWater} onUndo={undoWater} />
+            <NextBestActions brief={brief} onPick={setQueuedPrompt} />
+          </div>
+        )}
 
-      {/* Recent strip */}
-      <RecentStrip logs={sortedLogs} />
+        {/* Nudges */}
+        <NudgeInbox />
+
+        {/* One-tap quick log */}
+        <QuickLogBar />
+
+        {/* Specialist agents */}
+        <SpecialistDock focusCategory={brief?.command?.doToday.category} />
+
+        {/* Streak */}
+        <StreakCard />
+
+        {/* Recent strip */}
+        <RecentStrip logs={sortedLogs} />
+      </div>
+
     </div>
   );
 }
