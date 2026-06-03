@@ -5,8 +5,6 @@ import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { VoxelAgent } from "@/components/voxel/VoxelAgent";
-import { SuggestionChip } from "@/components/primitives/SuggestionChip";
 import { AgentBadge } from "@/components/insights/AgentBadge";
 import { Markdown } from "@/components/primitives/Markdown";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
@@ -16,9 +14,7 @@ import { useTypewriter } from "@/hooks/useTypewriter";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useDailyWindow, type DailyWindow } from "@/hooks/useDailyWindow";
 import { useBehavior } from "@/hooks/useBehavior";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useToast } from "@/context/ToastContext";
-import { recordSuggestion } from "@/lib/behavior";
 import { cn, localDateStr } from "@/lib/utils";
 import type { Agent } from "@/lib/storage";
 
@@ -32,29 +28,15 @@ type AgentAction =
   | { type: "button_row"; buttons: AgentButton[] }
   | { type: "coach_note"; tone?: "recovery" | "momentum" | "neutral"; text: string };
 
-/* ── Window-aware greeting ── */
 function greetingFor(firstName: string, w: DailyWindow): { headline: string; sub: string } {
   switch (w) {
-    case "morning":
-      return { headline: `Morning, ${firstName}.`, sub: "How are you feeling? What's on for today?" };
-    case "day":
-      return { headline: `Hi, ${firstName}.`, sub: "Quick log, photo, or question — I'm here." };
-    case "evening":
-      return { headline: `Evening, ${firstName}.`, sub: "How was today, 1 to 5? Anything I can help close out?" };
-    case "night":
-      return { headline: `Hey ${firstName}.`, sub: "Heading to bed? Aiming for a steady wind-down." };
+    case "morning": return { headline: `Morning, ${firstName}.`, sub: "What's on for today?" };
+    case "day":     return { headline: `Hi, ${firstName}.`, sub: "Log, ask, or just chat." };
+    case "evening": return { headline: `Evening, ${firstName}.`, sub: "How was today?" };
+    case "night":   return { headline: `Hey ${firstName}.`, sub: "Winding down?" };
   }
 }
 
-/* ── Window quick-tap chips ── */
-const WINDOW_TAPS: Record<DailyWindow, string[]> = {
-  morning: ["Energy is low", "Energy is okay", "Energy is great", "Plan today"],
-  day: ["Log a meal", "Suggest lunch", "How am I doing?", "Plan a workout"],
-  evening: ["Today was a 1", "Today was a 3", "Today was a 5", "Summarize today"],
-  night: ["Going to sleep now", "Stress is high", "Stress is low", "Wind down"],
-};
-
-/* ── Map backend coachType → frontend Agent ── */
 function coachToAgent(coachType?: string): Agent {
   switch (coachType) {
     case "diet": return "diet";
@@ -67,52 +49,30 @@ function coachToAgent(coachType?: string): Agent {
   }
 }
 
-/* ── Single message bubble inside the history panel ── */
-function MessageBubble({
-  role,
-  content,
-  fresh,
-}: {
-  role: "user" | "ai";
-  content: string;
-  fresh: boolean; // true → animate with typewriter (only for the last fresh AI reply)
-}) {
+/* ── Single message bubble ── */
+function MessageBubble({ role, content, fresh }: { role: "user" | "ai"; content: string; fresh: boolean }) {
   const { displayed, done } = useTypewriter(content, 18, fresh);
   const text = fresh ? displayed : content;
-
-  // For tier-1 + tier-2 stored as "tier1\n\ntier2", show only the first paragraph
-  // on the homepage to keep responses short. Full text remains in chat history.
-  const visibleText = role === "ai" ? text.split(/\n\n/, 1)[0] : text;
-  const hasMore = role === "ai" && text.includes("\n\n");
+  const showMarkdown = !fresh || done;
 
   if (role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[76%] rounded-2xl rounded-br-[6px] bg-ink text-text-on-ink px-3.5 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap break-words">
-          {visibleText}
+        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-ink text-text-on-ink px-3.5 py-2.5 text-[14px] leading-relaxed break-words">
+          {showMarkdown
+            ? <Markdown className="text-[14px] leading-relaxed prose-invert">{text}</Markdown>
+            : <span className="whitespace-pre-wrap">{text}</span>}
         </div>
       </div>
     );
   }
 
-  // AI bubble: render plain text while typewriter is animating, switch to
-  // markdown once done so formatting (lists, bold, code) shows correctly.
-  const showMarkdown = !fresh || done;
-
   return (
     <div className="flex justify-start">
-      <div className="max-w-[86%] rounded-2xl rounded-bl-[6px] bg-card-elev border border-border px-3.5 py-2.5 text-[14px] leading-relaxed text-text break-words">
-        {showMarkdown ? (
-          <>
-            <Markdown className="text-[14px] leading-relaxed">{visibleText}</Markdown>
-            {hasMore && <span className="ml-1 text-[11px] text-text-muted">…</span>}
-          </>
-        ) : (
-          <span className="whitespace-pre-wrap">
-            {visibleText}
-            {hasMore && <span className="ml-1 text-[11px] text-text-muted">…</span>}
-          </span>
-        )}
+      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card-elev border border-border px-3.5 py-2.5 text-[14px] leading-relaxed text-text break-words">
+        {showMarkdown
+          ? <Markdown className="text-[14px] leading-relaxed">{text}</Markdown>
+          : <span className="whitespace-pre-wrap">{text}</span>}
       </div>
     </div>
   );
@@ -176,7 +136,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const firstName = user?.firstName ?? user?.username ?? "there";
   const greeting = greetingFor(firstName, window);
-  const isLarge = useMediaQuery("(min-width: 1024px)");
+  const showHistory = messages.length > 0;
 
   useEffect(() => {
     if (!queuedPrompt) return;
@@ -360,7 +320,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
     if (button.value === "skip" || button.value === "done") {
       void recordBehavior({ kind: "checkin", key: button.value, value: action && "id" in action ? action.id : undefined }).catch(() => {});
-      setAgentActions((prev) => {
+      setAgentActions((_prev) => {
         const current = action && "queue" in action ? action.queue ?? [] : [];
         const [, ...rest] = current;
         if (rest.length === 0) return [];
@@ -410,11 +370,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     });
   }, [openDraft]);
 
-  const submit = () => send(textValue, attachedImage ?? undefined);
-
-  const botState: "thinking" | "listening" | "idle" =
-    thinking ? "thinking" : voice.recording ? "listening" : "idle";
-
   // Identify the most recent AI message for typewriter animation
   const lastAiTs = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -423,9 +378,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     return null;
   }, [messages]);
 
-  const showHistory = messages.length > 0;
-  const assistantMode = showHistory ? "conversation" : "arrival";
-  const voxelSize = assistantMode === "conversation" ? (isLarge ? 58 : 50) : (isLarge ? 176 : 132);
+  const submit = () => send(textValue, attachedImage ?? undefined);
 
   const Composer = (
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}
@@ -502,72 +455,69 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     </form>
   );
 
+  // Inline action button — replaces SuggestionChip inside cards
+  const Btn = ({ label, onClick }: { label: string; onClick: () => void }) => (
+    <button type="button" onClick={onClick}
+      className="inline-flex items-center rounded-full border border-border bg-card-elev hover:bg-card px-3 py-1.5 text-[13px] font-medium text-text transition-colors">
+      {label}
+    </button>
+  );
+
   function AgentActionCard({ action }: { action: AgentAction }) {
     if (action.type === "button_row") {
       return (
         <div className="flex flex-wrap gap-2">
-          {action.buttons.map((button) => (
-            <SuggestionChip key={button.value} label={button.label} onClick={() => handleActionButton(button, action)} />
-          ))}
+          {action.buttons.map((b) => <Btn key={b.value} label={b.label} onClick={() => handleActionButton(b, action)} />)}
         </div>
       );
     }
     if (action.type === "coach_note") {
       const tone = action.tone === "recovery" ? "border-l-sky" : action.tone === "momentum" ? "border-l-mint" : "border-l-lavender";
       return (
-        <div className={cn("rounded-2xl border border-border border-l-4 bg-card px-3.5 py-3 text-[13px] text-text", tone)}>
+        <div className={cn("rounded-2xl border border-border border-l-4 bg-card-elev px-3.5 py-3 text-[13.5px] leading-relaxed text-text", tone)}>
           {action.text}
         </div>
       );
     }
     if (action.type === "log_draft") {
       return (
-        <div className="rounded-2xl border border-border bg-card px-3.5 py-3 space-y-3">
-          <div>
-            <p className="text-[12px] font-bold uppercase tracking-wider text-text-muted">{action.source === "estimate" ? "Estimate card" : "Log draft"}</p>
-            <p className="mt-1 text-[14px] font-bold text-text">{action.title ?? action.draft?.description ?? "Review this log"}</p>
-            {action.body && <p className="mt-0.5 text-[12.5px] text-text-muted">{action.body}</p>}
-          </div>
+        <div className="rounded-2xl border border-border bg-card-elev px-3.5 py-3 space-y-2.5">
+          <p className="text-[13px] font-semibold text-text">{action.title ?? action.draft?.description ?? "Review this log"}</p>
           {action.draft?.kind === "meal" && (
-            <div className="grid grid-cols-4 gap-1.5 rounded-xl bg-card-elev p-2 text-center">
-              <span className="text-[12px] font-bold text-peach">{action.draft.kcal}<br/><span className="text-[10px] text-text-muted">kcal</span></span>
-              <span className="text-[12px] font-bold text-lavender">{action.draft.protein}g<br/><span className="text-[10px] text-text-muted">protein</span></span>
-              <span className="text-[12px] font-bold text-sky">{action.draft.carbs}g<br/><span className="text-[10px] text-text-muted">carbs</span></span>
-              <span className="text-[12px] font-bold text-mint">{action.draft.fat}g<br/><span className="text-[10px] text-text-muted">fat</span></span>
+            <div className="flex gap-3 text-[12px] font-semibold">
+              <span className="text-peach">{action.draft.kcal} kcal</span>
+              <span className="text-lavender">{action.draft.protein}g P</span>
+              <span className="text-sky">{action.draft.carbs}g C</span>
+              <span className="text-mint">{action.draft.fat}g F</span>
             </div>
           )}
+          {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
-            <SuggestionChip label="Review & confirm" onClick={() => openDraft(action.draft)} />
-            <SuggestionChip label="Discard" onClick={() => setAgentActions([])} />
+            <Btn label="Confirm" onClick={() => openDraft(action.draft)} />
+            <Btn label="Discard" onClick={() => setAgentActions([])} />
           </div>
         </div>
       );
     }
     if (action.type === "macro_conflict") {
       return (
-        <div className="rounded-2xl border border-border border-l-4 border-l-peach bg-card px-3.5 py-3 space-y-3">
-          <div>
-            <p className="text-[12px] font-bold uppercase tracking-wider text-text-muted">{action.title ?? "Macro check"}</p>
-            <p className="mt-1 text-[13px] text-text-muted">{action.body}</p>
-          </div>
+        <div className="rounded-2xl border border-border border-l-4 border-l-peach bg-card-elev px-3.5 py-3 space-y-2.5">
+          <p className="text-[13px] font-semibold text-text">{action.title ?? "Macro check"}</p>
+          {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
-            <SuggestionChip label="Use my numbers" onClick={() => openDraft(action.draft)} />
-            <SuggestionChip label="Use estimate" onClick={() => useEngineEstimate(action.draft)} />
+            <Btn label="Use my numbers" onClick={() => openDraft(action.draft)} />
+            <Btn label="Use estimate" onClick={() => useEngineEstimate(action.draft)} />
           </div>
         </div>
       );
     }
+    // quick_question
     return (
-      <div className="rounded-2xl border border-border bg-card px-3.5 py-3 space-y-3">
-        <div>
-          <p className="text-[12px] font-bold uppercase tracking-wider text-text-muted">Quick check-in</p>
-          <p className="mt-1 text-[14px] font-bold text-text">{action.title}</p>
-          {action.body && <p className="mt-0.5 text-[12.5px] text-text-muted">{action.body}</p>}
-        </div>
+      <div className="rounded-2xl border border-border bg-card-elev px-3.5 py-3 space-y-2.5">
+        <p className="text-[13.5px] font-semibold text-text">{action.title}</p>
+        {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
         <div className="flex flex-wrap gap-2">
-          {action.options.map((button) => (
-            <SuggestionChip key={button.value} label={button.label} onClick={() => handleActionButton(button, action)} />
-          ))}
+          {action.options.map((b) => <Btn key={b.value} label={b.label} onClick={() => handleActionButton(b, action)} />)}
         </div>
       </div>
     );
@@ -575,167 +525,94 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   return (
     <>
-      {/* Hidden file input for camera/gallery */}
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) onPickImage(file);
-          e.target.value = "";
-        }}
-      />
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickImage(f); e.target.value = ""; }} />
 
-      <div className={cn(
-        "w-full",
-        assistantMode === "arrival"
-          ? "flex flex-col items-center gap-3"
-          : "rounded-[24px] border border-border bg-card overflow-hidden shadow-[var(--shadow-elev)]",
-      )}>
-        {assistantMode === "arrival" ? (
-          <>
-        <div
-          className="relative overflow-hidden rounded-full"
-          style={{ width: voxelSize, height: voxelSize }}
-        >
-          <VoxelAgent agent={agentHint} size={voxelSize} state={botState} />
-          {voice.recording && (
-            <span className="absolute bottom-2 left-1/2 -translate-x-1/2 inline-flex h-2 w-2 rounded-full bg-peach animate-pulse" />
-          )}
-          {voice.transcribing && (
-            <span className="absolute bottom-2 left-1/2 -translate-x-1/2 inline-flex h-2 w-2 rounded-full bg-lavender animate-pulse" />
-          )}
-        </div>
+      {/* ── Outer shell: full-height flex column ── */}
+      <div className="w-full rounded-[24px] border border-border bg-card overflow-hidden shadow-[var(--shadow-elev)] flex flex-col">
 
-        {/* Greeting — ALWAYS visible, never replaced by replies */}
-        <div className="text-center space-y-1">
-          <h1 className="text-[26px] sm:text-[30px] font-extrabold tracking-tight text-text leading-[1.05]">
-            {greeting.headline}
-          </h1>
-          <p className="text-[14px] text-text-muted">{presenceLine ?? greeting.sub}</p>
-        </div>
-          </>
+        {/* Header: slim greeting (arrival) or Stry + clear (conversation) */}
+        {!showHistory ? (
+          <div className="px-5 pt-5 pb-2">
+            <h1 className="text-[22px] font-extrabold tracking-tight text-text">{greeting.headline}</h1>
+            <p className="text-[13px] text-text-muted mt-0.5">{presenceLine ?? greeting.sub}</p>
+          </div>
         ) : (
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full bg-card-elev">
-                <VoxelAgent agent={agentHint} size={voxelSize} state={botState} />
-                {(voice.recording || voice.transcribing) && (
-                  <span className={cn(
-                    "absolute bottom-1 left-1/2 -translate-x-1/2 inline-flex h-1.5 w-1.5 rounded-full animate-pulse",
-                    voice.recording ? "bg-peach" : "bg-lavender",
-                  )} />
-                )}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <p className="text-[14px] font-extrabold text-text">Stry</p>
-                  <AgentBadge agent={agentHint} />
-                </div>
-                <p className="truncate text-[12px] text-text-muted">{presenceLine ?? "Conversation mode"}</p>
-              </div>
+          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[14px] font-extrabold text-text">Stry</span>
+              <AgentBadge agent={agentHint} />
+              {(thinking || voice.recording || voice.transcribing) && (
+                <span className={cn("inline-flex h-1.5 w-1.5 rounded-full animate-pulse",
+                  voice.recording ? "bg-peach" : voice.transcribing ? "bg-lavender" : "bg-lavender")} />
+              )}
             </div>
-            <button
-              type="button"
-              onClick={() => clearHomepageMessages().catch(() => {})}
+            <button type="button" onClick={() => clearHomepageMessages().catch(() => {})}
               aria-label="Clear chat"
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-text-muted hover:bg-card-elev hover:text-text transition-colors"
-            >
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev hover:text-text transition-colors shrink-0">
               <Trash2 className="h-4 w-4" strokeWidth={1.75} />
             </button>
           </div>
         )}
 
-        {(showHistory || thinking || agentActions.length > 0) && (
-          <div
-            ref={scrollRef}
-            className={cn(
-              "w-full overflow-y-auto space-y-3 scroll-smooth",
-              assistantMode === "conversation"
-                ? "min-h-[360px] max-h-[52vh] px-4 py-4 bg-bg/35"
-                : "max-w-lg max-h-[180px] rounded-2xl bg-bg/40 border border-border px-3 py-2",
-            )}
-            aria-live="polite"
-            aria-label="Chat with Stry"
-          >
-            {messages.map((m) => (
-              <MessageBubble
-                key={m.ts}
-                role={m.role === "user" ? "user" : "ai"}
-                content={m.content}
-                fresh={freshTs !== null && m.ts === lastAiTs}
-              />
-            ))}
-            {thinking && (
-              <div className="flex items-center gap-1.5 px-2 py-1">
-                {[0, 1, 2].map((i) => (
-                  <motion.span
-                    key={i}
-                    className="h-1.5 w-1.5 rounded-full bg-lavender"
-                    animate={{ y: [0, -4, 0] }}
-                    transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }}
-                  />
-                ))}
-                <span className="text-[12px] text-text-muted">Stry is thinking…</span>
-              </div>
-            )}
-            {agentActions.map((action, i) => (
-              <div key={`${action.type}-${i}`} className="flex justify-start">
-                <div className="max-w-[92%]">
+        {/* Message stream: flex-col-reverse so newest is at bottom, scrolls up for history */}
+        <div ref={scrollRef}
+          className="flex-1 overflow-y-auto px-4 py-3 flex flex-col-reverse gap-3 min-h-[200px] max-h-[58vh]"
+          aria-live="polite" aria-label="Chat with Stry">
+
+          {/* Reversed: last items render at bottom visually */}
+          {/* Action cards — always at the "bottom" of the stream (top of reversed list) */}
+          {agentActions.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {agentActions.map((action, i) => (
+                <div key={`${action.type}-${i}`} className="flex justify-start max-w-[90%]">
                   <AgentActionCard action={action} />
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
 
-        {showHistory && !thinking && assistantMode === "arrival" && (
-          <div className="w-full max-w-lg flex items-center justify-between text-[11px] text-text-muted">
-            <AgentBadge agent={agentHint} />
-            <button
-              type="button"
-              onClick={() => clearHomepageMessages().catch(() => {})}
-              className="hover:text-text transition-colors"
-            >
-              Clear chat
-            </button>
-          </div>
-        )}
+          {/* Thinking indicator */}
+          {thinking && (
+            <div className="flex items-center gap-1.5 px-1">
+              {[0, 1, 2].map((i) => (
+                <motion.span key={i} className="h-1.5 w-1.5 rounded-full bg-lavender"
+                  animate={{ y: [0, -4, 0] }}
+                  transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }} />
+              ))}
+            </div>
+          )}
+
+          {/* Messages — reversed so newest renders at bottom */}
+          {[...messages].reverse().map((m) => (
+            <MessageBubble key={m.ts} role={m.role === "user" ? "user" : "ai"} content={m.content}
+              fresh={freshTs !== null && m.ts === lastAiTs} />
+          ))}
+        </div>
 
         {/* Image attachment preview */}
         <AnimatePresence>
           {attachedImage && (
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-              className="relative">
-              <img src={attachedImage} alt="Attached" className="h-20 w-20 rounded-xl object-cover border border-border" />
-              <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
-                className="absolute -top-2 -right-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-ink text-text-on-ink shadow-[var(--shadow-elev)]">
-                <X className="h-3 w-3" strokeWidth={2.5} />
-              </button>
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+              className="px-4 pb-2 shrink-0">
+              <div className="relative inline-block">
+                <img src={attachedImage} alt="Attached" className="h-16 w-16 rounded-xl object-cover border border-border" />
+                <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
+                  className="absolute -top-1.5 -right-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-ink text-text-on-ink">
+                  <X className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <div className={cn("w-full", assistantMode === "conversation" ? "border-t border-border bg-card p-3" : "max-w-lg")}>
+        {/* Input — always pinned to bottom of card */}
+        <div className="border-t border-border bg-card p-3 shrink-0">
           {Composer}
         </div>
-
-        {/* Window-aware tap chips — collapse when there's chat history to free up space */}
-        {!showHistory && (
-          <div className="flex flex-wrap justify-center gap-2 max-w-xl">
-            {WINDOW_TAPS[window].map((s) => (
-              <SuggestionChip key={s} label={s} onClick={() => { recordSuggestion(s); send(s); }} />
-            ))}
-          </div>
-        )}
-
-        {voice.error && (
-          <p className="text-[12px] text-bubblegum">{voice.error}</p>
-        )}
       </div>
+
+      {voice.error && <p className="text-[12px] text-bubblegum mt-1 px-1">{voice.error}</p>}
 
       {/* Barcode modal */}
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
@@ -744,67 +621,38 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       {/* Memory auto-log: Undo / Edit toast */}
       <AnimatePresence>
         {autoLoggedMeal && (
-          <motion.div
-            key="memory-toast"
-            initial={{ opacity: 0, y: 24, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 24, scale: 0.96 }}
+          <motion.div key="memory-toast"
+            initial={{ opacity: 0, y: 24, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 24, scale: 0.96 }}
             transition={{ type: "spring", stiffness: 320, damping: 28 }}
-            className="fixed bottom-[calc(env(safe-area-inset-bottom)+5rem)] lg:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-2xl bg-ink text-text-on-ink px-4 py-3 shadow-[var(--shadow-elev)] max-w-[calc(100vw-2rem)]"
-          >
-            <span className="text-[13px] font-medium shrink-0 min-w-0 truncate max-w-[180px]">
+            className="fixed bottom-[calc(env(safe-area-inset-bottom)+5rem)] lg:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-2xl bg-ink text-text-on-ink px-4 py-3 shadow-[var(--shadow-elev)] max-w-[calc(100vw-2rem)]">
+            <span className="text-[13px] font-medium shrink-0 truncate max-w-[180px]">
               {autoLoggedMeal.draft.memoryNote ?? `Logged ${autoLoggedMeal.draft.name}`}
             </span>
-            <span className="text-[12px] text-text-on-ink/60 shrink-0">
-              {autoLoggedMeal.draft.kcal} kcal
-            </span>
+            <span className="text-[12px] text-text-on-ink/60 shrink-0">{autoLoggedMeal.draft.kcal} kcal</span>
             <div className="flex items-center gap-1 ml-1 shrink-0">
-              <button
-                type="button"
-                onClick={async () => {
-                  if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
-                  setAutoLoggedMeal(null);
-                  try {
-                    await deleteMeal({ id: autoLoggedMeal.mealId });
-                    toast.info("Undone", autoLoggedMeal.draft.name);
-                  } catch {
-                    toast.error("Couldn't undo", "Meal may already be logged");
-                  }
-                }}
-                className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold transition-colors"
-              >
-                <Undo2 className="h-3 w-3" strokeWidth={2.25} />
-                Undo
+              <button type="button" onClick={async () => {
+                if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
+                setAutoLoggedMeal(null);
+                try { await deleteMeal({ id: autoLoggedMeal.mealId }); toast.info("Undone", autoLoggedMeal.draft.name); }
+                catch { toast.error("Couldn't undo", "Meal may already be logged"); }
+              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold transition-colors">
+                <Undo2 className="h-3 w-3" strokeWidth={2.25} /> Undo
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const d = autoLoggedMeal.draft;
-                  setEditEntry({
-                    _id: autoLoggedMeal.mealId,
-                    name: d.name,
-                    calories: d.kcal,
-                    protein: d.protein,
-                    carbs: d.carbs,
-                    fat: d.fat,
-                    time: d.time,
-                    mealType: d.mealType ?? "unspecified",
-                  });
-                  if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
-                  setAutoLoggedMeal(null);
-                }}
-                className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold transition-colors"
-              >
-                <Pencil className="h-3 w-3" strokeWidth={2.25} />
-                Edit
+              <button type="button" onClick={() => {
+                const d = autoLoggedMeal.draft;
+                setEditEntry({ _id: autoLoggedMeal.mealId, name: d.name, calories: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, time: d.time, mealType: d.mealType ?? "unspecified" });
+                if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
+                setAutoLoggedMeal(null);
+              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold transition-colors">
+                <Pencil className="h-3 w-3" strokeWidth={2.25} /> Edit
               </button>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Edit modal for memory-auto-logged meals */}
       <EditLogModal kind="meal" entry={editEntry} onClose={() => setEditEntry(null)} />
     </>
   );
 }
+
