@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip, Copy, Check, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip, Copy, Check } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -52,12 +52,9 @@ function coachToAgent(coachType?: string): Agent {
 /* ── Single message bubble with copy/edit/nav ── */
 function MessageBubble({
   role, content, fresh, onEdit, onCopy,
-  branchIndex, branchTotal, onPrevBranch, onNextBranch,
 }: {
   role: "user" | "ai"; content: string; fresh: boolean;
   onEdit?: () => void; onCopy?: () => void;
-  branchIndex?: number; branchTotal?: number;
-  onPrevBranch?: () => void; onNextBranch?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const { displayed, done } = useTypewriter(content, 18, fresh);
@@ -87,19 +84,6 @@ function MessageBubble({
             : <span className="whitespace-pre-wrap">{text}</span>}
         </div>
         <div className="flex items-center gap-2.5 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {branchTotal !== undefined && branchTotal > 1 && (
-            <span className="flex items-center gap-0.5">
-              <button type="button" onClick={onPrevBranch} disabled={branchIndex === 0}
-                className="inline-flex h-4 w-4 items-center justify-center rounded text-text-muted hover:text-text disabled:opacity-30 transition-colors">
-                <ChevronLeft className="h-3 w-3" strokeWidth={2.5} />
-              </button>
-              <span className="text-[10px] text-text-muted tabular-nums">{(branchIndex ?? 0) + 1}/{branchTotal}</span>
-              <button type="button" onClick={onNextBranch} disabled={branchIndex === branchTotal - 1}
-                className="inline-flex h-4 w-4 items-center justify-center rounded text-text-muted hover:text-text disabled:opacity-30 transition-colors">
-                <ChevronRight className="h-3 w-3" strokeWidth={2.5} />
-              </button>
-            </span>
-          )}
           <ActionBtn onClick={copyText}>
             {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
             {copied ? "Copied" : "Copy"}
@@ -155,13 +139,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // ConfirmModal queue
   const [pendingDrafts, setPendingDrafts] = useState<any[]>([]);
   const pendingTier2Ref = useRef<string>("");
-
-  // Branch navigation: when user edits a message, we snapshot the current
-  // conversation and create a new branch. branches[ts] = [{msgs, userText}, ...]
-  type Branch = { msgs: typeof messages; userText: string };
-  const [branches, setBranches] = useState<Map<number, Branch[]>>(new Map());
-  const [activeBranch, setActiveBranch] = useState<Map<number, number>>(new Map());
-  const editOriginTs = useRef<number | null>(null); // ts of user msg being edited
 
   // Auto-applied memory drafts → instant log + undo toast
   type AutoLogged = { mealId: Id<"meals">; draft: any };
@@ -236,23 +213,22 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     reader.readAsDataURL(file);
   }, [toast]);
 
-  /* ── Document input (PDF / MD / TXT) ── */
+  /* ── Document input (MD / TXT only — PDF not supported in browser) ── */
   const onPickFile = useCallback(async (file: File) => {
-    const allowed = ["application/pdf", "text/markdown", "text/plain", "text/x-markdown"];
-    const byExt = file.name.endsWith(".md") || file.name.endsWith(".pdf") || file.name.endsWith(".txt");
-    if (!allowed.includes(file.type) && !byExt) {
-      toast.error("Unsupported file", "Attach a PDF, MD, or TXT file");
+    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+      toast.error("PDF not supported", "Attach a .md or .txt file instead");
       return;
     }
-    if (file.type === "application/pdf") {
-      // For PDF, just send the filename as a note — full text extraction requires a server-side PDF parser
-      setAttachedFile({ name: file.name, content: `[PDF attached: ${file.name}]` });
+    const allowed = ["text/markdown", "text/plain", "text/x-markdown"];
+    const byExt = file.name.endsWith(".md") || file.name.endsWith(".txt");
+    if (!allowed.includes(file.type) && !byExt) {
+      toast.error("Unsupported file", "Attach a .md or .txt file");
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
       const text = reader.result as string;
-      setAttachedFile({ name: file.name, content: text.slice(0, 8000) }); // cap at 8k chars
+      setAttachedFile({ name: file.name, content: text.slice(0, 8000) });
     };
     reader.readAsText(file);
   }, [toast]);
@@ -300,6 +276,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           components: d.items?.join(", "),
           confidence: d.confidence,
           nutritionSource: d.nutritionSource,
+          foodMemoryId: d.foodMemoryId,
         });
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
         if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
@@ -361,27 +338,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       setFreshTs(Date.now());
       setAgentHint(coachToAgent(result.coachType));
       setAgentActions(Array.isArray(result.actions) ? result.actions : []);
-
-      // If this was an edit, save the resulting conversation as a new branch
-      if (editOriginTs.current !== null) {
-        const originTs = editOriginTs.current;
-        editOriginTs.current = null;
-        // After Convex updates messages, save as new branch (next tick)
-        setTimeout(() => {
-          setBranches(prev => {
-            const existing = prev.get(originTs) ?? [];
-            const next = new Map(prev);
-            next.set(originTs, [...existing, { msgs: [], userText: messageText }]);
-            return next;
-          });
-          setActiveBranch(prev => {
-            const existing = branches.get(originTs) ?? [];
-            const next = new Map(prev);
-            next.set(originTs, existing.length); // point to new branch
-            return next;
-          });
-        }, 200);
-      }
 
       const hasInlineDraft = Array.isArray(result.actions) && result.actions.some((a: any) => a.type === "log_draft" || a.type === "macro_conflict");
       if (!hasInlineDraft && !result.isQuestion && result.drafts && result.drafts.length > 0) {
@@ -555,7 +511,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
               <button type="button" onMouseDown={(e) => { e.preventDefault(); docRef.current?.click(); setMoreMenuOpen(false); }}
                 className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.95rem] font-medium text-text hover:bg-card-elev">
                 <Paperclip className="h-4 w-4" strokeWidth={1.75} />
-                Attach PDF / MD
+                Attach MD / TXT
               </button>
             </motion.div>
           )}
@@ -664,7 +620,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     <>
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickImage(f); e.target.value = ""; }} />
-      <input ref={docRef} type="file" accept=".pdf,.md,.txt,text/markdown,text/plain" className="hidden"
+      <input ref={docRef} type="file" accept=".md,.txt,text/markdown,text/plain" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.target.value = ""; }} />
 
       {/* Full-height flex column — no card wrapper, page provides the container */}
@@ -709,41 +665,18 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           aria-live="polite" aria-label="Chat with Stry">
 
           {/* Messages top→bottom, newest at bottom */}
-          {messages.map((m, idx) => {
-            const isUser = m.role === "user";
-            const msgBranches = isUser ? (branches.get(m.ts) ?? []) : undefined;
-            const curBranch = isUser ? (activeBranch.get(m.ts) ?? 0) : undefined;
-            return (
-              <MessageBubble
-                key={`${m.ts}-${curBranch}`}
-                role={isUser ? "user" : "ai"}
-                content={m.content}
-                fresh={freshTs !== null && m.ts === lastAiTs}
-                onCopy={undefined}
-                onEdit={isUser ? () => {
-                  // Snapshot current conversation as a branch starting from this message
-                  setBranches(prev => {
-                    const next = new Map(prev);
-                    if (!next.has(m.ts)) next.set(m.ts, [{ msgs: messages.slice(0, idx + 1), userText: m.content }]);
-                    return next;
-                  });
-                  editOriginTs.current = m.ts;
-                  setTextValue(m.content);
-                  setTimeout(() => activeRef.current?.focus(), 50);
-                } : undefined}
-                branchIndex={curBranch}
-                branchTotal={msgBranches?.length}
-                onPrevBranch={isUser && (curBranch ?? 0) > 0 ? () => {
-                  const prev = (curBranch ?? 0) - 1;
-                  setActiveBranch(b => new Map(b).set(m.ts, prev));
-                } : undefined}
-                onNextBranch={isUser && msgBranches && (curBranch ?? 0) < msgBranches.length - 1 ? () => {
-                  const next = (curBranch ?? 0) + 1;
-                  setActiveBranch(b => new Map(b).set(m.ts, next));
-                } : undefined}
-              />
-            );
-          })}
+          {messages.map((m) => (
+            <MessageBubble
+              key={m.ts}
+              role={m.role === "user" ? "user" : "ai"}
+              content={m.content}
+              fresh={freshTs !== null && m.ts === lastAiTs}
+              onEdit={m.role === "user" ? () => {
+                setTextValue(m.content);
+                setTimeout(() => activeRef.current?.focus(), 50);
+              } : undefined}
+            />
+          ))}
 
           {/* Thinking dots */}
           {thinking && (

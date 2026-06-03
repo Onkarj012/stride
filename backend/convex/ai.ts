@@ -1699,7 +1699,7 @@ const LOG_RE = new RegExp([
   "\\b(\\d{2,}\\s*steps|\\d+\\s*ml|\\d+\\s*l(itres?)?\\s+water|\\d+\\s*glasses?)\\b",
 ].join("|"), "i");
 
-const FOOD_WORD_RE = /\b(milk|whey|protein|biscuit|biscuits|marie|rice|roti|chapati|bread|oats|egg|eggs|chicken|paneer|dal|curd|yogurt|banana|apple|snack|meal|breakfast|lunch|dinner|food|eat|eating|calorie|calories|kcal|macro|macros|protein|carbs|fat)\b/i;
+const FOOD_WORD_RE = /\b(milk|whey|biscuit|biscuits|marie|rice|roti|chapati|bread|oats|egg|eggs|chicken|paneer|dal|curd|yogurt|banana|apple|snack|meal|breakfast|lunch|dinner|food|eat|eating)\b/i;
 const FOOD_ESTIMATE_RE = /\b(how many calories|how much calories|calorie|calories|kcal|macros?|estimate|can i (eat|have|take)|should i (eat|have|take)|would .* fit|might have|planning to have)\b/i;
 
 function looksLikeLog(message: string): boolean {
