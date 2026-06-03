@@ -81,9 +81,9 @@ function MessageBubble({
   if (role === "user") {
     return (
       <div className="flex flex-col items-end gap-1 group">
-        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-3.5 py-2.5 text-sm leading-relaxed break-words text-text">
+        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-3.5 py-2.5 text-[0.95rem] leading-relaxed break-words text-text">
           {showMarkdown
-            ? <Markdown className="text-sm leading-relaxed">{text}</Markdown>
+            ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
             : <span className="whitespace-pre-wrap">{text}</span>}
         </div>
         <div className="flex items-center gap-2.5 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -117,9 +117,9 @@ function MessageBubble({
 
   return (
     <div className="flex flex-col items-start gap-1 group">
-      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card border border-border px-3.5 py-2.5 text-sm leading-relaxed text-text break-words">
+      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card border border-border px-3.5 py-2.5 text-[0.95rem] leading-relaxed text-text break-words">
         {showMarkdown
-          ? <Markdown className="text-sm leading-relaxed">{text}</Markdown>
+          ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
           : <span className="whitespace-pre-wrap">{text}</span>}
       </div>
       <div className="flex items-center gap-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -523,7 +523,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         disabled={voice.recording || voice.transcribing}
         rows={1}
         style={{ resize: "none", height: "auto", maxHeight: 120, overflowY: "auto" }}
-        className="min-w-0 flex-1 bg-transparent text-base text-text placeholder:text-text-subtle focus:outline-none py-2 disabled:opacity-50 leading-snug"
+        className="min-w-0 flex-1 bg-transparent text-[1.1rem] text-text placeholder:text-text-subtle focus:outline-none py-2 disabled:opacity-50 leading-snug"
       />
 
       <div className="relative">
@@ -543,17 +543,17 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
               className="absolute bottom-full mb-2 right-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20"
             >
               <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-text hover:bg-card-elev">
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.95rem] font-medium text-text hover:bg-card-elev">
                 <ImagePlus className="h-4 w-4" strokeWidth={1.75} />
                 Photo / camera
               </button>
               <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-text hover:bg-card-elev">
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.95rem] font-medium text-text hover:bg-card-elev">
                 <Barcode className="h-4 w-4" strokeWidth={1.75} />
                 Scan barcode
               </button>
               <button type="button" onMouseDown={(e) => { e.preventDefault(); docRef.current?.click(); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-text hover:bg-card-elev">
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.95rem] font-medium text-text hover:bg-card-elev">
                 <Paperclip className="h-4 w-4" strokeWidth={1.75} />
                 Attach PDF / MD
               </button>
@@ -585,7 +585,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Inline action button — themed to design system
   const Btn = ({ label, onClick }: { label: string; onClick: () => void }) => (
     <button type="button" onClick={onClick}
-      className="inline-flex items-center rounded-full bg-lavender/15 hover:bg-lavender/25 border border-lavender/20 px-3 py-1.5 text-sm font-semibold text-text transition-colors">
+      className="inline-flex items-center rounded-full bg-lavender/15 hover:bg-lavender/25 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
       {label}
     </button>
   );
@@ -613,7 +613,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     if (action.type === "log_draft") {
       return (
         <div className="rounded-2xl border border-mint/25 bg-mint/8 px-3.5 py-3 space-y-2.5">
-          <p className="text-sm font-semibold text-text">{action.title ?? action.draft?.description ?? "Review this log"}</p>
+          <p className="text-[0.95rem] font-semibold text-text">{action.title ?? action.draft?.description ?? "Review this log"}</p>
           {action.draft?.kind === "meal" && (
             <div className="flex gap-3 text-[12px] font-bold">
               <span className="text-peach">{action.draft.kcal} kcal</span>
@@ -625,11 +625,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => { openDraft(action.draft); setAgentActions([]); }}
-              className="inline-flex items-center rounded-full bg-mint/20 hover:bg-mint/30 border border-mint/25 px-3 py-1.5 text-sm font-semibold text-text transition-colors">
+              className="inline-flex items-center rounded-full bg-mint/20 hover:bg-mint/30 border border-mint/25 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
               Confirm
             </button>
             <button type="button" onClick={() => setAgentActions([])}
-              className="inline-flex items-center rounded-full bg-card-elev hover:bg-border border border-border px-3 py-1.5 text-sm font-medium text-text-muted transition-colors">
+              className="inline-flex items-center rounded-full bg-card-elev hover:bg-border border border-border px-3 py-1.5 text-[0.95rem] font-medium text-text-muted transition-colors">
               Discard
             </button>
           </div>
@@ -639,7 +639,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     if (action.type === "macro_conflict") {
       return (
         <div className="rounded-2xl border border-peach/25 bg-peach/8 border-l-4 border-l-peach px-3.5 py-3 space-y-2.5">
-          <p className="text-sm font-semibold text-text">{action.title ?? "Macro check"}</p>
+          <p className="text-[0.95rem] font-semibold text-text">{action.title ?? "Macro check"}</p>
           {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
             <Btn label="Use my numbers" onClick={() => openDraft(action.draft)} />
@@ -678,7 +678,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           {!showHistory ? (
             <div>
               <h1 className="text-[20px] font-extrabold tracking-tight text-text">{greeting.headline}</h1>
-              <p className="text-sm text-text-muted">{presenceLine ?? greeting.sub}</p>
+              <p className="text-[0.95rem] text-text-muted">{presenceLine ?? greeting.sub}</p>
             </div>
           ) : (
             <div className="flex items-center gap-2 min-w-0">
@@ -823,7 +823,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
             transition={{ type: "spring", stiffness: 320, damping: 28 }}
             className="fixed bottom-[calc(env(safe-area-inset-bottom)+5rem)] lg:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-2xl bg-ink text-text-on-ink px-4 py-3 shadow-[var(--shadow-elev)] max-w-[calc(100vw-2rem)]">
-            <span className="text-sm font-medium truncate max-w-[180px]">
+            <span className="text-[0.95rem] font-medium truncate max-w-[180px]">
               {autoLoggedMeal.draft.memoryNote ?? `Logged ${autoLoggedMeal.draft.name}`}
             </span>
             <span className="text-[12px] text-text-on-ink/60">{autoLoggedMeal.draft.kcal} kcal</span>
