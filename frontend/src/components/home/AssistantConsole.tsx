@@ -528,77 +528,79 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickImage(f); e.target.value = ""; }} />
 
-      {/* ── Outer shell: full-height flex column ── */}
-      <div className="w-full rounded-[24px] border border-border bg-card overflow-hidden shadow-[var(--shadow-elev)] flex flex-col">
+      {/* Full-height flex column — no card wrapper, page provides the container */}
+      <div className="flex flex-col h-full min-h-0">
 
-        {/* Header: slim greeting (arrival) or Stry + clear (conversation) */}
-        {!showHistory ? (
-          <div className="px-5 pt-5 pb-2">
-            <h1 className="text-[22px] font-extrabold tracking-tight text-text">{greeting.headline}</h1>
-            <p className="text-[13px] text-text-muted mt-0.5">{presenceLine ?? greeting.sub}</p>
-          </div>
-        ) : (
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5 shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-[14px] font-extrabold text-text">Stry</span>
+        {/* Slim top bar — greeting or Stry name */}
+        <div className={cn(
+          "shrink-0 flex items-center justify-between px-4 lg:px-6",
+          showHistory ? "h-12 border-b border-border" : "pt-6 pb-3",
+        )}>
+          {!showHistory ? (
+            <div>
+              <h1 className="text-[20px] font-extrabold tracking-tight text-text">{greeting.headline}</h1>
+              <p className="text-[13px] text-text-muted">{presenceLine ?? greeting.sub}</p>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-[14px] font-bold text-text">Stry</span>
               <AgentBadge agent={agentHint} />
               {(thinking || voice.recording || voice.transcribing) && (
-                <span className={cn("inline-flex h-1.5 w-1.5 rounded-full animate-pulse",
-                  voice.recording ? "bg-peach" : voice.transcribing ? "bg-lavender" : "bg-lavender")} />
+                <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse",
+                  voice.recording ? "bg-peach" : "bg-lavender")} />
               )}
             </div>
+          )}
+          {showHistory && (
             <button type="button" onClick={() => clearHomepageMessages().catch(() => {})}
               aria-label="Clear chat"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev hover:text-text transition-colors shrink-0">
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
               <Trash2 className="h-4 w-4" strokeWidth={1.75} />
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Message stream: flex-col-reverse so newest is at bottom, scrolls up for history */}
+        {/* Message area — scrollable, fills all remaining height */}
         <div ref={scrollRef}
-          className="flex-1 overflow-y-auto px-4 py-3 flex flex-col-reverse gap-3 min-h-[200px] max-h-[58vh]"
+          className="flex-1 min-h-0 overflow-y-auto px-4 lg:px-6 py-4 flex flex-col gap-3"
           aria-live="polite" aria-label="Chat with Stry">
 
-          {/* Reversed: last items render at bottom visually */}
-          {/* Action cards — always at the "bottom" of the stream (top of reversed list) */}
-          {agentActions.length > 0 && (
-            <div className="flex flex-col gap-2">
-              {agentActions.map((action, i) => (
-                <div key={`${action.type}-${i}`} className="flex justify-start max-w-[90%]">
-                  <AgentActionCard action={action} />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Thinking indicator */}
-          {thinking && (
-            <div className="flex items-center gap-1.5 px-1">
-              {[0, 1, 2].map((i) => (
-                <motion.span key={i} className="h-1.5 w-1.5 rounded-full bg-lavender"
-                  animate={{ y: [0, -4, 0] }}
-                  transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }} />
-              ))}
-            </div>
-          )}
-
-          {/* Messages — reversed so newest renders at bottom */}
-          {[...messages].reverse().map((m) => (
+          {/* Messages top→bottom, newest at bottom */}
+          {messages.map((m) => (
             <MessageBubble key={m.ts} role={m.role === "user" ? "user" : "ai"} content={m.content}
               fresh={freshTs !== null && m.ts === lastAiTs} />
           ))}
+
+          {/* Thinking dots */}
+          {thinking && (
+            <div className="flex items-center gap-1.5 px-1 py-1">
+              {[0, 1, 2].map((i) => (
+                <motion.span key={i} className="h-2 w-2 rounded-full bg-text-muted/40"
+                  animate={{ scale: [1, 1.4, 1] }}
+                  transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }} />
+              ))}
+            </div>
+          )}
+
+          {/* Inline action cards — appear as a message at bottom of stream */}
+          {agentActions.map((action, i) => (
+            <div key={`${action.type}-${i}`} className="flex justify-start">
+              <div className="max-w-[88%] lg:max-w-[70%]">
+                <AgentActionCard action={action} />
+              </div>
+            </div>
+          ))}
         </div>
 
-        {/* Image attachment preview */}
+        {/* Attachment preview */}
         <AnimatePresence>
           {attachedImage && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-              className="px-4 pb-2 shrink-0">
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+              className="shrink-0 px-4 lg:px-6 pb-2">
               <div className="relative inline-block">
-                <img src={attachedImage} alt="Attached" className="h-16 w-16 rounded-xl object-cover border border-border" />
+                <img src={attachedImage} alt="Attached" className="h-14 w-14 rounded-xl object-cover border border-border" />
                 <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
-                  className="absolute -top-1.5 -right-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-ink text-text-on-ink">
+                  className="absolute -top-1.5 -right-1.5 h-5 w-5 flex items-center justify-center rounded-full bg-ink text-text-on-ink">
                   <X className="h-3 w-3" strokeWidth={2.5} />
                 </button>
               </div>
@@ -606,36 +608,34 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           )}
         </AnimatePresence>
 
-        {/* Input — always pinned to bottom of card */}
-        <div className="border-t border-border bg-card p-3 shrink-0">
+        {/* Input — always at the bottom */}
+        <div className="shrink-0 px-4 lg:px-6 pb-4 pt-2 bg-bg border-t border-border">
           {Composer}
+          {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
         </div>
       </div>
 
-      {voice.error && <p className="text-[12px] text-bubblegum mt-1 px-1">{voice.error}</p>}
-
-      {/* Barcode modal */}
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
       <ConfirmModal draft={pendingDrafts[0] ?? null} onConfirm={handleConfirm} onDiscard={handleDiscard} />
 
-      {/* Memory auto-log: Undo / Edit toast */}
+      {/* Memory auto-log undo toast */}
       <AnimatePresence>
         {autoLoggedMeal && (
           <motion.div key="memory-toast"
-            initial={{ opacity: 0, y: 24, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 24, scale: 0.96 }}
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
             transition={{ type: "spring", stiffness: 320, damping: 28 }}
             className="fixed bottom-[calc(env(safe-area-inset-bottom)+5rem)] lg:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-2xl bg-ink text-text-on-ink px-4 py-3 shadow-[var(--shadow-elev)] max-w-[calc(100vw-2rem)]">
-            <span className="text-[13px] font-medium shrink-0 truncate max-w-[180px]">
+            <span className="text-[13px] font-medium truncate max-w-[180px]">
               {autoLoggedMeal.draft.memoryNote ?? `Logged ${autoLoggedMeal.draft.name}`}
             </span>
-            <span className="text-[12px] text-text-on-ink/60 shrink-0">{autoLoggedMeal.draft.kcal} kcal</span>
-            <div className="flex items-center gap-1 ml-1 shrink-0">
+            <span className="text-[12px] text-text-on-ink/60">{autoLoggedMeal.draft.kcal} kcal</span>
+            <div className="flex gap-1 ml-1">
               <button type="button" onClick={async () => {
                 if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
                 setAutoLoggedMeal(null);
                 try { await deleteMeal({ id: autoLoggedMeal.mealId }); toast.info("Undone", autoLoggedMeal.draft.name); }
                 catch { toast.error("Couldn't undo", "Meal may already be logged"); }
-              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold transition-colors">
+              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold">
                 <Undo2 className="h-3 w-3" strokeWidth={2.25} /> Undo
               </button>
               <button type="button" onClick={() => {
@@ -643,7 +643,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                 setEditEntry({ _id: autoLoggedMeal.mealId, name: d.name, calories: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, time: d.time, mealType: d.mealType ?? "unspecified" });
                 if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
                 setAutoLoggedMeal(null);
-              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold transition-colors">
+              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold">
                 <Pencil className="h-3 w-3" strokeWidth={2.25} /> Edit
               </button>
             </div>
@@ -655,4 +655,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     </>
   );
 }
+
+
 

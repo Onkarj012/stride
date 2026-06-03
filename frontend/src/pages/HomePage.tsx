@@ -1,19 +1,14 @@
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowRight, Droplets, Minus, Plus, Target, Zap, Brain, ChevronDown, ChevronUp } from "lucide-react";
+import { Target, Brain, ChevronDown, ChevronUp } from "lucide-react";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { AssistantConsole } from "@/components/home/AssistantConsole";
-import { SpecialistDock } from "@/components/home/SpecialistDock";
 import { NudgeInbox } from "@/components/home/NudgeInbox";
-import { QuickLogBar } from "@/components/home/QuickLogBar";
-import { Card } from "@/components/primitives/Card";
-import { SuggestionChip } from "@/components/primitives/SuggestionChip";
 import { StreakCard } from "@/components/insights/StreakCard";
 import { useShortcut } from "@/hooks/useShortcut";
 import { useLogs } from "@/hooks/useLogs";
-import { categoryById } from "@/data/mock";
 import type { LogEntry } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 
@@ -70,16 +65,6 @@ function todayLogs(logs: LogEntry[]) {
   return logs.filter((l) => l.createdAt >= start);
 }
 
-function relTime(ts: number): string {
-  const diff = Date.now() - ts;
-  const min = Math.round(diff / 60000);
-  if (min < 1) return "just now";
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.round(hr / 24);
-  return `${day}d ago`;
-}
 
 
 /* ── Collapsed stats summary bar — expandable on tap ── */
@@ -209,147 +194,7 @@ function TodayCommandCard({ brief }: { brief?: TodayBrief | null }) {
   );
 }
 
-function nextActionPrompts(brief?: TodayBrief | null) {
-  const category = brief?.command?.doToday.category;
-  const base = brief?.command?.doToday.action;
-  const prompts = [
-    base ? `Help me with this: ${base}` : "What should I focus on right now?",
-    "Log my last meal",
-    "I feel off today",
-  ];
-  if (category === "water") prompts.splice(1, 0, "Log 250ml water");
-  if (category === "recovery") prompts.splice(1, 0, "Plan a recovery workout");
-  if (category === "meal") prompts.splice(1, 0, "Suggest a simple protein meal");
-  if (category === "reflection") prompts.splice(1, 0, "Close out today");
-  return Array.from(new Set(prompts)).slice(0, 5);
-}
 
-function NextBestActions({ brief, onPick }: { brief?: TodayBrief | null; onPick: (prompt: string) => void }) {
-  return (
-    <section aria-label="Next best actions" className="w-full">
-      <div className="flex items-center gap-1.5 mb-2 px-1">
-        <Zap className="h-3.5 w-3.5 text-peach" strokeWidth={2.5} />
-        <h2 className="text-[12px] font-bold uppercase tracking-wider text-text-muted">Next best actions</h2>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {nextActionPrompts(brief).map((prompt) => (
-          <SuggestionChip key={prompt} label={prompt} onClick={() => onPick(prompt)} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/* ── Compact recent strip ── */
-function RecentStrip({ logs }: { logs: LogEntry[] }) {
-  // Hide noise: water quick-tap logs are already shown by the WaterTracker,
-  // so they shouldn't clutter "recent" — users typically log 1L+ across
-  // multiple taps and don't want each glass surfaced separately. We also
-  // skip notes (legacy category).
-  const meaningful = logs.filter(
-    (l) => l.category !== "water" && l.category !== "note",
-  );
-  const items = meaningful.slice(0, 6);
-  if (items.length === 0) return null;
-
-  return (
-    <section className="w-full">
-      <header className="flex items-baseline justify-between mb-3 px-1">
-        <h2 className="text-h3 text-text">Recent</h2>
-        <Link
-          to="/history"
-          className="inline-flex items-center gap-1 text-[13px] font-medium text-text-muted hover:text-text"
-        >
-          See all
-          <ArrowRight className="h-3.5 w-3.5" strokeWidth={2} />
-        </Link>
-      </header>
-      <Card tone="card" radius="lg" padding="none" className="overflow-hidden">
-        <ul role="list" className="divide-y divide-border">
-          {items.map((log) => {
-            const meta = categoryById[log.category];
-            const Icon = meta.icon;
-            const detail =
-              log.meal
-                ? `${log.meal.kcal} kcal`
-                : log.workout
-                  ? `${log.workout.duration} min`
-                  : log.sleep
-                    ? `${log.sleep.hours.toFixed(1)} h`
-                    : log.water
-                      ? `${log.water.ml} ml`
-                      : log.steps
-                        ? `${log.steps.count.toLocaleString()} steps`
-                        : null;
-            return (
-              <li key={log.id} className="flex items-center gap-3 px-4 py-3">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-card-elev border border-border">
-                  <Icon className="h-4 w-4 text-text-muted" strokeWidth={1.75} />
-                </span>
-                <div className="flex flex-1 flex-col gap-0.5 min-w-0">
-                  <span className="text-[14.5px] font-semibold text-text truncate">
-                    {log.text}
-                  </span>
-                  <span className="text-[12px] text-text-muted">
-                    {meta.label}
-                    {detail && ` · ${detail}`}
-                    {" · "}
-                    {relTime(log.createdAt)}
-                  </span>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
-    </section>
-  );
-}
-
-/* ── Water tracker (the only thing that makes sense as a quick-tap) ── */
-function WaterTracker({ logs, onAdd, onUndo }: {
-  logs: LogEntry[];
-  onAdd: () => void;
-  onUndo: () => void;
-}) {
-  const todayStart = startOfDay().getTime();
-  const todayWaterLogs = logs.filter((l) => l.water && l.createdAt >= todayStart);
-  const glasses = todayWaterLogs.length;
-  const ml = todayWaterLogs.reduce((s, l) => s + (l.water?.ml ?? 0), 0);
-
-  return (
-    <div className="w-full flex items-center gap-3 rounded-[16px] bg-card border border-border px-4 py-3">
-      <Droplets className="h-5 w-5 text-sky shrink-0" strokeWidth={1.75} />
-      <div className="flex-1 min-w-0">
-        <span className="text-[14px] font-semibold text-text">{glasses} glass{glasses !== 1 ? "es" : ""}</span>
-        <span className="text-[12px] text-text-muted ml-1.5">{ml} ml today</span>
-      </div>
-      <div className="flex items-center gap-1.5">
-        <motion.button
-          type="button"
-          whileTap={{ scale: 0.88 }}
-          onClick={onUndo}
-          disabled={glasses === 0}
-          aria-label="Remove last glass"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-border text-text-muted hover:text-text disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-        >
-          <Minus className="h-4 w-4" strokeWidth={2} />
-        </motion.button>
-        <motion.button
-          type="button"
-          whileTap={{ scale: 0.88 }}
-          onClick={onAdd}
-          aria-label="Add glass of water"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-sky/20 text-sky hover:bg-sky/30 transition-colors"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2} />
-        </motion.button>
-      </div>
-    </div>
-  );
-}
-
-/* ── Memory context hint — shows known food count + expandable list ── */
 function MemoryContextHint() {
   const [open, setOpen] = useState(false);
   const memories = useQuery(api.food_memory.getTopMemoriesPublic, {}) as
@@ -407,9 +252,8 @@ function MemoryContextHint() {
 export function HomePage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
-  const { logs, add, remove } = useLogs();
+  const { logs } = useLogs();
   const brief = useQuery(api.insights.getTodayBrief, {}) as TodayBrief | undefined;
-  const homepageChat = useQuery(api.chat.getHomepageMessages, {}) as { messages?: unknown[] } | undefined;
   useShortcut("k", () => inputRef.current?.focus(), { meta: true });
 
   const sortedLogs = useMemo(
@@ -417,23 +261,16 @@ export function HomePage() {
     [logs],
   );
 
-  const addWater = () => add("water", "Glass of water", { water: { ml: 250 }, agent: "water" });
-  const undoWater = () => {
-    const todayStart = startOfDay().getTime();
-    const lastWater = sortedLogs.find((l) => l.water && l.createdAt >= todayStart);
-    if (lastWater) remove(lastWater.id);
-  };
   const presenceLine = brief?.command?.doToday
     ? `I'm watching today for: ${brief.command.doToday.title.toLowerCase()}.`
     : undefined;
-  const hasHomeConversation = (homepageChat?.messages?.length ?? 0) > 0;
 
   return (
-    <div className="w-full mx-auto max-w-2xl lg:max-w-7xl flex flex-col gap-4 lg:gap-6">
+    /* Full-height layout — break out of AppLayout padding to fill the screen */
+    <div className="flex -mx-4 lg:-mx-10 -mt-[max(env(safe-area-inset-top),16px)] lg:-mt-10 -mb-[max(calc(env(safe-area-inset-bottom)+7rem),7rem)] lg:-mb-12 h-dvh lg:h-[calc(100dvh-0px)]" style={{ height: "100dvh" }}>
 
-      {/* ── LAYER 1: Context engine — answers "what should I do right now?" ── */}
-      <div className="flex flex-col gap-3">
-        {/* 1a. The input — primary element */}
+      {/* ── Chat column — full height, full width on mobile ── */}
+      <div className="flex-1 min-w-0 flex flex-col min-h-0 border-r border-border">
         <AssistantConsole
           inputRef={inputRef}
           queuedPrompt={queuedPrompt}
@@ -441,43 +278,16 @@ export function HomePage() {
           presenceLine={presenceLine}
           initialActions={brief?.checkIn ? [brief.checkIn] : []}
         />
+      </div>
 
-        {/* 1b. What matters today — directly below the input */}
+      {/* ── Context sidebar — desktop only, 300px, scrollable ── */}
+      <aside className="hidden lg:flex w-[300px] shrink-0 flex-col gap-4 overflow-y-auto px-5 py-5 bg-bg">
         <TodayCommandCard brief={brief} />
-
-        {/* 1c. Memory hint — what the system knows about you */}
         <MemoryContextHint />
-
-        {/* 1d. Stats summary — collapsed by default, details on tap */}
         <PulseSummary logs={sortedLogs} brief={brief} />
-      </div>
-
-      {/* ── LAYER 2: Supporting tools — below the fold ── */}
-      <div className="flex flex-col gap-4 pt-2 border-t border-border">
-
-        {/* Quick actions — only when no active conversation */}
-        {!hasHomeConversation && (
-          <div className="flex flex-col gap-3">
-            <WaterTracker logs={sortedLogs} onAdd={addWater} onUndo={undoWater} />
-            <NextBestActions brief={brief} onPick={setQueuedPrompt} />
-          </div>
-        )}
-
-        {/* Nudges */}
         <NudgeInbox />
-
-        {/* One-tap quick log */}
-        <QuickLogBar />
-
-        {/* Specialist agents */}
-        <SpecialistDock focusCategory={brief?.command?.doToday.category} />
-
-        {/* Streak */}
         <StreakCard />
-
-        {/* Recent strip */}
-        <RecentStrip logs={sortedLogs} />
-      </div>
+      </aside>
 
     </div>
   );
