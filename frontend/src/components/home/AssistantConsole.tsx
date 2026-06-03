@@ -80,8 +80,8 @@ function MessageBubble({
 
   if (role === "user") {
     return (
-      <div className="flex flex-col items-end gap-1">
-        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-lavender text-ink px-3.5 py-2.5 text-[14px] leading-relaxed break-words">
+      <div className="flex flex-col items-end gap-1 group">
+        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-3.5 py-2.5 text-[14px] leading-relaxed break-words text-text">
           {showMarkdown
             ? <Markdown className="text-[14px] leading-relaxed">{text}</Markdown>
             : <span className="whitespace-pre-wrap">{text}</span>}
@@ -345,6 +345,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setTextValue("");
     setAttachedImage(null);
     setAttachedFile(null);
+    // Reset textarea height
+    if (activeRef.current) activeRef.current.style.height = "auto";
     recordEngagement(window);
 
     try {
@@ -622,7 +624,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           )}
           {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => openDraft(action.draft)}
+            <button type="button" onClick={() => { openDraft(action.draft); setAgentActions([]); }}
               className="inline-flex items-center rounded-full bg-mint/20 hover:bg-mint/30 border border-mint/25 px-3 py-1.5 text-[13px] font-semibold text-text transition-colors">
               Confirm
             </button>

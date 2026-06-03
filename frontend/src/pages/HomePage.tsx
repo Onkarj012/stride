@@ -297,6 +297,8 @@ export function HomePage() {
   // Collapsed sidebar stats
   const todayKcal = Math.round(sortedLogs.filter(l => l.createdAt >= new Date().setHours(0,0,0,0))
     .reduce((s, l) => s + (l.meal?.kcal ?? 0), 0));
+  const todayBurned = Math.round(sortedLogs.filter(l => l.createdAt >= new Date().setHours(0,0,0,0))
+    .reduce((s, l) => s + (l.workout?.kcal ?? 0), 0));
   const streak = streakInfo?.streak ?? 0;
   const kcalTarget = brief?.stats?.adjustedCalorieTarget ?? brief?.stats?.calorieTarget ?? 2000;
   const kcalPct = Math.min(1, todayKcal / kcalTarget);
@@ -371,6 +373,13 @@ export function HomePage() {
               <div className="flex flex-col items-center gap-0.5">
                 <span className="text-[13px] font-bold text-mint leading-none">{Math.round(brief!.stats!.todayProtein)}g</span>
                 <span className="text-[9px] font-semibold uppercase tracking-wide text-text-muted">protein</span>
+              </div>
+            )}
+            {/* Workout burned */}
+            {todayBurned > 0 && (
+              <div className="flex flex-col items-center gap-0.5">
+                <span className="text-[13px] font-bold text-lavender leading-none">{todayBurned}</span>
+                <span className="text-[9px] font-semibold uppercase tracking-wide text-text-muted">burned</span>
               </div>
             )}
           </div>
