@@ -1,4 +1,4 @@
-import { query } from "./_generated/server";
+import { query, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
 async function requireUserId(ctx: any): Promise<string> {
@@ -134,6 +134,33 @@ export const getPatterns = query({
       ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
     ]);
 
+    return derivePatterns({
+      meals: meals.map((m: any) => ({ date: m.date, protein: m.protein })),
+      workouts: workouts.map((w: any) => ({ date: w.date })),
+      sleep: sleep.map((s: any) => ({ date: s.date, hours: s.hours })),
+      water: water.map((w: any) => ({ date: w.date, ml: w.ml })),
+      proteinTarget: profile?.proteinTarget ?? 90,
+      waterTarget: profile?.waterTarget ?? 2000,
+    });
+  },
+});
+
+export const getPatternsForContext = internalQuery({
+  args: { userId: v.string(), days: v.optional(v.number()) },
+  handler: async (ctx, { userId, days = 28 }) => {
+    const start = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+    const between = (table: "meals" | "workouts" | "sleep_logs" | "water_logs") =>
+      ctx.db
+        .query(table)
+        .withIndex("by_user_date", (q: any) => q.eq("userId", userId).gte("date", start))
+        .collect();
+    const [meals, workouts, sleep, water, profile] = await Promise.all([
+      between("meals"),
+      between("workouts"),
+      between("sleep_logs"),
+      between("water_logs"),
+      ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
+    ]);
     return derivePatterns({
       meals: meals.map((m: any) => ({ date: m.date, protein: m.protein })),
       workouts: workouts.map((w: any) => ({ date: w.date })),

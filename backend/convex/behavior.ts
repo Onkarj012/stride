@@ -83,11 +83,18 @@ export function deriveBehaviorProfile(
     new Set(recent.filter((r) => r.kind === "nudge_dismiss" && r.ts >= recentCutoff).map((r) => r.key)),
   );
 
+  // Phase 4: acceptance rate — ratio of confirmed vs corrected meal logs
+  const confirmCount = recent.filter((r) => r.kind === "log" && r.key === "meal_confirm").length;
+  const correctCount = recent.filter((r) => r.kind === "log" && r.key === "meal_correct").length;
+  const total = confirmCount + correctCount;
+  const acceptRate = total >= 5 ? confirmCount / total : null;
+
   return {
     engagedWindows: topKeys(engagement, 4).filter((w) => WINDOWS.includes(w)),
     topSuggestions: topKeys(suggestions, 5),
     preferredCoach: topKeys(coaches, 1)[0] ?? null,
     dismissedNudges,
+    acceptRate,
     sampleSize: recent.length,
   };
 }

@@ -1,6 +1,7 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { applyDayAdjustment } from "./goals";
+import { internal } from "./_generated/api";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -58,6 +59,14 @@ export const addWorkout = mutation({
       structuredSets: args.structuredSets,
     });
     await applyDayAdjustment(ctx, userId, date);
+    const durationMin = args.duration ? parseFloat(args.duration) : undefined;
+    await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
+      userId, name: args.name, date,
+      exercises: args.exercises ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
+      durationMin: isNaN(durationMin as number) ? undefined : durationMin,
+      intensity: args.intensity || undefined,
+      caloriesBurned: args.caloriesBurned,
+    }).catch(() => {});
     return id;
   },
 });
@@ -202,7 +211,7 @@ export const addWorkoutFromAI = internalMutation({
     structuredSets: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    return ctx.db.insert("workouts", {
+    const id = await ctx.db.insert("workouts", {
       userId: args.userId, date: args.date,
       name: args.name, sets: args.sets, duration: args.duration,
       intensity: args.intensity || "HIGH",
@@ -215,6 +224,15 @@ export const addWorkoutFromAI = internalMutation({
       calculationVersion: args.calculationVersion,
       structuredSets: args.structuredSets,
     });
+    const durationMin = args.duration ? parseFloat(args.duration) : undefined;
+    await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
+      userId: args.userId, name: args.name, date: args.date,
+      exercises: args.exercises ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
+      durationMin: isNaN(durationMin as number) ? undefined : durationMin,
+      intensity: args.intensity || undefined,
+      caloriesBurned: args.caloriesBurned,
+    }).catch(() => {});
+    return id;
   },
 });
 

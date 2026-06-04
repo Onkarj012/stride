@@ -278,6 +278,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           nutritionSource: d.nutritionSource,
           foodMemoryId: d.foodMemoryId,
         });
+        void recordBehavior({ kind: "log", key: "meal_confirm" }).catch(() => {});
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
         if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
       } else if (d.kind === "workout") {
@@ -780,6 +781,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
               <button type="button" onClick={() => {
                 const d = autoLoggedMeal.draft;
                 setEditEntry({ _id: autoLoggedMeal.mealId, name: d.name, calories: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, time: d.time, mealType: d.mealType ?? "unspecified" });
+                void recordBehavior({ kind: "log", key: "meal_correct" }).catch(() => {});
                 if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
                 setAutoLoggedMeal(null);
               }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold">

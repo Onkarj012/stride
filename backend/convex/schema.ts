@@ -275,6 +275,23 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_name", ["userId", "normalizedName"]),
 
+  // ─── Workout Memory (auto-learned workout profiles) ────────────────────────
+
+  workout_memory: defineTable({
+    userId: v.string(),
+    normalizedName: v.string(),      // e.g. "back day", "push day", "leg day"
+    displayName: v.string(),
+    aliases: v.array(v.string()),
+    exercises: v.optional(v.string()),   // JSON: typical exercise names
+    durationMin: v.optional(v.number()), // smoothed average duration
+    intensity: v.optional(v.string()),   // most common: light|moderate|intense
+    caloriesBurned: v.optional(v.number()), // smoothed average kcal
+    timesLogged: v.number(),
+    lastUsedDate: v.string(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_name", ["userId", "normalizedName"]),
+
   // ─── Recipes (hybrid macro builder) ────────────────────────────────────────
 
   recipes: defineTable({
