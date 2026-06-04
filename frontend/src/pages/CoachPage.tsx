@@ -308,37 +308,35 @@ export function CoachPage() {
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
-      {/* Fixed toggle — pinned to viewport top-left of the chat column */}
-      <button
-        type="button"
-        onClick={() => setPanelOpen((o) => !o)}
-        aria-label="Toggle chat history"
-        className={cn(
-          "fixed z-20 inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
-          panelOpen ? "bg-card-elev text-text border-border-strong" : "border-border bg-bg text-text-muted hover:bg-card-elev",
-        )}
-        style={{ top: "max(env(safe-area-inset-top) + 0.75rem, 0.75rem)", left: panelOpen ? "calc(220px + 1rem)" : "1rem", transition: "left 0.25s cubic-bezier(0.4,0,0.2,1)" }}
+      {/* Session sidebar — always rendered as a strip; expands to full width when open */}
+      <div
+        className="shrink-0 flex flex-col border-r border-border bg-bg overflow-hidden transition-[width] duration-200 ease-in-out z-10"
+        style={{
+          width: panelOpen ? 220 : 48,
+          paddingTop: "max(env(safe-area-inset-top), 1rem)",
+        }}
       >
-        <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
-      </button>
-
-      {/* Session sidebar */}
-      <AnimatePresence initial={false}>
-        {panelOpen && (
-          <motion.aside
-            key="sidebar"
-            initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 220, opacity: 1 }}
-            exit={{ width: 0, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 32 }}
-            className="shrink-0 flex flex-col gap-2 overflow-hidden border-r border-border bg-bg px-3 z-10"
-            style={{ paddingTop: "max(env(safe-area-inset-top), 1rem)" }}
+        {/* Toggle button — always at top, never moves */}
+        <div className="flex items-center px-2.5 pb-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setPanelOpen((o) => !o)}
+            aria-label="Toggle chat history"
+            className={cn(
+              "inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors shrink-0",
+              panelOpen ? "bg-card-elev text-text border-border-strong" : "border-border text-text-muted hover:bg-card-elev",
+            )}
           >
-            <div className="flex items-center justify-between pb-2">
-              <span className="text-[13px] font-bold text-text">Chats</span>
-            </div>
+            <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+          {panelOpen && <span className="ml-2 text-[13px] font-bold text-text whitespace-nowrap overflow-hidden">Chats</span>}
+        </div>
+
+        {/* Sidebar content — only visible when open */}
+        {panelOpen && (
+          <div className="flex flex-col gap-2 flex-1 overflow-hidden px-3">
             <button type="button" onClick={newChat}
-              className="flex items-center gap-2 rounded-[12px] border border-border bg-card px-3 py-2.5 text-[13px] font-semibold text-text hover:bg-card-elev transition-colors">
+              className="flex items-center gap-2 rounded-[12px] border border-border bg-card px-3 py-2.5 text-[13px] font-semibold text-text hover:bg-card-elev transition-colors whitespace-nowrap">
               <Plus className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} /> New chat
             </button>
             <div className="flex-1 overflow-y-auto space-y-0.5 no-scrollbar">
@@ -361,15 +359,15 @@ export function CoachPage() {
                 </div>
               ))}
             </div>
-          </motion.aside>
+          </div>
         )}
-      </AnimatePresence>
+      </div>
 
       {/* Chat column */}
       <div className="flex flex-col flex-1 min-w-0">
 
         {/* Header */}
-        <div className="flex items-center gap-3 px-4 lg:px-8 pl-12 shrink-0 border-b border-border/50"
+        <div className="flex items-center gap-3 px-4 lg:px-8 shrink-0 border-b border-border/50"
           style={{ paddingTop: "max(env(safe-area-inset-top), 0.75rem)", paddingBottom: "0.75rem" }}>
 
           <div className="shrink-0 w-8 h-8 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[13px] font-bold text-lavender">S</div>
