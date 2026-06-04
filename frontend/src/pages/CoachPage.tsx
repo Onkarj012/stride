@@ -6,7 +6,6 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
-import { VoxelAgent } from "@/components/voxel/VoxelAgent";
 import { AgentBadge } from "@/components/insights/AgentBadge";
 import { Markdown } from "@/components/primitives/Markdown";
 import { useLogs } from "@/hooks/useLogs";
@@ -47,11 +46,7 @@ function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast:
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex items-start gap-2.5 max-w-[85%] group">
-      <div className="shrink-0 w-7 h-7 mt-1 rounded-full overflow-hidden border border-border bg-card-elev relative">
-        <div style={{ position: "absolute", top: -14, left: -14, width: 56, height: 56 }}>
-          <VoxelAgent agent={agent ?? "main"} size={56} />
-        </div>
-      </div>
+      <div className="shrink-0 w-7 h-7 mt-1 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[11px] font-bold text-lavender">S</div>
       <div className="flex flex-col gap-1 min-w-0">
         <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-2.5 text-text">
           <Markdown>{text}</Markdown>
@@ -96,11 +91,7 @@ function UserBubble({ text, onEdit }: { text: string; onEdit: () => void }) {
 function ThinkingBubble() {
   return (
     <div className="flex items-start gap-2.5">
-      <div className="shrink-0 w-7 h-7 mt-1 rounded-full overflow-hidden border border-border bg-card-elev relative">
-        <div style={{ position: "absolute", top: -14, left: -14, width: 56, height: 56 }}>
-          <VoxelAgent agent="main" size={56} />
-        </div>
-      </div>
+      <div className="shrink-0 w-7 h-7 mt-1 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[11px] font-bold text-lavender">S</div>
       <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-3 flex gap-1.5">
         {[0, 1, 2].map((i) => (
           <motion.div key={i} className="h-1.5 w-1.5 rounded-full bg-lavender"
@@ -317,7 +308,7 @@ export function CoachPage() {
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
-      {/* Fixed toggle — pinned to viewport, never moves */}
+      {/* Fixed toggle — pinned to viewport top-left of the chat column */}
       <button
         type="button"
         onClick={() => setPanelOpen((o) => !o)}
@@ -326,7 +317,7 @@ export function CoachPage() {
           "fixed z-20 inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
           panelOpen ? "bg-card-elev text-text border-border-strong" : "border-border bg-bg text-text-muted hover:bg-card-elev",
         )}
-        style={{ top: "max(env(safe-area-inset-top) + 0.75rem, 0.75rem)", left: "1rem" }}
+        style={{ top: "max(env(safe-area-inset-top) + 0.75rem, 0.75rem)", left: panelOpen ? "calc(220px + 1rem)" : "1rem", transition: "left 0.25s cubic-bezier(0.4,0,0.2,1)" }}
       >
         <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
       </button>
@@ -381,11 +372,7 @@ export function CoachPage() {
         <div className="flex items-center gap-3 px-4 lg:px-8 pl-12 shrink-0 border-b border-border/50"
           style={{ paddingTop: "max(env(safe-area-inset-top), 0.75rem)", paddingBottom: "0.75rem" }}>
 
-          <div className="shrink-0 w-8 h-8 rounded-full overflow-hidden border border-border bg-card-elev relative">
-            <div style={{ position: "absolute", top: -16, left: -16, width: 64, height: 64 }}>
-              <VoxelAgent agent="main" size={64} />
-            </div>
-          </div>
+          <div className="shrink-0 w-8 h-8 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[13px] font-bold text-lavender">S</div>
           <div className="flex-1 min-w-0">
             <p className="text-[15px] font-extrabold text-text leading-none">Stry</p>
             <p className="text-[11px] text-text-muted mt-0.5">Your AI wellness coach</p>
