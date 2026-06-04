@@ -317,7 +317,21 @@ export function CoachPage() {
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
-      {/* Session sidebar — slides in over content on mobile, beside on desktop */}
+      {/* Fixed toggle — pinned to viewport, never moves */}
+      <button
+        type="button"
+        onClick={() => setPanelOpen((o) => !o)}
+        aria-label="Toggle chat history"
+        className={cn(
+          "fixed z-20 inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors",
+          panelOpen ? "bg-card-elev text-text border-border-strong" : "border-border bg-bg text-text-muted hover:bg-card-elev",
+        )}
+        style={{ top: "max(env(safe-area-inset-top) + 0.75rem, 0.75rem)", left: "1rem" }}
+      >
+        <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
+      </button>
+
+      {/* Session sidebar */}
       <AnimatePresence initial={false}>
         {panelOpen && (
           <motion.aside
@@ -364,15 +378,8 @@ export function CoachPage() {
       <div className="flex flex-col flex-1 min-w-0">
 
         {/* Header */}
-        <div className="flex items-center gap-3 px-4 lg:px-8 shrink-0 border-b border-border/50"
+        <div className="flex items-center gap-3 px-4 lg:px-8 pl-12 shrink-0 border-b border-border/50"
           style={{ paddingTop: "max(env(safe-area-inset-top), 0.75rem)", paddingBottom: "0.75rem" }}>
-
-          {/* Single toggle — same place always */}
-          <button type="button" onClick={() => setPanelOpen((o) => !o)} aria-label="Toggle chat history"
-            className={cn("inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors shrink-0",
-              panelOpen ? "bg-card-elev text-text border-border-strong" : "border-border text-text-muted hover:bg-card-elev")}>
-            <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
-          </button>
 
           <div className="shrink-0 w-8 h-8 rounded-full overflow-hidden border border-border bg-card-elev relative">
             <div style={{ position: "absolute", top: -16, left: -16, width: 64, height: 64 }}>
