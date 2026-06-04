@@ -332,13 +332,22 @@ export function CoachPage() {
           {panelOpen && <span className="ml-2 text-[13px] font-bold text-text whitespace-nowrap overflow-hidden">Chats</span>}
         </div>
 
+        {/* New chat button — visible in both collapsed and expanded states */}
+        <div className="flex items-center px-2.5 pb-3 shrink-0">
+          <button
+            type="button"
+            onClick={newChat}
+            aria-label="New chat"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors shrink-0"
+          >
+            <Plus className="h-4 w-4" strokeWidth={2} />
+          </button>
+          {panelOpen && <span className="ml-2 text-[13px] font-semibold text-text whitespace-nowrap overflow-hidden">New chat</span>}
+        </div>
+
         {/* Sidebar content — only visible when open */}
         {panelOpen && (
           <div className="flex flex-col gap-2 flex-1 overflow-hidden px-3">
-            <button type="button" onClick={newChat}
-              className="flex items-center gap-2 rounded-[12px] border border-border bg-card px-3 py-2.5 text-[13px] font-semibold text-text hover:bg-card-elev transition-colors whitespace-nowrap">
-              <Plus className="h-3.5 w-3.5 shrink-0" strokeWidth={2.5} /> New chat
-            </button>
             <div className="flex-1 overflow-y-auto space-y-0.5 no-scrollbar">
               {sessions.length === 0 && <p className="text-[12px] text-text-muted px-2 py-3">No previous chats yet.</p>}
               {sessions.map((s) => (
