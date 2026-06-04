@@ -48,7 +48,7 @@ function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast:
     <div className="flex items-start gap-2.5 max-w-[85%] group">
       <div className="shrink-0 w-7 h-7 mt-1 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[11px] font-bold text-lavender">S</div>
       <div className="flex flex-col gap-1 min-w-0">
-        <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-2.5 text-text">
+        <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-2.5">
           <Markdown>{text}</Markdown>
         </div>
         <div className="flex items-center gap-3 ml-1">
@@ -317,7 +317,7 @@ export function CoachPage() {
         }}
       >
         {/* Toggle button — always at top, never moves */}
-        <div className="flex items-center px-2.5 pb-2 shrink-0">
+        <div className="flex items-center px-2.5 pt-2 pb-2 shrink-0">
           <button
             type="button"
             onClick={() => setPanelOpen((o) => !o)}
