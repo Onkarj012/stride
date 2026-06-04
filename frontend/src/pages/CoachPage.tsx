@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, MicOff, RotateCcw, Plus, ChevronLeft, Copy, Check, Trash2, Pencil, Camera, Barcode, ImagePlus, X, Loader2 } from "lucide-react";
+import { ArrowUp, Mic, MicOff, RotateCcw, Plus, Copy, Check, Trash2, Pencil, Barcode, ImagePlus, X, Loader2, PanelLeft } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -43,10 +43,8 @@ const GREETING: Record<CoachingStyle, string> = {
   analytical: "Hi, I'm Stry. I'll help you track patterns. What would you like to log?",
 };
 
-/* ── Assistant bubble — renders markdown immediately, no typewriter ── */
 function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast: boolean }) {
   const [copied, setCopied] = useState(false);
-
   return (
     <div className="flex items-start gap-2.5 max-w-[85%] group">
       <div className="shrink-0 w-7 h-7 mt-1 rounded-full overflow-hidden border border-border bg-card-elev relative">
@@ -60,11 +58,9 @@ function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast:
         </div>
         <div className="flex items-center gap-3 ml-1">
           {agent && agent !== "main" && <AgentBadge agent={agent} />}
-          <button
-            type="button"
+          <button type="button"
             onClick={() => { navigator.clipboard.writeText(text).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-            className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors"
-          >
+            className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
             {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
             {copied ? "Copied" : "Copy"}
           </button>
@@ -78,25 +74,19 @@ function UserBubble({ text, onEdit }: { text: string; onEdit: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex flex-col items-end gap-1 max-w-[85%]">
-      <div className="rounded-2xl rounded-br-sm bg-ink text-text-on-ink px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap">
+      <div className="rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-4 py-2.5 text-[0.95rem] leading-relaxed whitespace-pre-wrap text-text">
         {text}
       </div>
-      <div className="flex items-center gap-3 mr-1">
-        <button
-          type="button"
+      <div className="flex items-center gap-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button type="button"
           onClick={() => { navigator.clipboard.writeText(text).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors"
-        >
+          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
           {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
           {copied ? "Copied" : "Copy"}
         </button>
-        <button
-          type="button"
-          onClick={onEdit}
-          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors"
-        >
-          <Pencil className="h-3 w-3" strokeWidth={2} />
-          Edit
+        <button type="button" onClick={onEdit}
+          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
+          <Pencil className="h-3 w-3" strokeWidth={2} /> Edit
         </button>
       </div>
     </div>
@@ -115,18 +105,13 @@ function ThinkingBubble() {
         {[0, 1, 2].map((i) => (
           <motion.div key={i} className="h-1.5 w-1.5 rounded-full bg-lavender"
             animate={{ y: [0, -4, 0] }}
-            transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }}
-          />
+            transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }} />
         ))}
       </div>
     </div>
   );
 }
 
-/* ── Session list (slide-in panel) ── */
-
-
-/* ── Main page ── */
 export function CoachPage() {
   const { prefs, update } = usePrefs();
   const style = prefs.coachingStyle;
@@ -145,87 +130,57 @@ export function CoachPage() {
   ]);
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
-  const [panelOpen, setPanelOpen] = useState(true); // open by default
+  const [panelOpen, setPanelOpen] = useState(false); // collapsed by default
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  // Pending hydration: set when the user navigates to an existing session via
-  // the sidebar. The hydration effect waits for convexMessages to load, then
-  // replaces local state once. We can't react to (activeSessionId, convexMessages)
-  // unconditionally because the in-place send flow ALSO updates convexMessages
-  // (via persisted user/AI messages) and we don't want that to overwrite the
-  // optimistic local state with a typewriter mid-flight.
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const { add } = useLogs();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  /* ── Voice (Groq Whisper) ── */
   const onTranscript = useCallback((t: string) => {
     setInput((prev) => (prev ? `${prev} ${t}` : t).trim());
   }, []);
   const voice = useAudioRecorder(onTranscript);
 
-  /* ── Image attachment ── */
   const onPickImage = useCallback((file: File) => {
-    if (!file.type.startsWith("image/")) {
-      toast.error("Not an image", "Please choose an image file");
-      return;
-    }
+    if (!file.type.startsWith("image/")) { toast.error("Not an image", "Please choose an image file"); return; }
     const reader = new FileReader();
     reader.onload = () => setAttachedImage(reader.result as string);
     reader.readAsDataURL(file);
   }, [toast]);
 
-  /* ── Cmd+V image paste ── */
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
       if (!e.clipboardData) return;
       for (const item of Array.from(e.clipboardData.items)) {
-        if (item.type.startsWith("image/")) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          if (file) onPickImage(file);
-          return;
-        }
+        if (item.type.startsWith("image/")) { e.preventDefault(); const file = item.getAsFile(); if (file) onPickImage(file); return; }
       }
     }
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
   }, [onPickImage]);
 
-  // Hydrate messages when loading a session. Only runs when the user
-  // explicitly navigates via the sidebar (pendingHydrateRef === activeSessionId).
-  // This prevents the new-session create-on-send flow from overwriting the
-  // optimistic local state with the persisted DB copy.
   useEffect(() => {
-    if (!activeSessionId) return;
-    if (pendingHydrateRef.current !== activeSessionId) return;
-    if (!convexMessages) return; // still loading
+    if (!activeSessionId || pendingHydrateRef.current !== activeSessionId || !convexMessages) return;
     const hydrated: Message[] = convexMessages.map((m, i) => ({
       kind: "text" as const, id: `cx-${i}`,
       role: m.role === "ai" ? "assistant" as const : "user" as const, text: m.content, streamed: false,
     }));
     setMessages(hydrated.length > 0 ? hydrated : [{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
     pendingHydrateRef.current = null;
-    // Auto-scroll to bottom of newly-loaded thread
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "auto" }), 50);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, convexMessages]);
 
-  /** User clicked an old chat in the sidebar — request hydration. */
   const loadSession = useCallback((id: Id<"chat_sessions">) => {
-    if (id === activeSessionId) {
-      // Already on this session; if they tapped it again, just close the panel.
-      setPanelOpen(false);
-      return;
-    }
+    if (id === activeSessionId) { setPanelOpen(false); return; }
     pendingHydrateRef.current = id;
     setActiveSessionId(id);
-    // Show a placeholder while we wait for messages so it's clear something
-    // happened. The hydrate effect will replace this momentarily.
     setMessages([{ kind: "text", id: "loading", role: "assistant", text: "Loading…", streamed: false }]);
+    setPanelOpen(false);
   }, [activeSessionId]);
 
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
@@ -294,8 +249,7 @@ export function CoachPage() {
       setTimeout(() => {
         setThinking(false);
         const intro = trigger.draft.kind === "meal" ? "I've estimated the macros. Does this look right?" : "I've logged your workout. Does this look right?";
-        setMessages((prev) => [
-          ...prev,
+        setMessages((prev) => [...prev,
           { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: intro, streamed: true },
           { kind: "draft", id: `d-${Date.now() + 1}`, draft: trigger.draft, confirmReply: trigger.confirmReply, discardReply: trigger.discardReply, settled: false },
         ]);
@@ -312,20 +266,13 @@ export function CoachPage() {
         sessionId = result.id;
         setActiveSessionId(sessionId);
       }
-      const result = await sendToAI({
-        message: v,
-        image,
-        sessionId,
-        coachType: "auto",
-        today: localDateStr(),
-      });
+      const result = await sendToAI({ message: v, image, sessionId, coachType: "auto", today: localDateStr() });
       const r = result as Record<string, unknown>;
       const reply = typeof r.reply === "string" ? r.reply : String(result);
       const coachType = typeof r.coachType === "string" ? r.coachType : undefined;
       const agent = coachToAgent(coachType);
       const loggedItem = (r.loggedItem && typeof r.loggedItem === "object" && "type" in (r.loggedItem as object))
-        ? r.loggedItem as { type: string; data: any }
-        : undefined;
+        ? r.loggedItem as { type: string; data: any } : undefined;
 
       setThinking(false);
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: reply, agent, streamed: true }]);
@@ -347,28 +294,42 @@ export function CoachPage() {
     }
   }, [activeSessionId, createSession, sendToAI, scroll, toast]);
 
-  return (
-    <div className="flex h-[calc(100dvh-2rem)] lg:h-[calc(100dvh-2rem)] w-full -mx-4 lg:-mx-10 lg:-my-10 px-0">
+  // Auto-resize textarea
+  const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    e.target.style.height = "auto";
+    e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+  }, []);
 
-      {/* Hidden file input */}
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      void send(input, attachedImage ?? undefined);
+      if (inputRef.current) { inputRef.current.style.height = "auto"; }
+    }
+  }, [send, input, attachedImage]);
+
+  return (
+    /* Break out of AppLayout padding — same technique as HomePage */
+    <div className="flex -mx-4 lg:-mx-10 -my-4 lg:-my-10" style={{ height: "100dvh" }}>
+
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
-
-      {/* Barcode modal */}
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
-      {/* LEFT: Session sidebar */}
+      {/* Session sidebar — slides in over content on mobile, beside on desktop */}
       <AnimatePresence initial={false}>
         {panelOpen && (
-          <motion.div
+          <motion.aside
             key="sidebar"
             initial={{ width: 0, opacity: 0 }}
             animate={{ width: 220, opacity: 1 }}
             exit={{ width: 0, opacity: 0 }}
             transition={{ type: "spring", stiffness: 300, damping: 32 }}
-            className="shrink-0 flex flex-col gap-2 overflow-hidden border-r border-border px-3"
+            className="shrink-0 flex flex-col gap-2 overflow-hidden border-r border-border bg-bg px-3 z-10"
+            style={{ paddingTop: "max(env(safe-area-inset-top), 1rem)" }}
           >
-            <div className="flex items-center justify-between pt-3 pb-2">
+            <div className="flex items-center justify-between pb-2">
               <span className="text-[13px] font-bold text-text">Chats</span>
             </div>
             <button type="button" onClick={newChat}
@@ -395,37 +356,36 @@ export function CoachPage() {
                 </div>
               ))}
             </div>
-          </motion.div>
+          </motion.aside>
         )}
       </AnimatePresence>
 
-      {/* RIGHT: Chat column */}
-      <div className="flex flex-col flex-1 min-w-0 px-4 lg:px-8 py-4 lg:py-6">
-        {/* Header — toggle always at left edge */}
-        <div className="flex items-center gap-3 pb-3 shrink-0">
-          {/* Sidebar toggle — fixed position so it never moves */}
+      {/* Chat column */}
+      <div className="flex flex-col flex-1 min-w-0">
+
+        {/* Header */}
+        <div className="flex items-center gap-3 px-4 lg:px-8 shrink-0 border-b border-border/50"
+          style={{ paddingTop: "max(env(safe-area-inset-top), 0.75rem)", paddingBottom: "0.75rem" }}>
+
+          {/* Single toggle — same place always */}
           <button type="button" onClick={() => setPanelOpen((o) => !o)} aria-label="Toggle chat history"
-            className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors shrink-0",
+            className={cn("inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors shrink-0",
               panelOpen ? "bg-card-elev text-text border-border-strong" : "border-border text-text-muted hover:bg-card-elev")}>
-            <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75">
-              <line x1="2" y1="4" x2="14" y2="4" /><line x1="2" y1="8" x2="10" y2="8" /><line x1="2" y1="12" x2="12" y2="12" />
-            </svg>
+            <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
           </button>
 
-          {/* Stry avatar */}
-          <div className="shrink-0 w-9 h-9 rounded-full overflow-hidden border border-border bg-card-elev relative">
-            <div style={{ position: "absolute", top: -18, left: -18, width: 72, height: 72 }}>
-              <VoxelAgent agent="main" size={72} />
+          <div className="shrink-0 w-8 h-8 rounded-full overflow-hidden border border-border bg-card-elev relative">
+            <div style={{ position: "absolute", top: -16, left: -16, width: 64, height: 64 }}>
+              <VoxelAgent agent="main" size={64} />
             </div>
           </div>
-
           <div className="flex-1 min-w-0">
             <p className="text-[15px] font-extrabold text-text leading-none">Stry</p>
             <p className="text-[11px] text-text-muted mt-0.5">Your AI wellness coach</p>
           </div>
 
-          {/* Style picker */}
-          <div className="flex items-center gap-0.5 rounded-full bg-card-elev border border-border p-0.5" role="radiogroup">
+          {/* Style picker — hidden on very small screens */}
+          <div className="hidden sm:flex items-center gap-0.5 rounded-full bg-card-elev border border-border p-0.5" role="radiogroup">
             {coachingPersonalities.map((p) => (
               <button key={p.id} type="button" role="radio" aria-checked={style === p.id}
                 onClick={() => update({ coachingStyle: p.id })}
@@ -445,7 +405,7 @@ export function CoachPage() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pb-2">
+        <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 px-4 lg:px-8 py-4">
           {messages.map((m, i) => {
             if (m.kind === "draft") {
               if (m.settled) return null;
@@ -474,9 +434,9 @@ export function CoachPage() {
 
         {/* Suggestion chips */}
         {!hasUserMsg && (
-          <div className="flex flex-wrap gap-1.5 py-2 shrink-0">
+          <div className="flex flex-wrap gap-1.5 px-4 lg:px-8 py-2 shrink-0">
             {orderedSuggestions.map((s) => (
-              <button key={s} type="button" onClick={() => { recordSuggestion(s); send(s); }}
+              <button key={s} type="button" onClick={() => { recordSuggestion(s); void send(s); }}
                 className="rounded-full border border-border bg-card px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-card-elev transition-colors">
                 {s}
               </button>
@@ -488,7 +448,7 @@ export function CoachPage() {
         <AnimatePresence>
           {attachedImage && (
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }}
-              className="shrink-0 flex justify-start py-2">
+              className="shrink-0 flex px-4 lg:px-8 py-2">
               <div className="relative">
                 <img src={attachedImage} alt="Attached" className="h-20 w-20 rounded-xl object-cover border border-border" />
                 <button type="button" onClick={() => setAttachedImage(null)} aria-label="Remove image"
@@ -500,58 +460,67 @@ export function CoachPage() {
           )}
         </AnimatePresence>
 
-        {/* Input */}
-        <form onSubmit={(e) => { e.preventDefault(); send(input, attachedImage ?? undefined); }}
-          className={cn("shrink-0 flex items-center gap-1.5 rounded-full bg-card border pl-4 pr-1.5 py-1.5 transition-colors",
+        {/* Input — same pattern as AssistantConsole: textarea, safe-area bottom */}
+        <div className="shrink-0 px-4 lg:px-8" style={{ paddingBottom: "max(env(safe-area-inset-bottom) + 5rem, 1.25rem)" }}>
+          <div className={cn("flex items-end gap-1.5 rounded-2xl bg-card border px-3 py-2 transition-colors",
             voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender")}>
-          <input ref={inputRef} type="text" value={input} onChange={(e) => setInput(e.target.value)}
-            placeholder={voice.recording ? "Listening…" : voice.transcribing ? "Transcribing…" : attachedImage ? "Add a note (optional)…" : "Ask Stry, paste an image, or speak…"}
-            disabled={voice.recording || voice.transcribing}
-            aria-label="Message Stry"
-            className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none py-1 disabled:opacity-50" />
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder={voice.recording ? "Listening…" : voice.transcribing ? "Transcribing…" : "Ask Stry anything…"}
+              disabled={voice.recording || voice.transcribing}
+              aria-label="Message Stry"
+              className="min-w-0 flex-1 resize-none bg-transparent text-[0.95rem] text-text placeholder:text-text-subtle focus:outline-none py-1 disabled:opacity-50 max-h-[120px]"
+              style={{ lineHeight: "1.5" }}
+            />
 
-          {/* Camera + barcode menu */}
-          <div className="relative">
-            <button type="button" aria-label="Add" onClick={() => setMoreMenuOpen((o) => !o)} onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-              <Camera className="h-4 w-4" strokeWidth={1.75} />
+            {/* Attachment menu */}
+            <div className="relative shrink-0 self-end mb-0.5">
+              <button type="button" aria-label="Add" onClick={() => setMoreMenuOpen((o) => !o)} onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
+                <ImagePlus className="h-4 w-4" strokeWidth={1.75} />
+              </button>
+              <AnimatePresence>
+                {moreMenuOpen && (
+                  <motion.div initial={{ opacity: 0, y: 4, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 4, scale: 0.96 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute bottom-full mb-2 right-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20">
+                    <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                      <ImagePlus className="h-4 w-4" strokeWidth={1.75} /> Photo / camera
+                    </button>
+                    <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                      <Barcode className="h-4 w-4" strokeWidth={1.75} /> Scan barcode
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Voice */}
+            <button type="button" aria-label={voice.recording ? "Stop" : "Voice"} onClick={() => voice.recording ? voice.stop() : voice.start()}
+              disabled={voice.transcribing}
+              className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-50 shrink-0 self-end mb-0.5",
+                voice.recording ? "bg-peach text-ink" : "text-text-muted hover:bg-card-elev")}>
+              {voice.transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> :
+                voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> :
+                <Mic className="h-4 w-4" strokeWidth={1.75} />}
             </button>
-            <AnimatePresence>
-              {moreMenuOpen && (
-                <motion.div initial={{ opacity: 0, y: 4, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 4, scale: 0.96 }}
-                  transition={{ duration: 0.12 }}
-                  className="absolute bottom-full mb-2 right-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20">
-                  <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
-                    <ImagePlus className="h-4 w-4" strokeWidth={1.75} /> Photo / camera
-                  </button>
-                  <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
-                    <Barcode className="h-4 w-4" strokeWidth={1.75} /> Scan barcode
-                  </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+
+            <motion.button type="button" aria-label="Send"
+              onClick={() => { void send(input, attachedImage ?? undefined); if (inputRef.current) inputRef.current.style.height = "auto"; }}
+              disabled={(!input.trim() && !attachedImage) || thinking}
+              animate={{ scale: (input.trim() || attachedImage) ? 1 : 0.88, opacity: (input.trim() || attachedImage) ? 1 : 0.45 }}
+              transition={SPRING}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed self-end mb-0.5">
+              <ArrowUp className="h-4 w-4" strokeWidth={2.25} />
+            </motion.button>
           </div>
-
-          {/* Voice */}
-          <button type="button" aria-label={voice.recording ? "Stop" : "Voice"} onClick={() => voice.recording ? voice.stop() : voice.start()}
-            disabled={voice.transcribing}
-            className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-50",
-              voice.recording ? "bg-peach text-ink" : "text-text-muted hover:bg-card-elev")}>
-            {voice.transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> :
-              voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> :
-              <Mic className="h-4 w-4" strokeWidth={1.75} />}
-          </button>
-
-          <motion.button type="submit" aria-label="Send"
-            disabled={(!input.trim() && !attachedImage) || thinking}
-            animate={{ scale: (input.trim() || attachedImage) ? 1 : 0.88, opacity: (input.trim() || attachedImage) ? 1 : 0.45 }}
-            transition={SPRING}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed">
-            <ArrowUp className="h-4 w-4" strokeWidth={2.25} />
-          </motion.button>
-        </form>
+        </div>
       </div>
     </div>
   );

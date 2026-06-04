@@ -448,6 +448,17 @@ export const getTodayBrief = query({
     }
     const checkIn = checkInQuestions.slice(0, 3);
 
+    // Filter out check-in questions already answered today (recorded via behavior events)
+    const todayStr = today;
+    const answeredToday = await ctx.db
+      .query("user_behavior")
+      .withIndex("by_user_kind", (q) => q.eq("userId", userId).eq("kind", "checkin"))
+      .filter((q) => q.eq(q.field("date"), todayStr))
+      .collect()
+      .then((rows) => new Set(rows.map((r) => r.key)));
+
+    const unansweredCheckIn = checkIn.filter((q) => !answeredToday.has(q.id));
+
     return {
       window,
       headline,
@@ -460,13 +471,13 @@ export const getTodayBrief = query({
         why: doToday.reason,
         tone,
       },
-      checkIn: (checkIn.length && !hasHomepageMessagesToday) ? {
+      checkIn: (unansweredCheckIn.length && !hasHomepageMessagesToday) ? {
         type: "quick_question",
-        id: checkIn[0].id,
-        title: checkIn[0].title,
-        body: checkIn[0].body,
-        options: checkIn[0].options,
-        queue: checkIn,
+        id: unansweredCheckIn[0].id,
+        title: unansweredCheckIn[0].title,
+        body: unansweredCheckIn[0].body,
+        options: unansweredCheckIn[0].options,
+        queue: unansweredCheckIn,
       } : null,
       stats: {
         todayCals: Math.round(todayCals),
