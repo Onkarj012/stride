@@ -49,7 +49,7 @@ function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast:
       <div className="shrink-0 w-7 h-7 mt-1 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[11px] font-bold text-lavender">S</div>
       <div className="flex flex-col gap-1 min-w-0">
         <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-2.5">
-          <Markdown>{text}</Markdown>
+          <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
         </div>
         <div className="flex items-center gap-3 ml-1">
           {agent && agent !== "main" && <AgentBadge agent={agent} />}
@@ -68,7 +68,7 @@ function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast:
 function UserBubble({ text, onEdit }: { text: string; onEdit: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div className="flex flex-col items-end gap-1 max-w-[85%]">
+    <div className="flex flex-col items-end gap-1 max-w-[85%] group">
       <div className="rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-4 py-2.5 text-[0.95rem] leading-relaxed whitespace-pre-wrap text-text">
         {text}
       </div>
@@ -317,7 +317,7 @@ export function CoachPage() {
         }}
       >
         {/* Toggle button — always at top, never moves */}
-        <div className="flex items-center px-2.5 pt-2 pb-2 shrink-0">
+        <div className="flex items-center px-1 pt-4 pb-2 shrink-0 justify-center">
           <button
             type="button"
             onClick={() => setPanelOpen((o) => !o)}
@@ -329,11 +329,11 @@ export function CoachPage() {
           >
             <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
           </button>
-          {panelOpen && <span className="ml-2 text-[13px] font-bold text-text whitespace-nowrap overflow-hidden">Chats</span>}
+          {panelOpen && <span className="ml-2 flex-1 text-[13px] font-bold text-text whitespace-nowrap overflow-hidden">Chats</span>}
         </div>
 
         {/* New chat button — visible in both collapsed and expanded states */}
-        <div className="flex items-center px-2.5 pb-3 shrink-0">
+        <div className="flex items-center px-1 pb-3 shrink-0 justify-center">
           <button
             type="button"
             onClick={newChat}
@@ -342,7 +342,7 @@ export function CoachPage() {
           >
             <Plus className="h-4 w-4" strokeWidth={2} />
           </button>
-          {panelOpen && <span className="ml-2 text-[13px] font-semibold text-text whitespace-nowrap overflow-hidden">New chat</span>}
+          {panelOpen && <span className="ml-2 flex-1 text-[13px] font-semibold text-text whitespace-nowrap overflow-hidden">New chat</span>}
         </div>
 
         {/* Sidebar content — only visible when open */}
