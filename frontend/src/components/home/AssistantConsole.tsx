@@ -210,15 +210,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setAgentActions(initialActions);
   }, [initialActionKey, messages.length]);
 
-  // Scroll to bottom — two passes: immediate + 350ms after animation completes
+  // Scroll to bottom when content changes
   useEffect(() => {
-    const scroll = () => {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    };
-    scroll(); // immediate (works for messages)
-    const t = setTimeout(scroll, 350); // after height:auto animation (works for cards)
-    return () => clearTimeout(t);
-  }, [messages.length, thinking, pendingDrafts.length, freshTs]);
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages.length, thinking, pendingDrafts.length, agentActions.length, freshTs]);
 
   /* ── Voice (Groq Whisper) ── */
   const onTranscript = useCallback((t: string) => {
@@ -717,12 +712,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             </div>
           )}
 
-          {/* Inline action cards — animated in/out */}
+          {/* Inline action cards */}
           <AnimatePresence>
             {agentActions.map((action, i) => (
               <motion.div key={`${action.type}-${i}`}
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }} className="overflow-hidden flex justify-start">
+                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15 }}>
                 <div className="max-w-[88%] lg:max-w-[70%] w-full">
                   <AgentActionCard action={action} />
                 </div>
@@ -730,12 +725,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             ))}
           </AnimatePresence>
 
-          {/* Inline confirm cards — animated in/out, no blank space on dismiss */}
+          {/* Inline confirm cards */}
           <AnimatePresence>
             {pendingDrafts.map((draft, i) => (
               <motion.div key={`draft-${i}`}
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }} className="overflow-hidden flex justify-start">
+                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15 }}>
                 <div className="w-full max-w-[88%] lg:max-w-[420px]">
                   <LogConfirmCard
                     draft={draft}
