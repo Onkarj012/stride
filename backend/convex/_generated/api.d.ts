@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as agents from "../agents.js";
 import type * as ai from "../ai.js";
+import type * as ai_utils from "../ai_utils.js";
 import type * as behavior from "../behavior.js";
 import type * as calibration from "../calibration.js";
 import type * as calorie_engine from "../calorie_engine.js";
@@ -35,6 +37,7 @@ import type * as tdee_engine from "../tdee_engine.js";
 import type * as unit_converter from "../unit_converter.js";
 import type * as users from "../users.js";
 import type * as wellness from "../wellness.js";
+import type * as workout_memory from "../workout_memory.js";
 import type * as workout_scorer from "../workout_scorer.js";
 import type * as workouts from "../workouts.js";
 
@@ -45,7 +48,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agents: typeof agents;
   ai: typeof ai;
+  ai_utils: typeof ai_utils;
   behavior: typeof behavior;
   calibration: typeof calibration;
   calorie_engine: typeof calorie_engine;
@@ -72,6 +77,7 @@ declare const fullApi: ApiFromModules<{
   unit_converter: typeof unit_converter;
   users: typeof users;
   wellness: typeof wellness;
+  workout_memory: typeof workout_memory;
   workout_scorer: typeof workout_scorer;
   workouts: typeof workouts;
 }>;

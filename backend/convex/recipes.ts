@@ -1,4 +1,4 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import {
   buildNutritionResult,
@@ -209,5 +209,23 @@ export const logRecipe = mutation({
       structuredItems: JSON.stringify(breakdown.items),
       ingredientBreakdown: JSON.stringify(breakdown),
     });
+  },
+});
+
+export const getTopRecipesForContext = internalQuery({
+  args: { userId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { userId, limit = 8 }) => {
+    const rows = await ctx.db
+      .query("recipes")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+    return rows.slice(0, limit).map((r) => ({
+      name: r.name,
+      servings: r.servings,
+      kcalPerServing: r.perServing.kcal,
+      proteinPerServing: r.perServing.p,
+      carbsPerServing: r.perServing.c,
+      fatPerServing: r.perServing.f,
+    }));
   },
 });

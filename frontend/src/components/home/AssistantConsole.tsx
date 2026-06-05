@@ -134,10 +134,29 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Track which message id was the fresh one (so only it animates)
   const [freshTs, setFreshTs] = useState<number | null>(null);
   const [agentHint, setAgentHint] = useState<Agent>("main");
-  const [agentActions, setAgentActions] = useState<AgentAction[]>([]);
+  const [agentActions, setAgentActions] = useState<AgentAction[]>(initialActions);
 
-  // ConfirmModal queue
-  const [pendingDrafts, setPendingDrafts] = useState<any[]>([]);
+  // Sync initialActions when getTodayBrief loads (it arrives async after first render)
+  const prevInitialRef = useRef<AgentAction[]>(initialActions);
+  useEffect(() => {
+    if (initialActions !== prevInitialRef.current) {
+      prevInitialRef.current = initialActions;
+      // Only inject if no actions currently showing (don't interrupt an active conversation)
+      setAgentActions((cur) => cur.length === 0 ? initialActions : cur);
+    }
+  }, [initialActions]);
+
+  // ConfirmModal queue — persisted in sessionStorage so navigation doesn't lose pending cards
+  const [pendingDrafts, setPendingDraftsRaw] = useState<any[]>(() => {
+    try { return JSON.parse(sessionStorage.getItem("stride_pending_drafts") ?? "[]"); } catch { return []; }
+  });
+  const setPendingDrafts = useCallback((updater: any[] | ((prev: any[]) => any[])) => {
+    setPendingDraftsRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { sessionStorage.setItem("stride_pending_drafts", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
   const pendingTier2Ref = useRef<string>("");
 
   // Auto-applied memory drafts → instant log + undo toast
@@ -153,11 +172,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomSentinelRef = useRef<HTMLDivElement>(null);
   const activeRef = inputRef ?? internalRef;
   const toast = useToast();
 
   // Persistent homepage chat: load history from Convex.
-  const homepageChat = useQuery(api.chat.getHomepageMessages, {});
+  const homepageChat = useQuery(api.chat.getHomepageMessages, { date: localDateStr() });
   const messages = homepageChat?.messages ?? [];
   const initialActionKey = initialActions.map((a) => `${a.type}:${"id" in a ? a.id : ""}`).join("|");
 
@@ -190,11 +210,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setAgentActions(initialActions);
   }, [initialActionKey, messages.length]);
 
-  // Scroll to bottom on new messages AND during streaming
+  // Scroll to bottom when content changes
   useEffect(() => {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length, thinking, pendingDrafts.length, freshTs]);
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages.length, thinking, pendingDrafts.length, agentActions.length, freshTs]);
 
   /* ── Voice (Groq Whisper) ── */
   const onTranscript = useCallback((t: string) => {
@@ -278,6 +297,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           nutritionSource: d.nutritionSource,
           foodMemoryId: d.foodMemoryId,
         });
+        void recordBehavior({ kind: "log", key: "meal_confirm" }).catch(() => {});
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
         if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
       } else if (d.kind === "workout") {
@@ -388,7 +408,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
     if (button.value === "skip" || button.value === "done") {
-      void recordBehavior({ kind: "checkin", key: button.value, value: action && "id" in action ? action.id : undefined }).catch(() => {});
+      // Record the question id (not the button value) so getTodayBrief can filter it out today
+      const questionId = action && "id" in action ? action.id : button.value;
+      void recordBehavior({ kind: "checkin", key: questionId }).catch(() => {});
       setAgentActions((_prev) => {
         const current = action && "queue" in action ? action.queue ?? [] : [];
         const [, ...rest] = current;
@@ -409,6 +431,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     if (button.prompt) {
       void recordBehavior({ kind: "checkin", key: action && "id" in action ? action.id : "action", value: button.value }).catch(() => {});
+      setAgentActions([]);
       void send(button.prompt);
       return;
     }
@@ -689,12 +712,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             </div>
           )}
 
-          {/* Inline action cards — animated in/out */}
+          {/* Inline action cards */}
           <AnimatePresence>
             {agentActions.map((action, i) => (
               <motion.div key={`${action.type}-${i}`}
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }} className="overflow-hidden flex justify-start">
+                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15 }}>
                 <div className="max-w-[88%] lg:max-w-[70%] w-full">
                   <AgentActionCard action={action} />
                 </div>
@@ -702,12 +725,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             ))}
           </AnimatePresence>
 
-          {/* Inline confirm cards — animated in/out, no blank space on dismiss */}
+          {/* Inline confirm cards */}
           <AnimatePresence>
             {pendingDrafts.map((draft, i) => (
               <motion.div key={`draft-${i}`}
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.2 }} className="overflow-hidden flex justify-start">
+                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15 }}>
                 <div className="w-full max-w-[88%] lg:max-w-[420px]">
                   <LogConfirmCard
                     draft={draft}
@@ -718,6 +741,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
               </motion.div>
             ))}
           </AnimatePresence>
+
+          {/* Sentinel — always at the very bottom so scrollIntoView reaches past cards */}
+          <div ref={bottomSentinelRef} className="shrink-0 h-1" />
         </div>
 
         {/* Attachment previews */}
@@ -780,6 +806,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
               <button type="button" onClick={() => {
                 const d = autoLoggedMeal.draft;
                 setEditEntry({ _id: autoLoggedMeal.mealId, name: d.name, calories: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, time: d.time, mealType: d.mealType ?? "unspecified" });
+                void recordBehavior({ kind: "log", key: "meal_correct" }).catch(() => {});
                 if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
                 setAutoLoggedMeal(null);
               }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold">

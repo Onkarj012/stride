@@ -1,4 +1,4 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 
 async function requireUserId(ctx: any): Promise<string> {
@@ -202,5 +202,24 @@ export const getTodaySummary = query({
       lastMood: mood.length > 0 ? mood[mood.length - 1].rating : null,
       steps: steps?.count ?? 0,
     };
+  },
+});
+
+// ─── Internal: last sleep for AI context ────────────────────────────────────
+
+export const getLastSleepForContext = internalQuery({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().split("T")[0];
+    const today = new Date().toISOString().split("T")[0];
+    // Check today first, then yesterday
+    for (const date of [today, yesterday]) {
+      const row = await ctx.db
+        .query("sleep_logs")
+        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
+        .first();
+      if (row) return { hours: row.hours, quality: row.quality, date: row.date };
+    }
+    return null;
   },
 });

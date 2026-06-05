@@ -78,18 +78,44 @@ export function getCoach(type?: string): CoachConfig {
   return COACHES[(type as CoachType) ?? "overall"] ?? COACHES.overall;
 }
 
-/** Tone instruction derived from the user's coachingStyle preference. */
-export function toneInstruction(coachingStyle?: string | null): string {
+/** Tone instruction derived from the user's coachingStyle preference + runtime state. */
+export function toneInstruction(
+  coachingStyle?: string | null,
+  opts?: { sleepHours?: number; sleepQuality?: string; acceptRate?: number },
+): string {
+  const lines: string[] = [];
+
+  // Base coaching style preference
   switch (coachingStyle) {
     case "motivating":
-      return "Tone: high-energy and motivating — celebrate wins and push with encouragement.";
+      lines.push("Tone: high-energy and motivating — celebrate wins and push with encouragement.");
+      break;
     case "analytical":
-      return "Tone: analytical and data-first — lead with the numbers and the reasoning.";
+      lines.push("Tone: analytical and data-first — lead with the numbers and the reasoning.");
+      break;
     case "gentle":
-      return "Tone: gentle and supportive — be patient, low-pressure, and reassuring.";
-    default:
-      return "";
+      lines.push("Tone: gentle and supportive — be patient, low-pressure, and reassuring.");
+      break;
   }
+
+  // Phase 3: sleep state adjusts tone
+  if (opts?.sleepHours != null && opts.sleepHours < 6.5) {
+    lines.push(
+      `Recovery mode: user slept only ${opts.sleepHours.toFixed(1)}h (${opts.sleepQuality ?? "poor"} quality). ` +
+      "Be gentle, simplify recommendations, avoid aggressive targets, emphasise rest and recovery.",
+    );
+  }
+
+  // Phase 4: acceptance rate — if user rarely corrects, be more confident; if often, hedge more
+  if (opts?.acceptRate != null) {
+    if (opts.acceptRate < 0.4) {
+      lines.push("This user frequently corrects estimates — be more tentative, offer ranges, ask for confirmation.");
+    } else if (opts.acceptRate > 0.8) {
+      lines.push("This user rarely corrects estimates — be direct and confident in your estimates.");
+    }
+  }
+
+  return lines.join("\n");
 }
 
 /** Compact behavior summary line to inject into the AI system context. */
@@ -97,12 +123,14 @@ export function behaviorSummary(profile?: {
   preferredCoach?: string | null;
   engagedWindows?: string[];
   topSuggestions?: string[];
+  acceptRate?: number;
 } | null): string {
   if (!profile) return "";
   const parts: string[] = [];
   if (profile.preferredCoach) parts.push(`most-used specialist: ${profile.preferredCoach}`);
   if (profile.engagedWindows?.length) parts.push(`most active: ${profile.engagedWindows.join("/")}`);
   if (profile.topSuggestions?.length) parts.push(`acts on: ${profile.topSuggestions.slice(0, 3).join(", ")}`);
+  if (profile.acceptRate != null) parts.push(`estimate acceptance: ${Math.round(profile.acceptRate * 100)}%`);
   return parts.length ? `Behavioral signals — ${parts.join("; ")}.` : "";
 }
 

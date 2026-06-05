@@ -872,7 +872,7 @@ export const chat = action({
     const today = todayArg ?? new Date().toISOString().split("T")[0];
 
     // Gather context
-    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
@@ -880,6 +880,10 @@ export const chat = action({
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
       ctx.runQuery(internal.behavior.getBehaviorProfileForContext, { userId }),
       ctx.runQuery(internal.food_memory.getTopForContext, { userId, limit: 8 }),
+      ctx.runQuery(internal.wellness.getLastSleepForContext, { userId }),
+      ctx.runQuery(internal.patterns.getPatternsForContext, { userId }),
+      ctx.runQuery(internal.recipes.getTopRecipesForContext, { userId }),
+      ctx.runQuery(internal.workout_memory.getTopForContext, { userId, limit: 6 }),
     ]);
 
     const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
@@ -973,9 +977,45 @@ Rules:
       }
     }
 
-    // Behavioral memory + tone layer (no behavior → unchanged baseline)
-    const behaviorLine = behaviorSummary(behavior);
-    const toneLine = toneInstruction(settings?.coachingStyle);
+    // Known workout memory
+    if (Array.isArray(topWorkoutMemory) && topWorkoutMemory.length > 0) {
+      contextBlock += `\nUSER'S KNOWN WORKOUTS (from memory):\n`;
+      for (const w of topWorkoutMemory as any[]) {
+        const parts = [`${w.name} (logged ${w.timesLogged}×)`];
+        if (w.intensity) parts.push(w.intensity);
+        if (w.durationMin) parts.push(`~${Math.round(w.durationMin)} min`);
+        if (w.caloriesBurned) parts.push(`~${Math.round(w.caloriesBurned)} kcal`);
+        contextBlock += `- ${parts.join(", ")}\n`;
+      }
+    }
+
+    // Saved recipes
+    if (Array.isArray(topRecipes) && topRecipes.length > 0) {
+      contextBlock += `\nUSER'S SAVED RECIPES:\n`;
+      for (const r of topRecipes as any[]) {
+        contextBlock += `- ${r.name} (${r.servings} servings): ${r.kcalPerServing} kcal/serving, P:${r.proteinPerServing}g C:${r.carbsPerServing}g F:${r.fatPerServing}g\n`;
+      }
+    }
+
+    // Last night's sleep (Phase 3: cross-domain)
+    if (lastSleep) {
+      const sleepLabel = (lastSleep as any).date === today ? "Today" : "Last night";
+      contextBlock += `\nSLEEP: ${sleepLabel} — ${(lastSleep as any).hours}h, quality: ${(lastSleep as any).quality}\n`;
+    }
+
+    // Behavioral patterns (Phase 1b)
+    if (Array.isArray(patterns) && patterns.length > 0) {
+      contextBlock += `\nBEHAVIORAL PATTERNS (last 28 days):\n`;
+      for (const p of patterns as string[]) contextBlock += `- ${p}\n`;
+    }
+
+    // Behavioral memory + tone layer (Phase 3+4: sleep + acceptance rate)
+    const behaviorLine = behaviorSummary({ ...(behavior ?? {}), acceptRate: (behavior as any)?.acceptRate ?? null });
+    const toneLine = toneInstruction(settings?.coachingStyle, {
+      sleepHours: lastSleep ? (lastSleep as any).hours : undefined,
+      sleepQuality: lastSleep ? (lastSleep as any).quality : undefined,
+      acceptRate: (behavior as any)?.acceptRate ?? undefined,
+    });
     const personaSuffix = [behaviorLine, toneLine].filter(Boolean).join("\n");
 
     const messages: AIMessage[] = [
@@ -1794,7 +1834,7 @@ export const homepageInput = action({
 
     // Make sure we have a homepage session to persist into
     const activeSessionId = sessionId
-      ?? (await ctx.runMutation(internal.chat.getOrCreateHomepageSession, { userId }));
+      ?? (await ctx.runMutation(internal.chat.getOrCreateHomepageSession, { userId, date: today }));
 
     // Save user message immediately
     await ctx.runMutation(internal.chat.addMessage, {
@@ -1803,6 +1843,13 @@ export const homepageInput = action({
       role: "user",
       content: message,
     });
+
+    // Phase 5: MemoryAgent — fire-and-forget fact extraction (does not block response)
+    ctx.runAction(internal.agents.runMemoryAgentAction, {
+      userId, message, today,
+      model: settings?.openRouterModel ?? undefined,
+      apiKey: settings?.openRouterKey ?? undefined,
+    }).catch(() => {});
 
     // Heuristic pre-check
     const estimateMode = looksLikeFoodEstimate(message);
@@ -1925,20 +1972,49 @@ Return ONLY:
     if (extracted.isQuestion || extracted.items.length === 0) {
       const coachType: CoachType = classifyCoachType(message);
       const coach = getCoach(coachType);
-      const [todayMealsList, todayWorkoutsList, profile, history, topMemories] = await Promise.all([
+      const [todayMealsList, todayWorkoutsList, profile, history, topMemories, lastSleepQ, patternsQ, topRecipesQ, topWkMemQ, behaviorQ, settingsQ] = await Promise.all([
         ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
         ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
         ctx.runQuery(internal.profile.getProfileForContext, { userId }),
         ctx.runQuery(internal.chat.getMessagesForContext, { userId, sessionId: activeSessionId }),
         ctx.runQuery(internal.food_memory.getTopForContext, { userId, limit: 6 }),
+        ctx.runQuery(internal.wellness.getLastSleepForContext, { userId }),
+        ctx.runQuery(internal.patterns.getPatternsForContext, { userId }),
+        ctx.runQuery(internal.recipes.getTopRecipesForContext, { userId, limit: 5 }),
+        ctx.runQuery(internal.workout_memory.getTopForContext, { userId, limit: 4 }),
+        ctx.runQuery(internal.behavior.getBehaviorProfileForContext, { userId }),
+        ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
       ]);
       const userName = identity.name ?? "Athlete";
       let context = `USER: ${userName}\n`;
       if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
+      if (profile?.proteinTarget) context += `Protein target: ${profile.proteinTarget}g\n`;
+      if (profile?.dietaryPreference && profile.dietaryPreference !== "none") {
+        context += `Diet: ${profile.dietaryPreference}\n`;
+      }
       context += `Today: ${todayMealsList.length} meals, ${todayWorkoutsList.length} workouts logged.\n`;
       if (Array.isArray(topMemories) && topMemories.length > 0) {
         context += `Known foods: ${(topMemories as any[]).map((m: any) => `${m.name} (~${m.kcal} kcal)`).join(", ")}\n`;
       }
+      if (Array.isArray(topRecipesQ) && topRecipesQ.length > 0) {
+        context += `Saved recipes: ${(topRecipesQ as any[]).map((r: any) => `${r.name} (${r.kcalPerServing} kcal/srv)`).join(", ")}\n`;
+      }
+      if (Array.isArray(topWkMemQ) && topWkMemQ.length > 0) {
+        context += `Known workouts: ${(topWkMemQ as any[]).map((w: any) => `${w.name}`).join(", ")}\n`;
+      }
+      if (lastSleepQ) {
+        context += `Last sleep: ${(lastSleepQ as any).hours}h, ${(lastSleepQ as any).quality}\n`;
+      }
+      if (Array.isArray(patternsQ) && patternsQ.length > 0) {
+        context += `Patterns: ${(patternsQ as string[]).join(" | ")}\n`;
+      }
+
+      const toneOpts = {
+        sleepHours: lastSleepQ ? (lastSleepQ as any).hours : undefined,
+        sleepQuality: lastSleepQ ? (lastSleepQ as any).quality : undefined,
+        acceptRate: (behaviorQ as any)?.acceptRate ?? undefined,
+      };
+      const tone = toneInstruction(settingsQ?.coachingStyle, toneOpts);
 
       // Drop the trailing user message (we already saved it) when injecting history
       const trimmedHistory = (history as { role: string; content: string }[])
@@ -1946,8 +2022,9 @@ Return ONLY:
         .slice(-12) // keep only last ~12 turns to stay within context
         .map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content }));
 
+      const systemContent = `${coach.systemPrompt}${tone ? `\n\n${tone}` : ""}\n\n${context}\n\nKeep your reply concise — under 60 words unless the user asks for detail.`;
       const replyMessages: AIMessage[] = [
-        { role: "system", content: `${coach.systemPrompt}\n\n${context}\n\nKeep your reply concise — under 60 words.` },
+        { role: "system", content: systemContent },
         ...trimmedHistory,
         image
           ? { role: "user", content: [{ type: "text", text: message }, { type: "image_url", image_url: { url: image } }] }
