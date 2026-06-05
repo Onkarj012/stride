@@ -134,7 +134,17 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Track which message id was the fresh one (so only it animates)
   const [freshTs, setFreshTs] = useState<number | null>(null);
   const [agentHint, setAgentHint] = useState<Agent>("main");
-  const [agentActions, setAgentActions] = useState<AgentAction[]>([]);
+  const [agentActions, setAgentActions] = useState<AgentAction[]>(initialActions);
+
+  // Sync initialActions when getTodayBrief loads (it arrives async after first render)
+  const prevInitialRef = useRef<AgentAction[]>(initialActions);
+  useEffect(() => {
+    if (initialActions !== prevInitialRef.current) {
+      prevInitialRef.current = initialActions;
+      // Only inject if no actions currently showing (don't interrupt an active conversation)
+      setAgentActions((cur) => cur.length === 0 ? initialActions : cur);
+    }
+  }, [initialActions]);
 
   // ConfirmModal queue
   const [pendingDrafts, setPendingDrafts] = useState<any[]>([]);
@@ -389,7 +399,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
     if (button.value === "skip" || button.value === "done") {
-      void recordBehavior({ kind: "checkin", key: button.value, value: action && "id" in action ? action.id : undefined }).catch(() => {});
+      // Record the question id (not the button value) so getTodayBrief can filter it out today
+      const questionId = action && "id" in action ? action.id : button.value;
+      void recordBehavior({ kind: "checkin", key: questionId }).catch(() => {});
       setAgentActions((_prev) => {
         const current = action && "queue" in action ? action.queue ?? [] : [];
         const [, ...rest] = current;
@@ -410,6 +422,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     if (button.prompt) {
       void recordBehavior({ kind: "checkin", key: action && "id" in action ? action.id : "action", value: button.value }).catch(() => {});
+      setAgentActions([]);
       void send(button.prompt);
       return;
     }
