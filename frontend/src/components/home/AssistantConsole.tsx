@@ -146,8 +146,17 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
   }, [initialActions]);
 
-  // ConfirmModal queue
-  const [pendingDrafts, setPendingDrafts] = useState<any[]>([]);
+  // ConfirmModal queue — persisted in sessionStorage so navigation doesn't lose pending cards
+  const [pendingDrafts, setPendingDraftsRaw] = useState<any[]>(() => {
+    try { return JSON.parse(sessionStorage.getItem("stride_pending_drafts") ?? "[]"); } catch { return []; }
+  });
+  const setPendingDrafts = useCallback((updater: any[] | ((prev: any[]) => any[])) => {
+    setPendingDraftsRaw((prev) => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { sessionStorage.setItem("stride_pending_drafts", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
   const pendingTier2Ref = useRef<string>("");
 
   // Auto-applied memory drafts → instant log + undo toast
@@ -203,7 +212,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Scroll to bottom on new messages AND during streaming
   useEffect(() => {
     if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    // Use a small delay so animated cards (height 0→auto) have time to expand
+    const t = setTimeout(() => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }, 220);
+    return () => clearTimeout(t);
   }, [messages.length, thinking, pendingDrafts.length, freshTs]);
 
   /* ── Voice (Groq Whisper) ── */
