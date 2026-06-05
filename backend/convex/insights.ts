@@ -156,7 +156,7 @@ export const getTodayBrief = query({
     const homepageSession = await ctx.db
       .query("chat_sessions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("title"), "__HOMEPAGE__"))
+      .filter((q) => q.eq(q.field("title"), `__HOMEPAGE_${today}__`))
       .first();
     const todayStartMs = new Date(today + "T00:00:00.000Z").getTime();
     let hasHomepageMessagesToday = false;

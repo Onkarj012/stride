@@ -167,7 +167,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const toast = useToast();
 
   // Persistent homepage chat: load history from Convex.
-  const homepageChat = useQuery(api.chat.getHomepageMessages, {});
+  const homepageChat = useQuery(api.chat.getHomepageMessages, { date: localDateStr() });
   const messages = homepageChat?.messages ?? [];
   const initialActionKey = initialActions.map((a) => `${a.type}:${"id" in a ? a.id : ""}`).join("|");
 

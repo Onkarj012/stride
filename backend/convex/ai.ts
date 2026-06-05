@@ -1834,7 +1834,7 @@ export const homepageInput = action({
 
     // Make sure we have a homepage session to persist into
     const activeSessionId = sessionId
-      ?? (await ctx.runMutation(internal.chat.getOrCreateHomepageSession, { userId }));
+      ?? (await ctx.runMutation(internal.chat.getOrCreateHomepageSession, { userId, date: today }));
 
     // Save user message immediately
     await ctx.runMutation(internal.chat.addMessage, {

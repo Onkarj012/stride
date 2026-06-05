@@ -19,12 +19,17 @@ export const getSessions = query({
     return allSessions
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .map((s) => {
-        const isHome = s.title.startsWith("__");
-        // Use cached previewTitle if set (written by updateSessionTitleFromAI / touchSession)
-        // For legacy sessions with no preview, fall back to truncated title or "Home chat"
-        const title = isHome
-          ? s.previewTitle ?? "Home chat"
-          : s.title;
+        const isHome = isHomepageTitle(s.title);
+        // For home sessions, show "Home · Jun 4" style label
+        let title = s.title;
+        if (isHome) {
+          const dateStr = s.title.replace("__HOMEPAGE_", "").replace("__", "");
+          const d = new Date(dateStr + "T00:00:00");
+          const isToday = dateStr === new Date().toISOString().split("T")[0];
+          title = isToday
+            ? "Home · Today"
+            : `Home · ${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+        }
         return { id: s._id, title, updatedAt: s.updatedAt, isHome };
       });
   },
@@ -139,7 +144,7 @@ export const addMessage = internalMutation({
     // Cache first user message as previewTitle on homepage sessions (avoids N+1 in getSessions)
     if (args.role === "user" && args.sessionId) {
       const session = await ctx.db.get(args.sessionId);
-      if (session && session.title.startsWith("__") && !session.previewTitle) {
+      if (session && isHomepageTitle(session.title) && !session.previewTitle) {
         await ctx.db.patch(args.sessionId, { previewTitle: args.content.slice(0, 40).trim() });
       }
     }
@@ -163,42 +168,43 @@ export const touchSession = internalMutation({
 
 // ─── Homepage chat session ─────────────────────────────────────────────────
 //
-// The homepage uses ONE persistent chat session per user, identified by the
-// title prefix "__HOMEPAGE__". This keeps history continuous across reloads
-// without leaking the homepage thread into the user's named coach sessions.
+// Each calendar day gets its own homepage session, titled "__HOMEPAGE_YYYY-MM-DD__".
+// This keeps daily conversations separate while preserving full history in
+// the CoachPage session list.
 
-const HOMEPAGE_TITLE = "__HOMEPAGE__";
+const homepageTitle = (date: string) => `__HOMEPAGE_${date}__`;
+const isHomepageTitle = (t: string) => t.startsWith("__HOMEPAGE_");
 
 export const getOrCreateHomepageSession = internalMutation({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
+  args: { userId: v.string(), date: v.optional(v.string()) },
+  handler: async (ctx, { userId, date }) => {
+    const today = date ?? new Date().toISOString().split("T")[0];
+    const title = homepageTitle(today);
     const existing = await ctx.db
       .query("chat_sessions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("title"), HOMEPAGE_TITLE))
+      .filter((q) => q.eq(q.field("title"), title))
       .first();
     if (existing) return existing._id;
     return ctx.db.insert("chat_sessions", {
       userId,
-      title: HOMEPAGE_TITLE,
+      title,
       updatedAt: Date.now(),
+      previewTitle: today,  // show the date as the label in CoachPage
     });
   },
 });
 
-/**
- * Public query for the homepage to fetch its persistent chat thread.
- * Returns messages in chronological order, capped at the most recent 30
- * (the homepage UI doesn't need long history; the agent keeps last 12 in context).
- */
 export const getHomepageMessages = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { date: v.optional(v.string()) },
+  handler: async (ctx, { date }) => {
     const userId = await requireUserId(ctx);
+    const today = date ?? new Date().toISOString().split("T")[0];
+    const title = homepageTitle(today);
     const session = await ctx.db
       .query("chat_sessions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("title"), HOMEPAGE_TITLE))
+      .filter((q) => q.eq(q.field("title"), title))
       .first();
     if (!session) return { sessionId: null, messages: [] as { role: string; content: string; ts: number }[] };
     const messages = await ctx.db
@@ -213,17 +219,16 @@ export const getHomepageMessages = query({
   },
 });
 
-/**
- * Clear the homepage chat thread. Useful for "start fresh" UX.
- */
 export const clearHomepageMessages = mutation({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
+    const today = new Date().toISOString().split("T")[0];
+    const title = homepageTitle(today);
     const session = await ctx.db
       .query("chat_sessions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("title"), HOMEPAGE_TITLE))
+      .filter((q) => q.eq(q.field("title"), title))
       .first();
     if (!session) return;
     const messages = await ctx.db
