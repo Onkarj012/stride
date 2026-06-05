@@ -210,11 +210,13 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setAgentActions(initialActions);
   }, [initialActionKey, messages.length]);
 
-  // Scroll to bottom — wait 250ms so height:auto animations finish before we measure
+  // Scroll to bottom — two passes: immediate + 350ms after animation completes
   useEffect(() => {
-    const t = setTimeout(() => {
-      bottomSentinelRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-    }, 250);
+    const scroll = () => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    };
+    scroll(); // immediate (works for messages)
+    const t = setTimeout(scroll, 350); // after height:auto animation (works for cards)
     return () => clearTimeout(t);
   }, [messages.length, thinking, pendingDrafts.length, freshTs]);
 
@@ -691,22 +693,18 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           aria-live="polite" aria-label="Chat with Stry">
 
           {/* Messages top→bottom, newest at bottom */}
-          {messages.map((m) => {
-            // Suppress the last AI message when a confirm card is showing — it's the same content
-            if (m.ts === lastAiTs && m.role === "ai" && pendingDrafts.length > 0) return null;
-            return (
-              <MessageBubble
-                key={m.ts}
-                role={m.role === "user" ? "user" : "ai"}
-                content={m.content}
-                fresh={freshTs !== null && m.ts === lastAiTs}
-                onEdit={m.role === "user" ? () => {
-                  setTextValue(m.content);
-                  setTimeout(() => activeRef.current?.focus(), 50);
-                } : undefined}
-              />
-            );
-          })}
+          {messages.map((m) => (
+            <MessageBubble
+              key={m.ts}
+              role={m.role === "user" ? "user" : "ai"}
+              content={m.content}
+              fresh={freshTs !== null && m.ts === lastAiTs}
+              onEdit={m.role === "user" ? () => {
+                setTextValue(m.content);
+                setTimeout(() => activeRef.current?.focus(), 50);
+              } : undefined}
+            />
+          ))}
 
           {/* Thinking dots */}
           {thinking && (
