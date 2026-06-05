@@ -302,7 +302,7 @@ export function CoachPage() {
 
   return (
     /* Break out of AppLayout padding — same technique as HomePage */
-    <div className="flex -mx-4 lg:-mx-10 -my-4 lg:-my-10" style={{ height: "100dvh" }}>
+    <div className="flex -mx-4 lg:-mx-10 -my-4 lg:-my-10 overflow-hidden" style={{ height: "100dvh" }}>
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
@@ -373,7 +373,7 @@ export function CoachPage() {
       </div>
 
       {/* Chat column */}
-      <div className="flex flex-col flex-1 min-w-0">
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center gap-3 px-4 lg:px-8 shrink-0 border-b border-border/50"
@@ -462,7 +462,7 @@ export function CoachPage() {
         </AnimatePresence>
 
         {/* Input — same pattern as AssistantConsole: textarea, safe-area bottom */}
-        <div className="shrink-0 px-4 lg:px-8" style={{ paddingBottom: "max(env(safe-area-inset-bottom) + 5rem, 1.25rem)" }}>
+        <div className="shrink-0 px-4 lg:px-8 pb-3" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.75rem)" }}>
           <div className={cn("flex items-end gap-1.5 rounded-2xl bg-card border px-3 py-2 transition-colors",
             voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender")}>
             <textarea
