@@ -275,6 +275,25 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_user_name", ["userId", "normalizedName"]),
 
+  // ─── Personal Ingredient Memory ────────────────────────────────────────────
+  // Stores user-defined ingredient facts extracted from chat (e.g. homemade
+  // paneer macros, cooking oil amounts, custom serving sizes).
+
+  user_ingredients: defineTable({
+    userId: v.string(),
+    normalizedName: v.string(),      // lowercase key for matching, e.g. "homemade paneer"
+    displayName: v.string(),         // user-facing, e.g. "Homemade Paneer"
+    caloriesPer100g: v.optional(v.number()),
+    proteinPer100g: v.optional(v.number()),
+    carbsPer100g: v.optional(v.number()),
+    fatPer100g: v.optional(v.number()),
+    notes: v.optional(v.string()),   // free-text: "made with full-fat milk, no whey drained"
+    source: v.string(),              // "user_stated" | "corrected"
+    lastUpdated: v.string(),         // YYYY-MM-DD
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_name", ["userId", "normalizedName"]),
+
   // ─── Workout Memory (auto-learned workout profiles) ────────────────────────
 
   workout_memory: defineTable({

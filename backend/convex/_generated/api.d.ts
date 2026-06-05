@@ -35,6 +35,7 @@ import type * as recipes from "../recipes.js";
 import type * as seed from "../seed.js";
 import type * as tdee_engine from "../tdee_engine.js";
 import type * as unit_converter from "../unit_converter.js";
+import type * as user_ingredients from "../user_ingredients.js";
 import type * as users from "../users.js";
 import type * as wellness from "../wellness.js";
 import type * as workout_memory from "../workout_memory.js";
@@ -75,6 +76,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   tdee_engine: typeof tdee_engine;
   unit_converter: typeof unit_converter;
+  user_ingredients: typeof user_ingredients;
   users: typeof users;
   wellness: typeof wellness;
   workout_memory: typeof workout_memory;

@@ -133,7 +133,27 @@ function parseJSON<T>(text: string, fallback: T): T {
   try { return JSON.parse(match ? match[0] : text) as T; } catch { return fallback; }
 }
 
-async function parseMealDescription(description: string, mealType: string, time: string, model?: string, apiKey?: string) {
+async function parseMealDescription(
+  description: string,
+  mealType: string,
+  time: string,
+  model?: string,
+  apiKey?: string,
+  userIngredients?: Array<{ name: string; caloriesPer100g?: number; proteinPer100g?: number; carbsPer100g?: number; fatPer100g?: number; notes?: string }>,
+) {
+  const ingredientContext = userIngredients && userIngredients.length > 0
+    ? `\nUSER'S PERSONAL INGREDIENT DATABASE (use these values instead of generic database values when the ingredient name matches):\n` +
+      userIngredients.map((i) => {
+        const macros = [
+          i.caloriesPer100g != null ? `${i.caloriesPer100g} kcal/100g` : null,
+          i.proteinPer100g != null ? `${i.proteinPer100g}g protein/100g` : null,
+          i.fatPer100g != null ? `${i.fatPer100g}g fat/100g` : null,
+          i.carbsPer100g != null ? `${i.carbsPer100g}g carbs/100g` : null,
+        ].filter(Boolean).join(", ");
+        return `- ${i.name}: ${macros || "custom"}${i.notes ? ` (${i.notes})` : ""}`;
+      }).join("\n")
+    : "";
+
   const prompt = `You are a professional nutritionist. Extract structured ingredients from this meal description AND estimate total macros.
 
 Meal type: ${mealType || "unspecified"}
@@ -141,6 +161,7 @@ User's description:
 """
 ${description}
 """
+${ingredientContext}
 
 ${NUTRITION_ACCURACY_RULES}
 
@@ -872,7 +893,7 @@ export const chat = action({
     const today = todayArg ?? new Date().toISOString().split("T")[0];
 
     // Gather context
-    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory, userIngredients] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
@@ -884,6 +905,7 @@ export const chat = action({
       ctx.runQuery(internal.patterns.getPatternsForContext, { userId }),
       ctx.runQuery(internal.recipes.getTopRecipesForContext, { userId }),
       ctx.runQuery(internal.workout_memory.getTopForContext, { userId, limit: 6 }),
+      ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
     ]);
 
     const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
@@ -974,6 +996,19 @@ Rules:
       contextBlock += `\nUSER'S KNOWN FOODS (from memory — use these when the user mentions their usual meals):\n`;
       for (const m of topMemories as any[]) {
         contextBlock += `- ${m.name}: ~${m.kcal} kcal, P:${m.protein}g C:${m.carbs}g F:${m.fat}g (logged ${m.timesLogged}×${m.components ? `, ingredients: ${m.components}` : ""})\n`;
+      }
+    }
+
+    // Personal ingredient database
+    if (Array.isArray(userIngredients) && userIngredients.length > 0) {
+      contextBlock += `\nUSER'S PERSONAL INGREDIENTS (use these instead of generic values when estimating nutrition):\n`;
+      for (const ing of userIngredients as any[]) {
+        const macros = [
+          ing.caloriesPer100g != null ? `${ing.caloriesPer100g} kcal/100g` : null,
+          ing.proteinPer100g != null ? `${ing.proteinPer100g}g P/100g` : null,
+          ing.fatPer100g != null ? `${ing.fatPer100g}g F/100g` : null,
+        ].filter(Boolean).join(", ");
+        contextBlock += `- ${ing.name}: ${macros || "custom"}${ing.notes ? ` (${ing.notes})` : ""}\n`;
       }
     }
 
@@ -1972,7 +2007,7 @@ Return ONLY:
     if (extracted.isQuestion || extracted.items.length === 0) {
       const coachType: CoachType = classifyCoachType(message);
       const coach = getCoach(coachType);
-      const [todayMealsList, todayWorkoutsList, profile, history, topMemories, lastSleepQ, patternsQ, topRecipesQ, topWkMemQ, behaviorQ, settingsQ] = await Promise.all([
+      const [todayMealsList, todayWorkoutsList, profile, history, topMemories, lastSleepQ, patternsQ, topRecipesQ, topWkMemQ, behaviorQ, settingsQ, userIngredientsQ] = await Promise.all([
         ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
         ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
         ctx.runQuery(internal.profile.getProfileForContext, { userId }),
@@ -1984,6 +2019,7 @@ Return ONLY:
         ctx.runQuery(internal.workout_memory.getTopForContext, { userId, limit: 4 }),
         ctx.runQuery(internal.behavior.getBehaviorProfileForContext, { userId }),
         ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
+        ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
       ]);
       const userName = identity.name ?? "Athlete";
       let context = `USER: ${userName}\n`;
@@ -2001,6 +2037,12 @@ Return ONLY:
       }
       if (Array.isArray(topWkMemQ) && topWkMemQ.length > 0) {
         context += `Known workouts: ${(topWkMemQ as any[]).map((w: any) => `${w.name}`).join(", ")}\n`;
+      }
+      if (Array.isArray(userIngredientsQ) && userIngredientsQ.length > 0) {
+        context += `Personal ingredients: ${(userIngredientsQ as any[]).map((i: any) => {
+          const k = i.caloriesPer100g != null ? `${i.caloriesPer100g} kcal/100g` : "custom";
+          return `${i.name} (${k})`;
+        }).join(", ")}\n`;
       }
       if (lastSleepQ) {
         context += `Last sleep: ${(lastSleepQ as any).hours}h, ${(lastSleepQ as any).quality}\n`;
@@ -2044,8 +2086,11 @@ Return ONLY:
     }
 
     // Step 2: Parse each item in parallel
-    const profile = await ctx.runQuery(internal.profile.getProfileForContext, { userId });
-    const metabolicProfile: any = await ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {});
+    const [profile, metabolicProfile, userIngredients] = await Promise.all([
+      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+      ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {}),
+      ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
+    ]);
     const userPhysique: UserPhysique | undefined = profile ? {
       weight: profile.weight, height: profile.height, age: profile.age, sex: profile.sex,
       fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
@@ -2095,7 +2140,7 @@ Return ONLY:
           }
           // ── End memory match — fall through to LLM parse ──────────────────
 
-          const parsed = await parseMealDescription(desc, "unspecified", "", settingsModel, apiKey);
+          const parsed = await parseMealDescription(desc, "unspecified", "", settingsModel, apiKey, userIngredients as any[]);
           const nutrition = await runNutritionEngine(ctx, parsed);
           const baseDraft = {
             kind: "meal",
