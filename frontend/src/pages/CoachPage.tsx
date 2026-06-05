@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, MicOff, RotateCcw, Plus, Copy, Check, Trash2, Pencil, Barcode, ImagePlus, X, Loader2, PanelLeft } from "lucide-react";
+import { ArrowUp, Mic, MicOff, Plus, Copy, Check, Trash2, Pencil, Barcode, ImagePlus, X, Loader2, PanelLeft } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -13,7 +13,7 @@ import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useToast } from "@/context/ToastContext";
 import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
-import { todaySuggestions, coachingPersonalities, DRAFT_TRIGGERS } from "@/data/mock";
+import { todaySuggestions, DRAFT_TRIGGERS } from "@/data/mock";
 import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import type { Agent, CoachingStyle } from "@/lib/storage";
 import { cn, localDateStr } from "@/lib/utils";
@@ -104,7 +104,7 @@ function ThinkingBubble() {
 }
 
 export function CoachPage() {
-  const { prefs, update } = usePrefs();
+  const { prefs } = usePrefs();
   const style = prefs.coachingStyle;
 
   const sessions = useQuery(api.chat.getSessions) ?? [];
@@ -374,36 +374,6 @@ export function CoachPage() {
 
       {/* Chat column */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-
-        {/* Header */}
-        <div className="flex items-center gap-3 px-4 lg:px-8 shrink-0 border-b border-border/50"
-          style={{ paddingTop: "max(env(safe-area-inset-top), 0.75rem)", paddingBottom: "0.75rem" }}>
-
-          <div className="shrink-0 w-8 h-8 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[13px] font-bold text-lavender">S</div>
-          <div className="flex-1 min-w-0">
-            <p className="text-[15px] font-extrabold text-text leading-none">Stry</p>
-            <p className="text-[11px] text-text-muted mt-0.5">Your AI wellness coach</p>
-          </div>
-
-          {/* Style picker — hidden on very small screens */}
-          <div className="hidden sm:flex items-center gap-0.5 rounded-full bg-card-elev border border-border p-0.5" role="radiogroup">
-            {coachingPersonalities.map((p) => (
-              <button key={p.id} type="button" role="radio" aria-checked={style === p.id}
-                onClick={() => update({ coachingStyle: p.id })}
-                className={cn("rounded-full px-2 py-1 text-[11px] font-semibold transition-colors",
-                  style === p.id ? "bg-ink text-text-on-ink" : "text-text-muted hover:text-text")}>
-                {p.label}
-              </button>
-            ))}
-          </div>
-
-          {messages.length > 1 && (
-            <button type="button" onClick={newChat} aria-label="New chat"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
-              <RotateCcw className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-          )}
-        </div>
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 px-4 lg:px-8 py-4">
