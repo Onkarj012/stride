@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip, Copy, Check } from "lucide-react";
+import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Pencil, Paperclip, Copy, Check } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
-import type { Id } from "@convex/_generated/dataModel";
 import { AgentBadge } from "@/components/insights/AgentBadge";
 import { Markdown } from "@/components/primitives/Markdown";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
@@ -159,11 +158,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   }, []);
   const pendingTier2Ref = useRef<string>("");
 
-  // Auto-applied memory drafts → instant log + undo toast
-  type AutoLogged = { mealId: Id<"meals">; draft: any };
-  const [autoLoggedMeal, setAutoLoggedMeal] = useState<AutoLogged | null>(null);
+  // Auto-applied memory drafts — removed (all drafts now go through confirm card)
   const [editEntry, setEditEntry] = useState<EditableMeal | null>(null);
-  const autoLogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { user } = useUser();
   const { recordEngagement } = useBehavior();
@@ -185,7 +181,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const homepageInput = useAction(api.ai.homepageInput);
   const clearHomepageMessages = useMutation(api.chat.clearHomepageMessages);
   const addMeal = useMutation(api.meals.addMeal);
-  const deleteMeal = useMutation(api.meals.deleteMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
   const addWater = useMutation(api.wellness.addWater);
   const upsertSleep = useMutation(api.wellness.upsertSleep);
@@ -354,51 +349,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       });
 
       setThinking(false);
-      // Mark this moment so only the just-arrived AI message animates
       setFreshTs(Date.now());
       setAgentHint(coachToAgent(result.coachType));
+      // actions always contain log_draft cards for every draft — just show them
       setAgentActions(Array.isArray(result.actions) ? result.actions : []);
-
-      const hasInlineDraft = Array.isArray(result.actions) && result.actions.some((a: any) => a.type === "log_draft" || a.type === "macro_conflict");
-      if (!hasInlineDraft && !result.isQuestion && result.drafts && result.drafts.length > 0) {
-        const autoDrafts = result.drafts.filter((d: any) => d.autoApplied && d.kind === "meal");
-        const confirmDrafts = result.drafts.filter((d: any) => !d.autoApplied);
-
-        // Instant-log auto-applied memory drafts
-        for (const d of autoDrafts) {
-          try {
-            const time = new Date().toTimeString().slice(0, 5);
-            const today = localDateStr();
-            const date = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : today;
-            const mealId = await addMeal({
-              name: d.description,
-              calories: d.kcal,
-              protein: d.protein,
-              carbs: d.carbs,
-              fat: d.fat,
-              time,
-              date,
-              components: d.items?.join(", "),
-              confidence: d.confidence,
-              nutritionSource: d.nutritionSource,
-              foodMemoryId: d.foodMemoryId,
-            });
-            // Show undo/edit overlay (auto-dismiss after 6 s)
-            if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
-            setAutoLoggedMeal({ mealId: mealId as Id<"meals">, draft: d });
-            autoLogTimerRef.current = setTimeout(() => setAutoLoggedMeal(null), 6000);
-            await recordActivity({ type: "meal" }).catch(() => {});
-          } catch (err) {
-            toast.error("Couldn't auto-log", err instanceof Error ? err.message : "Try again");
-          }
-        }
-
-        // Remaining drafts still need confirmation
-        if (confirmDrafts.length > 0) {
-          pendingTier2Ref.current = result.tier2Detail ?? "";
-          setPendingDrafts(confirmDrafts);
-        }
-      }
     } catch (err) {
       setThinking(false);
       const msg = err instanceof Error ? err.message : "Something went wrong";
@@ -782,41 +736,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       </div>
 
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
-
-      {/* Memory auto-log undo toast */}
-      <AnimatePresence>
-        {autoLoggedMeal && (
-          <motion.div key="memory-toast"
-            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
-            transition={{ type: "spring", stiffness: 320, damping: 28 }}
-            className="fixed bottom-[calc(env(safe-area-inset-bottom)+5rem)] lg:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-2xl bg-ink text-text-on-ink px-4 py-3 shadow-[var(--shadow-elev)] max-w-[calc(100vw-2rem)]">
-            <span className="text-[0.95rem] font-medium truncate max-w-[180px]">
-              {autoLoggedMeal.draft.memoryNote ?? `Logged ${autoLoggedMeal.draft.name}`}
-            </span>
-            <span className="text-[12px] text-text-on-ink/60">{autoLoggedMeal.draft.kcal} kcal</span>
-            <div className="flex gap-1 ml-1">
-              <button type="button" onClick={async () => {
-                if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
-                setAutoLoggedMeal(null);
-                try { await deleteMeal({ id: autoLoggedMeal.mealId }); toast.info("Undone", autoLoggedMeal.draft.name); }
-                catch { toast.error("Couldn't undo", "Meal may already be logged"); }
-              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold">
-                <Undo2 className="h-3 w-3" strokeWidth={2.25} /> Undo
-              </button>
-              <button type="button" onClick={() => {
-                const d = autoLoggedMeal.draft;
-                setEditEntry({ _id: autoLoggedMeal.mealId, name: d.name, calories: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, time: d.time, mealType: d.mealType ?? "unspecified" });
-                void recordBehavior({ kind: "log", key: "meal_correct" }).catch(() => {});
-                if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
-                setAutoLoggedMeal(null);
-              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold">
-                <Pencil className="h-3 w-3" strokeWidth={2.25} /> Edit
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <EditLogModal kind="meal" entry={editEntry} onClose={() => setEditEntry(null)} />
     </>
   );

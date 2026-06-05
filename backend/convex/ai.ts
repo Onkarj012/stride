@@ -2085,8 +2085,8 @@ Return ONLY:
               time,
               confidence: Math.min(0.95, 0.7 + memMatch.score * 0.25),
               nutritionSource: "memory",
-              autoApplied: true,
-              memoryNote: `Used your usual ${mem.displayName}`,
+              autoApplied: false,  // always confirm — never silent log
+              memoryNote: `Using your usual ${mem.displayName}`,
               foodMemoryId: mem._id,
             };
             drafts.push(draft);
@@ -2207,41 +2207,44 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
     });
 
     const actions: any[] = [];
-    if (estimateMode) {
-      const mealDraft = drafts.find((d) => d.kind === "meal");
-      if (mealDraft && mealDraft.nutritionSource !== "macro_conflict") {
-        const rangeLow = Math.max(0, Math.round(mealDraft.kcal * 0.88));
-        const rangeHigh = Math.round(mealDraft.kcal * 1.12);
+
+    // Always show a log_draft card for every draft — deterministic confirm flow
+    for (const draft of drafts) {
+      if (draft.kind === "meal") {
+        const rangeLow = Math.max(0, Math.round(draft.kcal * 0.88));
+        const rangeHigh = Math.round(draft.kcal * 1.12);
+        const isMacroConflict = draft.nutritionSource === "macro_conflict";
+        if (isMacroConflict) {
+          actions.push({
+            type: "macro_conflict",
+            title: "Macro check",
+            body: `${draft.engineEstimate ? `My estimate is ~${draft.engineEstimate.kcal} kcal. ` : ""}Your numbers differ significantly — which should I use?`,
+            draft,
+            buttons: [
+              { label: "Use my numbers", value: "use_user_macros" },
+              { label: "Use estimate", value: "use_engine_estimate" },
+            ],
+          });
+        } else {
+          actions.push({
+            type: "log_draft",
+            source: hasUserMacros ? "user_macros" : draft.nutritionSource ?? "estimate",
+            draft,
+            title: draft.description ?? "Log this meal?",
+            body: estimateMode
+              ? `${rangeLow}–${rangeHigh} kcal depending on portions.`
+              : undefined,
+          });
+        }
+      } else {
+        // workout, sleep, water, mood, steps — always confirm
         actions.push({
           type: "log_draft",
-          source: hasUserMacros ? "user_macros" : "estimate",
-          draft: mealDraft,
-          title: hasUserMacros ? "Use these macros?" : "Estimated snack",
-          body: `${rangeLow}-${rangeHigh} kcal depending on portions. Confirm only if you eat it.`,
+          source: draft.kind,
+          draft,
+          title: draft.description ?? `Log ${draft.kind}?`,
         });
       }
-    }
-    for (const draft of drafts.filter((d) => d.nutritionSource === "macro_conflict")) {
-      actions.push({
-        type: "macro_conflict",
-        title: "Macro check",
-        body: `${draft.engineEstimate ? `My estimate is ~${draft.engineEstimate.kcal} kcal. ` : ""}Your numbers are quite different. Which should I use?`,
-        draft,
-        buttons: [
-          { label: "Use my numbers", value: "use_user_macros", prompt: "Use my numbers and log this" },
-          { label: "Use estimate", value: "use_engine_estimate", prompt: "Use your estimate instead" },
-        ],
-      });
-    }
-    if (!estimateMode) {
-      actions.push({
-        type: "button_row",
-        buttons: [
-          { label: "Confirm log", value: "confirm_log" },
-          { label: "Edit first", value: "edit_log" },
-          { label: "Discard", value: "discard_log" },
-        ],
-      });
     }
 
     return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId };
