@@ -107,6 +107,13 @@ export function CoachPage() {
   const { prefs } = usePrefs();
   const style = prefs.coachingStyle;
 
+  // Lock AppLayout's <main> scroll while this page is mounted
+  useEffect(() => {
+    const main = document.querySelector("main");
+    if (main) main.style.overflow = "hidden";
+    return () => { if (main) main.style.overflow = ""; };
+  }, []);
+
   const sessions = useQuery(api.chat.getSessions) ?? [];
   const createSession = useMutation(api.chat.createSession);
   const deleteSession = useMutation(api.chat.deleteSession);
@@ -302,7 +309,7 @@ export function CoachPage() {
 
   return (
     /* Break out of AppLayout padding — same technique as HomePage */
-    <div className="fixed inset-0 flex overflow-hidden bg-bg z-10">
+    <div className="flex -mx-4 lg:-mx-10 -my-4 lg:-my-10 overflow-hidden" style={{ height: "calc(100dvh - max(env(safe-area-inset-top),16px))" }}>
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
