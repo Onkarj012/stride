@@ -172,6 +172,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomSentinelRef = useRef<HTMLDivElement>(null);
   const activeRef = inputRef ?? internalRef;
   const toast = useToast();
 
@@ -209,13 +210,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setAgentActions(initialActions);
   }, [initialActionKey, messages.length]);
 
-  // Scroll to bottom on new messages AND during streaming
+  // Scroll to bottom — wait 250ms so height:auto animations finish before we measure
   useEffect(() => {
-    if (!scrollRef.current) return;
-    // Use a small delay so animated cards (height 0→auto) have time to expand
     const t = setTimeout(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }, 220);
+      bottomSentinelRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }, 250);
     return () => clearTimeout(t);
   }, [messages.length, thinking, pendingDrafts.length, freshTs]);
 
@@ -692,18 +691,22 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           aria-live="polite" aria-label="Chat with Stry">
 
           {/* Messages top→bottom, newest at bottom */}
-          {messages.map((m) => (
-            <MessageBubble
-              key={m.ts}
-              role={m.role === "user" ? "user" : "ai"}
-              content={m.content}
-              fresh={freshTs !== null && m.ts === lastAiTs}
-              onEdit={m.role === "user" ? () => {
-                setTextValue(m.content);
-                setTimeout(() => activeRef.current?.focus(), 50);
-              } : undefined}
-            />
-          ))}
+          {messages.map((m) => {
+            // Suppress the last AI message when a confirm card is showing — it's the same content
+            if (m.ts === lastAiTs && m.role === "ai" && pendingDrafts.length > 0) return null;
+            return (
+              <MessageBubble
+                key={m.ts}
+                role={m.role === "user" ? "user" : "ai"}
+                content={m.content}
+                fresh={freshTs !== null && m.ts === lastAiTs}
+                onEdit={m.role === "user" ? () => {
+                  setTextValue(m.content);
+                  setTimeout(() => activeRef.current?.focus(), 50);
+                } : undefined}
+              />
+            );
+          })}
 
           {/* Thinking dots */}
           {thinking && (
@@ -745,6 +748,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
               </motion.div>
             ))}
           </AnimatePresence>
+
+          {/* Sentinel — always at the very bottom so scrollIntoView reaches past cards */}
+          <div ref={bottomSentinelRef} className="shrink-0 h-1" />
         </div>
 
         {/* Attachment previews */}
