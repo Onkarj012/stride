@@ -1,18 +1,15 @@
 /**
- * agents.ts — Agentic orchestration skeleton (Phase 5)
+ * agents.ts — MemoryAgent
  *
- * Each agent is a pure async function that receives a shared context object and
- * returns a partial result. homepageInput wires them together.
- *
- * Current state: stubs for DietAgent, WorkoutAgent, SleepAgent, CoachAgent.
- * MemoryAgent is fully implemented — it extracts user-stated facts and aliases
- * from messages and silently patches food_memory / workout_memory.
+ * MemoryAgent extracts user-stated food/ingredient facts and aliases from
+ * messages and silently patches food_memory / user_ingredients. It runs
+ * fire-and-forget from homepageInput via runMemoryAgentAction.
  */
 
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { callAI } from "./ai_utils";
+import { callAI } from "./ai/llm";
 // user_ingredients module is accessed via internal.user_ingredients (Convex codegen)
 
 // ─── Shared context passed to every agent ────────────────────────────────────
@@ -128,67 +125,6 @@ Return ONLY a JSON array, or [] if nothing applies.`;
       }
     }
   } catch { /* fire-and-forget */ }
-}
-
-// ─── Domain agent stubs ───────────────────────────────────────────────────────
-
-/** Routes a meal description through the nutrition engine. Stub — currently delegates to homepageInput's existing parseMealDescription path. */
-export interface DietAgentInput {
-  description: string;
-  date: string;
-  userId: string;
-}
-export interface DietAgentResult {
-  handled: false; // stub: not yet fully implemented
-}
-export async function runDietAgent(_ctx: any, _input: DietAgentInput): Promise<DietAgentResult> {
-  // TODO Phase 5 full: run parseMealDescription, apply food_memory match, return draft
-  return { handled: false };
-}
-
-/** Routes a workout description through the calorie engine. Stub. */
-export interface WorkoutAgentInput {
-  description: string;
-  date: string;
-  userId: string;
-}
-export interface WorkoutAgentResult {
-  handled: false;
-}
-export async function runWorkoutAgent(_ctx: any, _input: WorkoutAgentInput): Promise<WorkoutAgentResult> {
-  // TODO Phase 5 full: run parseWorkoutDescription, apply workout_memory, return draft
-  return { handled: false };
-}
-
-/** Interprets a sleep log and returns recovery tone adjustment. Stub. */
-export interface SleepAgentInput {
-  hours: number;
-  quality: string;
-  date: string;
-}
-export interface SleepAgentResult {
-  recoveryMode: boolean;
-  toneNote: string;
-}
-export function runSleepAgent(input: SleepAgentInput): SleepAgentResult {
-  const recoveryMode = input.hours < 6.5 || input.quality === "poor";
-  const toneNote = recoveryMode
-    ? `User slept ${input.hours}h (${input.quality}). Prioritise rest, simplify goals.`
-    : "";
-  return { recoveryMode, toneNote };
-}
-
-/** Assembles the final coaching reply from domain agent outputs. Stub — currently returns null to fall through to existing chat path. */
-export interface CoachAgentInput {
-  userId: string;
-  message: string;
-  dietResult?: DietAgentResult;
-  workoutResult?: WorkoutAgentResult;
-  sleepResult?: SleepAgentResult;
-}
-export function runCoachAgent(_input: CoachAgentInput): null {
-  // TODO Phase 5 full: synthesise a short daily brief from all domain results
-  return null;
 }
 
 // ─── Convex action: runMemoryAgentAction ─────────────────────────────────────

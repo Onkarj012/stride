@@ -58,10 +58,9 @@ Thumbs.db
 
 # Temporary / scratchpad
 temp/
-docs/
 
-# Internal docs (assessments, reports — not for version control)
-# docs/
+# Design system reference (local only — not source code)
+Stride Design System/
 
 # Graphify cache
 graphify-out/cache/

@@ -77,7 +77,7 @@ function MessageBubble({
   if (role === "user") {
     return (
       <div className="flex flex-col items-end gap-1 group">
-        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-3.5 py-2.5 text-[0.95rem] leading-relaxed break-words text-text">
+        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-ink px-3.5 py-2.5 text-[0.95rem] leading-relaxed break-words text-text-on-ink">
           {showMarkdown
             ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
             : <span className="whitespace-pre-wrap">{text}</span>}
@@ -100,7 +100,7 @@ function MessageBubble({
 
   return (
     <div className="flex flex-col items-start gap-1 group">
-      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card border border-border px-3.5 py-2.5 text-[0.95rem] leading-relaxed text-text break-words">
+      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-3.5 py-2.5 text-[0.95rem] leading-relaxed text-text break-words">
         {showMarkdown
           ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
           : <span className="whitespace-pre-wrap">{text}</span>}
@@ -429,8 +429,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const Composer = (
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}
       className={cn(
-        "relative flex items-end gap-1.5 rounded-[20px] bg-card border px-4 py-1.5 w-full transition-colors",
-        voice.recording ? "border-peach" : attachedFile ? "border-lavender" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender",
+        "relative flex items-end gap-1.5 rounded-full bg-card border px-4 py-1.5 w-full shadow-[var(--shadow-float)] transition-colors",
+        voice.recording ? "border-peach" : attachedFile ? "border-lavender" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40",
       )}
     >
       <textarea
@@ -638,7 +638,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
         {/* Message area — scrollable, fills all remaining height */}
         <div ref={scrollRef}
-          className="flex-1 min-h-0 overflow-y-auto px-4 lg:px-6 py-4 flex flex-col gap-3"
+          className="flex-1 min-h-0 overflow-y-auto px-4 lg:px-6 py-4 flex flex-col gap-3 [mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)] [-webkit-mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)]"
           aria-live="polite" aria-label="Chat with Stry">
 
           {/* Messages top→bottom, newest at bottom */}
@@ -657,11 +657,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
           {/* Thinking dots */}
           {thinking && (
-            <div className="flex items-center gap-1.5 px-1 py-1">
+            <div className="rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-3.5 py-3 flex gap-1.5 w-fit">
               {[0, 1, 2].map((i) => (
-                <motion.span key={i} className="h-2 w-2 rounded-full bg-text-muted/40"
-                  animate={{ scale: [1, 1.4, 1] }}
-                  transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }} />
+                <motion.span key={i} className="h-2 w-2 rounded-full bg-lavender/60"
+                  animate={{ y: [0, -4, 0] }}
+                  transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }} />
               ))}
             </div>
           )}
@@ -729,7 +729,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </AnimatePresence>
 
         {/* Input — always at the bottom */}
-        <div className="shrink-0 px-4 lg:px-6 pb-[calc(env(safe-area-inset-bottom)+5rem)] lg:pb-4 pt-2 bg-bg border-t border-border">
+        <div className="shrink-0 px-4 lg:px-6 pb-[calc(env(safe-area-inset-bottom)+5rem)] lg:pb-4 pt-3 [background:linear-gradient(to_top,var(--color-bg)_80%,transparent)]">
           {Composer}
           {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
         </div>

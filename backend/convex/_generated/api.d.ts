@@ -10,7 +10,9 @@
 
 import type * as agents from "../agents.js";
 import type * as ai from "../ai.js";
-import type * as ai_utils from "../ai_utils.js";
+import type * as ai_intent from "../ai/intent.js";
+import type * as ai_llm from "../ai/llm.js";
+import type * as ai_parse from "../ai/parse.js";
 import type * as behavior from "../behavior.js";
 import type * as calibration from "../calibration.js";
 import type * as calorie_engine from "../calorie_engine.js";
@@ -51,7 +53,9 @@ import type {
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   ai: typeof ai;
-  ai_utils: typeof ai_utils;
+  "ai/intent": typeof ai_intent;
+  "ai/llm": typeof ai_llm;
+  "ai/parse": typeof ai_parse;
   behavior: typeof behavior;
   calibration: typeof calibration;
   calorie_engine: typeof calorie_engine;

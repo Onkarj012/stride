@@ -246,7 +246,7 @@ export const getSettings = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
     return {
-      openRouterKey: s?.openRouterKey ?? null,
+      // openRouterKey is write-only — never returned to client
       hasOpenRouterKey: !!(s?.openRouterKey),
       openRouterModel: s?.openRouterModel ?? "openai/gpt-4o-mini",
       units: s?.units ?? "metric",

@@ -14,5 +14,5 @@
     "allowImportingTsExtensions": true,
     "moduleDetection": "force"
   },
-  "include": ["src"]
+  "include": ["convex"]
 }

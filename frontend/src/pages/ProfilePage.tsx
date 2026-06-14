@@ -594,6 +594,7 @@ function SettingsTab() {
   const { signOut } = useClerk();
   const navigate = useNavigate();
   const clearAllData = useMutation(api.users.clearAllData);
+  const exportData = useQuery(api.users.exportAllData);
   const upsertProfile = useMutation(api.profile.upsertProfile);
 
   return (
@@ -667,7 +668,8 @@ function SettingsTab() {
         </div>
         <ListRow icon={<Download />} title="Export your data" meta="Download a JSON copy of your logs"
           onClick={() => {
-            const data = JSON.stringify({ exportedAt: new Date().toISOString() }, null, 2);
+            if (!exportData) return;
+            const data = JSON.stringify(exportData, null, 2);
             const a = document.createElement("a");
             a.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
             a.download = `stride-export-${new Date().toISOString().slice(0, 10)}.json`;

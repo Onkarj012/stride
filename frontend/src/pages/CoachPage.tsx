@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, MicOff, Plus, Copy, Check, Trash2, Pencil, Barcode, ImagePlus, X, Loader2, PanelLeft } from "lucide-react";
+import { ArrowUp, Mic, MicOff, Plus, Copy, Check, Trash2, Pencil, Barcode, ImagePlus, X, Loader2, PanelLeft, Sparkles } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -13,9 +13,22 @@ import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useToast } from "@/context/ToastContext";
 import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
-import { todaySuggestions, DRAFT_TRIGGERS } from "@/data/mock";
 import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import type { Agent, CoachingStyle } from "@/lib/storage";
+
+const COACH_SUGGESTIONS = [
+  "Log breakfast",
+  "How is my week?",
+  "Plan a workout",
+  "I'm feeling tired",
+];
+
+const SUGGESTION_DOT: Record<string, string> = {
+  "Log breakfast": "bg-peach",
+  "How is my week?": "bg-lavender",
+  "Plan a workout": "bg-mint",
+  "I'm feeling tired": "bg-sky",
+};
 import { cn, localDateStr } from "@/lib/utils";
 
 function coachToAgent(coachType?: string): Agent {
@@ -46,9 +59,11 @@ function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast:
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex items-start gap-2.5 max-w-[85%] group">
-      <div className="shrink-0 w-7 h-7 mt-1 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[11px] font-bold text-lavender">S</div>
+      <div className="shrink-0 h-[18px] w-[18px] mt-1.5 rounded-[6px] bg-lavender flex items-center justify-center">
+        <Sparkles className="h-2.5 w-2.5 text-ink" strokeWidth={2.5} />
+      </div>
       <div className="flex flex-col gap-1 min-w-0">
-        <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-2.5">
+        <div className="rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-4 py-2.5">
           <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
         </div>
         <div className="flex items-center gap-3 ml-1">
@@ -69,7 +84,7 @@ function UserBubble({ text, onEdit }: { text: string; onEdit: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex flex-col items-end gap-1 max-w-[85%] group">
-      <div className="rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-4 py-2.5 text-[0.95rem] leading-relaxed whitespace-pre-wrap text-text">
+      <div className="rounded-2xl rounded-br-sm bg-ink px-4 py-2.5 text-[0.95rem] leading-relaxed whitespace-pre-wrap text-text-on-ink">
         {text}
       </div>
       <div className="flex items-center gap-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -91,8 +106,10 @@ function UserBubble({ text, onEdit }: { text: string; onEdit: () => void }) {
 function ThinkingBubble() {
   return (
     <div className="flex items-start gap-2.5">
-      <div className="shrink-0 w-7 h-7 mt-1 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[11px] font-bold text-lavender">S</div>
-      <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-3 flex gap-1.5">
+      <div className="shrink-0 h-[18px] w-[18px] mt-1.5 rounded-[6px] bg-lavender flex items-center justify-center">
+        <Sparkles className="h-2.5 w-2.5 text-ink" strokeWidth={2.5} />
+      </div>
+      <div className="rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-4 py-3 flex gap-1.5">
         {[0, 1, 2].map((i) => (
           <motion.div key={i} className="h-1.5 w-1.5 rounded-full bg-lavender"
             animate={{ y: [0, -4, 0] }}
@@ -190,7 +207,7 @@ export function CoachPage() {
     setPanelOpen(false);
   }, [style]);
 
-  const orderedSuggestions = useMemo(() => orderSuggestions(todaySuggestions), []);
+  const orderedSuggestions = useMemo(() => orderSuggestions(COACH_SUGGESTIONS), []);
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
 
@@ -240,21 +257,6 @@ export function CoachPage() {
     setAttachedImage(null);
     setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || "[image]" }]);
     scroll();
-
-    const trigger = !image ? DRAFT_TRIGGERS[v.toLowerCase()] : undefined;
-    if (trigger) {
-      setThinking(true);
-      setTimeout(() => {
-        setThinking(false);
-        const intro = trigger.draft.kind === "meal" ? "I've estimated the macros. Does this look right?" : "I've logged your workout. Does this look right?";
-        setMessages((prev) => [...prev,
-          { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: intro, streamed: true },
-          { kind: "draft", id: `d-${Date.now() + 1}`, draft: trigger.draft, confirmReply: trigger.confirmReply, discardReply: trigger.discardReply, settled: false },
-        ]);
-        scroll();
-      }, 1200);
-      return;
-    }
 
     setThinking(true);
     try {
@@ -383,7 +385,7 @@ export function CoachPage() {
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
         {/* Messages */}
-        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-3 px-4 lg:px-8 py-4">
+        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-3 px-4 lg:px-8 py-4 [mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)] [-webkit-mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)]">
           {messages.map((m, i) => {
             if (m.kind === "draft") {
               if (m.settled) return null;
@@ -415,7 +417,8 @@ export function CoachPage() {
           <div className="flex flex-wrap gap-1.5 px-4 lg:px-8 py-2 shrink-0">
             {orderedSuggestions.map((s) => (
               <button key={s} type="button" onClick={() => { recordSuggestion(s); void send(s); }}
-                className="rounded-full border border-border bg-card px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-card-elev transition-colors">
+                className="inline-flex items-center gap-1.5 rounded-full bg-card shadow-[var(--shadow-soft)] px-3 py-1.5 text-[12px] font-bold text-text hover:bg-card-elev transition-colors">
+                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", SUGGESTION_DOT[s] ?? "bg-lavender")} />
                 {s}
               </button>
             ))}
@@ -439,9 +442,9 @@ export function CoachPage() {
         </AnimatePresence>
 
         {/* Input — same pattern as AssistantConsole: textarea, safe-area bottom */}
-        <div className="shrink-0 px-4 lg:px-8 pb-3" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.75rem)" }}>
-          <div className={cn("flex items-end gap-1.5 rounded-2xl bg-card border px-3 py-2 transition-colors",
-            voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender")}>
+        <div className="shrink-0 px-4 lg:px-8 pt-2" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.75rem)", background: "linear-gradient(to top, var(--color-bg) 80%, transparent)" }}>
+          <div className={cn("flex items-end gap-1.5 rounded-full bg-card border px-3 py-2 shadow-[var(--shadow-float)] transition-colors",
+            voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40")}>
             <textarea
               ref={inputRef}
               rows={1}
