@@ -275,23 +275,25 @@ export function CoachPage() {
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
       {/* ── Mobile header ─────────────────────────────────────────── */}
-      <div className="lg:hidden shrink-0 flex items-center gap-2 px-4 border-b border-border bg-bg"
+      <div className="lg:hidden shrink-0 flex items-center justify-between px-4 border-b border-border bg-bg"
         style={{ paddingTop: "max(env(safe-area-inset-top), 0.75rem)", paddingBottom: "0.75rem" }}>
-        <NavTrigger />
         <div className="flex-1 min-w-0 px-2">
           <p className="text-[15px] font-bold text-text leading-tight">Stry</p>
           {activeSession && (
             <p className="text-[11px] text-text-muted truncate leading-tight">{activeSession.title}</p>
           )}
         </div>
-        <button type="button" onClick={newChat} aria-label="New chat"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
-          <Plus className="h-4 w-4" strokeWidth={2} />
-        </button>
-        <button type="button" onClick={() => setMobileHistoryOpen(true)} aria-label="Chat history"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
-          <Clock className="h-4 w-4" strokeWidth={1.75} />
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button type="button" onClick={newChat} aria-label="New chat"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
+            <Plus className="h-4 w-4" strokeWidth={2} />
+          </button>
+          <button type="button" onClick={() => setMobileHistoryOpen(true)} aria-label="Chat history"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
+            <Clock className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+          <NavTrigger />
+        </div>
       </div>
 
       {/* ── Mobile history sheet ───────────────────────────────────── */}

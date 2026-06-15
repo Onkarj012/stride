@@ -6,7 +6,6 @@ import {
 } from "lucide-react";
 import { Brand } from "@/components/layout/Brand";
 import { StrideMark } from "@/components/primitives/StrideMark";
-import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { Avatar } from "@/components/primitives/Avatar";
 import { useSidebar } from "@/context/SidebarContext";
 import { useUser, useClerk } from "@clerk/react";
@@ -238,11 +237,6 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
 
       {/* Footer: theme toggle, settings, user chip */}
       <div className={cn("flex flex-col gap-3", collapsed ? "px-2" : "px-4")}>
-        {/* Theme toggle */}
-        <div className={cn("flex", collapsed ? "justify-center" : "")}>
-          <ThemeToggle />
-        </div>
-
         {/* Settings icon */}
         <NavLink
           to="/settings"

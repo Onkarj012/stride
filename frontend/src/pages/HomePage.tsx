@@ -76,7 +76,7 @@ export function HomePage() {
 
   return (
     <div
-      className="flex -mx-4 lg:-mx-10 -mt-[max(env(safe-area-inset-top),16px)] lg:-mt-10 -mb-[max(calc(env(safe-area-inset-bottom)+5rem),5rem)] lg:-mb-12"
+      className="flex -mx-4 lg:-mx-10 -mt-[max(env(safe-area-inset-top),16px)] lg:-mt-10 -mb-[max(env(safe-area-inset-bottom),0rem)] lg:-mb-12"
       style={{ height: "100dvh" }}
     >
       <div className="flex-1 min-w-0 flex flex-col min-h-0">
