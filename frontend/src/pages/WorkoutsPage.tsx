@@ -114,7 +114,7 @@ export function WorkoutsPage() {
             return (
               <div key={w._id} className="group rounded-[20px] bg-card border border-border p-4 mb-3 relative shadow-[var(--shadow-soft)]">
                 {/* Controls — desktop hover, always visible on mobile */}
-                <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="absolute top-3 right-3 flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                   <button
                     type="button"
                     onClick={() => setEditEntry({ _id: w._id, name: w.name, intensity: w.intensity ?? "medium", duration: w.duration, caloriesBurned: w.caloriesBurned, rationale: w.rationale, sets: w.sets })}

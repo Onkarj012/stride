@@ -151,7 +151,7 @@ export function NutritionPage() {
                 <span className="text-white font-extrabold">{protein}g / {proteinTarget}g</span>
               </div>
               <div className="h-1 rounded-full mt-1 overflow-hidden" style={{ background: "rgba(255,255,255,0.18)" }}>
-                <div className="h-full rounded-full" style={{ width: `${Math.min((protein / proteinTarget) * 100, 100)}%`, background: "var(--color-lavender)" }} />
+                <div className="h-full rounded-full" style={{ width: `${proteinTarget > 0 ? Math.min((protein / proteinTarget) * 100, 100) : 0}%`, background: "var(--color-lavender)" }} />
               </div>
             </div>
             <div>
@@ -192,7 +192,7 @@ export function NutritionPage() {
                         <button
                           type="button"
                           onClick={() => setEditEntry({ _id: m._id, name: m.name, calories: m.calories, protein: m.protein, carbs: m.carbs ?? 0, fat: m.fat ?? 0, time: m.time ?? "", mealType: m.mealType, aiSuggestion: m.aiSuggestion, components: m.components })}
-                          className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle opacity-0 group-hover:opacity-100 hover:bg-card-elev hover:text-text transition-all"
+                          className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-card-elev hover:text-text transition-all"
                           aria-label="Edit meal"
                         >
                           <Pencil className="h-3 w-3" strokeWidth={2} />
@@ -200,7 +200,7 @@ export function NutritionPage() {
                         <button
                           type="button"
                           onClick={() => setConfirmDelete(m._id)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle opacity-0 group-hover:opacity-100 hover:bg-card-elev hover:text-bubblegum transition-all"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-card-elev hover:text-bubblegum transition-all"
                           aria-label="Delete meal"
                         >
                           <Trash2 className="h-3 w-3" strokeWidth={2} />

@@ -205,6 +205,7 @@ export function CoachPage() {
   }, [scroll]);
 
   const send = useCallback(async (text: string, image?: string) => {
+    if (thinking) return;
     const v = text.trim();
     if (!v && !image) return;
     setInput("");

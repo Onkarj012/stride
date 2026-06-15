@@ -660,11 +660,11 @@ export function RecipesPage() {
             </div>
 
             {/* Saved recipes */}
-            {recipes.length > 0 && (
+            {saved.length > 0 && (
               <div>
                 <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-text-muted mb-3">Saved recipes</p>
                 <div className="flex flex-col gap-2">
-                  {recipes.map((r: any) => (
+                  {saved.map((r: any) => (
                     <SavedRecipeRow
                       key={r._id}
                       recipe={r}

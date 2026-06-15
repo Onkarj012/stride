@@ -204,7 +204,7 @@ Return ONLY valid JSON:
 
   // Deterministic calorie calculation
   let calorieResult: ParsedWorkoutResult["calorieResult"] = null;
-  if (exercises.length > 0) {
+  if (userPhysique?.weight && exercises.length > 0) {
     try {
       const durationMin = parseDurationMinutes(result.duration || duration || "30 min");
       const engineIntensity = mapAIIntensity(result.intensity || intensity || "HIGH");
