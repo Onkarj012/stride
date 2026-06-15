@@ -4,10 +4,10 @@ import { useTypewriter } from "@/hooks/useTypewriter";
 import { Markdown } from "@/components/primitives/Markdown";
 
 export function MessageBubble({
-  role, content, fresh, onEdit, onCopy,
+  role, content, fresh, onEdit, onCopy, badge,
 }: {
   role: "user" | "ai"; content: string; fresh: boolean;
-  onEdit?: () => void; onCopy?: () => void;
+  onEdit?: () => void; onCopy?: () => void; badge?: React.ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
   const { displayed, done } = useTypewriter(content, 18, fresh);
@@ -58,6 +58,7 @@ export function MessageBubble({
           : <span className="whitespace-pre-wrap">{text}</span>}
       </div>
       <div className="flex items-center gap-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        {badge}
         <ActionBtn onClick={copyText}>
           {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
           {copied ? "Copied" : "Copy"}

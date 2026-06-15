@@ -204,7 +204,7 @@ Return ONLY valid JSON:
 
   // Deterministic calorie calculation
   let calorieResult: ParsedWorkoutResult["calorieResult"] = null;
-  if (userPhysique?.weight && exercises.length > 0) {
+  if (exercises.length > 0) {
     try {
       const durationMin = parseDurationMinutes(result.duration || duration || "30 min");
       const engineIntensity = mapAIIntensity(result.intensity || intensity || "HIGH");
@@ -223,11 +223,11 @@ Return ONLY valid JSON:
           weighted_met: weightedMet,
         },
         {
-          weight_kg: userPhysique.weight ?? 70,
-          age: userPhysique.age ?? 30,
-          sex: (userPhysique.sex === "female" ? "female" : "male"),
-          fitness_level: (userPhysique.fitnessLevel as "beginner" | "intermediate" | "advanced") || "beginner",
-          metabolic_factor: userPhysique.metabolicFactor ?? 1.0,
+          weight_kg: userPhysique?.weight ?? 70,
+          age: userPhysique?.age ?? 30,
+          sex: (userPhysique?.sex === "female" ? "female" : "male"),
+          fitness_level: ((userPhysique?.fitnessLevel ?? "beginner") as "beginner" | "intermediate" | "advanced"),
+          metabolic_factor: userPhysique?.metabolicFactor ?? 1.0,
         },
       );
 

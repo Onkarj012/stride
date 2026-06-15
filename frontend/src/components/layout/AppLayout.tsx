@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { DesktopSidebar } from "@/components/layout/DesktopSidebar";
+import { RightPanel } from "@/components/layout/RightPanel";
 
 type AppLayoutProps = {
   children: ReactNode;
@@ -20,9 +21,10 @@ export function AppLayout({ children, onAskStride }: AppLayoutProps) {
             lg:px-10 lg:py-10 lg:pb-12
           "
         >
-          {/* No max-w cap — let pages control their own width */}
           {children}
         </main>
+
+        <RightPanel />
       </div>
     </div>
   );

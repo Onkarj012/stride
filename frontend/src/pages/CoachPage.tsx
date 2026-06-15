@@ -1,13 +1,13 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, MicOff, Plus, Copy, Check, Trash2, Pencil, Barcode, ImagePlus, X, Loader2, PanelLeft, Sparkles } from "lucide-react";
+import { ArrowUp, Mic, MicOff, Plus, Trash2, Barcode, ImagePlus, X, Loader2, PanelLeft, Sparkles } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { AgentBadge } from "@/components/insights/AgentBadge";
-import { Markdown } from "@/components/primitives/Markdown";
+import { MessageBubble } from "@/components/chat/MessageBubble";
 import { useLogs } from "@/hooks/useLogs";
 import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
@@ -54,54 +54,6 @@ const GREETING: Record<CoachingStyle, string> = {
   motivating: "Hey! I'm Stry. Ready to make today count? Let's go!",
   analytical: "Hi, I'm Stry. I'll help you track patterns. What would you like to log?",
 };
-
-function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast: boolean }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex items-start gap-2.5 max-w-[85%] group">
-      <div className="shrink-0 h-[18px] w-[18px] mt-1.5 rounded-[6px] bg-lavender flex items-center justify-center">
-        <Sparkles className="h-2.5 w-2.5 text-ink" strokeWidth={2.5} />
-      </div>
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-4 py-2.5">
-          <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
-        </div>
-        <div className="flex items-center gap-3 ml-1">
-          {agent && agent !== "main" && <AgentBadge agent={agent} />}
-          <button type="button"
-            onClick={() => { navigator.clipboard.writeText(text).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-            className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
-            {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function UserBubble({ text, onEdit }: { text: string; onEdit: () => void }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex flex-col items-end gap-1 max-w-[85%] group">
-      <div className="rounded-2xl rounded-br-sm bg-ink px-4 py-2.5 text-[0.95rem] leading-relaxed whitespace-pre-wrap text-text-on-ink">
-        {text}
-      </div>
-      <div className="flex items-center gap-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button type="button"
-          onClick={() => { navigator.clipboard.writeText(text).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
-          {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-        <button type="button" onClick={onEdit}
-          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
-          <Pencil className="h-3 w-3" strokeWidth={2} /> Edit
-        </button>
-      </div>
-    </div>
-  );
-}
 
 function ThinkingBubble() {
   return (
@@ -398,9 +350,13 @@ export function CoachPage() {
             return (
               <motion.div key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}
                 className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-                {m.role === "assistant"
-                  ? <AssistantBubble text={m.text} agent={m.agent} isLast={i === lastTextIdx && !!m.streamed} />
-                  : <UserBubble text={m.text} onEdit={() => { setInput(m.text); inputRef.current?.focus(); }} />}
+                <MessageBubble
+                  role={m.role === "assistant" ? "ai" : "user"}
+                  content={m.text}
+                  fresh={i === lastTextIdx && !!m.streamed}
+                  onEdit={m.role === "user" ? () => { setInput(m.text); inputRef.current?.focus(); } : undefined}
+                  badge={m.role === "assistant" && m.agent && m.agent !== "main" ? <AgentBadge agent={m.agent} /> : undefined}
+                />
               </motion.div>
             );
           })}

@@ -9,6 +9,7 @@ import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { NavTrigger } from "@/components/layout/NavTrigger";
 import { MacroDonut } from "@/components/charts/MacroDonut";
 import { MacroBars } from "@/components/charts/MacroBars";
 import { MilestoneList } from "@/components/insights/MilestoneList";
@@ -416,6 +417,7 @@ export function InsightsPage() {
             </span>
           </div>
         }
+        right={<NavTrigger className="lg:hidden" />}
       />
 
       <div className="flex justify-center">
