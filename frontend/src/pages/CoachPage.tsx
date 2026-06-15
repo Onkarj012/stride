@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, MicOff, Plus, Trash2, Barcode, ImagePlus, X, Loader2, PanelLeft, Sparkles } from "lucide-react";
+import { ArrowUp, Mic, MicOff, Plus, Trash2, Barcode, ImagePlus, X, Loader2, PanelLeft, Sparkles, Clock } from "lucide-react";
+import { NavTrigger } from "@/components/layout/NavTrigger";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -98,6 +99,7 @@ export function CoachPage() {
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
   const [panelOpen, setPanelOpen] = useState(false); // collapsed by default
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -261,23 +263,85 @@ export function CoachPage() {
     }
   }, [send, input, attachedImage]);
 
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
+
   return (
     /* Break out of AppLayout padding — same technique as HomePage */
-    <div className="flex -mx-4 lg:-mx-10 -my-4 lg:-my-10 overflow-hidden" style={{ height: "calc(100dvh - max(env(safe-area-inset-top),16px))" }}>
+    <div className="flex flex-col lg:flex-row -mx-4 lg:-mx-10 -my-4 lg:-my-10 overflow-hidden" style={{ height: "calc(100dvh - max(env(safe-area-inset-top),16px))" }}>
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
-      {/* Session sidebar — always rendered as a strip; expands to full width when open */}
+      {/* ── Mobile header ─────────────────────────────────────────── */}
+      <div className="lg:hidden shrink-0 flex items-center gap-2 px-4 border-b border-border bg-bg"
+        style={{ paddingTop: "max(env(safe-area-inset-top), 0.75rem)", paddingBottom: "0.75rem" }}>
+        <NavTrigger />
+        <div className="flex-1 min-w-0 px-2">
+          <p className="text-[15px] font-bold text-text leading-tight">Stry</p>
+          {activeSession && (
+            <p className="text-[11px] text-text-muted truncate leading-tight">{activeSession.title}</p>
+          )}
+        </div>
+        <button type="button" onClick={newChat} aria-label="New chat"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
+          <Plus className="h-4 w-4" strokeWidth={2} />
+        </button>
+        <button type="button" onClick={() => setMobileHistoryOpen(true)} aria-label="Chat history"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
+          <Clock className="h-4 w-4" strokeWidth={1.75} />
+        </button>
+      </div>
+
+      {/* ── Mobile history sheet ───────────────────────────────────── */}
+      <AnimatePresence>
+        {mobileHistoryOpen && (
+          <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end" aria-modal="true" role="dialog">
+            <motion.div className="absolute inset-0 bg-ink/50"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => setMobileHistoryOpen(false)} />
+            <motion.div className="relative z-10 bg-card rounded-t-[26px] px-5 pt-3"
+              style={{ paddingBottom: "max(env(safe-area-inset-bottom), 2rem)", maxHeight: "70dvh" }}
+              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 340, damping: 34 }}>
+              <div className="w-9 h-1 rounded-full bg-border mx-auto mb-4" />
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-[15px] font-bold text-text">Chats</h3>
+                <button type="button" onClick={() => { newChat(); setMobileHistoryOpen(false); }}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-card-elev border border-border px-3 py-1.5 text-[12px] font-semibold text-text">
+                  <Plus className="h-3.5 w-3.5" strokeWidth={2} /> New chat
+                </button>
+              </div>
+              <div className="overflow-y-auto space-y-0.5 no-scrollbar" style={{ maxHeight: "50dvh" }}>
+                {sessions.length === 0 && <p className="text-[13px] text-text-muted py-4 text-center">No previous chats yet.</p>}
+                {sessions.map((s) => (
+                  <div key={s.id} className={cn("group flex items-center gap-1 rounded-[12px] transition-colors", s.id === activeSessionId ? "bg-card-elev" : "hover:bg-card-elev")}>
+                    <button type="button" onClick={() => { loadSession(s.id); setMobileHistoryOpen(false); }} className="flex-1 text-left px-3 py-2.5 min-w-0">
+                      <div className="text-[14px] font-medium text-text truncate">{s.title}</div>
+                      <div className="text-[11px] text-text-subtle mt-0.5">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+                    </button>
+                    <button type="button" onClick={() => deleteSession({ id: s.id })} aria-label="Delete"
+                      className="opacity-0 group-hover:opacity-100 mr-3 inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum transition-colors">
+                      <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Desktop sidebar strip ─────────────────────────────────── */}
       <div
-        className="shrink-0 flex flex-col border-r border-border bg-bg overflow-hidden transition-[width] duration-200 ease-in-out z-10"
+        className="hidden lg:flex shrink-0 flex-col border-r border-border bg-bg overflow-hidden transition-[width] duration-200 ease-in-out z-10"
         style={{
           width: panelOpen ? 220 : 48,
           paddingTop: "max(env(safe-area-inset-top), 1rem)",
         }}
       >
-        {/* Toggle button — always at top, never moves */}
+        {/* Toggle button */}
         <div className="flex items-center px-1 pt-4 pb-2 shrink-0 justify-center">
           <button
             type="button"
@@ -293,7 +357,7 @@ export function CoachPage() {
           {panelOpen && <span className="ml-2 flex-1 text-[13px] font-bold text-text whitespace-nowrap overflow-hidden">Chats</span>}
         </div>
 
-        {/* New chat button — visible in both collapsed and expanded states */}
+        {/* New chat button */}
         <div className="flex items-center px-1 pb-3 shrink-0 justify-center">
           <button
             type="button"
@@ -306,7 +370,6 @@ export function CoachPage() {
           {panelOpen && <span className="ml-2 flex-1 text-[13px] font-semibold text-text whitespace-nowrap overflow-hidden">New chat</span>}
         </div>
 
-        {/* Sidebar content — only visible when open */}
         {panelOpen && (
           <div className="flex flex-col gap-2 flex-1 overflow-hidden px-3">
             <div className="flex-1 overflow-y-auto space-y-0.5 no-scrollbar">
@@ -333,7 +396,7 @@ export function CoachPage() {
         )}
       </div>
 
-      {/* Chat column */}
+      {/* ── Chat column ───────────────────────────────────────────── */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
         {/* Messages */}
@@ -397,8 +460,8 @@ export function CoachPage() {
           )}
         </AnimatePresence>
 
-        {/* Input — same pattern as AssistantConsole: textarea, safe-area bottom */}
-        <div className="shrink-0 px-4 lg:px-8 pt-2" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.75rem)", background: "linear-gradient(to top, var(--color-bg) 80%, transparent)" }}>
+        {/* Input */}
+        <div className="shrink-0 px-4 lg:px-8 pt-2" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 1rem)", background: "linear-gradient(to top, var(--color-bg) 80%, transparent)" }}>
           <div className={cn("flex items-end gap-1.5 rounded-full bg-card border px-3 py-2 shadow-[var(--shadow-float)] transition-colors",
             voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40")}>
             <textarea

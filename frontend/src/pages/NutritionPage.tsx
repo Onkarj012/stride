@@ -22,9 +22,13 @@ function MacroBar({ value, target, color }: { value: number; target: number; col
 const SECTIONS = ["Breakfast", "Lunch", "Snack", "Dinner"] as const;
 type Section = (typeof SECTIONS)[number];
 
-function groupByTime(meals: Array<{ time?: string } & Record<string, any>>) {
+function groupByTime(meals: Array<{ time?: string; mealType?: string } & Record<string, any>>) {
   const groups: Record<Section, typeof meals> = { Breakfast: [], Lunch: [], Snack: [], Dinner: [] };
   for (const m of meals) {
+    if (m.mealType && m.mealType !== "unspecified") {
+      const key = (m.mealType.charAt(0).toUpperCase() + m.mealType.slice(1)) as Section;
+      if (key in groups) { groups[key].push(m); continue; }
+    }
     const h = m.time ? parseInt(m.time.split(":")[0], 10) : 12;
     if (h < 11) groups.Breakfast.push(m);
     else if (h < 15) groups.Lunch.push(m);

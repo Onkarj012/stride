@@ -112,13 +112,13 @@ export function WorkoutsPage() {
             try { exerciseList = w.exercises ? JSON.parse(w.exercises as string) : []; } catch {}
 
             return (
-              <div key={w._id} className="group rounded-[20px] bg-mint-soft p-4 mb-3 relative">
+              <div key={w._id} className="group rounded-[20px] bg-card border border-border p-4 mb-3 relative shadow-[var(--shadow-soft)]">
                 {/* Controls — desktop hover, always visible on mobile */}
                 <div className="absolute top-3 right-3 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     type="button"
                     onClick={() => setEditEntry({ _id: w._id, name: w.name, intensity: w.intensity ?? "medium", duration: w.duration, caloriesBurned: w.caloriesBurned, rationale: w.rationale, sets: w.sets })}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-card/80 text-text-muted hover:text-text transition-colors"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-card-elev text-text-muted hover:text-text transition-colors"
                     aria-label="Edit workout"
                   >
                     <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
@@ -126,7 +126,7 @@ export function WorkoutsPage() {
                   <button
                     type="button"
                     onClick={() => setConfirmDelete(w._id)}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-card/80 text-text-muted hover:text-bubblegum transition-colors"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-card-elev text-text-muted hover:text-bubblegum transition-colors"
                     aria-label="Delete workout"
                   >
                     <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
@@ -139,33 +139,33 @@ export function WorkoutsPage() {
                     <h2 className="text-[19px] font-extrabold tracking-tight text-text">{w.name}</h2>
                     <p className="text-[11.5px] text-text-muted mt-1">Logged via chat · {durationNum > 0 ? `${durationNum} min` : w.intensity}</p>
                   </div>
-                  <div className="flex items-center gap-1.5 bg-mint rounded-full px-3 py-1 shrink-0">
-                    <svg width="9" height="9" viewBox="0 0 12 12"><path d="M2.5 6.5l2.4 2.4 4.6-5.3" stroke="#3D9A57" strokeWidth="2" strokeLinecap="round"/></svg>
-                    <span className="text-[11px] font-bold text-[#3D9A57]">Done</span>
+                  <div className="flex items-center gap-1.5 bg-lavender/15 rounded-full px-3 py-1 shrink-0">
+                    <svg width="9" height="9" viewBox="0 0 12 12" className="text-lavender"><path d="M2.5 6.5l2.4 2.4 4.6-5.3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+                    <span className="text-[11px] font-bold text-lavender">Done</span>
                   </div>
                 </div>
 
                 {/* Stat chips */}
                 <div className="flex gap-2 mb-3">
                   {durationNum > 0 && (
-                    <div className="flex-1 rounded-[12px] bg-white/65 dark:bg-card/50 px-3 py-2">
+                    <div className="flex-1 rounded-[12px] bg-card-elev px-3 py-2">
                       <div className="text-[14.5px] font-extrabold text-text">{durationNum} min</div>
                       <div className="text-[10px] text-text-muted font-semibold mt-0.5">Duration</div>
                     </div>
                   )}
                   {!!w.caloriesBurned && w.caloriesBurned > 0 && (
-                    <div className="flex-1 rounded-[12px] bg-white/65 dark:bg-card/50 px-3 py-2">
+                    <div className="flex-1 rounded-[12px] bg-card-elev px-3 py-2">
                       <div className="text-[14.5px] font-extrabold text-text">~{w.caloriesBurned}</div>
                       <div className="text-[10px] text-text-muted font-semibold mt-0.5">kcal burned</div>
                     </div>
                   )}
                   {exerciseList.length > 0 && (
-                    <div className="flex-1 rounded-[12px] bg-white/65 dark:bg-card/50 px-3 py-2">
+                    <div className="flex-1 rounded-[12px] bg-card-elev px-3 py-2">
                       <div className="text-[14.5px] font-extrabold text-text">{exerciseList.length}</div>
                       <div className="text-[10px] text-text-muted font-semibold mt-0.5">Exercises</div>
                     </div>
                   )}
-                  <div className="flex-1 rounded-[12px] bg-white/65 dark:bg-card/50 px-3 py-2">
+                  <div className="flex-1 rounded-[12px] bg-card-elev px-3 py-2">
                     <div className="text-[14.5px] font-extrabold text-text capitalize">{w.intensity}</div>
                     <div className="text-[10px] text-text-muted font-semibold mt-0.5">Intensity</div>
                   </div>

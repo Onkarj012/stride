@@ -22,7 +22,7 @@ export function FloatingTabBar() {
   const initials = [user?.firstName?.[0], user?.lastName?.[0]]
     .filter(Boolean).join("").toUpperCase() || "?";
   const fullName = user?.fullName ?? user?.firstName ?? "Profile";
-  const goal = "Cut · 🔥 Streak";
+  const goal = "Cut · Streak";
 
   function handleNav(to: string) {
     navigate(to);

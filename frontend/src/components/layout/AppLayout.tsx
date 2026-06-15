@@ -17,7 +17,7 @@ export function AppLayout({ children, onAskStride }: AppLayoutProps) {
           className="
             flex-1 min-w-0 overflow-x-hidden
             px-4 pt-[max(env(safe-area-inset-top),16px)]
-            pb-[max(calc(env(safe-area-inset-bottom)+5rem),5rem)]
+            pb-[max(env(safe-area-inset-bottom),1.5rem)]
             lg:px-10 lg:py-10 lg:pb-12
           "
         >

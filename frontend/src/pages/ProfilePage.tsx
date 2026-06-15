@@ -8,6 +8,7 @@ import {
 import { useQuery, useMutation } from "convex/react";
 import { useUser, useClerk } from "@clerk/react";
 import { api } from "@convex/_generated/api";
+import { NavTrigger } from "@/components/layout/NavTrigger";
 import { Avatar } from "@/components/primitives/Avatar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
@@ -712,7 +713,7 @@ export function ProfilePage() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <PageHeader center="Profile" />
+      <PageHeader center="Profile" right={<NavTrigger className="lg:hidden" />} />
       <div role="tablist" className="flex gap-1 rounded-full bg-card-elev border border-border p-1 self-start max-w-full overflow-x-auto no-scrollbar">
         {profileTabs.map((t) => {
           const Icon = t.icon;
@@ -744,7 +745,7 @@ export function ProfilePage() {
 export function SettingsPage() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <PageHeader center="Settings" />
+      <PageHeader center="Settings" right={<NavTrigger className="lg:hidden" />} />
       <div className="-mx-2 lg:mx-0">
         <SettingsTab />
       </div>
