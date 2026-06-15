@@ -104,6 +104,7 @@ export function CoachPage() {
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
+  const sendingRef = useRef(false);
   const { add } = useLogs();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -205,9 +206,10 @@ export function CoachPage() {
   }, [scroll]);
 
   const send = useCallback(async (text: string, image?: string) => {
-    if (thinking) return;
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     const v = text.trim();
-    if (!v && !image) return;
+    if (!v && !image) { sendingRef.current = false; return; }
     setInput("");
     setAttachedImage(null);
     setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || "[image]" }]);
@@ -229,7 +231,6 @@ export function CoachPage() {
       const loggedItem = (r.loggedItem && typeof r.loggedItem === "object" && "type" in (r.loggedItem as object))
         ? r.loggedItem as { type: string; data: any } : undefined;
 
-      setThinking(false);
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: reply, agent, streamed: true }]);
       scroll();
 
@@ -243,9 +244,11 @@ export function CoachPage() {
         }
       }
     } catch {
-      setThinking(false);
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: "Sorry, couldn't reach the AI right now. Please try again.", streamed: false }]);
       toast.error("Couldn't reach Stry", "Check your connection or try again");
+    } finally {
+      sendingRef.current = false;
+      setThinking(false);
     }
   }, [activeSessionId, createSession, sendToAI, scroll, toast]);
 
@@ -268,7 +271,7 @@ export function CoachPage() {
 
   return (
     /* Break out of AppLayout padding — same technique as HomePage */
-    <div className="flex flex-col lg:flex-row -mx-4 lg:-mx-10 -my-4 lg:-my-10 overflow-hidden" style={{ height: "calc(100dvh - max(env(safe-area-inset-top),16px))" }}>
+    <div className="flex flex-col lg:flex-row -mx-4 lg:-mx-10 -my-4 lg:-my-10 overflow-hidden" style={{ height: "calc(100dvh - max(env(safe-area-inset-top),16px))", marginBottom: "calc(-1 * max(env(safe-area-inset-bottom), 1.5rem))" }}>
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
@@ -325,7 +328,7 @@ export function CoachPage() {
                       <div className="text-[11px] text-text-subtle mt-0.5">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
                     </button>
                     <button type="button" onClick={() => deleteSession({ id: s.id })} aria-label="Delete"
-                      className="opacity-0 group-hover:opacity-100 mr-3 inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum transition-colors">
+                      className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 mr-3 inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum transition-colors">
                       <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                     </button>
                   </div>

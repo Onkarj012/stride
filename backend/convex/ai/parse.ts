@@ -248,7 +248,7 @@ Return ONLY valid JSON:
     sets: setsVal,
     duration: result.duration || duration || "30 min",
     intensity: result.intensity || intensity || "HIGH",
-    caloriesBurned: calorieResult?.total_kcal ?? 0,
+    caloriesBurned: calorieResult?.total_kcal ?? result.caloriesBurned ?? 0,
     rationale: result.rationale || "",
     exercises: exercises.length > 0 ? exercises : null,
     description,

@@ -678,7 +678,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </AnimatePresence>
 
         {/* Input — always at the bottom */}
-        <div className="shrink-0 px-4 lg:px-6 pb-[calc(env(safe-area-inset-bottom)+5rem)] lg:pb-4 pt-3 [background:linear-gradient(to_top,var(--color-bg)_80%,transparent)]">
+        <div className="shrink-0 px-4 lg:px-6 pb-[max(env(safe-area-inset-bottom),0.75rem)] lg:pb-4 pt-3 [background:linear-gradient(to_top,var(--color-bg)_80%,transparent)]">
           {Composer}
           {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
         </div>

@@ -97,7 +97,7 @@ export function FloatingTabBar() {
                     <span
                       className={cn(
                         "text-[10px] font-bold",
-                        active ? "text-ink" : "text-text-muted",
+                        active ? "text-text" : "text-text-muted",
                       )}
                     >
                       {label}
