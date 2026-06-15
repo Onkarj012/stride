@@ -382,10 +382,13 @@ export async function runNutritionEngine(
       // for missing pieces, not an automatic override to a larger whole-meal guess.
       const unresolvedShare = Math.min(0.45, Math.max(0.15, unresolved.length / Math.max(ingredients.length, 1)));
       const aiMissingCalories = Math.max(0, aiCals - engine.calories_kcal) * unresolvedShare;
+      const aiMissingProtein = Math.max(0, aiProtein - engine.protein_g) * unresolvedShare;
+      const aiMissingCarbs = Math.max(0, aiCarbs - engine.carbs_g) * unresolvedShare;
+      const aiMissingFat = Math.max(0, aiFat - engine.fat_g) * unresolvedShare;
       finalCalories = engine.calories_kcal > 0 ? engine.calories_kcal + aiMissingCalories : aiCals;
-      finalProtein = engine.protein_g > 0 ? engine.protein_g : aiProtein;
-      finalCarbs = engine.carbs_g > 0 ? engine.carbs_g : aiCarbs;
-      finalFat = engine.fat_g > 0 ? engine.fat_g : aiFat;
+      finalProtein = engine.protein_g + aiMissingProtein;
+      finalCarbs = engine.carbs_g + aiMissingCarbs;
+      finalFat = engine.fat_g + aiMissingFat;
       finalConfidence = Math.max(0.3, engine.confidence * 0.7);
       finalSource = "mixed";
     }

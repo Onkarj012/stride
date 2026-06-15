@@ -40,8 +40,9 @@ export interface UserMacros {
 export function looksLikeLog(message: string): boolean {
   const m = message.trim();
   if (m.length === 0) return false;
+  if (LOG_RE.test(m)) return true;
   if (QUESTION_RE.test(m)) return false;
-  return LOG_RE.test(m);
+  return false;
 }
 
 /** True when the message asks for a calorie/macro estimate about a food. */

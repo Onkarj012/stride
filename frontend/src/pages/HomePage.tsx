@@ -308,7 +308,7 @@ export function HomePage() {
     : undefined;
 
   return (
-    <div className="flex -mx-4 lg:-mx-10 -mt-[max(env(safe-area-inset-top),16px)] lg:-mt-10 -mb-[max(calc(env(safe-area-inset-bottom)+7rem),7rem)] lg:-mb-12 h-dvh" style={{ height: "100dvh" }}>
+    <div className="flex -mx-4 lg:-mx-10 -mt-[max(env(safe-area-inset-top),16px)] lg:-mt-10 -mb-[max(calc(env(safe-area-inset-bottom)+5rem),5rem)] lg:-mb-12 h-dvh" style={{ height: "100dvh" }}>
 
       {/* ── Chat column ── */}
       <div className="flex-1 min-w-0 flex flex-col min-h-0 border-r border-border">

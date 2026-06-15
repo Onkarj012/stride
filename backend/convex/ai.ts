@@ -527,6 +527,7 @@ Rules:
         const macros = [
           ing.caloriesPer100g != null ? `${ing.caloriesPer100g} kcal/100g` : null,
           ing.proteinPer100g != null ? `${ing.proteinPer100g}g P/100g` : null,
+          ing.carbsPer100g != null ? `${ing.carbsPer100g}g C/100g` : null,
           ing.fatPer100g != null ? `${ing.fatPer100g}g F/100g` : null,
         ].filter(Boolean).join(", ");
         contextBlock += `- ${ing.name}: ${macros || "custom"}${ing.notes ? ` (${ing.notes})` : ""}\n`;

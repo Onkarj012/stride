@@ -42,6 +42,8 @@ export async function callAI(messages: AIMessage[], maxTokens = 500, model?: str
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < 4; attempt++) {
+    const backoffMs = 250 * 2 ** attempt;
+    const wait = () => new Promise((r) => setTimeout(r, backoffMs));
     const useFallback = attempt >= 2;
     const currentModel = useFallback ? FALLBACK_MODEL : primaryModel;
     const controller = new AbortController();
@@ -59,6 +61,7 @@ export async function callAI(messages: AIMessage[], maxTokens = 500, model?: str
         const errBody = await res.text();
         if (status >= 500 || status === 429) {
           lastError = new Error(`OpenRouter error ${status}: ${errBody}`);
+          await wait();
           continue;
         }
         throw new Error(`OpenRouter error ${status}: ${errBody}`);
@@ -66,17 +69,20 @@ export async function callAI(messages: AIMessage[], maxTokens = 500, model?: str
       const data = await res.json() as any;
       if (data.error) {
         lastError = new Error(`OpenRouter API error: ${data.error.message}`);
+        await wait();
         continue;
       }
       const content = data.choices?.[0]?.message?.content;
       if (!content) {
         lastError = new Error("OpenRouter returned empty response");
+        await wait();
         continue;
       }
       return content;
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         lastError = new Error("OpenRouter request timed out after 60s");
+        await wait();
         continue;
       }
       const error = err as Error;
@@ -88,6 +94,7 @@ export async function callAI(messages: AIMessage[], maxTokens = 500, model?: str
         error.message.includes("network")
       ) {
         lastError = error;
+        await wait();
         continue;
       }
       throw err;
@@ -101,6 +108,39 @@ export async function callAI(messages: AIMessage[], maxTokens = 500, model?: str
 
 /** Extract and parse the first JSON object/array from LLM text, or fallback. */
 export function parseJSON<T>(text: string, fallback: T): T {
-  const match = text.match(/\{[\s\S]*\}/) ?? text.match(/\[[\s\S]*\]/);
-  try { return JSON.parse(match ? match[0] : text) as T; } catch { return fallback; }
+  const objIdx = text.indexOf("{");
+  const arrIdx = text.indexOf("[");
+  const start =
+    objIdx === -1 ? arrIdx :
+    arrIdx === -1 ? objIdx :
+    Math.min(objIdx, arrIdx);
+
+  if (start === -1) {
+    try { return JSON.parse(text) as T; } catch { return fallback; }
+  }
+
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === "\"") inString = false;
+      continue;
+    }
+    if (ch === "\"") inString = true;
+    else if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(text.slice(start, i + 1)) as T; } catch { return fallback; }
+      }
+    }
+  }
+  return fallback;
 }

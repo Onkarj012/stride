@@ -28,7 +28,7 @@ cd frontend && bun run dev
 
 # TypeScript check
 cd backend && bun run typecheck
-cd frontend && bun run lint
+cd frontend && bun run typecheck
 
 # Build frontend
 cd frontend && bun run build
