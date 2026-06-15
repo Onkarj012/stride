@@ -150,7 +150,7 @@ export function EditLogModal(props: Props) {
             {/* Header */}
             <div className={cn(
               "flex items-center gap-3 px-4 py-3 border-b border-border",
-              props.kind === "meal" ? "bg-peach/10" : "bg-lavender/10",
+              props.kind === "meal" ? "bg-peach-soft" : "bg-lavender-soft",
             )}>
               {props.kind === "meal" ? (
                 <Flame className="h-4 w-4 text-peach" strokeWidth={2} />

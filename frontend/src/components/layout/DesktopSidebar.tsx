@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Home, BarChart3, CalendarDays, Settings as SettingsIcon,
-  MessageSquare, Bot, User, LogOut, ChefHat,
+  MessageSquare, Bot, User, LogOut, ChefHat, UtensilsCrossed, Dumbbell,
 } from "lucide-react";
 import { Brand } from "@/components/layout/Brand";
 import { StrideMark } from "@/components/primitives/StrideMark";
@@ -14,11 +14,20 @@ import { cn } from "@/lib/utils";
 import { useRef, useState } from "react";
 
 const NAV = [
-  { to: "/", label: "Home", icon: Home },
+  { to: "/", label: "Today", icon: Home },
+  { to: "/nutrition", label: "Nutrition", icon: UtensilsCrossed },
+  { to: "/workouts", label: "Workouts", icon: Dumbbell },
   { to: "/insights", label: "Insights", icon: BarChart3 },
   { to: "/history", label: "History", icon: CalendarDays },
   { to: "/recipes", label: "Recipes", icon: ChefHat },
   { to: "/coach", label: "AI Coach", icon: Bot },
+];
+
+const RECENT_CHATS = [
+  "Protein-friendly dinner ideas",
+  "Why was my sleep off?",
+  "Lower body plan for June",
+  "Travel-day eating strategy",
 ];
 
 const SPRING = { type: "spring", stiffness: 320, damping: 32 } as const;
@@ -172,24 +181,24 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
         </AnimatePresence>
       </div>
 
-      {/* Ask Stry CTA → navigates to /coach */}
+      {/* Ask Stride CTA → navigates to /coach */}
       <div className={cn(collapsed ? "px-2" : "px-4")}>
         <button
           type="button"
           onClick={() => navigate("/coach")}
-          aria-label="Ask Stry"
-          title={collapsed ? "Ask Stry" : undefined}
+          aria-label="Ask Stride"
+          title={collapsed ? "Ask Stride" : undefined}
           className={cn(
-            "flex items-center justify-center rounded-full bg-ink text-text-on-ink",
-            "transition-[transform,opacity] duration-150 hover:opacity-90 active:scale-[0.98]",
-            "focus-visible:outline-none",
+            "flex items-center justify-center rounded-full bg-lavender text-ink",
+            "transition-[transform,box-shadow] duration-150 hover:brightness-105 active:scale-[0.98]",
+            "focus-visible:outline-none shadow-[0_2px_8px_rgba(179,160,255,0.35)]",
             collapsed ? "h-11 w-11 mx-auto" : "h-11 w-full gap-2 px-4 text-[15px] font-semibold",
           )}
         >
           <MessageSquare className="h-4 w-4 shrink-0" strokeWidth={2} />
           {!collapsed && (
             <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={FADE}>
-              Ask Stry
+              Ask Stride
             </motion.span>
           )}
         </button>
@@ -208,6 +217,22 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
           />
         ))}
       </nav>
+
+      {/* Recent conversations — only when expanded */}
+      {!collapsed && (
+        <div className="px-3">
+          <p className="text-[10px] font-extrabold tracking-[1.1px] uppercase text-text-muted px-1 pt-3 pb-1.5">Recent</p>
+          {RECENT_CHATS.map((chat) => (
+            <button
+              key={chat}
+              type="button"
+              className="w-full text-left px-2.5 py-1.5 rounded-[9px] text-[12px] text-text-muted font-medium hover:bg-card transition-colors truncate"
+            >
+              {chat}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="flex-1" />
 

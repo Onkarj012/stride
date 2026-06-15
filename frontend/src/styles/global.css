@@ -19,6 +19,17 @@
   --color-bubblegum: #f4b5d6;
   --color-sunshine: #ffc93b;
 
+  /* ---------- Soft accent fills — use instead of /8–/15 opacity tints ---------- */
+  --color-lavender-soft: #EDE8FF;
+  --color-sky-soft: #E7F0FF;
+  --color-peach-soft: #FFEEDC;
+  --color-mint-soft: #E6F7EA;
+  --color-bubblegum-soft: #FCEAF3;
+
+  /* ---------- Chat bubble — user message ---------- */
+  --color-bubble-user: #0d101b;
+  --color-bubble-user-text: #ffffff;
+
   /* ---------- Semantic surfaces (light defaults; dark overrides below) ---------- */
   --color-bg: #f8f8f8;          /* page background */
   --color-card: #ffffff;        /* primary card surface */
@@ -111,6 +122,14 @@
 
   --color-border: #21243a;
   --color-border-strong: #2c3045;
+
+  --color-lavender-soft: #252240;
+  --color-sky-soft: #1b2540;
+  --color-peach-soft: #33200f;
+  --color-mint-soft: #172a1c;
+  --color-bubblegum-soft: #2c1832;
+  --color-bubble-user: #2a2e4a;
+  --color-bubble-user-text: #ECEAF5;
 
   --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.5);
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.35);

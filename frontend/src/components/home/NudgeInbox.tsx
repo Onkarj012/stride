@@ -31,7 +31,7 @@ export function NudgeInbox() {
           <motion.div key={n._id} layout={!reduce} {...motionProps}>
             <Card tone="card" radius="lg" padding="none" className="overflow-hidden border-l-4 border-l-lavender">
               <div className="flex items-start gap-3 p-3">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-lavender/20">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-lavender-soft">
                   <Bell className="h-4 w-4 text-lavender" strokeWidth={2} />
                 </div>
                 <button

@@ -21,7 +21,7 @@ export function MilestoneList({
           className={cn(
             "rounded-[16px] border p-4 transition-colors duration-150",
             m.achieved
-              ? "bg-lavender/15 border-lavender/40"
+              ? "bg-lavender-soft border-lavender/40"
               : "bg-card border-border opacity-60",
           )}
         >

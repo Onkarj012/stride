@@ -7,6 +7,8 @@ import { api } from "@convex/_generated/api";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { SidebarProvider } from "@/context/SidebarContext";
 import { ToastProvider } from "@/context/ToastContext";
+import { NavSheetProvider } from "@/context/NavSheetContext";
+import { SnapshotProvider } from "@/context/SnapshotContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { FloatingTabBar } from "@/components/layout/FloatingTabBar";
@@ -17,6 +19,8 @@ import { SettingsPage } from "@/pages/ProfilePage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { CoachPage } from "@/pages/CoachPage";
 import { RecipesPage } from "@/pages/RecipesPage";
+import { NutritionPage } from "@/pages/NutritionPage";
+import { WorkoutsPage } from "@/pages/WorkoutsPage";
 import { SignInPage, SignUpPage } from "@/pages/AuthPages";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 
@@ -65,6 +69,8 @@ function MainAppRoutes() {
       <AnimatePresence mode="wait" initial={false}>
         <Routes location={location} key={location.pathname}>
           <Route path="/" element={<PageWrapper><HomePage /></PageWrapper>} />
+          <Route path="/nutrition" element={<PageWrapper><NutritionPage /></PageWrapper>} />
+          <Route path="/workouts" element={<PageWrapper><WorkoutsPage /></PageWrapper>} />
           <Route path="/insights" element={<PageWrapper><InsightsPage /></PageWrapper>} />
           <Route path="/history" element={<PageWrapper><HistoryPage /></PageWrapper>} />
           <Route path="/settings" element={<PageWrapper><SettingsPage /></PageWrapper>} />
@@ -98,7 +104,9 @@ export default function App() {
         </Show>
         <Show when="signed-in">
           <ThemeProvider>
+            <NavSheetProvider>
             <SidebarProvider>
+            <SnapshotProvider>
               <ToastProvider>
                 <EnsureUser />
                 <Routes>
@@ -117,7 +125,9 @@ export default function App() {
                   } />
                 </Routes>
               </ToastProvider>
+            </SnapshotProvider>
             </SidebarProvider>
+            </NavSheetProvider>
           </ThemeProvider>
         </Show>
       </ClerkLoaded>

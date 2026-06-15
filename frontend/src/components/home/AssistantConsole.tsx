@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Pencil, Paperclip, Copy, Check } from "lucide-react";
+import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { AgentBadge } from "@/components/insights/AgentBadge";
-import { Markdown } from "@/components/primitives/Markdown";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
-import { useTypewriter } from "@/hooks/useTypewriter";
+import { MessageBubble } from "@/components/chat/MessageBubble";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useDailyWindow, type DailyWindow } from "@/hooks/useDailyWindow";
 import { useBehavior } from "@/hooks/useBehavior";
 import { useToast } from "@/context/ToastContext";
 import { cn, localDateStr } from "@/lib/utils";
 import type { Agent } from "@/lib/storage";
+import { Brand } from "@/components/layout/Brand";
+import { NavTrigger } from "@/components/layout/NavTrigger";
 
 const SPRING = { type: "spring", stiffness: 260, damping: 28 } as const;
 
@@ -46,73 +47,6 @@ function coachToAgent(coachType?: string): Agent {
     case "mindset": return "wellness";
     default: return "main";
   }
-}
-
-/* ── Single message bubble with copy/edit/nav ── */
-function MessageBubble({
-  role, content, fresh, onEdit, onCopy,
-}: {
-  role: "user" | "ai"; content: string; fresh: boolean;
-  onEdit?: () => void; onCopy?: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const { displayed, done } = useTypewriter(content, 18, fresh);
-  const text = fresh ? displayed : content;
-  const showMarkdown = !fresh || done;
-
-  const copyText = () => {
-    navigator.clipboard.writeText(content).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-    onCopy?.();
-  };
-
-  const ActionBtn = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
-    <button type="button" onClick={onClick}
-      className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
-      {children}
-    </button>
-  );
-
-  if (role === "user") {
-    return (
-      <div className="flex flex-col items-end gap-1 group">
-        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-ink px-3.5 py-2.5 text-[0.95rem] leading-relaxed break-words text-text-on-ink">
-          {showMarkdown
-            ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
-            : <span className="whitespace-pre-wrap">{text}</span>}
-        </div>
-        <div className="flex items-center gap-2.5 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <ActionBtn onClick={copyText}>
-            {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
-            {copied ? "Copied" : "Copy"}
-          </ActionBtn>
-          {onEdit && (
-            <ActionBtn onClick={onEdit}>
-              <Pencil className="h-3 w-3" strokeWidth={2} />
-              Edit
-            </ActionBtn>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-start gap-1 group">
-      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-3.5 py-2.5 text-[0.95rem] leading-relaxed text-text break-words">
-        {showMarkdown
-          ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
-          : <span className="whitespace-pre-wrap">{text}</span>}
-      </div>
-      <div className="flex items-center gap-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <ActionBtn onClick={copyText}>
-          {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
-          {copied ? "Copied" : "Copy"}
-        </ActionBtn>
-      </div>
-    </div>
-  );
 }
 
 type AssistantConsoleProps = {
@@ -429,7 +363,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const Composer = (
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}
       className={cn(
-        "relative flex items-end gap-1.5 rounded-full bg-card border px-4 py-1.5 w-full shadow-[var(--shadow-float)] transition-colors",
+        "relative flex items-end gap-1.5 rounded-[18px] bg-card border px-4 py-1.5 w-full shadow-[var(--shadow-float)] transition-colors",
         voice.recording ? "border-peach" : attachedFile ? "border-lavender" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40",
       )}
     >
@@ -518,7 +452,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Inline action button — themed to design system
   const Btn = ({ label, onClick }: { label: string; onClick: () => void }) => (
     <button type="button" onClick={onClick}
-      className="inline-flex items-center rounded-full bg-lavender/15 hover:bg-lavender/25 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
+      className="inline-flex items-center rounded-full bg-lavender-soft hover:bg-lavender/25 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
       {label}
     </button>
   );
@@ -533,10 +467,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     if (action.type === "coach_note") {
       const toneStyle = action.tone === "recovery"
-        ? "border-l-sky bg-sky/8"
+        ? "border-l-sky bg-sky-soft"
         : action.tone === "momentum"
-        ? "border-l-mint bg-mint/8"
-        : "border-l-lavender bg-lavender/8";
+        ? "border-l-mint bg-mint-soft"
+        : "border-l-lavender bg-lavender-soft";
       return (
         <div className={`rounded-2xl border border-border border-l-4 px-3.5 py-3 text-[13.5px] leading-relaxed text-text ${toneStyle}`}>
           {action.text}
@@ -545,7 +479,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     if (action.type === "log_draft") {
       return (
-        <div className="rounded-2xl border border-mint/25 bg-mint/8 px-3.5 py-3 space-y-2.5">
+        <div className="rounded-2xl border border-mint/25 bg-mint-soft px-3.5 py-3 space-y-2.5">
           <p className="text-[0.95rem] font-semibold text-text">{action.title ?? action.draft?.description ?? "Review this log"}</p>
           {action.draft?.kind === "meal" && (
             <div className="flex gap-3 text-[12px] font-bold">
@@ -571,7 +505,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     if (action.type === "macro_conflict") {
       return (
-        <div className="rounded-2xl border border-peach/25 bg-peach/8 border-l-4 border-l-peach px-3.5 py-3 space-y-2.5">
+        <div className="rounded-2xl border border-peach/25 bg-peach-soft border-l-4 border-l-peach px-3.5 py-3 space-y-2.5">
           <p className="text-[0.95rem] font-semibold text-text">{action.title ?? "Macro check"}</p>
           {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
@@ -583,7 +517,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     // quick_question — lavender tinted
     return (
-      <div className="rounded-2xl border border-lavender/20 bg-lavender/8 px-3.5 py-3 space-y-2.5">
+      <div className="rounded-2xl border border-lavender/20 bg-lavender-soft px-3.5 py-3 space-y-2.5">
         <p className="text-[13.5px] font-semibold text-text">{action.title}</p>
         {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
         <div className="flex flex-wrap gap-2">
@@ -603,9 +537,24 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       {/* Full-height flex column — no card wrapper, page provides the container */}
       <div className="flex flex-col h-full min-h-0">
 
-        {/* Slim top bar — greeting or Stry name */}
+        {/* Mobile brand header — matches mockup top bar */}
+        <div className="lg:hidden shrink-0 flex items-center justify-between px-4 pt-[6px] pb-[10px]">
+          <Brand showWordmark />
+          <div className="flex items-center gap-2">
+            <button type="button" aria-label="Settings"
+              className="w-[38px] h-[38px] rounded-[12px] bg-card flex items-center justify-center shadow-[0_2px_10px_rgba(13,16,27,0.06)] text-text-muted">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M12 2v2.5M12 19.5V22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M2 12h2.5M19.5 12H22M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/>
+              </svg>
+            </button>
+            <NavTrigger />
+          </div>
+        </div>
+
+        {/* Desktop slim top bar — greeting or Stry name */}
         <div className={cn(
-          "shrink-0 flex items-center justify-between px-4 lg:px-6",
+          "hidden lg:flex shrink-0 items-center justify-between px-6",
           showHistory ? "h-12 border-b border-border" : "pt-6 pb-3",
         )}>
           {!showHistory ? (
@@ -715,7 +664,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                 </div>
               )}
               {attachedFile && (
-                <div className="relative inline-flex items-center gap-2 rounded-xl border border-lavender/30 bg-lavender/10 px-3 py-2">
+                <div className="relative inline-flex items-center gap-2 rounded-xl border border-lavender/30 bg-lavender-soft px-3 py-2">
                   <Paperclip className="h-3.5 w-3.5 text-lavender shrink-0" strokeWidth={2} />
                   <span className="text-[12px] font-medium text-text max-w-[140px] truncate">{attachedFile.name}</span>
                   <button type="button" onClick={() => setAttachedFile(null)} aria-label="Remove file"
