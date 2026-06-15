@@ -60,7 +60,7 @@ Thumbs.db
 temp/
 
 # Design system reference (local only — not source code)
-Stride Design System/
+Stride_Design_System/
 
 # Graphify cache
 graphify-out/cache/
