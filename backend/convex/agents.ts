@@ -111,14 +111,14 @@ Return ONLY a JSON array, or [] if nothing applies.`;
         }).catch(() => {});
       }
 
-      if (fact.kind === "meal_fact" && fact.kcal != null) {
+      if (fact.kind === "meal_fact" && fact.kcal != null && fact.protein != null && fact.carbs != null && fact.fat != null) {
         await ctx.runMutation(internal.food_memory.recordFromMeal, {
           userId: agentCtx.userId,
           name: fact.name,
           kcal: fact.kcal,
-          protein: fact.protein ?? 0,
-          carbs: fact.carbs ?? 0,
-          fat: fact.fat ?? 0,
+          protein: fact.protein,
+          carbs: fact.carbs,
+          fat: fact.fat,
           date: agentCtx.today,
           source: "corrected",
         }).catch(() => {});
