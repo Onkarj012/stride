@@ -18,6 +18,7 @@
   --color-mint: #b8e5c0;
   --color-bubblegum: #f4b5d6;
   --color-sunshine: #ffc93b;
+  --color-error: #d93025;        /* error red — readable on both light and dark */
 
   /* ---------- Soft accent fills — use instead of /8–/15 opacity tints ---------- */
   --color-lavender-soft: #EDE8FF;
@@ -128,6 +129,7 @@
   --color-peach-soft: #33200f;
   --color-mint-soft: #172a1c;
   --color-bubblegum-soft: #2c1832;
+  --color-error: #f27b72;        /* softer red on dark bg — still high contrast */
   --color-bubble-user: #2a2e4a;
   --color-bubble-user-text: #ECEAF5;
 

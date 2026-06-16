@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Paperclip } from "lucide-react";
+import { ArrowUp, Mic, Plus, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -64,6 +64,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [kbPad, setKbPad] = useState(0);
   // Track which message id was the fresh one (so only it animates)
   const [freshTs, setFreshTs] = useState<number | null>(null);
   const [agentHint, setAgentHint] = useState<Agent>("main");
@@ -97,7 +98,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const { user } = useUser();
   const { recordEngagement } = useBehavior();
-  const window = useDailyWindow();
+  const dailyWindow = useDailyWindow();
   const internalRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
@@ -124,7 +125,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const recordBehavior = useMutation(api.behavior.recordBehavior);
 
   const firstName = user?.firstName ?? user?.username ?? "there";
-  const greeting = greetingFor(firstName, window);
+  const greeting = greetingFor(firstName, dailyWindow);
   const showHistory = messages.length > 0;
 
   useEffect(() => {
@@ -180,6 +181,23 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     };
     reader.readAsText(file);
   }, [toast]);
+
+  // Pin composer above keyboard on mobile
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    function update() {
+      if (window.innerWidth >= 1024) { setKbPad(0); return; }
+      const gap = window.innerHeight - vv!.offsetTop - vv!.height;
+      setKbPad(gap > 50 ? gap : 0);
+    }
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
 
   /* ── Cmd+V image paste (page-wide) ── */
   useEffect(() => {
@@ -246,8 +264,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         await upsertSteps({ count: d.count, date });
         toast.success(`Steps logged${dateNote}`, `${d.count.toLocaleString()} steps`);
       }
-    } catch (err) {
-      toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");
+    } catch {
+      toast.error("Couldn't log", "Something went wrong — try again.");
     }
     if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
   }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, toast, pendingDrafts.length]);
@@ -273,7 +291,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setAttachedFile(null);
     // Reset textarea height
     if (activeRef.current) activeRef.current.style.height = "auto";
-    recordEngagement(window);
+    recordEngagement(dailyWindow);
 
     try {
       const result = await homepageInput({
@@ -289,10 +307,19 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       setAgentActions(Array.isArray(result.actions) ? result.actions : []);
     } catch (err) {
       setThinking(false);
-      const msg = err instanceof Error ? err.message : "Something went wrong";
+      const raw = err instanceof Error ? err.message : "";
+      const msg = raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")
+        ? "AI is not configured — contact the app owner to set up the API key."
+        : raw.includes("429") || raw.toLowerCase().includes("rate limit") || raw.toLowerCase().includes("quota")
+        ? "Stry is busy — try again in a moment."
+        : raw.toLowerCase().includes("timeout") || raw.toLowerCase().includes("timed out")
+        ? "Request timed out — check your connection."
+        : raw.includes("Unauthenticated")
+        ? "Session expired — please sign in again."
+        : "Something went wrong. Try again.";
       toast.error("Couldn't reach Stry", msg);
     }
-  }, [homepageInput, toast, recordEngagement, window, attachedFile]);
+  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile]);
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
     if (button.value === "skip" || button.value === "done") {
@@ -363,16 +390,52 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const Composer = (
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}
       className={cn(
-        "relative flex items-end gap-1.5 rounded-[18px] bg-card border px-4 py-1.5 w-full shadow-[var(--shadow-float)] transition-colors",
+        "relative flex items-center gap-1.5 rounded-[18px] bg-card border px-3 py-1.5 w-full shadow-[var(--shadow-float)] transition-colors",
         voice.recording ? "border-peach" : attachedFile ? "border-lavender" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40",
       )}
     >
+      {/* Attachment menu — left */}
+      <div className="relative shrink-0">
+        <button type="button" aria-label="Add"
+          onClick={() => setMoreMenuOpen((o) => !o)}
+          onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
+          <Plus className="h-4 w-4" strokeWidth={2} />
+        </button>
+        <AnimatePresence>
+          {moreMenuOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: 4, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 4, scale: 0.96 }}
+              transition={{ duration: 0.12 }}
+              className="absolute bottom-full mb-2 left-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20"
+            >
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                <ImagePlus className="h-4 w-4" strokeWidth={1.75} />
+                Photo / camera
+              </button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                <Barcode className="h-4 w-4" strokeWidth={1.75} />
+                Scan barcode
+              </button>
+              <button type="button" onMouseDown={(e) => { e.preventDefault(); docRef.current?.click(); setMoreMenuOpen(false); }}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
+                <Paperclip className="h-4 w-4" strokeWidth={1.75} />
+                Attach MD / TXT
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
       <textarea
         ref={activeRef as React.RefObject<HTMLTextAreaElement>}
         value={textValue}
         onChange={(e) => {
           setTextValue(e.target.value);
-          // Auto-grow: reset height then set to scrollHeight, capped at ~5 lines (120px)
           e.target.style.height = "auto";
           e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
         }}
@@ -390,49 +453,15 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         disabled={voice.recording || voice.transcribing}
         rows={1}
         style={{ resize: "none", height: "auto", maxHeight: 120, overflowY: "auto" }}
-        className="min-w-0 flex-1 bg-transparent text-[1.1rem] text-text placeholder:text-text-subtle focus:outline-none py-2 disabled:opacity-50 leading-snug"
+        className="min-w-0 flex-1 bg-transparent text-[13px] lg:text-[1.1rem] text-text placeholder:text-text-subtle focus:outline-none py-2 disabled:opacity-50 leading-snug"
       />
 
-      <div className="relative">
-        <button type="button" aria-label="Add"
-          onClick={() => setMoreMenuOpen((o) => !o)}
-          onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-          <FileText className="h-4 w-4" strokeWidth={1.75} />
-        </button>
-        <AnimatePresence>
-          {moreMenuOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: 4, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 4, scale: 0.96 }}
-              transition={{ duration: 0.12 }}
-              className="absolute bottom-full mb-2 right-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20"
-            >
-              <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.95rem] font-medium text-text hover:bg-card-elev">
-                <ImagePlus className="h-4 w-4" strokeWidth={1.75} />
-                Photo / camera
-              </button>
-              <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.95rem] font-medium text-text hover:bg-card-elev">
-                <Barcode className="h-4 w-4" strokeWidth={1.75} />
-                Scan barcode
-              </button>
-              <button type="button" onMouseDown={(e) => { e.preventDefault(); docRef.current?.click(); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[0.95rem] font-medium text-text hover:bg-card-elev">
-                <Paperclip className="h-4 w-4" strokeWidth={1.75} />
-                Attach MD / TXT
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
+      {/* Voice — hidden on mobile when typing */}
       <button type="button" aria-label={voice.recording ? "Stop listening" : "Voice input"}
         onClick={() => voice.recording ? voice.stop() : voice.start()}
         disabled={voice.transcribing}
-        className={cn("inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-50",
+        className={cn("h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-50 shrink-0",
+          textValue.trim() ? "hidden lg:inline-flex" : "inline-flex",
           voice.recording ? "bg-peach text-ink" : "text-text-muted hover:bg-card-elev")}>
         {voice.transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> :
           voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> :
@@ -537,19 +566,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       {/* Full-height flex column — no card wrapper, page provides the container */}
       <div className="flex flex-col h-full min-h-0">
 
-        {/* Mobile brand header — matches mockup top bar */}
+        {/* Mobile brand header */}
         <div className="lg:hidden shrink-0 flex items-center justify-between px-4 pt-[6px] pb-[10px]">
           <Brand showWordmark />
-          <div className="flex items-center gap-2">
-            <button type="button" aria-label="Settings"
-              className="w-[38px] h-[38px] rounded-[12px] bg-card flex items-center justify-center shadow-[0_2px_10px_rgba(13,16,27,0.06)] text-text-muted">
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M12 2v2.5M12 19.5V22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M2 12h2.5M19.5 12H22M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/>
-              </svg>
-            </button>
-            <NavTrigger />
-          </div>
+          <NavTrigger />
         </div>
 
         {/* Desktop slim top bar — greeting or Stry name */}
@@ -678,7 +698,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </AnimatePresence>
 
         {/* Input — always at the bottom */}
-        <div className="shrink-0 px-4 lg:px-6 pb-[max(env(safe-area-inset-bottom),0.75rem)] lg:pb-4 pt-3 [background:linear-gradient(to_top,var(--color-bg)_80%,transparent)]">
+        <div className="shrink-0 px-4 lg:px-6 lg:pb-4 pt-3 [background:linear-gradient(to_top,var(--color-bg)_80%,transparent)]"
+          style={{ paddingBottom: kbPad > 0 ? `${kbPad}px` : "max(env(safe-area-inset-bottom), 0.75rem)" }}>
           {Composer}
           {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
         </div>

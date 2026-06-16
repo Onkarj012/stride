@@ -605,93 +605,92 @@ function SavedRecipeRow({ recipe, onOpen, onLog }: { recipe: any; onOpen: () => 
 
 type View = { mode: "list" } | { mode: "new" } | { mode: "detail"; recipe: any };
 
-export function RecipesPage() {
+export function RecipesContent({ embedded = false }: { embedded?: boolean }) {
   const recipes = useQuery(api.recipes.getRecipes, {}) as any[] | undefined;
   const logRecipe = useMutation(api.recipes.logRecipe);
   const toast = useToast();
   const [view, setView] = useState<View>({ mode: "list" });
 
-  const body = (() => {
-    if (view.mode === "new") return <RecipeBuilderView onDone={() => setView({ mode: "list" })} />;
-    if (view.mode === "detail") return <RecipeDetailView recipe={view.recipe} onBack={() => setView({ mode: "list" })} />;
+  if (view.mode === "new") return <RecipeBuilderView onDone={() => setView({ mode: "list" })} />;
+  if (view.mode === "detail") return <RecipeDetailView recipe={view.recipe} onBack={() => setView({ mode: "list" })} />;
 
-    const suggested = (recipes ?? []).slice(0, 4);
-    const saved = (recipes ?? []).slice(4);
+  const suggested = (recipes ?? []).slice(0, 4);
+  const saved = (recipes ?? []).slice(4);
 
-    return (
-      <div className="w-full max-w-7xl mx-auto space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="text-h2 text-text">Recipes</h1>
-          <div className="flex items-center gap-2">
-            <NavTrigger className="lg:hidden" />
-            <button type="button" onClick={() => setView({ mode: "new" })}
-              className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-2.5 text-[14px] font-bold">
-              <Plus className="h-4 w-4" strokeWidth={2.5} /> New recipe
-            </button>
-          </div>
+  return (
+    <div className="w-full max-w-7xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        {!embedded && <h1 className="text-h2 text-text">Recipes</h1>}
+        <div className={embedded ? "ml-auto flex items-center gap-2" : "flex items-center gap-2"}>
+          {!embedded && <NavTrigger className="lg:hidden" />}
+          <button type="button" onClick={() => setView({ mode: "new" })}
+            className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-2.5 text-[14px] font-bold">
+            <Plus className="h-4 w-4" strokeWidth={2.5} /> New recipe
+          </button>
         </div>
+      </div>
 
-        {recipes === undefined ? (
-          <p className="text-text-muted text-[14px]">Loading…</p>
-        ) : recipes.length === 0 ? (
-          <Card tone="card" radius="xl" padding="lg" className="flex flex-col items-center gap-3 text-center py-16">
-            <div className="grid h-14 w-14 place-items-center rounded-full bg-lavender/20">
-              <ChefHat className="h-6 w-6 text-lavender" strokeWidth={2} />
+      {recipes === undefined ? (
+        <p className="text-text-muted text-[14px]">Loading…</p>
+      ) : recipes.length === 0 ? (
+        <Card tone="card" radius="xl" padding="lg" className="flex flex-col items-center gap-3 text-center py-16">
+          <div className="grid h-14 w-14 place-items-center rounded-full bg-lavender/20">
+            <ChefHat className="h-6 w-6 text-lavender" strokeWidth={2} />
+          </div>
+          <div>
+            <p className="text-[16px] font-semibold text-text">No recipes yet</p>
+            <p className="text-[14px] text-text-muted">Build one to log meals in a single tap.</p>
+          </div>
+          <button type="button" onClick={() => setView({ mode: "new" })}
+            className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-2.5 text-[14px] font-bold">
+            <Plus className="h-4 w-4" strokeWidth={2.5} /> New recipe
+          </button>
+        </Card>
+      ) : (
+        <>
+          {/* Suggested for tonight */}
+          <div>
+            <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-text-muted mb-3">Suggested for tonight</p>
+            <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              {suggested.map((r: any) => (
+                <SuggestedCard key={r._id} recipe={r} onOpen={() => setView({ mode: "detail", recipe: r })} />
+              ))}
             </div>
+          </div>
+
+          {/* Saved recipes */}
+          {saved.length > 0 && (
             <div>
-              <p className="text-[16px] font-semibold text-text">No recipes yet</p>
-              <p className="text-[14px] text-text-muted">Build one to log meals in a single tap.</p>
-            </div>
-            <button type="button" onClick={() => setView({ mode: "new" })}
-              className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-2.5 text-[14px] font-bold">
-              <Plus className="h-4 w-4" strokeWidth={2.5} /> New recipe
-            </button>
-          </Card>
-        ) : (
-          <>
-            {/* Suggested for tonight */}
-            <div>
-              <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-text-muted mb-3">Suggested for tonight</p>
-              <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {suggested.map((r: any) => (
-                  <SuggestedCard key={r._id} recipe={r} onOpen={() => setView({ mode: "detail", recipe: r })} />
+              <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-text-muted mb-3">Saved recipes</p>
+              <div className="flex flex-col gap-2">
+                {saved.map((r: any) => (
+                  <SavedRecipeRow
+                    key={r._id}
+                    recipe={r}
+                    onOpen={() => setView({ mode: "detail", recipe: r })}
+                    onLog={async () => {
+                      try {
+                        await logRecipe({ id: r._id, servings: 1, date: localDateStr() });
+                        toast.success(`Logged ${r.name}`, `${r.perServing.kcal} kcal`);
+                      } catch {
+                        toast.error("Couldn't log recipe");
+                      }
+                    }}
+                  />
                 ))}
               </div>
             </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
-            {/* Saved recipes */}
-            {saved.length > 0 && (
-              <div>
-                <p className="text-[11px] font-extrabold uppercase tracking-[0.9px] text-text-muted mb-3">Saved recipes</p>
-                <div className="flex flex-col gap-2">
-                  {saved.map((r: any) => (
-                    <SavedRecipeRow
-                      key={r._id}
-                      recipe={r}
-                      onOpen={() => setView({ mode: "detail", recipe: r })}
-                      onLog={async () => {
-                        try {
-                          await logRecipe({ id: r._id, servings: 1, date: localDateStr() });
-                          toast.success(`Logged ${r.name}`, `${r.perServing.kcal} kcal`);
-                        } catch {
-                          toast.error("Couldn't log recipe");
-                        }
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    );
-  })();
-
+export function RecipesPage() {
   return (
-    <motion.div key={view.mode === "detail" ? `d-${(view as any).recipe._id}` : view.mode}
-      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
-      {body}
+    <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
+      <RecipesContent />
     </motion.div>
   );
 }

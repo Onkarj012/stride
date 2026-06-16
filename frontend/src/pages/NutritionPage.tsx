@@ -9,6 +9,7 @@ import { NavTrigger } from "@/components/layout/NavTrigger";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
 import { useToast } from "@/context/ToastContext";
 import { localDateStr, cn } from "@/lib/utils";
+import { RecipesContent } from "@/pages/RecipesPage";
 
 function MacroBar({ value, target, color }: { value: number; target: number; color: string }) {
   const pct = target > 0 ? Math.min((value / target) * 100, 100) : 0;
@@ -53,6 +54,7 @@ export function NutritionPage() {
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const toast = useToast();
 
+  const [activeTab, setActiveTab] = useState<"log" | "recipes">("log");
   const [editEntry, setEditEntry] = useState<EditableMeal | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Id<"meals"> | null>(null);
 
@@ -120,6 +122,20 @@ export function NutritionPage() {
           }
         />
 
+        {/* Log | Recipes tabs */}
+        <div className="flex gap-1 mb-4 p-1 rounded-xl bg-card-elev w-fit">
+          {(["log", "recipes"] as const).map((tab) => (
+            <button key={tab} type="button" onClick={() => setActiveTab(tab)}
+              className={cn("px-4 py-1.5 rounded-lg text-[13px] font-bold capitalize transition-colors",
+                activeTab === tab ? "bg-card text-text shadow-[var(--shadow-soft)]" : "text-text-muted hover:text-text")}>
+              {tab === "log" ? "Log" : "Recipes"}
+            </button>
+          ))}
+        </div>
+
+        {activeTab === "recipes" && <RecipesContent embedded />}
+
+        {activeTab === "log" && <>
         {/* Macro summary card */}
         <div className="rounded-[20px] bg-ink p-4 flex items-center gap-4 mb-4">
           <svg width="72" height="72" viewBox="0 0 72 72" className="shrink-0">
@@ -237,6 +253,7 @@ export function NutritionPage() {
           <Plus className="h-4 w-4" strokeWidth={1.8} />
           Log a meal
         </button>
+        </>}
       </div>
     </>
   );
