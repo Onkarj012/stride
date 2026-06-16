@@ -223,7 +223,7 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
               <button
                 key={s.id}
                 type="button"
-                onClick={() => navigate("/coach")}
+                onClick={() => navigate(`/coach?session=${s.id}`)}
                 className="w-full text-left px-2.5 py-1.5 rounded-[9px] text-[12px] text-text-muted font-medium hover:bg-card transition-colors truncate"
               >
                 {s.title}

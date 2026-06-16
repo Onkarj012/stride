@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { ArrowUp, Mic, MicOff, Plus, Trash2, Barcode, ImagePlus, X, Loader2, PanelLeft, Sparkles, Clock } from "lucide-react";
 import { NavTrigger } from "@/components/layout/NavTrigger";
@@ -89,6 +90,7 @@ export function CoachPage() {
   const deleteSession = useMutation(api.chat.deleteSession);
   const sendToAI = useAction(api.ai.chat);
   const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [activeSessionId, setActiveSessionId] = useState<Id<"chat_sessions"> | null>(null);
   const convexMessages = useQuery(api.chat.getMessages, activeSessionId ? { sessionId: activeSessionId } : "skip");
@@ -128,7 +130,7 @@ export function CoachPage() {
     const vv = window.visualViewport;
     if (!vv) return;
     function update() {
-      if (window.innerWidth >= 1024) return;
+      if (window.innerWidth >= 1024) { setKbPad(0); return; }
       const gap = window.innerHeight - vv!.offsetTop - vv!.height;
       setKbPad(gap > 50 ? gap : 0);
     }
@@ -170,6 +172,14 @@ export function CoachPage() {
     setMessages([{ kind: "text", id: "loading", role: "assistant", text: "Loading…", streamed: false }]);
     setPanelOpen(false);
   }, [activeSessionId]);
+
+  // Load session from sidebar ?session= param, then clear the param from URL
+  useEffect(() => {
+    const sid = searchParams.get("session");
+    if (!sid || sessions.length === 0) return;
+    const match = sessions.find((s) => s.id === sid);
+    if (match) { loadSession(match.id as Id<"chat_sessions">); setSearchParams({}, { replace: true }); }
+  }, [searchParams, sessions, loadSession, setSearchParams]);
 
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
 
@@ -531,7 +541,7 @@ export function CoachPage() {
               placeholder={voice.recording ? "Listening…" : voice.transcribing ? "Transcribing…" : "Ask Stry anything…"}
               disabled={voice.recording || voice.transcribing}
               aria-label="Message Stry"
-              className="min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-[13px] lg:text-[0.95rem] text-text placeholder:text-text-subtle focus:outline-none py-1 disabled:opacity-50 max-h-[120px]"
+              className="min-w-0 flex-1 resize-none overflow-y-auto bg-transparent text-[13px] lg:text-[0.95rem] text-text placeholder:text-text-subtle focus:outline-none py-1 disabled:opacity-50 max-h-[120px]"
               style={{ lineHeight: "1.5" }}
             />
 

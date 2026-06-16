@@ -280,7 +280,7 @@ export function SignInPage() {
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send reset code"}
               </button>
             </form>
-            <button type="button" onClick={() => { setError(null); setView("signin"); }} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back to sign in</button>
+            <button type="button" onClick={() => { setError(null); setErrorField(null); setView("signin"); }} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back to sign in</button>
           </motion.div>
         )}
 
@@ -301,7 +301,7 @@ export function SignInPage() {
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify code"}
               </button>
             </form>
-            <button type="button" onClick={() => { setError(null); setView("forgot_email"); }} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back</button>
+            <button type="button" onClick={() => { setError(null); setErrorField(null); setView("forgot_email"); }} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back</button>
           </motion.div>
         )}
 

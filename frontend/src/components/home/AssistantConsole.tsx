@@ -98,7 +98,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const { user } = useUser();
   const { recordEngagement } = useBehavior();
-  const window = useDailyWindow();
+  const dailyWindow = useDailyWindow();
   const internalRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
@@ -125,7 +125,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const recordBehavior = useMutation(api.behavior.recordBehavior);
 
   const firstName = user?.firstName ?? user?.username ?? "there";
-  const greeting = greetingFor(firstName, window);
+  const greeting = greetingFor(firstName, dailyWindow);
   const showHistory = messages.length > 0;
 
   useEffect(() => {
@@ -187,7 +187,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     const vv = window.visualViewport;
     if (!vv) return;
     function update() {
-      if (window.innerWidth >= 1024) return;
+      if (window.innerWidth >= 1024) { setKbPad(0); return; }
       const gap = window.innerHeight - vv!.offsetTop - vv!.height;
       setKbPad(gap > 50 ? gap : 0);
     }
@@ -291,7 +291,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setAttachedFile(null);
     // Reset textarea height
     if (activeRef.current) activeRef.current.style.height = "auto";
-    recordEngagement(window);
+    recordEngagement(dailyWindow);
 
     try {
       const result = await homepageInput({
@@ -319,7 +319,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         : "Something went wrong. Try again.";
       toast.error("Couldn't reach Stry", msg);
     }
-  }, [homepageInput, toast, recordEngagement, window, attachedFile]);
+  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile]);
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
     if (button.value === "skip" || button.value === "done") {
@@ -452,7 +452,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         aria-label="Ask Stry"
         disabled={voice.recording || voice.transcribing}
         rows={1}
-        style={{ resize: "none", height: "auto", maxHeight: 120, overflowY: "hidden" }}
+        style={{ resize: "none", height: "auto", maxHeight: 120, overflowY: "auto" }}
         className="min-w-0 flex-1 bg-transparent text-[13px] lg:text-[1.1rem] text-text placeholder:text-text-subtle focus:outline-none py-2 disabled:opacity-50 leading-snug"
       />
 
