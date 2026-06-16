@@ -9,6 +9,8 @@ import { StrideMark } from "@/components/primitives/StrideMark";
 import { Avatar } from "@/components/primitives/Avatar";
 import { useSidebar } from "@/context/SidebarContext";
 import { useUser, useClerk } from "@clerk/react";
+import { useQuery } from "convex/react";
+import { api } from "@convex/_generated/api";
 import { cn } from "@/lib/utils";
 import { useRef, useState } from "react";
 
@@ -20,13 +22,6 @@ const NAV = [
   { to: "/history", label: "History", icon: CalendarDays },
   { to: "/recipes", label: "Recipes", icon: ChefHat },
   { to: "/coach", label: "AI Coach", icon: Bot },
-];
-
-const RECENT_CHATS = [
-  "Protein-friendly dinner ideas",
-  "Why was my sleep off?",
-  "Lower body plan for June",
-  "Travel-day eating strategy",
 ];
 
 const SPRING = { type: "spring", stiffness: 320, damping: 32 } as const;
@@ -151,6 +146,8 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const activeIndex = NAV.findIndex((n) => (n.to === "/" ? pathname === "/" : pathname.startsWith(n.to)));
+  const sessions = useQuery(api.chat.getSessions) ?? [];
+  const recentChats = sessions.slice(0, 5);
 
   return (
     <motion.aside
@@ -159,14 +156,14 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
       onMouseEnter={() => collapsed && setCollapsed(false)}
       onMouseLeave={() => !collapsed && setCollapsed(true)}
       className={cn(
-        "hidden lg:flex shrink-0 flex-col gap-5",
+        "hidden lg:flex shrink-0 flex-col",
         "sticky top-0 h-screen overflow-hidden",
         "border-r border-border bg-bg",
         "py-5 z-20",
       )}
     >
       {/* Brand */}
-      <div className={cn("flex items-center", collapsed ? "justify-center px-2" : "px-5")}>
+      <div className={cn("flex items-center shrink-0 mb-4", collapsed ? "justify-center px-2" : "px-5")}>
         <AnimatePresence mode="wait" initial={false}>
           {collapsed ? (
             <motion.div key="mark" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={FADE} className="text-text">
@@ -180,8 +177,8 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
         </AnimatePresence>
       </div>
 
-      {/* Ask Stride CTA → navigates to /coach */}
-      <div className={cn(collapsed ? "px-2" : "px-4")}>
+      {/* Ask Stride CTA */}
+      <div className={cn("shrink-0 mb-3", collapsed ? "px-2" : "px-4")}>
         <button
           type="button"
           onClick={() => navigate("/coach")}
@@ -203,41 +200,41 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
         </button>
       </div>
 
-      {/* Nav */}
-      <nav aria-label="Main" className={cn("flex flex-col gap-1", collapsed ? "px-2" : "px-3")}>
-        {NAV.map((item, i) => (
-          <NavItem
-            key={item.to}
-            to={item.to}
-            label={item.label}
-            Icon={item.icon}
-            active={i === activeIndex}
-            collapsed={collapsed}
-          />
-        ))}
-      </nav>
-
-      {/* Recent conversations — only when expanded */}
-      {!collapsed && (
-        <div className="px-3">
-          <p className="text-[10px] font-extrabold tracking-[1.1px] uppercase text-text-muted px-1 pt-3 pb-1.5">Recent</p>
-          {RECENT_CHATS.map((chat) => (
-            <button
-              key={chat}
-              type="button"
-              className="w-full text-left px-2.5 py-1.5 rounded-[9px] text-[12px] text-text-muted font-medium hover:bg-card transition-colors truncate"
-            >
-              {chat}
-            </button>
+      {/* Scrollable middle: nav + recent */}
+      <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col">
+        <nav aria-label="Main" className={cn("flex flex-col gap-1 shrink-0", collapsed ? "px-2" : "px-3")}>
+          {NAV.map((item, i) => (
+            <NavItem
+              key={item.to}
+              to={item.to}
+              label={item.label}
+              Icon={item.icon}
+              active={i === activeIndex}
+              collapsed={collapsed}
+            />
           ))}
-        </div>
-      )}
+        </nav>
 
-      <div className="flex-1" />
+        {/* Recent conversations — only when expanded */}
+        {!collapsed && recentChats.length > 0 && (
+          <div className="px-3 mt-4">
+            <p className="text-[10px] font-extrabold tracking-[1.1px] uppercase text-text-muted px-1 pb-1.5">Recent</p>
+            {recentChats.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => navigate("/coach")}
+                className="w-full text-left px-2.5 py-1.5 rounded-[9px] text-[12px] text-text-muted font-medium hover:bg-card transition-colors truncate"
+              >
+                {s.title}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
-      {/* Footer: theme toggle, settings, user chip */}
-      <div className={cn("flex flex-col gap-3", collapsed ? "px-2" : "px-4")}>
-        {/* Settings icon */}
+      {/* Footer: settings + user chip */}
+      <div className={cn("shrink-0 flex flex-col gap-3 pt-3", collapsed ? "px-2" : "px-4")}>
         <NavLink
           to="/settings"
           title={collapsed ? "Settings" : undefined}
@@ -257,8 +254,6 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
             </span>
           )}
         </NavLink>
-
-        {/* User chip with popover */}
         <UserChip collapsed={collapsed} />
       </div>
     </motion.aside>

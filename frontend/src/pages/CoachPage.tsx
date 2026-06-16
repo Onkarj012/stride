@@ -103,6 +103,7 @@ export function CoachPage() {
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [kbPad, setKbPad] = useState(0);
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const sendingRef = useRef(false);
   const { add } = useLogs();
@@ -121,6 +122,23 @@ export function CoachPage() {
     reader.onload = () => setAttachedImage(reader.result as string);
     reader.readAsDataURL(file);
   }, [toast]);
+
+  // Pin composer above keyboard on mobile via visualViewport
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    function update() {
+      if (window.innerWidth >= 1024) return;
+      const gap = window.innerHeight - vv!.offsetTop - vv!.height;
+      setKbPad(gap > 50 ? gap : 0);
+    }
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
 
   useEffect(() => {
     function onPaste(e: ClipboardEvent) {
@@ -243,9 +261,17 @@ export function CoachPage() {
           toast.success(`Logged workout: ${d.name ?? "workout"}`, d.duration ? `${d.duration} · ${d.caloriesBurned ?? 0} kcal burned` : undefined);
         }
       }
-    } catch {
-      setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: "Sorry, couldn't reach the AI right now. Please try again.", streamed: false }]);
-      toast.error("Couldn't reach Stry", "Check your connection or try again");
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "";
+      const userMsg = raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")
+        ? "AI is not configured — contact the app owner to set up the API key."
+        : raw.includes("429") || raw.toLowerCase().includes("rate limit") || raw.toLowerCase().includes("quota")
+        ? "Stry is busy — try again in a moment."
+        : raw.toLowerCase().includes("timeout") || raw.toLowerCase().includes("timed out")
+        ? "Request timed out — check your connection."
+        : "Couldn't reach Stry right now. Please try again.";
+      setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: userMsg, streamed: false }]);
+      toast.error("Error", userMsg);
     } finally {
       sendingRef.current = false;
       setThinking(false);
@@ -467,33 +493,22 @@ export function CoachPage() {
         </AnimatePresence>
 
         {/* Input */}
-        <div className="shrink-0 px-4 lg:px-8 pt-2" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 1rem)", background: "linear-gradient(to top, var(--color-bg) 80%, transparent)" }}>
-          <div className={cn("flex items-end gap-1.5 rounded-full bg-card border px-3 py-2 shadow-[var(--shadow-float)] transition-colors",
+        <div className="shrink-0 px-4 lg:px-8 pt-2"
+          style={{ paddingBottom: kbPad > 0 ? `${kbPad}px` : "max(env(safe-area-inset-bottom), 1rem)", background: "linear-gradient(to top, var(--color-bg) 80%, transparent)" }}>
+          <div className={cn("flex items-center gap-1.5 rounded-full bg-card border px-3 py-2 shadow-[var(--shadow-float)] transition-colors",
             voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40")}>
-            <textarea
-              ref={inputRef}
-              rows={1}
-              value={input}
-              onChange={handleInput}
-              onKeyDown={handleKeyDown}
-              placeholder={voice.recording ? "Listening…" : voice.transcribing ? "Transcribing…" : "Ask Stry anything…"}
-              disabled={voice.recording || voice.transcribing}
-              aria-label="Message Stry"
-              className="min-w-0 flex-1 resize-none bg-transparent text-[0.95rem] text-text placeholder:text-text-subtle focus:outline-none py-1 disabled:opacity-50 max-h-[120px]"
-              style={{ lineHeight: "1.5" }}
-            />
 
-            {/* Attachment menu */}
-            <div className="relative shrink-0 self-end mb-0.5">
+            {/* Attachment menu — left */}
+            <div className="relative shrink-0">
               <button type="button" aria-label="Add" onClick={() => setMoreMenuOpen((o) => !o)} onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-                <ImagePlus className="h-4 w-4" strokeWidth={1.75} />
+                <Plus className="h-4 w-4" strokeWidth={2} />
               </button>
               <AnimatePresence>
                 {moreMenuOpen && (
                   <motion.div initial={{ opacity: 0, y: 4, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 4, scale: 0.96 }}
                     transition={{ duration: 0.12 }}
-                    className="absolute bottom-full mb-2 right-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20">
+                    className="absolute bottom-full mb-2 left-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20">
                     <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
                       className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
                       <ImagePlus className="h-4 w-4" strokeWidth={1.75} /> Photo / camera
@@ -507,10 +522,24 @@ export function CoachPage() {
               </AnimatePresence>
             </div>
 
-            {/* Voice */}
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder={voice.recording ? "Listening…" : voice.transcribing ? "Transcribing…" : "Ask Stry anything…"}
+              disabled={voice.recording || voice.transcribing}
+              aria-label="Message Stry"
+              className="min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-[13px] lg:text-[0.95rem] text-text placeholder:text-text-subtle focus:outline-none py-1 disabled:opacity-50 max-h-[120px]"
+              style={{ lineHeight: "1.5" }}
+            />
+
+            {/* Voice — hidden on mobile when typing */}
             <button type="button" aria-label={voice.recording ? "Stop" : "Voice"} onClick={() => voice.recording ? voice.stop() : voice.start()}
               disabled={voice.transcribing}
-              className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-50 shrink-0 self-end mb-0.5",
+              className={cn("h-8 w-8 items-center justify-center rounded-full transition-colors disabled:opacity-50 shrink-0",
+                input.trim() ? "hidden lg:inline-flex" : "inline-flex",
                 voice.recording ? "bg-peach text-ink" : "text-text-muted hover:bg-card-elev")}>
               {voice.transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> :
                 voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> :
@@ -522,7 +551,7 @@ export function CoachPage() {
               disabled={(!input.trim() && !attachedImage) || thinking}
               animate={{ scale: (input.trim() || attachedImage) ? 1 : 0.88, opacity: (input.trim() || attachedImage) ? 1 : 0.45 }}
               transition={SPRING}
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed self-end mb-0.5">
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed">
               <ArrowUp className="h-4 w-4" strokeWidth={2.25} />
             </motion.button>
           </div>

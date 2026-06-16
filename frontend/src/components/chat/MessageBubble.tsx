@@ -31,10 +31,10 @@ export function MessageBubble({
   if (role === "user") {
     return (
       <div className="flex flex-col items-end gap-1 group">
-        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-[var(--color-bubble-user)] px-3.5 py-2.5 text-[0.95rem] leading-relaxed break-words text-[var(--color-bubble-user-text)]">
+        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-[var(--color-bubble-user)] px-3.5 py-2.5 text-[14px] lg:text-[0.95rem] leading-relaxed break-words text-[var(--color-bubble-user-text)]">
           <span className="whitespace-pre-wrap">{text}</span>
         </div>
-        <div className="flex items-center gap-2.5 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-2.5 mr-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
           <ActionBtn onClick={copyText}>
             {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
             {copied ? "Copied" : "Copy"}
@@ -52,12 +52,12 @@ export function MessageBubble({
 
   return (
     <div className="flex flex-col items-start gap-1 group">
-      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-3.5 py-2.5 text-[0.95rem] leading-relaxed text-text break-words">
+      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-3.5 py-2.5 text-[14px] lg:text-[0.95rem] leading-relaxed text-text break-words">
         {showMarkdown
-          ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
+          ? <Markdown className="text-[14px] lg:text-[0.95rem] leading-relaxed">{text}</Markdown>
           : <span className="whitespace-pre-wrap">{text}</span>}
       </div>
-      <div className="flex items-center gap-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="flex items-center gap-2.5 ml-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
         {badge}
         <ActionBtn onClick={copyText}>
           {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
