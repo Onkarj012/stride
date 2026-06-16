@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Undo2, Pencil, Paperclip, Copy, Check } from "lucide-react";
+import { ArrowUp, Mic, FileText, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
-import type { Id } from "@convex/_generated/dataModel";
 import { AgentBadge } from "@/components/insights/AgentBadge";
-import { Markdown } from "@/components/primitives/Markdown";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
-import { useTypewriter } from "@/hooks/useTypewriter";
+import { MessageBubble } from "@/components/chat/MessageBubble";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useDailyWindow, type DailyWindow } from "@/hooks/useDailyWindow";
 import { useBehavior } from "@/hooks/useBehavior";
 import { useToast } from "@/context/ToastContext";
 import { cn, localDateStr } from "@/lib/utils";
 import type { Agent } from "@/lib/storage";
+import { Brand } from "@/components/layout/Brand";
+import { NavTrigger } from "@/components/layout/NavTrigger";
 
 const SPRING = { type: "spring", stiffness: 260, damping: 28 } as const;
 
@@ -47,73 +47,6 @@ function coachToAgent(coachType?: string): Agent {
     case "mindset": return "wellness";
     default: return "main";
   }
-}
-
-/* ── Single message bubble with copy/edit/nav ── */
-function MessageBubble({
-  role, content, fresh, onEdit, onCopy,
-}: {
-  role: "user" | "ai"; content: string; fresh: boolean;
-  onEdit?: () => void; onCopy?: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const { displayed, done } = useTypewriter(content, 18, fresh);
-  const text = fresh ? displayed : content;
-  const showMarkdown = !fresh || done;
-
-  const copyText = () => {
-    navigator.clipboard.writeText(content).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-    onCopy?.();
-  };
-
-  const ActionBtn = ({ onClick, children }: { onClick: () => void; children: React.ReactNode }) => (
-    <button type="button" onClick={onClick}
-      className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
-      {children}
-    </button>
-  );
-
-  if (role === "user") {
-    return (
-      <div className="flex flex-col items-end gap-1 group">
-        <div className="max-w-[78%] rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-3.5 py-2.5 text-[0.95rem] leading-relaxed break-words text-text">
-          {showMarkdown
-            ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
-            : <span className="whitespace-pre-wrap">{text}</span>}
-        </div>
-        <div className="flex items-center gap-2.5 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <ActionBtn onClick={copyText}>
-            {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
-            {copied ? "Copied" : "Copy"}
-          </ActionBtn>
-          {onEdit && (
-            <ActionBtn onClick={onEdit}>
-              <Pencil className="h-3 w-3" strokeWidth={2} />
-              Edit
-            </ActionBtn>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-start gap-1 group">
-      <div className="max-w-[86%] rounded-2xl rounded-bl-sm bg-card border border-border px-3.5 py-2.5 text-[0.95rem] leading-relaxed text-text break-words">
-        {showMarkdown
-          ? <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
-          : <span className="whitespace-pre-wrap">{text}</span>}
-      </div>
-      <div className="flex items-center gap-2.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <ActionBtn onClick={copyText}>
-          {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
-          {copied ? "Copied" : "Copy"}
-        </ActionBtn>
-      </div>
-    </div>
-  );
 }
 
 type AssistantConsoleProps = {
@@ -159,11 +92,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   }, []);
   const pendingTier2Ref = useRef<string>("");
 
-  // Auto-applied memory drafts → instant log + undo toast
-  type AutoLogged = { mealId: Id<"meals">; draft: any };
-  const [autoLoggedMeal, setAutoLoggedMeal] = useState<AutoLogged | null>(null);
+  // Auto-applied memory drafts — removed (all drafts now go through confirm card)
   const [editEntry, setEditEntry] = useState<EditableMeal | null>(null);
-  const autoLogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { user } = useUser();
   const { recordEngagement } = useBehavior();
@@ -185,7 +115,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const homepageInput = useAction(api.ai.homepageInput);
   const clearHomepageMessages = useMutation(api.chat.clearHomepageMessages);
   const addMeal = useMutation(api.meals.addMeal);
-  const deleteMeal = useMutation(api.meals.deleteMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
   const addWater = useMutation(api.wellness.addWater);
   const upsertSleep = useMutation(api.wellness.upsertSleep);
@@ -354,51 +283,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       });
 
       setThinking(false);
-      // Mark this moment so only the just-arrived AI message animates
       setFreshTs(Date.now());
       setAgentHint(coachToAgent(result.coachType));
+      // actions always contain log_draft cards for every draft — just show them
       setAgentActions(Array.isArray(result.actions) ? result.actions : []);
-
-      const hasInlineDraft = Array.isArray(result.actions) && result.actions.some((a: any) => a.type === "log_draft" || a.type === "macro_conflict");
-      if (!hasInlineDraft && !result.isQuestion && result.drafts && result.drafts.length > 0) {
-        const autoDrafts = result.drafts.filter((d: any) => d.autoApplied && d.kind === "meal");
-        const confirmDrafts = result.drafts.filter((d: any) => !d.autoApplied);
-
-        // Instant-log auto-applied memory drafts
-        for (const d of autoDrafts) {
-          try {
-            const time = new Date().toTimeString().slice(0, 5);
-            const today = localDateStr();
-            const date = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : today;
-            const mealId = await addMeal({
-              name: d.description,
-              calories: d.kcal,
-              protein: d.protein,
-              carbs: d.carbs,
-              fat: d.fat,
-              time,
-              date,
-              components: d.items?.join(", "),
-              confidence: d.confidence,
-              nutritionSource: d.nutritionSource,
-              foodMemoryId: d.foodMemoryId,
-            });
-            // Show undo/edit overlay (auto-dismiss after 6 s)
-            if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
-            setAutoLoggedMeal({ mealId: mealId as Id<"meals">, draft: d });
-            autoLogTimerRef.current = setTimeout(() => setAutoLoggedMeal(null), 6000);
-            await recordActivity({ type: "meal" }).catch(() => {});
-          } catch (err) {
-            toast.error("Couldn't auto-log", err instanceof Error ? err.message : "Try again");
-          }
-        }
-
-        // Remaining drafts still need confirmation
-        if (confirmDrafts.length > 0) {
-          pendingTier2Ref.current = result.tier2Detail ?? "";
-          setPendingDrafts(confirmDrafts);
-        }
-      }
     } catch (err) {
       setThinking(false);
       const msg = err instanceof Error ? err.message : "Something went wrong";
@@ -475,8 +363,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const Composer = (
     <form onSubmit={(e) => { e.preventDefault(); submit(); }}
       className={cn(
-        "relative flex items-end gap-1.5 rounded-[20px] bg-card border px-4 py-1.5 w-full transition-colors",
-        voice.recording ? "border-peach" : attachedFile ? "border-lavender" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender",
+        "relative flex items-end gap-1.5 rounded-[18px] bg-card border px-4 py-1.5 w-full shadow-[var(--shadow-float)] transition-colors",
+        voice.recording ? "border-peach" : attachedFile ? "border-lavender" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40",
       )}
     >
       <textarea
@@ -564,7 +452,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Inline action button — themed to design system
   const Btn = ({ label, onClick }: { label: string; onClick: () => void }) => (
     <button type="button" onClick={onClick}
-      className="inline-flex items-center rounded-full bg-lavender/15 hover:bg-lavender/25 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
+      className="inline-flex items-center rounded-full bg-lavender-soft hover:bg-lavender/25 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
       {label}
     </button>
   );
@@ -579,10 +467,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     if (action.type === "coach_note") {
       const toneStyle = action.tone === "recovery"
-        ? "border-l-sky bg-sky/8"
+        ? "border-l-sky bg-sky-soft"
         : action.tone === "momentum"
-        ? "border-l-mint bg-mint/8"
-        : "border-l-lavender bg-lavender/8";
+        ? "border-l-mint bg-mint-soft"
+        : "border-l-lavender bg-lavender-soft";
       return (
         <div className={`rounded-2xl border border-border border-l-4 px-3.5 py-3 text-[13.5px] leading-relaxed text-text ${toneStyle}`}>
           {action.text}
@@ -591,7 +479,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     if (action.type === "log_draft") {
       return (
-        <div className="rounded-2xl border border-mint/25 bg-mint/8 px-3.5 py-3 space-y-2.5">
+        <div className="rounded-2xl border border-mint/25 bg-mint-soft px-3.5 py-3 space-y-2.5">
           <p className="text-[0.95rem] font-semibold text-text">{action.title ?? action.draft?.description ?? "Review this log"}</p>
           {action.draft?.kind === "meal" && (
             <div className="flex gap-3 text-[12px] font-bold">
@@ -617,7 +505,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     if (action.type === "macro_conflict") {
       return (
-        <div className="rounded-2xl border border-peach/25 bg-peach/8 border-l-4 border-l-peach px-3.5 py-3 space-y-2.5">
+        <div className="rounded-2xl border border-peach/25 bg-peach-soft border-l-4 border-l-peach px-3.5 py-3 space-y-2.5">
           <p className="text-[0.95rem] font-semibold text-text">{action.title ?? "Macro check"}</p>
           {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap gap-2">
@@ -629,7 +517,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     // quick_question — lavender tinted
     return (
-      <div className="rounded-2xl border border-lavender/20 bg-lavender/8 px-3.5 py-3 space-y-2.5">
+      <div className="rounded-2xl border border-lavender/20 bg-lavender-soft px-3.5 py-3 space-y-2.5">
         <p className="text-[13.5px] font-semibold text-text">{action.title}</p>
         {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
         <div className="flex flex-wrap gap-2">
@@ -649,9 +537,24 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       {/* Full-height flex column — no card wrapper, page provides the container */}
       <div className="flex flex-col h-full min-h-0">
 
-        {/* Slim top bar — greeting or Stry name */}
+        {/* Mobile brand header — matches mockup top bar */}
+        <div className="lg:hidden shrink-0 flex items-center justify-between px-4 pt-[6px] pb-[10px]">
+          <Brand showWordmark />
+          <div className="flex items-center gap-2">
+            <button type="button" aria-label="Settings"
+              className="w-[38px] h-[38px] rounded-[12px] bg-card flex items-center justify-center shadow-[0_2px_10px_rgba(13,16,27,0.06)] text-text-muted">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M12 2v2.5M12 19.5V22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M2 12h2.5M19.5 12H22M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/>
+              </svg>
+            </button>
+            <NavTrigger />
+          </div>
+        </div>
+
+        {/* Desktop slim top bar — greeting or Stry name */}
         <div className={cn(
-          "shrink-0 flex items-center justify-between px-4 lg:px-6",
+          "hidden lg:flex shrink-0 items-center justify-between px-6",
           showHistory ? "h-12 border-b border-border" : "pt-6 pb-3",
         )}>
           {!showHistory ? (
@@ -684,7 +587,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
         {/* Message area — scrollable, fills all remaining height */}
         <div ref={scrollRef}
-          className="flex-1 min-h-0 overflow-y-auto px-4 lg:px-6 py-4 flex flex-col gap-3"
+          className="flex-1 min-h-0 overflow-y-auto px-4 lg:px-6 py-4 flex flex-col gap-3 [mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)] [-webkit-mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)]"
           aria-live="polite" aria-label="Chat with Stry">
 
           {/* Messages top→bottom, newest at bottom */}
@@ -703,11 +606,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
           {/* Thinking dots */}
           {thinking && (
-            <div className="flex items-center gap-1.5 px-1 py-1">
+            <div className="rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-3.5 py-3 flex gap-1.5 w-fit">
               {[0, 1, 2].map((i) => (
-                <motion.span key={i} className="h-2 w-2 rounded-full bg-text-muted/40"
-                  animate={{ scale: [1, 1.4, 1] }}
-                  transition={{ duration: 0.8, repeat: Infinity, delay: i * 0.18, ease: "easeInOut" }} />
+                <motion.span key={i} className="h-2 w-2 rounded-full bg-lavender/60"
+                  animate={{ y: [0, -4, 0] }}
+                  transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }} />
               ))}
             </div>
           )}
@@ -761,7 +664,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                 </div>
               )}
               {attachedFile && (
-                <div className="relative inline-flex items-center gap-2 rounded-xl border border-lavender/30 bg-lavender/10 px-3 py-2">
+                <div className="relative inline-flex items-center gap-2 rounded-xl border border-lavender/30 bg-lavender-soft px-3 py-2">
                   <Paperclip className="h-3.5 w-3.5 text-lavender shrink-0" strokeWidth={2} />
                   <span className="text-[12px] font-medium text-text max-w-[140px] truncate">{attachedFile.name}</span>
                   <button type="button" onClick={() => setAttachedFile(null)} aria-label="Remove file"
@@ -775,48 +678,13 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </AnimatePresence>
 
         {/* Input — always at the bottom */}
-        <div className="shrink-0 px-4 lg:px-6 pb-[calc(env(safe-area-inset-bottom)+5rem)] lg:pb-4 pt-2 bg-bg border-t border-border">
+        <div className="shrink-0 px-4 lg:px-6 pb-[max(env(safe-area-inset-bottom),0.75rem)] lg:pb-4 pt-3 [background:linear-gradient(to_top,var(--color-bg)_80%,transparent)]">
           {Composer}
           {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
         </div>
       </div>
 
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
-
-      {/* Memory auto-log undo toast */}
-      <AnimatePresence>
-        {autoLoggedMeal && (
-          <motion.div key="memory-toast"
-            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 16 }}
-            transition={{ type: "spring", stiffness: 320, damping: 28 }}
-            className="fixed bottom-[calc(env(safe-area-inset-bottom)+5rem)] lg:bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-2xl bg-ink text-text-on-ink px-4 py-3 shadow-[var(--shadow-elev)] max-w-[calc(100vw-2rem)]">
-            <span className="text-[0.95rem] font-medium truncate max-w-[180px]">
-              {autoLoggedMeal.draft.memoryNote ?? `Logged ${autoLoggedMeal.draft.name}`}
-            </span>
-            <span className="text-[12px] text-text-on-ink/60">{autoLoggedMeal.draft.kcal} kcal</span>
-            <div className="flex gap-1 ml-1">
-              <button type="button" onClick={async () => {
-                if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
-                setAutoLoggedMeal(null);
-                try { await deleteMeal({ id: autoLoggedMeal.mealId }); toast.info("Undone", autoLoggedMeal.draft.name); }
-                catch { toast.error("Couldn't undo", "Meal may already be logged"); }
-              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold">
-                <Undo2 className="h-3 w-3" strokeWidth={2.25} /> Undo
-              </button>
-              <button type="button" onClick={() => {
-                const d = autoLoggedMeal.draft;
-                setEditEntry({ _id: autoLoggedMeal.mealId, name: d.name, calories: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, time: d.time, mealType: d.mealType ?? "unspecified" });
-                void recordBehavior({ kind: "log", key: "meal_correct" }).catch(() => {});
-                if (autoLogTimerRef.current) clearTimeout(autoLogTimerRef.current);
-                setAutoLoggedMeal(null);
-              }} className="inline-flex items-center gap-1 rounded-full bg-text-on-ink/15 hover:bg-text-on-ink/25 px-2.5 py-1.5 text-[12px] font-semibold">
-                <Pencil className="h-3 w-3" strokeWidth={2.25} /> Edit
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       <EditLogModal kind="meal" entry={editEntry} onClose={() => setEditEntry(null)} />
     </>
   );

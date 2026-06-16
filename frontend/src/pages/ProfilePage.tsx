@@ -8,6 +8,7 @@ import {
 import { useQuery, useMutation } from "convex/react";
 import { useUser, useClerk } from "@clerk/react";
 import { api } from "@convex/_generated/api";
+import { NavTrigger } from "@/components/layout/NavTrigger";
 import { Avatar } from "@/components/primitives/Avatar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
@@ -594,6 +595,7 @@ function SettingsTab() {
   const { signOut } = useClerk();
   const navigate = useNavigate();
   const clearAllData = useMutation(api.users.clearAllData);
+  const exportData = useQuery(api.users.exportAllData);
   const upsertProfile = useMutation(api.profile.upsertProfile);
 
   return (
@@ -667,7 +669,8 @@ function SettingsTab() {
         </div>
         <ListRow icon={<Download />} title="Export your data" meta="Download a JSON copy of your logs"
           onClick={() => {
-            const data = JSON.stringify({ exportedAt: new Date().toISOString() }, null, 2);
+            if (!exportData) return;
+            const data = JSON.stringify(exportData, null, 2);
             const a = document.createElement("a");
             a.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
             a.download = `stride-export-${new Date().toISOString().slice(0, 10)}.json`;
@@ -710,7 +713,7 @@ export function ProfilePage() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <PageHeader center="Profile" />
+      <PageHeader center="Profile" right={<NavTrigger className="lg:hidden" />} />
       <div role="tablist" className="flex gap-1 rounded-full bg-card-elev border border-border p-1 self-start max-w-full overflow-x-auto no-scrollbar">
         {profileTabs.map((t) => {
           const Icon = t.icon;
@@ -742,7 +745,7 @@ export function ProfilePage() {
 export function SettingsPage() {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <PageHeader center="Settings" />
+      <PageHeader center="Settings" right={<NavTrigger className="lg:hidden" />} />
       <div className="-mx-2 lg:mx-0">
         <SettingsTab />
       </div>

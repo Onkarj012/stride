@@ -5,6 +5,7 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { NavTrigger } from "@/components/layout/NavTrigger";
 import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
@@ -404,7 +405,7 @@ export function HistoryPage() {
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <PageHeader center="History" />
+      <PageHeader center="History" right={<NavTrigger className="lg:hidden" />} />
 
       {/* Mobile: stacked. Desktop: 2 columns */}
       <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">

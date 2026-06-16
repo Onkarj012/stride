@@ -1,21 +1,35 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, MicOff, Plus, Copy, Check, Trash2, Pencil, Barcode, ImagePlus, X, Loader2, PanelLeft } from "lucide-react";
+import { ArrowUp, Mic, MicOff, Plus, Trash2, Barcode, ImagePlus, X, Loader2, PanelLeft, Sparkles, Clock } from "lucide-react";
+import { NavTrigger } from "@/components/layout/NavTrigger";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { AgentBadge } from "@/components/insights/AgentBadge";
-import { Markdown } from "@/components/primitives/Markdown";
+import { MessageBubble } from "@/components/chat/MessageBubble";
 import { useLogs } from "@/hooks/useLogs";
 import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useToast } from "@/context/ToastContext";
 import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
-import { todaySuggestions, DRAFT_TRIGGERS } from "@/data/mock";
 import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import type { Agent, CoachingStyle } from "@/lib/storage";
+
+const COACH_SUGGESTIONS = [
+  "Log breakfast",
+  "How is my week?",
+  "Plan a workout",
+  "I'm feeling tired",
+];
+
+const SUGGESTION_DOT: Record<string, string> = {
+  "Log breakfast": "bg-peach",
+  "How is my week?": "bg-lavender",
+  "Plan a workout": "bg-mint",
+  "I'm feeling tired": "bg-sky",
+};
 import { cn, localDateStr } from "@/lib/utils";
 
 function coachToAgent(coachType?: string): Agent {
@@ -42,57 +56,13 @@ const GREETING: Record<CoachingStyle, string> = {
   analytical: "Hi, I'm Stry. I'll help you track patterns. What would you like to log?",
 };
 
-function AssistantBubble({ text, agent }: { text: string; agent?: Agent; isLast: boolean }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex items-start gap-2.5 max-w-[85%] group">
-      <div className="shrink-0 w-7 h-7 mt-1 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[11px] font-bold text-lavender">S</div>
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-2.5">
-          <Markdown className="text-[0.95rem] leading-relaxed">{text}</Markdown>
-        </div>
-        <div className="flex items-center gap-3 ml-1">
-          {agent && agent !== "main" && <AgentBadge agent={agent} />}
-          <button type="button"
-            onClick={() => { navigator.clipboard.writeText(text).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-            className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
-            {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function UserBubble({ text, onEdit }: { text: string; onEdit: () => void }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex flex-col items-end gap-1 max-w-[85%] group">
-      <div className="rounded-2xl rounded-br-sm bg-card-elev border border-lavender/40 px-4 py-2.5 text-[0.95rem] leading-relaxed whitespace-pre-wrap text-text">
-        {text}
-      </div>
-      <div className="flex items-center gap-3 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button type="button"
-          onClick={() => { navigator.clipboard.writeText(text).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
-          {copied ? <Check className="h-3 w-3 text-mint" strokeWidth={2.5} /> : <Copy className="h-3 w-3" strokeWidth={2} />}
-          {copied ? "Copied" : "Copy"}
-        </button>
-        <button type="button" onClick={onEdit}
-          className="inline-flex items-center gap-1 text-[11px] text-text-muted hover:text-text transition-colors">
-          <Pencil className="h-3 w-3" strokeWidth={2} /> Edit
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function ThinkingBubble() {
   return (
     <div className="flex items-start gap-2.5">
-      <div className="shrink-0 w-7 h-7 mt-1 rounded-full bg-lavender/20 border border-lavender/30 flex items-center justify-center text-[11px] font-bold text-lavender">S</div>
-      <div className="rounded-2xl rounded-bl-sm bg-card border border-border px-4 py-3 flex gap-1.5">
+      <div className="shrink-0 h-[18px] w-[18px] mt-1.5 rounded-[6px] bg-lavender flex items-center justify-center">
+        <Sparkles className="h-2.5 w-2.5 text-ink" strokeWidth={2.5} />
+      </div>
+      <div className="rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-4 py-3 flex gap-1.5">
         {[0, 1, 2].map((i) => (
           <motion.div key={i} className="h-1.5 w-1.5 rounded-full bg-lavender"
             animate={{ y: [0, -4, 0] }}
@@ -129,10 +99,12 @@ export function CoachPage() {
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
   const [panelOpen, setPanelOpen] = useState(false); // collapsed by default
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
+  const sendingRef = useRef(false);
   const { add } = useLogs();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -190,7 +162,7 @@ export function CoachPage() {
     setPanelOpen(false);
   }, [style]);
 
-  const orderedSuggestions = useMemo(() => orderSuggestions(todaySuggestions), []);
+  const orderedSuggestions = useMemo(() => orderSuggestions(COACH_SUGGESTIONS), []);
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
 
@@ -234,27 +206,14 @@ export function CoachPage() {
   }, [scroll]);
 
   const send = useCallback(async (text: string, image?: string) => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     const v = text.trim();
-    if (!v && !image) return;
+    if (!v && !image) { sendingRef.current = false; return; }
     setInput("");
     setAttachedImage(null);
     setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || "[image]" }]);
     scroll();
-
-    const trigger = !image ? DRAFT_TRIGGERS[v.toLowerCase()] : undefined;
-    if (trigger) {
-      setThinking(true);
-      setTimeout(() => {
-        setThinking(false);
-        const intro = trigger.draft.kind === "meal" ? "I've estimated the macros. Does this look right?" : "I've logged your workout. Does this look right?";
-        setMessages((prev) => [...prev,
-          { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: intro, streamed: true },
-          { kind: "draft", id: `d-${Date.now() + 1}`, draft: trigger.draft, confirmReply: trigger.confirmReply, discardReply: trigger.discardReply, settled: false },
-        ]);
-        scroll();
-      }, 1200);
-      return;
-    }
 
     setThinking(true);
     try {
@@ -272,7 +231,6 @@ export function CoachPage() {
       const loggedItem = (r.loggedItem && typeof r.loggedItem === "object" && "type" in (r.loggedItem as object))
         ? r.loggedItem as { type: string; data: any } : undefined;
 
-      setThinking(false);
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: reply, agent, streamed: true }]);
       scroll();
 
@@ -286,9 +244,11 @@ export function CoachPage() {
         }
       }
     } catch {
-      setThinking(false);
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: "Sorry, couldn't reach the AI right now. Please try again.", streamed: false }]);
       toast.error("Couldn't reach Stry", "Check your connection or try again");
+    } finally {
+      sendingRef.current = false;
+      setThinking(false);
     }
   }, [activeSessionId, createSession, sendToAI, scroll, toast]);
 
@@ -307,23 +267,87 @@ export function CoachPage() {
     }
   }, [send, input, attachedImage]);
 
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
+
   return (
     /* Break out of AppLayout padding — same technique as HomePage */
-    <div className="flex -mx-4 lg:-mx-10 -my-4 lg:-my-10 overflow-hidden" style={{ height: "calc(100dvh - max(env(safe-area-inset-top),16px))" }}>
+    <div className="flex flex-col lg:flex-row -mx-4 lg:-mx-10 -my-4 lg:-my-10 overflow-hidden" style={{ height: "calc(100dvh - max(env(safe-area-inset-top),16px))", marginBottom: "calc(-1 * max(env(safe-area-inset-bottom), 1.5rem))" }}>
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
 
-      {/* Session sidebar — always rendered as a strip; expands to full width when open */}
+      {/* ── Mobile header ─────────────────────────────────────────── */}
+      <div className="lg:hidden shrink-0 flex items-center justify-between px-4 border-b border-border bg-bg"
+        style={{ paddingTop: "max(env(safe-area-inset-top), 0.75rem)", paddingBottom: "0.75rem" }}>
+        <div className="flex-1 min-w-0 px-2">
+          <p className="text-[15px] font-bold text-text leading-tight">Stry</p>
+          {activeSession && (
+            <p className="text-[11px] text-text-muted truncate leading-tight">{activeSession.title}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button type="button" onClick={newChat} aria-label="New chat"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
+            <Plus className="h-4 w-4" strokeWidth={2} />
+          </button>
+          <button type="button" onClick={() => setMobileHistoryOpen(true)} aria-label="Chat history"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-text-muted hover:bg-card-elev transition-colors">
+            <Clock className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+          <NavTrigger />
+        </div>
+      </div>
+
+      {/* ── Mobile history sheet ───────────────────────────────────── */}
+      <AnimatePresence>
+        {mobileHistoryOpen && (
+          <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end" aria-modal="true" role="dialog">
+            <motion.div className="absolute inset-0 bg-ink/50"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => setMobileHistoryOpen(false)} />
+            <motion.div className="relative z-10 bg-card rounded-t-[26px] px-5 pt-3"
+              style={{ paddingBottom: "max(env(safe-area-inset-bottom), 2rem)", maxHeight: "70dvh" }}
+              initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }}
+              transition={{ type: "spring", stiffness: 340, damping: 34 }}>
+              <div className="w-9 h-1 rounded-full bg-border mx-auto mb-4" />
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-[15px] font-bold text-text">Chats</h3>
+                <button type="button" onClick={() => { newChat(); setMobileHistoryOpen(false); }}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-card-elev border border-border px-3 py-1.5 text-[12px] font-semibold text-text">
+                  <Plus className="h-3.5 w-3.5" strokeWidth={2} /> New chat
+                </button>
+              </div>
+              <div className="overflow-y-auto space-y-0.5 no-scrollbar" style={{ maxHeight: "50dvh" }}>
+                {sessions.length === 0 && <p className="text-[13px] text-text-muted py-4 text-center">No previous chats yet.</p>}
+                {sessions.map((s) => (
+                  <div key={s.id} className={cn("group flex items-center gap-1 rounded-[12px] transition-colors", s.id === activeSessionId ? "bg-card-elev" : "hover:bg-card-elev")}>
+                    <button type="button" onClick={() => { loadSession(s.id); setMobileHistoryOpen(false); }} className="flex-1 text-left px-3 py-2.5 min-w-0">
+                      <div className="text-[14px] font-medium text-text truncate">{s.title}</div>
+                      <div className="text-[11px] text-text-subtle mt-0.5">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+                    </button>
+                    <button type="button" onClick={() => deleteSession({ id: s.id })} aria-label="Delete"
+                      className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 mr-3 inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle hover:text-bubblegum transition-colors">
+                      <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Desktop sidebar strip ─────────────────────────────────── */}
       <div
-        className="shrink-0 flex flex-col border-r border-border bg-bg overflow-hidden transition-[width] duration-200 ease-in-out z-10"
+        className="hidden lg:flex shrink-0 flex-col border-r border-border bg-bg overflow-hidden transition-[width] duration-200 ease-in-out z-10"
         style={{
           width: panelOpen ? 220 : 48,
           paddingTop: "max(env(safe-area-inset-top), 1rem)",
         }}
       >
-        {/* Toggle button — always at top, never moves */}
+        {/* Toggle button */}
         <div className="flex items-center px-1 pt-4 pb-2 shrink-0 justify-center">
           <button
             type="button"
@@ -339,7 +363,7 @@ export function CoachPage() {
           {panelOpen && <span className="ml-2 flex-1 text-[13px] font-bold text-text whitespace-nowrap overflow-hidden">Chats</span>}
         </div>
 
-        {/* New chat button — visible in both collapsed and expanded states */}
+        {/* New chat button */}
         <div className="flex items-center px-1 pb-3 shrink-0 justify-center">
           <button
             type="button"
@@ -352,7 +376,6 @@ export function CoachPage() {
           {panelOpen && <span className="ml-2 flex-1 text-[13px] font-semibold text-text whitespace-nowrap overflow-hidden">New chat</span>}
         </div>
 
-        {/* Sidebar content — only visible when open */}
         {panelOpen && (
           <div className="flex flex-col gap-2 flex-1 overflow-hidden px-3">
             <div className="flex-1 overflow-y-auto space-y-0.5 no-scrollbar">
@@ -379,11 +402,11 @@ export function CoachPage() {
         )}
       </div>
 
-      {/* Chat column */}
+      {/* ── Chat column ───────────────────────────────────────────── */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
 
         {/* Messages */}
-        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-3 px-4 lg:px-8 py-4">
+        <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-3 px-4 lg:px-8 py-4 [mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)] [-webkit-mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)]">
           {messages.map((m, i) => {
             if (m.kind === "draft") {
               if (m.settled) return null;
@@ -396,9 +419,13 @@ export function CoachPage() {
             return (
               <motion.div key={m.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={SPRING}
                 className={cn("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-                {m.role === "assistant"
-                  ? <AssistantBubble text={m.text} agent={m.agent} isLast={i === lastTextIdx && !!m.streamed} />
-                  : <UserBubble text={m.text} onEdit={() => { setInput(m.text); inputRef.current?.focus(); }} />}
+                <MessageBubble
+                  role={m.role === "assistant" ? "ai" : "user"}
+                  content={m.text}
+                  fresh={i === lastTextIdx && !!m.streamed}
+                  onEdit={m.role === "user" ? () => { setInput(m.text); inputRef.current?.focus(); } : undefined}
+                  badge={m.role === "assistant" && m.agent && m.agent !== "main" ? <AgentBadge agent={m.agent} /> : undefined}
+                />
               </motion.div>
             );
           })}
@@ -415,7 +442,8 @@ export function CoachPage() {
           <div className="flex flex-wrap gap-1.5 px-4 lg:px-8 py-2 shrink-0">
             {orderedSuggestions.map((s) => (
               <button key={s} type="button" onClick={() => { recordSuggestion(s); void send(s); }}
-                className="rounded-full border border-border bg-card px-3 py-1.5 text-[12px] font-medium text-text-muted hover:text-text hover:bg-card-elev transition-colors">
+                className="inline-flex items-center gap-1.5 rounded-full bg-card shadow-[var(--shadow-soft)] px-3 py-1.5 text-[12px] font-bold text-text hover:bg-card-elev transition-colors">
+                <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", SUGGESTION_DOT[s] ?? "bg-lavender")} />
                 {s}
               </button>
             ))}
@@ -438,10 +466,10 @@ export function CoachPage() {
           )}
         </AnimatePresence>
 
-        {/* Input — same pattern as AssistantConsole: textarea, safe-area bottom */}
-        <div className="shrink-0 px-4 lg:px-8 pb-3" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 0.75rem)" }}>
-          <div className={cn("flex items-end gap-1.5 rounded-2xl bg-card border px-3 py-2 transition-colors",
-            voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-border-strong focus-within:border-lavender")}>
+        {/* Input */}
+        <div className="shrink-0 px-4 lg:px-8 pt-2" style={{ paddingBottom: "max(env(safe-area-inset-bottom), 1rem)", background: "linear-gradient(to top, var(--color-bg) 80%, transparent)" }}>
+          <div className={cn("flex items-end gap-1.5 rounded-full bg-card border px-3 py-2 shadow-[var(--shadow-float)] transition-colors",
+            voice.recording ? "border-peach" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40")}>
             <textarea
               ref={inputRef}
               rows={1}

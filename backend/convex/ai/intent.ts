@@ -1,0 +1,107 @@
+/**
+ * ai/intent.ts — pure intent-detection + user-macro extraction helpers.
+ *
+ * Extracted from ai.ts (homepageInput path). No Convex or network deps, so
+ * these are unit-testable in isolation. See ai/intent.test.ts.
+ */
+
+export const QUESTION_RE = /(\?$|\?\s|\b(how|what|why|when|where|which|who|should|can you|could you|will|would|do you|did i|am i|are you|tell me|explain|recommend|suggest|advice|tip|help me|do i)\b)/i;
+
+export const LOG_RE = new RegExp([
+  // First-person past/present action + food/drink/workout
+  "\\b(i|i'?ve|i've|just)\\s+(had|ate|drank|consumed|finished|did|completed|ran|walked|jogged|biked|cycled|lifted|swam|hit|trained|crushed|knocked out|got in|squeezed in)\\b",
+  // Direct activity reports without subject
+  "\\b(had|ate|drank|finished|did|ran|walked|jogged|biked|cycled|lifted|swam)\\b\\s+(a|an|some|my|the|\\d+|breakfast|lunch|dinner|snack)",
+  // Sleep reports
+  "\\bslept\\b|\\bwent to bed\\b|\\bwoke up\\b|\\bjust woke\\b|\\bbed time\\b",
+  // Workout indicators
+  "\\b(workout|workouts|reps?|sets?|miles?|km|kilometers?|minutes? of)\\b",
+  // Quick logging shortcuts
+  "^(log\\s+|logged\\s+|track\\s+|add\\s+|record\\s+)",
+  // Common food/drink words paired with quantity-ish hints
+  "\\b(\\d+\\s*(g|grams?|oz|ml|l|cups?|tbsp|tsp|pieces?|slices?|servings?))\\b",
+  // Mood: "feeling X / mood Y"
+  "\\b(feeling|mood)\\b",
+  // Steps and water
+  "\\b(\\d{2,}\\s*steps|\\d+\\s*ml|\\d+\\s*l(itres?)?\\s+water|\\d+\\s*glasses?)\\b",
+].join("|"), "i");
+
+export const FOOD_WORD_RE = /\b(milk|whey|biscuit|biscuits|marie|rice|roti|chapati|bread|oats|egg|eggs|chicken|paneer|dal|curd|yogurt|banana|apple|snack|meal|breakfast|lunch|dinner|food|eat|eating)\b/i;
+export const FOOD_ESTIMATE_RE = /\b(how many calories|how much calories|calorie|calories|kcal|macros?|estimate|can i (eat|have|take)|should i (eat|have|take)|would .* fit|might have|planning to have)\b/i;
+
+export interface UserMacros {
+  calories?: number;
+  protein?: number;
+  carbs?: number;
+  fat?: number;
+}
+
+/** True when the message reads like a log report (not a question). */
+export function looksLikeLog(message: string): boolean {
+  const m = message.trim();
+  if (m.length === 0) return false;
+  if (QUESTION_RE.test(m)) return false;
+  return LOG_RE.test(m);
+}
+
+/** True when the message asks for a calorie/macro estimate about a food. */
+export function looksLikeFoodEstimate(message: string): boolean {
+  return FOOD_WORD_RE.test(message) && FOOD_ESTIMATE_RE.test(message);
+}
+
+/** Pull any explicit macro numbers the user stated from free text. */
+export function extractUserMacros(message: string): UserMacros {
+  const text = message.toLowerCase();
+  const macros: UserMacros = {};
+  const kcal = text.match(/(?:around|about|approx(?:imately)?\s*)?(\d{2,4})\s*(?:kcal|calories|cals|cal)\b/);
+  if (kcal) macros.calories = Number(kcal[1]);
+  const protein = text.match(/(\d{1,3}(?:\.\d+)?)\s*g\s*(?:of\s*)?(?:protein|prot|p)\b|\bprotein\s*(?:is|:|=)?\s*(\d{1,3}(?:\.\d+)?)/);
+  if (protein) macros.protein = Number(protein[1] ?? protein[2]);
+  const carbs = text.match(/(\d{1,3}(?:\.\d+)?)\s*g\s*(?:of\s*)?(?:carbs?|c)\b|\bcarbs?\s*(?:is|:|=)?\s*(\d{1,3}(?:\.\d+)?)/);
+  if (carbs) macros.carbs = Number(carbs[1] ?? carbs[2]);
+  const fat = text.match(/(\d{1,3}(?:\.\d+)?)\s*g\s*(?:of\s*)?(?:fat|f)\b|\bfat\s*(?:is|:|=)?\s*(\d{1,3}(?:\.\d+)?)/);
+  if (fat) macros.fat = Number(fat[1] ?? fat[2]);
+  return macros;
+}
+
+/**
+ * Overlay user-stated macros onto an engine draft, flagging conflicts when the
+ * user's calories diverge sharply from the engine estimate or the macro grams
+ * don't reconcile with the stated calories.
+ */
+export function applyUserMacros(draft: any, userMacros: UserMacros) {
+  const engineCalories = Number(draft.kcal) || 0;
+  const userCalories = userMacros.calories;
+  const calorieDelta = userCalories != null ? Math.abs(userCalories - engineCalories) : 0;
+  const calorieConflict = userCalories != null && calorieDelta > 150 && calorieDelta / Math.max(engineCalories, 1) > 0.3;
+  const macroCalories =
+    (userMacros.protein ?? draft.protein ?? 0) * 4 +
+    (userMacros.carbs ?? draft.carbs ?? 0) * 4 +
+    (userMacros.fat ?? draft.fat ?? 0) * 9;
+  const macroImpossible = userCalories != null && macroCalories > 0 && Math.abs(macroCalories - userCalories) > Math.max(120, userCalories * 0.35);
+
+  const userDraft = {
+    ...draft,
+    kcal: userMacros.calories ?? draft.kcal,
+    protein: userMacros.protein ?? draft.protein,
+    carbs: userMacros.carbs ?? draft.carbs,
+    fat: userMacros.fat ?? draft.fat,
+    nutritionSource: calorieConflict || macroImpossible ? "macro_conflict" : "user_provided",
+    engineEstimate: {
+      kcal: draft.kcal,
+      protein: draft.protein,
+      carbs: draft.carbs,
+      fat: draft.fat,
+    },
+  };
+
+  return {
+    draft: userDraft,
+    conflict: calorieConflict || macroImpossible,
+    reason: calorieConflict
+      ? `Your calorie number differs from my estimate by ${Math.round(calorieDelta)} kcal.`
+      : macroImpossible
+        ? "The calories and macro grams do not line up cleanly."
+        : "",
+  };
+}

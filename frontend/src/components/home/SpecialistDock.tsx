@@ -8,11 +8,11 @@ import { AGENT_META } from "@/data/mock";
 const SPECIALISTS: AgentKind[] = ["diet", "workout", "sleep", "water", "habit", "wellness"];
 
 const TONE_BG: Record<string, string> = {
-  peach: "bg-peach/15",
-  lavender: "bg-lavender/15",
-  sky: "bg-sky/15",
-  mint: "bg-mint/15",
-  bubblegum: "bg-bubblegum/15",
+  peach: "bg-peach-soft",
+  lavender: "bg-lavender-soft",
+  sky: "bg-sky-soft",
+  mint: "bg-mint-soft",
+  bubblegum: "bg-bubblegum-soft",
 };
 
 const SPRING = { type: "spring", stiffness: 280, damping: 22 } as const;

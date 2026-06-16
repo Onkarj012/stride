@@ -305,12 +305,12 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
 
   // Header config per draft kind
   const HEADER_CONFIG: Record<string, { icon: typeof Flame; bg: string; color: string; label: string }> = {
-    meal:    { icon: Flame,    bg: "bg-peach/10",    color: "text-peach",    label: "Meal estimate — does this look right?" },
-    workout: { icon: Dumbbell, bg: "bg-lavender/10", color: "text-lavender", label: "Workout estimate — does this look right?" },
-    sleep:   { icon: Moon,     bg: "bg-lavender/10", color: "text-lavender", label: "Sleep — confirm to log" },
-    water:   { icon: Droplets, bg: "bg-sky/10",      color: "text-sky",      label: "Water — confirm to log" },
-    mood:    { icon: Smile,    bg: "bg-peach/10",    color: "text-peach",    label: "Mood — confirm to log" },
-    steps:   { icon: Activity, bg: "bg-mint/10",     color: "text-mint",     label: "Steps — confirm to log" },
+    meal:    { icon: Flame,    bg: "bg-peach-soft",    color: "text-peach",    label: "Meal estimate — does this look right?" },
+    workout: { icon: Dumbbell, bg: "bg-lavender-soft", color: "text-lavender", label: "Workout estimate — does this look right?" },
+    sleep:   { icon: Moon,     bg: "bg-lavender-soft", color: "text-lavender", label: "Sleep — confirm to log" },
+    water:   { icon: Droplets, bg: "bg-sky-soft",      color: "text-sky",      label: "Water — confirm to log" },
+    mood:    { icon: Smile,    bg: "bg-peach-soft",    color: "text-peach",    label: "Mood — confirm to log" },
+    steps:   { icon: Activity, bg: "bg-mint-soft",     color: "text-mint",     label: "Steps — confirm to log" },
   };
   const header = HEADER_CONFIG[draft.kind] ?? HEADER_CONFIG.meal;
   const HeaderIcon = header.icon;
@@ -362,7 +362,7 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
           className={cn(
             "inline-flex items-center justify-center gap-1.5 rounded-full border px-4 py-2.5 text-[13px] font-semibold transition-colors",
             editing
-              ? "bg-lavender/20 border-lavender text-text"
+              ? "bg-lavender-soft border-lavender text-text"
               : "border-border text-text-muted hover:text-text",
           )}
         >
