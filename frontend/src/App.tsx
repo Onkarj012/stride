@@ -23,6 +23,7 @@ import { NutritionPage } from "@/pages/NutritionPage";
 import { WorkoutsPage } from "@/pages/WorkoutsPage";
 import { SignInPage, SignUpPage } from "@/pages/AuthPages";
 import { OnboardingPage } from "@/pages/OnboardingPage";
+import { LandingPage } from "@/pages/LandingPage";
 
 const VoxelCanvas = lazy(() =>
   import("@/components/voxel/VoxelCanvas").then((m) => ({ default: m.VoxelCanvas })),
@@ -96,10 +97,11 @@ export default function App() {
       <ClerkLoaded>
         <Show when="signed-out">
           <Routes>
+            <Route path="/" element={<LandingPage />} />
             <Route path="/sign-in" element={<SignInPage />} />
             <Route path="/sign-up" element={<SignUpPage />} />
             <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback />} />
-            <Route path="*" element={<Navigate to="/sign-in" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Show>
         <Show when="signed-in">
