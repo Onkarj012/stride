@@ -1,12 +1,13 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
+import { DeviceShowcase } from "@/components/landing/DeviceShowcase";
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap');
 
   .sl-root {
     --ink:#0D101B;--lavender:#B3A0FF;--sky:#A0C6FF;--surface:#F8F8F8;--white:#FFF;--peach:#FDB572;--mint:#B8E5C0;--bubblegum:#F4B5D6;--sunshine:#FFC93B;--font:"Manrope","Plus Jakarta Sans",system-ui,sans-serif;
-    font-family:var(--font);background:var(--surface);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.5;overflow-x:hidden;min-height:100dvh;scroll-behavior:smooth;
+    font-family:var(--font);background:var(--surface);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.5;overflow-x:hidden;min-height:100dvh;
   }
   .sl-root *{box-sizing:border-box;margin:0;padding:0}
   .sl-root ::selection{background:var(--lavender)}
@@ -94,6 +95,8 @@ export function LandingPage() {
 
     const reduce = window.matchMedia("(prefers-reduced-motion:reduce)").matches;
 
+    if (!reduce) document.documentElement.style.scrollBehavior = "smooth";
+
     Promise.all([
       import("gsap"),
       import("gsap/ScrollTrigger"),
@@ -124,11 +127,23 @@ export function LandingPage() {
           if (!reduce) setInterval(cycle, 1100);
         }
         if (name === "mem") {
+          if (reduce) {
+            document.querySelectorAll<HTMLElement>("#d3mem .sl-mem").forEach(el => { el.style.opacity = "1"; el.style.transform = "scale(1)"; });
+            const count = document.getElementById("d3count"); if (count) count.textContent = "50";
+            return;
+          }
           gsap.to("#d3mem .sl-mem", { opacity: 1, scale: 1, duration: .4, stagger: .09, ease: "back.out(2)" });
           const o = { v: 0 };
           gsap.to(o, { v: 50, duration: 1.2, ease: "power2.out", onUpdate: () => { const el = document.getElementById("d3count"); if (el) el.textContent = String(Math.round(o.v)); } });
         }
         if (name === "ins") {
+          if (reduce) {
+            const kcal = document.getElementById("d5kcal"); if (kcal) kcal.textContent = "1840";
+            const donut = document.getElementById("d5donut") as SVGCircleElement | null; if (donut) donut.style.strokeDashoffset = String(377 * 0.42);
+            document.querySelectorAll<HTMLElement>("#d5bars .b").forEach(b => { b.style.height = b.dataset.h + "%"; });
+            typeInto(document.getElementById("d5narr"), "Strong, steady day — protein gap closed and you moved well. Tomorrow, watch the weekend carb drift.", 0);
+            return;
+          }
           const o = { v: 0 };
           gsap.to(o, { v: 1840, duration: 1.2, ease: "power2.out", onUpdate: () => { const el = document.getElementById("d5kcal"); if (el) el.textContent = String(Math.round(o.v)); } });
           gsap.to("#d5donut", { strokeDashoffset: 377 * 0.42, duration: 1.2, ease: "power2.out" });
@@ -136,6 +151,7 @@ export function LandingPage() {
           typeInto(document.getElementById("d5narr"), "Strong, steady day — protein gap closed and you moved well. Tomorrow, watch the weekend carb drift.", 20);
         }
         if (name === "streak") {
+          if (reduce) { const el = document.getElementById("d7streak"); if (el) el.textContent = "12"; return; }
           const o = { v: 0 };
           gsap.to(o, { v: 12, duration: 1.2, ease: "power2.out", onUpdate: () => { const el = document.getElementById("d7streak"); if (el) el.textContent = String(Math.round(o.v)); } });
         }
@@ -166,6 +182,7 @@ export function LandingPage() {
     });
 
     return () => {
+      document.documentElement.style.scrollBehavior = "";
       import("gsap/ScrollTrigger").then(({ ScrollTrigger }) => ScrollTrigger.getAll().forEach(t => t.kill()));
     };
   }, []);
@@ -222,7 +239,7 @@ export function LandingPage() {
 
           {/* 02 */}
           <article className="sl-cap" id="c2">
-            <div className="sl-caphead sl-reveal"><div className="sl-num">02</div><div className="t"><span className="sl-eyebrow">Six ways in</span><h2 className="sl-h2">Whatever's fastest in the moment.</h2><p className="sl-lead sl-muted">Type, speak, photograph your plate, scan a barcode, or read a nutrition label. Same result, different door.</p></div></div>
+            <div className="sl-caphead sl-reveal"><div className="sl-num">02</div><div className="t"><span className="sl-eyebrow">Five ways in</span><h2 className="sl-h2">Whatever's fastest in the moment.</h2><p className="sl-lead sl-muted">Type, speak, photograph your plate, scan a barcode, or read a nutrition label. Same result, different door.</p></div></div>
             <div className="sl-demo sl-reveal" data-demo="modes">
               <div className="sl-modegrid" id="modegrid">
                 <div className="sl-mode" data-i="0"><svg className="ic"><use href="#i-chat"/></svg><b>Type</b></div>
@@ -285,6 +302,10 @@ export function LandingPage() {
               <div className="sl-streakwrap"><div className="sl-streakn tnum" id="d7streak">0</div><div><strong style={{ fontSize: 18 }}>day streak</strong><p className="sl-muted" style={{ fontSize: 15, marginTop: 4 }}>"Strong, steady week. The streak is the story." — Stry's weekly recap</p></div></div>
             </div>
           </article>
+
+          <section className="sl-section" style={{ paddingBottom: 0 }}>
+            <DeviceShowcase />
+          </section>
 
           <section className="sl-section"><div className="sl-cta-block sl-reveal" id="start">
             <h2 className="sl-h2" style={{ color: "#fff" }}>The whole stack. Two minutes a day.</h2>

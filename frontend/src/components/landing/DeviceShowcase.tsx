@@ -119,11 +119,18 @@ export function DeviceShowcase() {
   const reduce = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [idx, setIdx] = useState(0);
   const active = SCREENS[idx].id;
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startCycle = () => {
+    if (reduce) return;
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => setIdx((i) => (i + 1) % SCREENS.length), CYCLE_MS);
+  };
 
   useEffect(() => {
-    if (reduce) return;
-    const t = setInterval(() => setIdx((i) => (i + 1) % SCREENS.length), CYCLE_MS);
-    return () => clearInterval(t);
+    startCycle();
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reduce]);
 
   return (
@@ -152,7 +159,7 @@ export function DeviceShowcase() {
             <button
               key={s.id}
               type="button"
-              onClick={() => setIdx(i)}
+              onClick={() => { setIdx(i); startCycle(); }}
               className={cn(
                 "rounded-full px-3.5 py-1.5 text-[13px] font-semibold transition-colors",
                 on ? "bg-ink text-text-on-ink" : "bg-card text-text-muted border border-border hover:text-text",
