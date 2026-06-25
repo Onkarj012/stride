@@ -150,7 +150,7 @@ export function DeviceShowcase() {
           <PhoneFrame active={active} float={!reduce} />
         </div>
       </div>
-
+import { useEffect, useRef, useState } from "react";
       {/* Screen selector / progress */}
       <div className="flex flex-wrap items-center justify-center gap-2">
         {SCREENS.map((s, i) => {
