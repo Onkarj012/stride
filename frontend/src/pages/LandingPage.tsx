@@ -9,7 +9,13 @@ const CSS = `
     --ink:#0D101B;--lavender:#B3A0FF;--sky:#A0C6FF;--surface:#F8F8F8;--white:#FFF;--peach:#FDB572;--mint:#B8E5C0;--bubblegum:#F4B5D6;--sunshine:#FFC93B;--font:"Manrope","Plus Jakarta Sans",system-ui,sans-serif;
     font-family:var(--font);background:var(--surface);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.5;overflow-x:hidden;min-height:100dvh;
   }
-  .sl-root *{box-sizing:border-box;margin:0;padding:0}
+  .sl-root *{box-sizing:border-box}
+  /* Zero default margins/padding for the hand-authored landing markup, but
+     NOT inside .sl-iso — the device showcase is Tailwind-styled and relies
+     on its own padding/margin utilities. :where() keeps this at the same
+     specificity as the original blanket reset so the .sl-* class rules below
+     still win as before. */
+  .sl-root *:where(:not(.sl-iso, .sl-iso *)){margin:0;padding:0}
   .sl-root ::selection{background:var(--lavender)}
   .sl-root svg.ic{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
   .sl-root .tnum{font-variant-numeric:tabular-nums}

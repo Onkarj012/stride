@@ -134,7 +134,7 @@ export function DeviceShowcase() {
   }, [reduce]);
 
   return (
-    <div className="flex flex-col items-center gap-7">
+    <div className="sl-iso flex flex-col items-center gap-7">
       <div className="relative mx-auto w-full max-w-4xl">
         {/* ambient glow behind devices */}
         <div
