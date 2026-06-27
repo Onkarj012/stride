@@ -91,7 +91,7 @@ function HomeScreen({ variant }: { variant: Variant }) {
         </div>
       </Rise>
 
-      <div className="mt-5 flex flex-1 flex-col justify-end gap-2.5">
+      <div className="mt-4 flex flex-1 flex-col justify-end gap-2.5 overflow-hidden">
         <Rise i={1}><Bubble role="user">had oatmeal with banana and a coffee</Bubble></Rise>
 
         <Rise i={2}>
@@ -110,16 +110,27 @@ function HomeScreen({ variant }: { variant: Variant }) {
                   <span className="text-mint">5g F</span>
                 </p>
                 <div className="mt-2.5 flex gap-2">
-                  <span className="rounded-full bg-ink px-3 py-1 text-[12px] font-bold text-text-on-ink">Confirm</span>
-                  <span className="rounded-full border border-border px-3 py-1 text-[12px] font-bold text-text-muted">Discard</span>
+                  <span className="rounded-full bg-mint/20 border border-mint/25 px-3 py-1 text-[12px] font-bold text-text">Confirm</span>
+                  <span className="rounded-full bg-card-elev border border-border px-3 py-1 text-[12px] font-bold text-text-muted">Discard</span>
                 </div>
               </div>
             </div>
           </div>
         </Rise>
+
+        <Rise i={3}><Bubble role="user">and a 30 min easy run before work</Bubble></Rise>
+
+        <Rise i={4}>
+          <div className="flex items-start gap-2.5">
+            <span className="mt-1.5 grid h-[18px] w-[18px] shrink-0 place-items-center rounded-[6px] bg-lavender">
+              <Sparkles className="h-2.5 w-2.5 text-ink" strokeWidth={2.5} />
+            </span>
+            <Bubble role="ai">Nice — logged ~280 kcal burned. You're ahead on movement today.</Bubble>
+          </div>
+        </Rise>
       </div>
 
-      <Rise i={3} className="mt-3">
+      <Rise i={5} className="mt-3">
         <Composer placeholder="Ask Stry, paste an image, or speak…" rounded="rounded-[18px]" />
       </Rise>
     </div>
@@ -135,6 +146,14 @@ const SECTIONS = [
   {
     label: "Lunch",
     meals: [{ name: "Grilled chicken bowl", kcal: 540, p: 46, c: 52, f: 14 }],
+  },
+  {
+    label: "Snack",
+    meals: [{ name: "Apple & almond butter", kcal: 210, p: 5, c: 24, f: 11 }],
+  },
+  {
+    label: "Dinner",
+    meals: [],
   },
 ] as const;
 
@@ -207,7 +226,7 @@ function NutritionScreen({ variant }: { variant: Variant }) {
                   <Plus className="h-3 w-3" strokeWidth={2.5} /> Log
                 </span>
               </div>
-              {section.meals.map((m) => (
+              {section.meals.length > 0 ? section.meals.map((m) => (
                 <div key={m.name} className="mb-1.5 rounded-[14px] bg-card px-3 py-2.5 shadow-[0_2px_10px_rgba(13,16,27,0.06)]">
                   <div className="flex items-start justify-between">
                     <span className="mr-2 flex-1 truncate text-[13px] font-bold text-text">{m.name}</span>
@@ -219,10 +238,23 @@ function NutritionScreen({ variant }: { variant: Variant }) {
                     <span className="rounded-full bg-mint-soft px-2 py-0.5 text-[10px] font-bold">{m.f}g F</span>
                   </div>
                 </div>
-              ))}
+              )) : (
+                <div className="mb-1.5 rounded-[14px] border border-dashed border-border px-3 py-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[13px] font-medium text-text-muted">Not logged yet</span>
+                    <span className="text-[11.5px] font-extrabold text-lavender">+52g needed</span>
+                  </div>
+                </div>
+              )}
             </div>
           </Rise>
         ))}
+
+        <Rise i={3 + SECTIONS.length}>
+          <div className="flex items-center justify-center gap-2 rounded-[14px] border border-dashed border-border py-2.5 text-[13px] font-bold text-text-muted">
+            <Plus className="h-4 w-4" strokeWidth={1.8} /> Log a meal
+          </div>
+        </Rise>
       </div>
     </Pad>
   );
@@ -273,6 +305,7 @@ function CoachScreen({ variant }: { variant: Variant }) {
               { label: "Log breakfast", dot: "bg-peach" },
               { label: "How is my week?", dot: "bg-lavender" },
               { label: "Plan a workout", dot: "bg-mint" },
+              { label: "I'm feeling tired", dot: "bg-sky" },
             ].map((s) => (
               <span key={s.label} className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1.5 text-[12px] font-bold text-text shadow-[var(--shadow-soft)]">
                 <span className={cn("h-1.5 w-1.5 rounded-full", s.dot)} />
@@ -342,8 +375,8 @@ function InsightsScreen({ variant }: { variant: Variant }) {
           <div className="grid grid-cols-3 gap-2.5">
             {[
               { icon: Dumbbell, label: "Workouts", value: "32", unit: "min" },
-              { icon: Flame, label: "Avg calories", value: "1,940", unit: "kcal" },
-              { icon: TrendingUp, label: "Goal", value: "2,100", unit: "kcal" },
+              { icon: Flame, label: "Avg calories", value: "1,940", unit: "kcal/day" },
+              { icon: TrendingUp, label: "Calorie goal", value: "2,100", unit: "kcal" },
             ].map((s) => (
               <div key={s.label} className="space-y-2 rounded-[16px] border border-border bg-card p-3">
                 <div className="flex items-center gap-1.5">
