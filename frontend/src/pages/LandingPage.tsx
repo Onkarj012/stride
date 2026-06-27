@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
-import { DeviceShowcase } from "@/components/landing/DeviceShowcase";
 
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap');
@@ -302,10 +301,6 @@ export function LandingPage() {
               <div className="sl-streakwrap"><div className="sl-streakn tnum" id="d7streak">0</div><div><strong style={{ fontSize: 18 }}>day streak</strong><p className="sl-muted" style={{ fontSize: 15, marginTop: 4 }}>"Strong, steady week. The streak is the story." — Stry's weekly recap</p></div></div>
             </div>
           </article>
-
-          <section className="sl-section" style={{ paddingBottom: 0 }}>
-            <DeviceShowcase />
-          </section>
 
           <section className="sl-section"><div className="sl-cta-block sl-reveal" id="start">
             <h2 className="sl-h2" style={{ color: "#fff" }}>The whole stack. Two minutes a day.</h2>
