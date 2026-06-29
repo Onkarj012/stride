@@ -1,0 +1,13 @@
+{
+  "name": "stride-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @stride/web dev",
+    "build": "pnpm --filter @stride/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  },
+  "engines": {
+    "pnpm": ">=9"
+  }
+}
