@@ -5,7 +5,7 @@ import { useUser } from "@clerk/react";
 import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { ArrowRight, Check, Loader2, Plus, X, Sparkles, Send } from "lucide-react";
-import { VoxelAgent } from "@/components/voxel/VoxelAgent";
+import { PixelAgent } from "@/components/primitives/PixelAgent";
 import { MacroDonut } from "@/components/charts/MacroDonut";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { cn } from "@/lib/utils";
@@ -251,7 +251,7 @@ export function OnboardingPage() {
         className="min-h-dvh w-full bg-bg flex flex-col items-center justify-center px-4 py-8">
         <div className="w-full max-w-md space-y-5 text-center">
           <div className="w-24 h-24 mx-auto rounded-full bg-lavender overflow-hidden grid place-items-center">
-            <VoxelAgent agent="main" size={96} state="idle" />
+            <PixelAgent agent="main" size={96} state="idle" />
           </div>
           <div>
             <h1 className="text-h1 text-text">Your plan, {state.firstName || "friend"}</h1>
@@ -312,7 +312,7 @@ export function OnboardingPage() {
               className={cn("flex items-end gap-2", m.role === "user" ? "justify-end" : "justify-start")}>
               {m.role === "bot" && (
                 <div className="h-8 w-8 shrink-0 rounded-full bg-lavender overflow-hidden grid place-items-center">
-                  <VoxelAgent agent="main" size={32} state="idle" />
+                  <PixelAgent agent="main" size={32} state="idle" />
                 </div>
               )}
               <div className={cn("max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[14px] leading-relaxed",
@@ -326,7 +326,7 @@ export function OnboardingPage() {
         {typing && (
           <div className="flex items-end gap-2">
             <div className="h-8 w-8 shrink-0 rounded-full bg-lavender overflow-hidden grid place-items-center">
-              <VoxelAgent agent="main" size={32} state="idle" />
+              <PixelAgent agent="main" size={32} state="idle" />
             </div>
             <div className="rounded-2xl rounded-bl-md bg-card border border-border px-4 py-3 flex gap-1">
               {[0, 1, 2].map((i) => (

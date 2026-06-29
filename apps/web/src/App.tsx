@@ -1,5 +1,5 @@
 import { Routes, Route, useLocation, Navigate } from "react-router-dom";
-import { lazy, Suspense, useEffect } from "react";
+import { useEffect } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Show, useUser, ClerkLoaded, ClerkLoading, AuthenticateWithRedirectCallback } from "@clerk/react";
 import { useMutation, useQuery } from "convex/react";
@@ -24,10 +24,6 @@ import { WorkoutsPage } from "@/pages/WorkoutsPage";
 import { SignInPage, SignUpPage } from "@/pages/AuthPages";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 import { LandingPage } from "@/pages/LandingPage";
-
-const VoxelCanvas = lazy(() =>
-  import("@/components/voxel/VoxelCanvas").then((m) => ({ default: m.VoxelCanvas })),
-);
 
 const pageVariants = { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -4 } };
 const pageTransition = { duration: 0.22, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] };
@@ -117,9 +113,6 @@ export default function App() {
                   {/* Main app — guarded by onboarding check */}
                   <Route path="*" element={
                     <OnboardingGuard>
-                      <Suspense fallback={null}>
-                        <VoxelCanvas />
-                      </Suspense>
                       <AppLayout>
                         <MainAppRoutes />
                       </AppLayout>

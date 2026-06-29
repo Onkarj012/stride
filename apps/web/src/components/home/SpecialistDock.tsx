@@ -1,8 +1,7 @@
 import { Link } from "react-router-dom";
 import { motion } from "motion/react";
 import { Card } from "@/components/primitives/Card";
-import { VoxelAgent } from "@/components/voxel/VoxelAgent";
-import { type AgentKind } from "@/components/primitives/PixelAgent";
+import { PixelAgent, type AgentKind } from "@/components/primitives/PixelAgent";
 import { AGENT_META } from "@/data/mock";
 
 const SPECIALISTS: AgentKind[] = ["diet", "workout", "sleep", "water", "habit", "wellness"];
@@ -74,7 +73,7 @@ export function SpecialistDock({ focusCategory }: { focusCategory?: string }) {
                   )}
                   <div className={`w-full aspect-square rounded-[14px] overflow-hidden relative ${TONE_BG[meta.tone] ?? "bg-card-elev"}`}>
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <VoxelAgent agent={kind} size={96} />
+                      <PixelAgent agent={kind} size={96} />
                     </div>
                   </div>
                   <div className="space-y-0.5 min-h-[36px]">

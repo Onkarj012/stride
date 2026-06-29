@@ -1,5 +1,5 @@
 {
-  "name": "stride",
+  "name": "@stride/web",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -13,8 +13,6 @@
   },
   "dependencies": {
     "@clerk/react": "^6.7.1",
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.6.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "convex": "^1.39.1",
@@ -26,8 +24,7 @@
     "react-markdown": "8",
     "react-router-dom": "^7.1.1",
     "remark-gfm": "3",
-    "tailwind-merge": "^2.6.0",
-    "three": "^0.184.0"
+    "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
@@ -37,7 +34,6 @@
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.0.0",
