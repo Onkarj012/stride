@@ -5,7 +5,8 @@ import { colors, typography, spacing, radius, motion } from './tokens.ts'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '../../..')
-const webStylesOut = resolve(root, 'apps/web/src/styles/tokens.generated.css')
+const defaultOut = resolve(root, 'apps/web/src/styles/tokens.generated.css')
+const webStylesOut = process.argv[2] ? resolve(process.argv[2]) : defaultOut
 
 const c = colors
 const t = typography
@@ -79,6 +80,10 @@ const css = `/* ============================================================
   --text-h1--line-height: ${t.scale.h1.lh};
   --text-display: ${t.scale.display.size};
   --text-display--line-height: ${t.scale.display.lh};
+  --text-stat-value: ${t.scale.statValue.size};
+  --text-stat-value--line-height: ${t.scale.statValue.lh};
+  --text-stat-label: ${t.scale.statLabel.size};
+  --text-stat-label--line-height: ${t.scale.statLabel.lh};
 
   --weight-regular: ${t.weight.regular};
   --weight-medium: ${t.weight.medium};

@@ -121,14 +121,14 @@
   font-weight: 500;
 }
 @utility text-stat-value {
-  font-size: 1.5rem;
-  line-height: 1;
+  font-size: var(--text-stat-value);
+  line-height: var(--text-stat-value--line-height);
   font-weight: 700;
   letter-spacing: -0.5px;
 }
 @utility text-stat-label {
-  font-size: 0.75rem;
-  line-height: 1.2;
+  font-size: var(--text-stat-label);
+  line-height: var(--text-stat-label--line-height);
   font-weight: 500;
   opacity: 0.7;
 }
