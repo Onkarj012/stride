@@ -123,13 +123,13 @@
 @utility text-stat-value {
   font-size: var(--text-stat-value);
   line-height: var(--text-stat-value--line-height);
-  font-weight: 700;
-  letter-spacing: -0.5px;
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
 }
 @utility text-stat-label {
   font-size: var(--text-stat-label);
   line-height: var(--text-stat-label--line-height);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   opacity: 0.7;
 }
 
