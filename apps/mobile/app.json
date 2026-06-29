@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Stride",
+    "slug": "stride-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "stride",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0d101b",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.stride.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0d101b"
+      },
+      "package": "com.stride.mobile"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

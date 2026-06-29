@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --filter @stride/web dev",
+    "dev:mobile": "pnpm --filter @stride/mobile start",
     "build": "pnpm --filter @stride/web build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
