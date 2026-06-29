@@ -169,6 +169,6 @@ const css = `/* ============================================================
 }
 `
 
-mkdirSync(resolve(root, 'apps/web/src/styles'), { recursive: true })
+mkdirSync(dirname(webStylesOut), { recursive: true })
 writeFileSync(webStylesOut, css, 'utf8')
 console.log(`✓ tokens.generated.css → ${webStylesOut}`)
