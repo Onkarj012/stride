@@ -109,6 +109,20 @@ export type MealDraft = {
   carbs: number;
   fat: number;
   items: string[];
+  ingredientBreakdown?: {
+    items: Array<{
+      food_text: string;
+      matched_food_name?: string;
+      grams?: number;
+      calories_kcal?: number;
+      protein_g?: number;
+      carbs_g?: number;
+      fat_g?: number;
+      source?: string;
+      confidence?: number;
+    }>;
+    unresolved?: string[];
+  } | null;
 };
 
 export type WorkoutDraft = {
@@ -119,6 +133,29 @@ export type WorkoutDraft = {
   distance?: number;
   kcal: number;
   intensity: "light" | "medium" | "high";
+  sets?: string;
+  rationale?: string;
+  exercises?: Array<{
+    name: string;
+    muscle_group?: string;
+    weight_unit?: string;
+    sets: Array<{
+      weight?: string;
+      reps?: string;
+      distance_km?: string;
+      duration_min?: string;
+      incline?: string;
+      pace?: string;
+      calories_per_hr?: string;
+    }>;
+  }> | null;
+  calorieResult?: {
+    total_kcal: number;
+    confidence: number;
+    range_low: number;
+    range_high: number;
+    breakdown: Record<string, number>;
+  } | null;
 };
 
 export type LogDraft = MealDraft | WorkoutDraft;

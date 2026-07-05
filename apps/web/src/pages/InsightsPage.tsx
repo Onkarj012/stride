@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  Moon, Droplets, Dumbbell, Flame, TrendingUp, Sparkles,
+  Dumbbell, Flame, TrendingUp, Sparkles,
   UtensilsCrossed, Lightbulb, Pencil, RotateCcw, Trash2, RefreshCw,
 } from "lucide-react";
 import { useAction, useMutation, useQuery } from "convex/react";
@@ -8,8 +8,10 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
+import { MacroCard, MilestoneCard, NarrativeCard, StatChip, StreakCard } from "@/components/ui-kit";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { NavTrigger } from "@/components/layout/NavTrigger";
+import { ScreenHeader } from "@/components/mobile/MobileKit";
 import { MacroDonut } from "@/components/charts/MacroDonut";
 import { MacroBars } from "@/components/charts/MacroBars";
 import { MilestoneList } from "@/components/insights/MilestoneList";
@@ -405,9 +407,43 @@ export function InsightsPage() {
   const weeklySummary = useQuery(api.insights.getWeeklySummary);
 
   const macroTarget = { kcal: avgGoal * days, protein: 150 * days, carbs: 200 * days, fat: 60 * days };
+  const milestoneItems = [
+    { label: "Protein", achieved: todayProtein >= macroTarget.protein * 0.7 },
+    { label: "Training", achieved: period === "today" ? workoutMin > 0 : totalWorkouts > 0 },
+    { label: "Active days", achieved: activeDays >= Math.min(days, 3) },
+  ];
+  const mobileNarrative = period !== "today" && weeklySummary
+    ? weeklySummary.content
+    : `You have logged ${Math.round(todayKcal).toLocaleString()} kcal and ${Math.round(todayProtein)}g protein for this ${period === "today" ? "day" : period}.`;
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <>
+    <div className="lg:hidden px-5 pt-4 pb-6">
+      <ScreenHeader title="Insights" sub="What's working, what to watch" />
+      <div className="flex gap-2 mb-5">
+        {(["today", "week", "month"] as const).map((range) => (
+          <button
+            key={range}
+            onClick={() => setPeriod(range)}
+            className={`flex-1 py-2 rounded-full text-[13px] font-bold capitalize transition-colors border ${
+              period === range
+                ? "bg-ink text-white border-ink dark:bg-lavender dark:text-ink dark:border-lavender"
+                : "bg-white dark:bg-[#1a1e2e] text-ink/55 dark:text-white/55 border-ink/12 dark:border-white/12"
+            }`}
+          >
+            {range}
+          </button>
+        ))}
+      </div>
+      <div className="space-y-4">
+        <NarrativeCard type={period === "today" ? "daily" : "weekly"} narrative={mobileNarrative} date={period === "today" ? "Today" : period === "week" ? "Last 7 days" : "Last 30 days"} />
+        <MacroCard kcal={Math.round(todayKcal)} protein={Math.round(todayProtein)} carbs={Math.round(todayCarbs)} fat={Math.round(todayFat)} />
+        <StreakCard />
+        <MilestoneCard milestones={milestoneItems} />
+      </div>
+    </div>
+
+    <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
       <PageHeader
         center={
           <div className="flex flex-col items-center -space-y-0.5">
@@ -429,13 +465,11 @@ export function InsightsPage() {
 
       {/* Weekly/monthly AI summary */}
       {period !== "today" && weeklySummary && (
-        <Card tone="lavender" radius="xl" padding="lg" className="space-y-2">
-          <Pill tone="ink" size="sm" className="gap-1.5">
-            <Sparkles className="h-3 w-3" strokeWidth={2.25} />
-            {period === "week" ? "This week" : "This month"}
-          </Pill>
-          <p className="text-[15px] leading-relaxed text-ink/75">{weeklySummary.content}</p>
-        </Card>
+        <NarrativeCard
+          type="weekly"
+          narrative={weeklySummary.content}
+          date={period === "week" ? "Last 7 days" : "Last 30 days"}
+        />
       )}
 
       {/* Nutrition + Today's Insights (replaces Active Days) */}
@@ -478,50 +512,32 @@ export function InsightsPage() {
         )}
       </div>
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        <Card tone="card" radius="lg" padding="lg" className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Dumbbell className="h-4 w-4 text-text-muted" strokeWidth={1.75} />
-            <span className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Workouts</span>
-          </div>
-          <div>
-            <span className="text-[28px] font-extrabold text-text leading-none">
-              {period === "today" ? workoutMin : totalWorkouts}
-            </span>
-            <span className="text-[14px] text-text-muted ml-1">{period === "today" ? "min" : "sessions"}</span>
-          </div>
-        </Card>
-
-        <Card tone="card" radius="lg" padding="lg" className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Droplets className="h-4 w-4 text-text-muted" strokeWidth={1.75} />
-            <span className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Avg calories</span>
-          </div>
-          <div>
-            <span className="text-[28px] font-extrabold text-text leading-none">
-              {progressRows.length > 0 ? Math.round(totalKcal / progressRows.length) : 0}
-            </span>
-            <span className="text-[14px] text-text-muted ml-1">kcal/day</span>
-          </div>
-          <div className="h-1.5 w-full rounded-full bg-border overflow-hidden">
-            <div
-              className="h-full rounded-full bg-peach"
-              style={{ width: `${Math.min(100, (totalKcal / Math.max(1, progressRows.length) / avgGoal) * 100)}%` }}
-            />
-          </div>
-        </Card>
-
-        <Card tone="card" radius="lg" padding="lg" className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Moon className="h-4 w-4 text-text-muted" strokeWidth={1.75} />
-            <span className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Calorie goal</span>
-          </div>
-          <div>
-            <span className="text-[28px] font-extrabold text-text leading-none">{avgGoal}</span>
-            <span className="text-[14px] text-text-muted ml-1">kcal</span>
-          </div>
-        </Card>
+      {/* Streak + key stats */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <StreakCard />
+        <div className="flex flex-wrap gap-3 content-start">
+          <StatChip
+            className="flex-1"
+            label="Workouts"
+            value={String(period === "today" ? workoutMin : totalWorkouts)}
+            unit={period === "today" ? "min" : "sessions"}
+            color="lavender"
+          />
+          <StatChip
+            className="flex-1"
+            label="Avg calories"
+            value={String(progressRows.length > 0 ? Math.round(totalKcal / progressRows.length) : 0)}
+            unit="kcal/day"
+            color="peach"
+          />
+          <StatChip
+            className="flex-1"
+            label="Calorie goal"
+            value={String(avgGoal)}
+            unit="kcal"
+            color="sky"
+          />
+        </div>
       </div>
 
       {/* Today's meals + workouts (moved below charts) */}
@@ -541,5 +557,6 @@ export function InsightsPage() {
         <MilestoneList logs={logs} />
       </section>
     </div>
+    </>
   );
 }

@@ -1,4 +1,4 @@
-import { StrideMark } from "@/components/primitives/StrideMark";
+import { StrideMark } from "@/components/ui-kit";
 import { cn } from "@/lib/utils";
 
 type BrandProps = {

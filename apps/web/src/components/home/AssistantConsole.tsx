@@ -1,24 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowUp, Mic, Plus, MicOff, X, Barcode, ImagePlus, Loader2, Sparkles, Trash2, Paperclip } from "lucide-react";
+import { X, Barcode, ImagePlus, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
-import { AgentBadge } from "@/components/insights/AgentBadge";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
 import { MessageBubble } from "@/components/chat/MessageBubble";
+import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
+import { InputBar } from "@/components/ui-kit";
+import type { AttachItem, InputMode, Modality } from "@/components/ui-kit";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useDailyWindow, type DailyWindow } from "@/hooks/useDailyWindow";
 import { useBehavior } from "@/hooks/useBehavior";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useToast } from "@/context/ToastContext";
-import { cn, localDateStr } from "@/lib/utils";
-import type { Agent } from "@/lib/storage";
-import { Brand } from "@/components/layout/Brand";
-import { NavTrigger } from "@/components/layout/NavTrigger";
-
-const SPRING = { type: "spring", stiffness: 260, damping: 28 } as const;
+import { localDateStr } from "@/lib/utils";
+import { FADE_FAST } from "@/lib/motion";
 
 type AgentButton = { label: string; value: string; prompt?: string };
 type AgentAction =
@@ -37,18 +36,6 @@ function greetingFor(firstName: string, w: DailyWindow): { headline: string; sub
   }
 }
 
-function coachToAgent(coachType?: string): Agent {
-  switch (coachType) {
-    case "diet": return "diet";
-    case "workout": return "workout";
-    case "recovery": return "sleep";
-    case "water": return "water";
-    case "habit": return "habit";
-    case "mindset": return "wellness";
-    default: return "main";
-  }
-}
-
 type AssistantConsoleProps = {
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
   queuedPrompt?: string | null;
@@ -57,17 +44,28 @@ type AssistantConsoleProps = {
   initialActions?: AgentAction[];
 };
 
+type HomepageMessage = {
+  role: string;
+  content: string;
+  ts: number;
+};
+
+function modalityForContent(content: string): { modality?: Modality; chip?: string } {
+  const fileMatch = content.match(/^\[File: ([^\]]+)\]/);
+  if (fileMatch) return { modality: "ocr", chip: fileMatch[1] };
+  if (content === "[image]" || content === "Photo of meal") return { modality: "photo", chip: "Attached image" };
+  return {};
+}
+
 export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, presenceLine, initialActions = [] }: AssistantConsoleProps) {
   const [textValue, setTextValue] = useState("");
   const [thinking, setThinking] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [kbPad, setKbPad] = useState(0);
   // Track which message id was the fresh one (so only it animates)
   const [freshTs, setFreshTs] = useState<number | null>(null);
-  const [agentHint, setAgentHint] = useState<Agent>("main");
   const [agentActions, setAgentActions] = useState<AgentAction[]>(initialActions);
 
   // Sync initialActions when getTodayBrief loads (it arrives async after first render)
@@ -98,6 +96,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const { user } = useUser();
   const { recordEngagement } = useBehavior();
+  const reduceMotion = useReducedMotion();
   const dailyWindow = useDailyWindow();
   const internalRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -109,7 +108,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   // Persistent homepage chat: load history from Convex.
   const homepageChat = useQuery(api.chat.getHomepageMessages, { date: localDateStr() });
-  const messages = homepageChat?.messages ?? [];
+  const messages = (homepageChat?.messages ?? []) as HomepageMessage[];
   const initialActionKey = initialActions.map((a) => `${a.type}:${"id" in a ? a.id : ""}`).join("|");
 
   // Backend actions/mutations
@@ -230,6 +229,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       const dateNote = isPastDay ? ` for ${date}` : "";
 
       if (d.kind === "meal") {
+        const ingredientBreakdown = d.ingredientBreakdown ?? null;
         await addMeal({
           name: d.description,
           calories: d.kcal,
@@ -243,12 +243,30 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           confidence: d.confidence,
           nutritionSource: d.nutritionSource,
           foodMemoryId: d.foodMemoryId,
+          structuredItems: ingredientBreakdown?.items ? JSON.stringify(ingredientBreakdown.items) : undefined,
+          ingredientBreakdown: ingredientBreakdown ? JSON.stringify(ingredientBreakdown) : undefined,
         });
         void recordBehavior({ kind: "log", key: "meal_confirm" }).catch(() => {});
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
         if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
       } else if (d.kind === "workout") {
-        await addWorkout({ name: d.description, sets: d.sets || "1", duration: String(d.duration), intensity: d.intensity.toUpperCase(), date, caloriesBurned: d.kcal, rationale: tier2 || undefined, structuredSets: d.exercises ? JSON.stringify(d.exercises) : undefined });
+        const calorieResult = d.calorieResult ?? null;
+        await addWorkout({
+          name: d.description,
+          sets: d.sets || "1",
+          duration: String(d.duration),
+          intensity: d.intensity.toUpperCase(),
+          date,
+          exercises: d.exercises ?? undefined,
+          caloriesBurned: d.kcal,
+          rationale: tier2 || d.rationale || undefined,
+          calorieConfidence: calorieResult?.confidence,
+          calorieRangeLow: calorieResult?.range_low,
+          calorieRangeHigh: calorieResult?.range_high,
+          calorieBreakdown: calorieResult?.breakdown ? JSON.stringify(calorieResult.breakdown) : undefined,
+          calculationVersion: calorieResult ? 1 : undefined,
+          structuredSets: d.exercises ? JSON.stringify(d.exercises) : undefined,
+        });
         toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
         if (!isPastDay) await recordActivity({ type: "workout" }).catch(() => {});
       } else if (d.kind === "sleep") {
@@ -302,7 +320,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
       setThinking(false);
       setFreshTs(Date.now());
-      setAgentHint(coachToAgent(result.coachType));
       // actions always contain log_draft cards for every draft — just show them
       setAgentActions(Array.isArray(result.actions) ? result.actions : []);
     } catch (err) {
@@ -325,7 +342,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     if (button.value === "skip" || button.value === "done") {
       // Record the question id (not the button value) so getTodayBrief can filter it out today
       const questionId = action && "id" in action ? action.id : button.value;
-      void recordBehavior({ kind: "checkin", key: questionId }).catch(() => {});
+      void recordBehavior({ kind: "checkin", key: questionId, date: localDateStr() }).catch(() => {});
       setAgentActions((_prev) => {
         const current = action && "queue" in action ? action.queue ?? [] : [];
         const [, ...rest] = current;
@@ -345,12 +362,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       return;
     }
     if (button.prompt) {
-      void recordBehavior({ kind: "checkin", key: action && "id" in action ? action.id : "action", value: button.value }).catch(() => {});
+      void recordBehavior({ kind: "checkin", key: action && "id" in action ? action.id : "action", value: button.value, date: localDateStr() }).catch(() => {});
       setAgentActions([]);
       void send(button.prompt);
       return;
     }
-    void recordBehavior({ kind: "checkin", key: action && "id" in action ? action.id : "action", value: button.value }).catch(() => {});
+    void recordBehavior({ kind: "checkin", key: action && "id" in action ? action.id : "action", value: button.value, date: localDateStr() }).catch(() => {});
     setAgentActions((prev) => {
       const current = action && "queue" in action ? action.queue ?? [] : [];
       const [, ...rest] = current;
@@ -386,97 +403,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   }, [messages]);
 
   const submit = () => send(textValue, attachedImage ?? undefined);
-
-  const Composer = (
-    <form onSubmit={(e) => { e.preventDefault(); submit(); }}
-      className={cn(
-        "relative flex items-center gap-1.5 rounded-[18px] bg-card border px-3 py-1.5 w-full shadow-[var(--shadow-float)] transition-colors",
-        voice.recording ? "border-peach" : attachedFile ? "border-lavender" : attachedImage ? "border-lavender" : "border-transparent focus-within:border-lavender/40",
-      )}
-    >
-      {/* Attachment menu — left */}
-      <div className="relative shrink-0">
-        <button type="button" aria-label="Add"
-          onClick={() => setMoreMenuOpen((o) => !o)}
-          onBlur={() => setTimeout(() => setMoreMenuOpen(false), 120)}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-          <Plus className="h-4 w-4" strokeWidth={2} />
-        </button>
-        <AnimatePresence>
-          {moreMenuOpen && (
-            <motion.div
-              initial={{ opacity: 0, y: 4, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 4, scale: 0.96 }}
-              transition={{ duration: 0.12 }}
-              className="absolute bottom-full mb-2 left-0 w-44 rounded-2xl bg-card border border-border shadow-[var(--shadow-elev)] py-1 z-20"
-            >
-              <button type="button" onMouseDown={(e) => { e.preventDefault(); fileRef.current?.click(); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
-                <ImagePlus className="h-4 w-4" strokeWidth={1.75} />
-                Photo / camera
-              </button>
-              <button type="button" onMouseDown={(e) => { e.preventDefault(); setBarcodeOpen(true); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
-                <Barcode className="h-4 w-4" strokeWidth={1.75} />
-                Scan barcode
-              </button>
-              <button type="button" onMouseDown={(e) => { e.preventDefault(); docRef.current?.click(); setMoreMenuOpen(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium text-text hover:bg-card-elev">
-                <Paperclip className="h-4 w-4" strokeWidth={1.75} />
-                Attach MD / TXT
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      <textarea
-        ref={activeRef as React.RefObject<HTMLTextAreaElement>}
-        value={textValue}
-        onChange={(e) => {
-          setTextValue(e.target.value);
-          e.target.style.height = "auto";
-          e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
-        }}
-        placeholder={
-          voice.recording ? "Listening…" :
-          voice.transcribing ? "Transcribing…" :
-          attachedImage ? "Add a note (optional)…" :
-          showHistory ? "Reply, log, or ask…" :
-          "Ask Stry, paste an image, or speak…"
-        }
-        aria-label="Ask Stry"
-        disabled={voice.recording || voice.transcribing}
-        rows={1}
-        style={{ resize: "none", height: "auto", maxHeight: 120, overflowY: "auto" }}
-        className="min-w-0 flex-1 bg-transparent text-[13px] lg:text-[1.1rem] text-text placeholder:text-text-subtle focus:outline-none py-2 disabled:opacity-50 leading-snug"
-      />
-
-      {/* Voice — hidden on mobile when typing */}
-      <button type="button" aria-label={voice.recording ? "Stop listening" : "Voice input"}
-        onClick={() => voice.recording ? voice.stop() : voice.start()}
-        disabled={voice.transcribing}
-        className={cn("h-9 w-9 items-center justify-center rounded-full transition-colors disabled:opacity-50 shrink-0",
-          textValue.trim() ? "hidden lg:inline-flex" : "inline-flex",
-          voice.recording ? "bg-peach text-ink" : "text-text-muted hover:bg-card-elev")}>
-        {voice.transcribing ? <Loader2 className="h-4 w-4 animate-spin" /> :
-          voice.recording ? <MicOff className="h-4 w-4" strokeWidth={1.75} /> :
-          <Mic className="h-4 w-4" strokeWidth={1.75} />}
-      </button>
-
-      <motion.button type="submit" aria-label="Send"
-        disabled={(!textValue.trim() && !attachedImage && !attachedFile) || thinking}
-        animate={{ scale: (textValue.trim() || attachedImage || attachedFile) ? 1 : 0.9, opacity: (textValue.trim() || attachedImage || attachedFile) ? 1 : 0.5 }}
-        transition={SPRING}
-        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:cursor-not-allowed">
-        {thinking ? <Sparkles className="h-4 w-4 animate-pulse" /> : <ArrowUp className="h-4 w-4" strokeWidth={2.25} />}
-      </motion.button>
-    </form>
-  );
+  const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : attachedFile ? "ocr" : "type";
+  const attachItems: AttachItem[] = [
+    { key: "photo", label: "Photo of meal", mode: "photo", icon: <ImagePlus className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => fileRef.current?.click() },
+    { key: "barcode", label: "Scan barcode", mode: "barcode", icon: <Barcode className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => setBarcodeOpen(true) },
+    { key: "doc", label: "Attach MD / TXT", mode: "ocr", icon: <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => docRef.current?.click() },
+  ];
 
   // Inline action button — themed to design system
   const Btn = ({ label, onClick }: { label: string; onClick: () => void }) => (
@@ -563,60 +495,29 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       <input ref={docRef} type="file" accept=".md,.txt,text/markdown,text/plain" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.target.value = ""; }} />
 
-      {/* Full-height flex column — no card wrapper, page provides the container */}
-      <div className="flex flex-col h-full min-h-0">
-
-        {/* Mobile brand header */}
-        <div className="lg:hidden shrink-0 flex items-center justify-between px-4 pt-[6px] pb-[10px]">
-          <Brand showWordmark />
-          <NavTrigger />
-        </div>
-
-        {/* Desktop slim top bar — greeting or Stry name */}
-        <div className={cn(
-          "hidden lg:flex shrink-0 items-center justify-between px-6",
-          showHistory ? "h-12 border-b border-border" : "pt-6 pb-3",
-        )}>
-          {!showHistory ? (
-            <div>
-              <h1 className="text-[20px] font-extrabold tracking-tight text-text">{greeting.headline}</h1>
-              <p className="text-[0.95rem] text-text-muted">{presenceLine ?? greeting.sub}</p>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 min-w-0">
-              <AgentBadge agent={agentHint} />
-              {(voice.recording || voice.transcribing) && (
-                <span className={cn("h-1.5 w-1.5 rounded-full animate-pulse shrink-0",
-                  voice.recording ? "bg-peach" : "bg-lavender")} />
-              )}
-              {thinking
-                ? <span className="text-[12px] text-text-muted truncate">Thinking…</span>
-                : presenceLine
-                ? <span className="text-[12px] text-text-muted truncate">{presenceLine}</span>
-                : null}
-            </div>
+      <div className="flex h-full min-h-0 flex-col transition-colors duration-300">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto" aria-live="polite" aria-label="Chat with Stry">
+          <div className="max-w-[720px] mx-auto px-4 pt-5 pb-3 space-y-4">
+          {!showHistory && (
+            <motion.div
+              className="flex flex-col max-w-[92%]"
+              initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 28 }}
+            >
+              <p className="text-[14px] font-medium text-ink dark:text-surface/90 leading-relaxed">
+                {greeting.headline} {presenceLine ?? greeting.sub}
+              </p>
+            </motion.div>
           )}
-          {showHistory && (
-            <button type="button" onClick={() => clearHomepageMessages().catch(() => {})}
-              aria-label="Clear chat"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors">
-              <Trash2 className="h-4 w-4" strokeWidth={1.75} />
-            </button>
-          )}
-        </div>
 
-        {/* Message area — scrollable, fills all remaining height */}
-        <div ref={scrollRef}
-          className="flex-1 min-h-0 overflow-y-auto px-4 lg:px-6 py-4 flex flex-col gap-3 [mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)] [-webkit-mask-image:linear-gradient(to_bottom,transparent_0,black_14px,black_100%)]"
-          aria-live="polite" aria-label="Chat with Stry">
-
-          {/* Messages top→bottom, newest at bottom */}
           {messages.map((m) => (
             <MessageBubble
               key={m.ts}
               role={m.role === "user" ? "user" : "ai"}
               content={m.content}
               fresh={freshTs !== null && m.ts === lastAiTs}
+              {...(m.role === "user" ? modalityForContent(m.content) : {})}
               onEdit={m.role === "user" ? () => {
                 setTextValue(m.content);
                 setTimeout(() => activeRef.current?.focus(), 50);
@@ -624,24 +525,15 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             />
           ))}
 
-          {/* Thinking dots */}
-          {thinking && (
-            <div className="rounded-2xl rounded-bl-sm bg-card shadow-[var(--shadow-soft)] px-3.5 py-3 flex gap-1.5 w-fit">
-              {[0, 1, 2].map((i) => (
-                <motion.span key={i} className="h-2 w-2 rounded-full bg-lavender/60"
-                  animate={{ y: [0, -4, 0] }}
-                  transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15, ease: "easeInOut" }} />
-              ))}
-            </div>
-          )}
+          {thinking && <ThinkingBubble />}
 
           {/* Inline action cards */}
           <AnimatePresence>
             {agentActions.map((action, i) => (
               <motion.div key={`${action.type}-${i}`}
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.15 }}>
-                <div className="max-w-[88%] lg:max-w-[70%] w-full">
+                initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                transition={reduceMotion ? { duration: 0 } : FADE_FAST}>
+                <div className="max-w-[92%] w-full" style={{ zoom: 0.72 } as React.CSSProperties}>
                   <AgentActionCard action={action} />
                 </div>
               </motion.div>
@@ -652,9 +544,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           <AnimatePresence>
             {pendingDrafts.map((draft, i) => (
               <motion.div key={`draft-${i}`}
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.15 }}>
-                <div className="w-full max-w-[88%] lg:max-w-[420px]">
+                initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+                transition={reduceMotion ? { duration: 0 } : FADE_FAST}>
+                <div className="w-full max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
                   <LogConfirmCard
                     draft={draft}
                     onConfirm={handleConfirm}
@@ -667,13 +559,15 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
           {/* Sentinel — always at the very bottom so scrollIntoView reaches past cards */}
           <div ref={bottomSentinelRef} className="shrink-0 h-1" />
+          </div>
         </div>
 
         {/* Attachment previews */}
         <AnimatePresence>
           {(attachedImage || attachedFile) && (
-            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-              className="shrink-0 px-4 lg:px-6 pb-2 flex items-center gap-2">
+            <motion.div initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.18 }}
+              className="shrink-0 max-w-[720px] mx-auto w-full px-3 pb-2 flex items-center gap-2">
               {attachedImage && (
                 <div className="relative inline-block">
                   <img src={attachedImage} alt="Attached" className="h-14 w-14 rounded-xl object-cover border border-border" />
@@ -697,11 +591,38 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           )}
         </AnimatePresence>
 
-        {/* Input — always at the bottom */}
-        <div className="shrink-0 px-4 lg:px-6 lg:pb-4 pt-3 [background:linear-gradient(to_top,var(--color-bg)_80%,transparent)]"
+        <div className="shrink-0"
           style={{ paddingBottom: kbPad > 0 ? `${kbPad}px` : "max(env(safe-area-inset-bottom), 0.75rem)" }}>
-          {Composer}
-          {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
+          <div className="max-w-[720px] mx-auto px-3 pt-1">
+            <InputBar
+              inputRef={activeRef as React.RefObject<HTMLTextAreaElement>}
+              value={textValue}
+              onValueChange={setTextValue}
+              onSubmit={submit}
+              activeMode={activeMode}
+              attachItems={attachItems}
+              onVoice={() => voice.recording ? voice.stop() : voice.start()}
+              voiceState={voice.transcribing ? "transcribing" : voice.recording ? "recording" : "idle"}
+              busy={thinking}
+              disabled={voice.transcribing}
+              submitEnabled={!!textValue.trim() || !!attachedImage || !!attachedFile}
+              placeholder={
+                voice.recording ? "Listening..." :
+                voice.transcribing ? "Transcribing..." :
+                attachedImage ? "Add a note (optional)..." :
+                showHistory ? "Reply, log, or ask..." :
+                "Message Stry — what did you eat or train?"
+              }
+              ariaLabel="Ask Stry"
+            />
+            {showHistory && (
+              <button type="button" onClick={() => clearHomepageMessages().catch(() => {})}
+                className="mt-2 text-[11px] font-bold uppercase tracking-wide text-ink/35 dark:text-white/35 hover:text-ink dark:hover:text-white">
+                Clear chat
+              </button>
+            )}
+            {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
+          </div>
         </div>
       </div>
 
@@ -710,6 +631,3 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     </>
   );
 }
-
-
-

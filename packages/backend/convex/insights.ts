@@ -158,7 +158,7 @@ export const getTodayBrief = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .filter((q) => q.eq(q.field("title"), `__HOMEPAGE_${today}__`))
       .first();
-    const todayStartMs = new Date(today + "T00:00:00.000Z").getTime();
+    const todayStartMs = new Date(today + "T00:00:00.000Z").getTime() + offsetMin * 60_000;
     let hasHomepageMessagesToday = false;
     if (homepageSession) {
       const recentMsg = await ctx.db

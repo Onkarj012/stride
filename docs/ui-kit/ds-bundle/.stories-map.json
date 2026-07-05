@@ -1,0 +1,202 @@
+{
+  "global": "Stride",
+  "pkg": "stride-ui-kit",
+  "pkgDir": "/Users/onkarj012/Projects/VibeCoding/skill-testing/bespoke/stride/ui-kit",
+  "extraEntries": [],
+  "exported": [
+    "AgentBadge",
+    "AnimatedNumber",
+    "ChatPanel",
+    "CoachBubble",
+    "DailyGuidanceCard",
+    "InputBar",
+    "MacroCard",
+    "MealLogCard",
+    "MealLogCardEmpty",
+    "MilestoneCard",
+    "NarrativeCard",
+    "RecipeCard",
+    "RecipeCreateModal",
+    "RecipeDetailModal",
+    "StatChip",
+    "StreakCard",
+    "StrideMark",
+    "WaterTracker",
+    "WorkoutCard",
+    "WorkoutCardEmpty",
+    "WorkoutSessionCard"
+  ],
+  "storybookStatic": null,
+  "keyRecipe": 7,
+  "cfgSliceGlobal": "a139d95ad8ab0a8ba08b44a258c54602e36090304087f48fe923c61aa5a8ae08",
+  "components": [
+    {
+      "name": "AgentBadge",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "1d2dc3796ff414a8",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "AnimatedNumber",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "bb5f6c0dd271f09c",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "ChatPanel",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "81402efa6c09470a",
+      "cfgSlice": "6a0dc2a9531201b45ea3f611080afc6a72822f30ec9441157eebc25b5b370f4b",
+      "stories": []
+    },
+    {
+      "name": "CoachBubble",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "06d3fc7fffd42d22",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "DailyGuidanceCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "71a5936189e44759",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "InputBar",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "1a8167c45de5a640",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "MacroCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "413d46d4065b5513",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "MealLogCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "8f533e86bfc4468e",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "MealLogCardEmpty",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "f388ba9745c97e7f",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "MilestoneCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "7173f0c2e6e916e4",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "NarrativeCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "0dadbfdf84f593ae",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "RecipeCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "307cf5a8828fae3b",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "RecipeCreateModal",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "b373f3586f294a7a",
+      "cfgSlice": "73196a65ed3d9771c88d82f1d178802b368cae7007cbd92c074b6809c0e434a0",
+      "stories": []
+    },
+    {
+      "name": "RecipeDetailModal",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "f4ebb1217996beb3",
+      "cfgSlice": "73196a65ed3d9771c88d82f1d178802b368cae7007cbd92c074b6809c0e434a0",
+      "stories": []
+    },
+    {
+      "name": "StatChip",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "491c2b65b091febf",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "StreakCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "2e0bf343fa136d2f",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "StrideMark",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "33020d58c78f6bfa",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "WaterTracker",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "2aafc9ad47696596",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "WorkoutCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "7618b656524346ef",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "WorkoutCardEmpty",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "e853cff7d14eed79",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    },
+    {
+      "name": "WorkoutSessionCard",
+      "group": "general",
+      "srcSha": null,
+      "sourceKey": "f99dc2f0c65dd216",
+      "cfgSlice": "5ff899b099eb6923833804cda955efdd69101524bec86f67dac5537cd81802e8",
+      "stories": []
+    }
+  ]
+}

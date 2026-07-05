@@ -2,6 +2,10 @@
 
 Track daily nutrition, workouts, and fitness progress with AI-powered insights.
 
+## Agent working agreement
+
+The main assistant session (Claude) orchestrates and must NOT change application code itself. Code changes go through delegated agents: Codex (gpt-5.5) for well-specified implementation, OpenCode for codebase recon, high-taste Claude agents (Fable/Opus) for UI/UX design decisions and reviews. The main session is limited to: reading code, read-only shell, dispatching/reviewing agents, and maintaining docs/config (CLAUDE.md, AGENTS.md). Exception: the user explicitly says "execute directly".
+
 ## Project Structure
 
 ```

@@ -9,10 +9,11 @@ import { useQuery, useMutation } from "convex/react";
 import { useUser, useClerk } from "@clerk/react";
 import { api } from "@convex/_generated/api";
 import { NavTrigger } from "@/components/layout/NavTrigger";
+import { OverlayHeader } from "@/components/mobile/MobileKit";
 import { Avatar } from "@/components/primitives/Avatar";
 import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
-import { StatChip } from "@/components/primitives/StatChip";
+import { StatChip } from "@/components/ui-kit/StatChip";
 import { ListRow, ListDivider } from "@/components/primitives/ListRow";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { MilestoneList } from "@/components/insights/MilestoneList";
@@ -32,6 +33,26 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 const SPRING = { type: "spring", stiffness: 300, damping: 30 } as const;
+
+function AccountField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between py-3 border-b border-ink/8 dark:border-white/8 last:border-0">
+      <span className="text-[14px] font-medium text-ink/55 dark:text-white/55">{label}</span>
+      <span className="text-[14px] font-extrabold text-ink dark:text-surface text-right">{value}</span>
+    </div>
+  );
+}
+
+function AccountToggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button type="button" onClick={() => onChange(!checked)} className="w-full flex items-center justify-between py-3 border-b border-ink/8 dark:border-white/8 last:border-0">
+      <span className="text-[14px] font-medium text-ink/70 dark:text-white/70">{label}</span>
+      <span className={cn("w-11 h-6 rounded-full p-0.5 transition-colors", checked ? "bg-lavender" : "bg-ink/15 dark:bg-white/15")}>
+        <motion.span layout className="block w-5 h-5 rounded-full bg-white shadow" style={{ marginLeft: checked ? 20 : 0 }} />
+      </span>
+    </button>
+  );
+}
 
 function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
@@ -707,12 +728,65 @@ function SettingsTab() {
   );
 }
 
+function MobileAccountLayout({ title }: { title: string }) {
+  const navigate = useNavigate();
+  const { user } = useUser();
+  const profile = useQuery(api.profile.getProfile);
+  const { theme, toggle } = useTheme();
+  const { prefs, update } = usePrefs();
+  const name = user?.fullName ?? user?.username ?? "User";
+  const email = user?.primaryEmailAddress?.emailAddress ?? "";
+  const initial = [user?.firstName?.[0], user?.lastName?.[0]].filter(Boolean).join("").toUpperCase() || user?.username?.[0]?.toUpperCase() || "?";
+
+  return (
+    <div className="lg:hidden px-5 pt-2 pb-6">
+      <OverlayHeader
+        title={title}
+        back={() => navigate(-1)}
+        right={
+          <button onClick={toggle} aria-label="Toggle theme" className="w-10 h-10 rounded-full bg-white dark:bg-[#1a1e2e] shadow-[0_6px_18px_rgba(13,16,27,0.08)] flex items-center justify-center text-ink/60 dark:text-white/60 active:scale-90 transition-transform">
+            {theme === "dark" ? <Sun className="h-4.5 w-4.5" strokeWidth={2} /> : <Moon className="h-4.5 w-4.5" strokeWidth={2} />}
+          </button>
+        }
+      />
+
+      <div className="flex items-center gap-4 mb-6 bg-white dark:bg-[#1a1e2e] rounded-[20px] p-5 shadow-[0_10px_30px_rgba(13,16,27,0.07)]">
+        <div className="w-14 h-14 rounded-full bg-lavender flex items-center justify-center text-[22px] font-extrabold text-ink shrink-0">{initial}</div>
+        <div className="min-w-0">
+          <h3 className="text-[18px] font-extrabold text-ink dark:text-surface truncate">{name}</h3>
+          <p className="text-[13px] font-medium text-ink/45 dark:text-white/45 truncate">{email}</p>
+        </div>
+      </div>
+
+      <p className="text-[11px] font-extrabold tracking-[2px] uppercase text-ink/35 dark:text-white/35 mb-3">Goals</p>
+      <div className="bg-white dark:bg-[#1a1e2e] rounded-[20px] px-5 py-1 shadow-[0_10px_30px_rgba(13,16,27,0.07)] mb-6">
+        <AccountField label="Primary goal" value={profile?.goal ? profile.goal.replace(/-/g, " ") : "Not set"} />
+        <AccountField label="Current weight" value={profile?.weight ? `${profile.weight} kg` : "Not set"} />
+        <AccountField label="Goal weight" value={profile?.goalWeightKg ? `${profile.goalWeightKg} kg` : "Not set"} />
+        <AccountField label="Daily calories" value={profile?.calorieTarget ? `${profile.calorieTarget} kcal` : "Not set"} />
+        <AccountField label="Protein target" value={profile?.proteinTarget ? `${profile.proteinTarget} g` : "Not set"} />
+        <AccountField label="Activity level" value={profile?.trainingDays ? `${profile.trainingDays} days/wk` : "Not set"} />
+      </div>
+
+      <p className="text-[11px] font-extrabold tracking-[2px] uppercase text-ink/35 dark:text-white/35 mb-3">Settings</p>
+      <div className="bg-white dark:bg-[#1a1e2e] rounded-[20px] px-5 py-1 shadow-[0_10px_30px_rgba(13,16,27,0.07)]">
+        <AccountToggle label="Daily morning insight" checked={prefs.notifications} onChange={(v) => update({ notifications: v })} />
+        <AccountToggle label="Reduced motion" checked={prefs.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
+        <AccountToggle label="Analytical coaching" checked={prefs.coachingStyle === "analytical"} onChange={(v) => update({ coachingStyle: v ? "analytical" : "gentle" })} />
+        <AccountToggle label="Metric units" checked={prefs.units === "metric"} onChange={(v) => update({ units: v ? "metric" : "imperial" })} />
+      </div>
+    </div>
+  );
+}
+
 export function ProfilePage() {
   const [tab, setTab] = useState<Exclude<TabId, "settings">>("overview");
   const profileTabs = TABS.filter((t) => t.id !== "settings");
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <>
+    <MobileAccountLayout title="Profile" />
+    <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
       <PageHeader center="Profile" right={<NavTrigger className="lg:hidden" />} />
       <div role="tablist" className="flex gap-1 rounded-full bg-card-elev border border-border p-1 self-start max-w-full overflow-x-auto no-scrollbar">
         {profileTabs.map((t) => {
@@ -733,22 +807,26 @@ export function ProfilePage() {
           );
         })}
       </div>
-      <div className="-mx-2 lg:mx-0">
+      <div>
         {tab === "overview" && <OverviewTab />}
         {tab === "activity" && <ActivityTab />}
         {tab === "goals" && <GoalsTab />}
       </div>
     </div>
+    </>
   );
 }
 
 export function SettingsPage() {
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <>
+    <MobileAccountLayout title="Account" />
+    <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
       <PageHeader center="Settings" right={<NavTrigger className="lg:hidden" />} />
-      <div className="-mx-2 lg:mx-0">
+      <div>
         <SettingsTab />
       </div>
     </div>
+    </>
   );
 }
