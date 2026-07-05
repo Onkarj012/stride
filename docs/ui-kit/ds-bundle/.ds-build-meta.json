@@ -1,9 +1,0 @@
-{
-  "namespace": "Stride",
-  "source": "stride-ui-kit@0.0.1",
-  "shape": "package",
-  "provider": null,
-  "componentCount": 21,
-  "skippedStoryIds": [],
-  "runtimeFontPrefixes": []
-}

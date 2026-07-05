@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "predev": "pnpm -w run build:tokens",
     "dev": "vite",
+    "prebuild": "pnpm -w run build:tokens",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
