@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion, AnimatePresence } from "motion/react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -7,18 +8,15 @@ import { Pencil, Trash2, Plus } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
+import { Card } from "@/components/primitives/Card";
+import { Button } from "@/components/primitives/Button";
+import { ProgressBar } from "@/components/primitives/ProgressBar";
+import { MealLogCard } from "@/components/ui-kit";
+import { MacroCard, MealLogCardEmpty } from "@/components/ui-kit";
+import { MobileIcon, ScreenHeader, SegToggle } from "@/components/mobile/MobileKit";
 import { useToast } from "@/context/ToastContext";
 import { localDateStr, cn } from "@/lib/utils";
 import { RecipesContent } from "@/pages/RecipesPage";
-
-function MacroBar({ value, target, color }: { value: number; target: number; color: string }) {
-  const pct = target > 0 ? Math.min((value / target) * 100, 100) : 0;
-  return (
-    <div className="h-1 rounded-full bg-input overflow-hidden mt-1">
-      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: color }} />
-    </div>
-  );
-}
 
 const SECTIONS = ["Breakfast", "Lunch", "Snack", "Dinner"] as const;
 type Section = (typeof SECTIONS)[number];
@@ -46,6 +44,39 @@ const SECTION_LOG_KEY: Record<Section, string> = {
   Dinner: "dinner",
 };
 
+const MODALITIES = [
+  { id: "type", label: "Type it", icon: <path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-4.5A8 8 0 1 1 21 12z" /> },
+  { id: "voice", label: "Voice note", icon: <><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" /><path d="M5 11v1a7 7 0 0 0 14 0v-1M12 19v3" /></> },
+  { id: "photo", label: "Photo of meal", icon: <><path d="M3 8a2 2 0 0 1 2-2h2l2-2h6l2 2h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><circle cx="12" cy="13" r="3.5" /></> },
+  { id: "barcode", label: "Scan barcode", icon: <path d="M4 6v12M8 6v12M11 6v12M14 6v12M18 6v12M21 6v12" /> },
+  { id: "ocr", label: "Nutrition label", icon: <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10" /> },
+];
+
+function AddSheet({ onClose, onPick }: { onClose: () => void; onPick: () => void }) {
+  return (
+    <motion.div className="fixed inset-0 z-50 flex items-end lg:hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <button className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]" onClick={onClose} aria-label="Close" />
+      <motion.div
+        className="relative w-full bg-surface dark:bg-[#11141f] rounded-t-[28px] p-5 pb-8 shadow-[0_-20px_60px_rgba(13,16,27,0.25)]"
+        initial={{ y: 360 }} animate={{ y: 0 }} exit={{ y: 360 }} transition={{ type: "spring", stiffness: 320, damping: 34 }}
+      >
+        <div className="w-10 h-1 rounded-full bg-ink/15 dark:bg-white/15 mx-auto mb-5" />
+        <h3 className="text-[18px] font-extrabold text-ink dark:text-surface mb-1">Log anything</h3>
+        <p className="text-[13px] font-medium text-ink/45 dark:text-white/45 mb-5">Stry parses it into a meal automatically</p>
+        <div className="grid grid-cols-1 gap-2">
+          {MODALITIES.map((m) => (
+            <button key={m.id} onClick={onPick} className="flex items-center gap-3 rounded-[14px] bg-white dark:bg-[#1a1e2e] px-4 py-3.5 text-left active:scale-[0.98] transition-transform shadow-[0_4px_14px_rgba(13,16,27,0.05)]">
+              <span className="w-10 h-10 rounded-full bg-lavender/15 flex items-center justify-center text-lavender shrink-0"><MobileIcon size={20}>{m.icon}</MobileIcon></span>
+              <span className="text-[15px] font-bold text-ink dark:text-surface">{m.label}</span>
+              <span className="ml-auto text-ink/25 dark:text-white/25"><MobileIcon size={18}><path d="M9 6l6 6-6 6" /></MobileIcon></span>
+            </button>
+          ))}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 export function NutritionPage() {
   const navigate = useNavigate();
   const today = localDateStr();
@@ -55,6 +86,7 @@ export function NutritionPage() {
   const toast = useToast();
 
   const [activeTab, setActiveTab] = useState<"log" | "recipes">("log");
+  const [adding, setAdding] = useState(false);
   const [editEntry, setEditEntry] = useState<EditableMeal | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Id<"meals"> | null>(null);
 
@@ -94,20 +126,56 @@ export function NutritionPage() {
             <p className="text-[15px] font-bold text-text mb-1">Delete this meal?</p>
             <p className="text-[13px] text-text-muted mb-4">This can't be undone.</p>
             <div className="flex gap-2">
-              <button type="button" onClick={() => setConfirmDelete(null)}
-                className="flex-1 rounded-full border border-border py-2.5 text-[13px] font-bold text-text-muted hover:bg-card-elev transition-colors">
+              <Button variant="outline" full onClick={() => setConfirmDelete(null)}>
                 Cancel
-              </button>
-              <button type="button" onClick={() => void handleDelete(confirmDelete)}
-                className="flex-1 rounded-full bg-bubblegum py-2.5 text-[13px] font-bold text-white transition-opacity hover:opacity-90">
+              </Button>
+              <Button full onClick={() => void handleDelete(confirmDelete)}
+                className="bg-bubblegum text-white hover:opacity-90">
                 Delete
-              </button>
+              </Button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="max-w-3xl lg:max-w-4xl mx-auto">
+      <AnimatePresence>
+        {adding && <AddSheet onClose={() => setAdding(false)} onPick={() => { setAdding(false); navigate("/coach"); }} />}
+      </AnimatePresence>
+
+      <div className="lg:hidden px-5 pt-4 pb-6 relative">
+        <ScreenHeader title="Nutrition" sub="Today's meals & recipes" />
+        <div className="mb-5">
+          <SegToggle value={activeTab} onChange={setActiveTab} layoutId="m-nutri-seg" options={[{ id: "log", label: "Today's meals" }, { id: "recipes", label: "Recipes" }]} />
+        </div>
+        {activeTab === "recipes" ? (
+          <RecipesContent embedded />
+        ) : (
+          <div className="space-y-4">
+            <MacroCard kcal={kcal} protein={protein} carbs={carbs} fat={fat} />
+            {meals.map((m: any) => (
+              <MealLogCard
+                key={m._id}
+                meal={m.name}
+                time={m.time || m.mealType || "Meal"}
+                macros={{ kcal: Math.round(m.calories), protein: Math.round(m.protein), carbs: Math.round(m.carbs ?? 0), fat: Math.round(m.fat ?? 0) }}
+                confirmed={false}
+              />
+            ))}
+            <MealLogCardEmpty />
+          </div>
+        )}
+        {activeTab === "log" && (
+          <button
+            onClick={() => setAdding(true)}
+            aria-label="Log meal"
+            className="fixed right-5 bottom-28 z-20 w-14 h-14 rounded-full bg-ink dark:bg-lavender text-white dark:text-ink flex items-center justify-center shadow-[0_16px_40px_rgba(13,16,27,0.3)] active:scale-90 transition-transform"
+          >
+            <MobileIcon size={26} sw={2.6}><path d="M12 5v14M5 12h14" /></MobileIcon>
+          </button>
+        )}
+      </div>
+
+      <div className="hidden lg:block max-w-3xl lg:max-w-4xl mx-auto">
         <PageHeader
           left={
             <div>
@@ -137,7 +205,7 @@ export function NutritionPage() {
 
         {activeTab === "log" && <>
         {/* Macro summary card */}
-        <div className="rounded-[20px] bg-ink p-4 flex items-center gap-4 mb-4">
+        <Card tone="ink" radius="lg" padding="md" className="flex items-center gap-4 mb-4">
           <svg width="72" height="72" viewBox="0 0 72 72" className="shrink-0">
             <circle cx="36" cy="36" r="28" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="9" />
             <circle
@@ -157,30 +225,27 @@ export function NutritionPage() {
                 <span className="text-white/55 font-semibold">Calories</span>
                 <span className="text-white font-extrabold">{kcal} / {kcalTarget}</span>
               </div>
-              <div className="h-1 rounded-full mt-1 overflow-hidden" style={{ background: "rgba(255,255,255,0.18)" }}>
-                <div className="h-full rounded-full" style={{ width: `${Math.min(kcalPct, 100)}%`, background: "var(--color-peach)" }} />
-              </div>
+              <ProgressBar className="mt-1" height="sm" tone="peach" track="rgba(255,255,255,0.18)"
+                value={kcalTarget > 0 ? kcal / kcalTarget : 0} />
             </div>
             <div>
               <div className="flex justify-between text-[11px]">
                 <span className="text-white/55 font-semibold">Protein</span>
                 <span className="text-white font-extrabold">{protein}g / {proteinTarget}g</span>
               </div>
-              <div className="h-1 rounded-full mt-1 overflow-hidden" style={{ background: "rgba(255,255,255,0.18)" }}>
-                <div className="h-full rounded-full" style={{ width: `${proteinTarget > 0 ? Math.min((protein / proteinTarget) * 100, 100) : 0}%`, background: "var(--color-lavender)" }} />
-              </div>
+              <ProgressBar className="mt-1" height="sm" tone="lavender" track="rgba(255,255,255,0.18)"
+                value={proteinTarget > 0 ? protein / proteinTarget : 0} />
             </div>
             <div>
               <div className="flex justify-between text-[11px]">
                 <span className="text-white/55 font-semibold">Carbs</span>
                 <span className="text-white font-extrabold">{carbs}g / {carbTarget}g</span>
               </div>
-              <div className="h-1 rounded-full mt-1 overflow-hidden" style={{ background: "rgba(255,255,255,0.18)" }}>
-                <div className="h-full rounded-full" style={{ width: `${Math.min((carbs / carbTarget) * 100, 100)}%`, background: "var(--color-sky)" }} />
-              </div>
+              <ProgressBar className="mt-1" height="sm" tone="sky" track="rgba(255,255,255,0.18)"
+                value={carbTarget > 0 ? carbs / carbTarget : 0} />
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* Meals by section */}
         <div className="flex flex-col gap-2">
@@ -200,33 +265,35 @@ export function NutritionPage() {
                   </button>
                 </div>
                 {sectionMeals.length > 0 ? sectionMeals.map((m: any) => (
-                  <div key={m._id} className="group rounded-[14px] bg-card px-3 py-2.5 shadow-[0_2px_10px_rgba(13,16,27,0.06)] mb-1.5">
-                    <div className="flex justify-between items-start">
-                      <span className="text-[13px] font-bold text-text flex-1 min-w-0 mr-2">{m.name}</span>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-[11.5px] font-extrabold text-text-muted">{Math.round(m.calories)} kcal</span>
-                        <button
-                          type="button"
-                          onClick={() => setEditEntry({ _id: m._id, name: m.name, calories: m.calories, protein: m.protein, carbs: m.carbs ?? 0, fat: m.fat ?? 0, time: m.time ?? "", mealType: m.mealType, aiSuggestion: m.aiSuggestion, components: m.components })}
-                          className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-card-elev hover:text-text transition-all"
-                          aria-label="Edit meal"
-                        >
-                          <Pencil className="h-3 w-3" strokeWidth={2} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDelete(m._id)}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-subtle opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-card-elev hover:text-bubblegum transition-all"
-                          aria-label="Delete meal"
-                        >
-                          <Trash2 className="h-3 w-3" strokeWidth={2} />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="flex gap-1.5 mt-1.5 flex-wrap">
-                      <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-lavender-soft">{Math.round(m.protein)}g P</span>
-                      <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-peach-soft">{Math.round(m.carbs ?? 0)}g C</span>
-                      <span className="text-[10px] font-bold rounded-full px-2 py-0.5 bg-mint-soft">{Math.round(m.fat ?? 0)}g F</span>
+                  <div key={m._id} className="group relative mb-1.5">
+                    <MealLogCard
+                      meal={m.name}
+                      time={m.time || section}
+                      macros={{
+                        kcal: Math.round(m.calories),
+                        protein: Math.round(m.protein),
+                        carbs: Math.round(m.carbs ?? 0),
+                        fat: Math.round(m.fat ?? 0),
+                      }}
+                      confirmed={false}
+                    />
+                    <div className="absolute top-3.5 right-3.5 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditEntry({ _id: m._id, name: m.name, calories: m.calories, protein: m.protein, carbs: m.carbs ?? 0, fat: m.fat ?? 0, time: m.time ?? "", mealType: m.mealType, aiSuggestion: m.aiSuggestion, components: m.components })}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-card-elev text-text-subtle opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-text transition-all"
+                        aria-label="Edit meal"
+                      >
+                        <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDelete(m._id)}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-card-elev text-text-subtle opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-bubblegum transition-all"
+                        aria-label="Delete meal"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                      </button>
                     </div>
                   </div>
                 )) : (

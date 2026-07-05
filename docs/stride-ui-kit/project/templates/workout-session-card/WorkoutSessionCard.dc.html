@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<!-- @template name="WorkoutSessionCard" description="Workout session card — stacked set pills (weight / ×reps) remove x-alignment issues" -->
+<helmet><script src="./ds-base.js"></script></helmet>
+<div style="font-family: Manrope, sans-serif; background: white; border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(13,16,27,0.07); max-width: 440px;">
+
+  <!-- Header -->
+  <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 16px;">
+    <div>
+      <p style="margin: 0 0 4px; font-size: 10px; font-weight: 800; letter-spacing: 2.5px; text-transform: uppercase; color: rgba(13,16,27,0.4);">Session</p>
+      <h3 style="margin: 0 0 3px; font-size: 18px; font-weight: 800; color: #0d101b; letter-spacing: -0.5px;">{{ session.title }}</h3>
+      <p style="margin: 0; font-size: 13px; font-weight: 500; color: rgba(13,16,27,0.4);">{{ session.date }}</p>
+    </div>
+    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+      <span style="background: #fdb572; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 800; color: #0d101b; white-space: nowrap;">{{ session.burnKcal }} kcal</span>
+      <span style="background: #b8e5c0; border-radius: 999px; padding: 6px 12px; font-size: 12px; font-weight: 700; color: #0d101b; white-space: nowrap;">{{ session.durationMin }} min</span>
+    </div>
+  </div>
+
+  <!-- Summary row -->
+  <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: rgba(13,16,27,0.35);">
+    <span>{{ exerciseCount }} exercises</span>
+    <span style="width: 4px; height: 4px; border-radius: 50%; background: rgba(13,16,27,0.2); display: inline-block; flex-shrink: 0;"></span>
+    <span>{{ totalSets }} sets</span>
+  </div>
+
+  <!-- Exercises -->
+  <div style="display: flex; flex-direction: column; gap: 10px;">
+    <sc-for list="{{ exercises }}" as="ex" hint-placeholder-count="2">
+      <div style="background: #f8f8f8; border-radius: 12px; padding: 14px;">
+
+        <!-- Exercise name + set count -->
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+          <span style="font-size: 14px; font-weight: 800; color: #0d101b;">{{ ex.name }}</span>
+          <span style="font-size: 11px; font-weight: 700; color: rgba(13,16,27,0.4);">{{ ex.setCount }} sets</span>
+        </div>
+
+        <!-- Set pills — stacked layout so × always aligns -->
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
+          <sc-for list="{{ ex.sets }}" as="set" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 3px; background: white; border-radius: 9px; padding: 9px 6px; box-shadow: 0 2px 8px rgba(13,16,27,0.05);">
+              <span style="font-size: 12px; font-weight: 800; color: #0d101b; font-variant-numeric: tabular-nums; line-height: 1;">{{ set.weight }}</span>
+              <span style="font-size: 11px; font-weight: 700; color: rgba(13,16,27,0.35); line-height: 1;">× {{ set.reps }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+      </div>
+    </sc-for>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: {&quot;width&quot;: 440, &quot;height&quot;: 500},
+  &quot;session&quot;: {&quot;editor&quot;: null, &quot;default&quot;: null, &quot;tsType&quot;: &quot;{ title: string; date: string; durationMin: number; burnKcal: number; exercises: { name: string; sets: { weight: string; reps: number }[] }[] }&quot;}
+}">
+class Component extends DCLogic {
+  renderVals() {
+    const session = this.props.session ?? {
+      title: 'Push + Pull',
+      date: 'Today · 5:12–6:10 PM',
+      durationMin: 58,
+      burnKcal: 740,
+      exercises: [
+        { name: 'Bench press', sets: [{ weight: '60 kg', reps: 10 }, { weight: '80 kg', reps: 8 }, { weight: '80 kg', reps: 8 }, { weight: '85 kg', reps: 6 }] },
+        { name: 'Pull-ups',    sets: [{ weight: 'BW', reps: 10 }, { weight: 'BW', reps: 10 }, { weight: 'BW', reps: 8 }] },
+        { name: 'Deadlift',   sets: [{ weight: '100 kg', reps: 5 }, { weight: '120 kg', reps: 5 }, { weight: '120 kg', reps: 5 }] },
+      ],
+    };
+    const exercises = session.exercises.map((ex) => ({ ...ex, setCount: ex.sets.length }));
+    return {
+      session,
+      exercises,
+      totalSets:     exercises.reduce((s, e) => s + e.setCount, 0),
+      exerciseCount: exercises.length,
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,12 +1,12 @@
-import { motion, AnimatePresence } from "motion/react";
-import { PanelRightClose, PanelRightOpen } from "lucide-react";
+import { motion } from "motion/react";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { useLogs } from "@/hooks/useLogs";
+import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { localDateStr } from "@/lib/utils";
 import { useSnapshot } from "@/context/SnapshotContext";
 
-const SPRING = { type: "spring", stiffness: 320, damping: 32 } as const;
+const SPRING = { type: "spring", stiffness: 260, damping: 30 } as const;
 
 function PulseBar({ pct, color }: { pct: number; color: string }) {
   return (
@@ -18,6 +18,7 @@ function PulseBar({ pct, color }: { pct: number; color: string }) {
 
 export function RightPanel() {
   const { expanded, toggle } = useSnapshot();
+  const reduceMotion = useReducedMotion();
   const profile = useQuery(api.profile.getProfile);
   const { logs } = useLogs(localDateStr());
   const streakInfo = useQuery(api.history.getStreak, { today: new Date().toISOString().split("T")[0] });
@@ -26,7 +27,6 @@ export function RightPanel() {
   const protein = Math.round(logs.reduce((s, l) => s + (l.meal?.protein ?? 0), 0));
   const waterMl = logs.reduce((s, l) => s + (l.water?.ml ?? 0), 0);
   const workoutMin = logs.reduce((s, l) => s + (l.workout?.duration ?? 0), 0);
-  const burnedKcal = Math.round(logs.reduce((s, l) => s + (l.workout?.kcal ?? 0), 0));
   const streak = streakInfo?.streak ?? 0;
 
   const kcalTarget = profile?.calorieTarget ?? 2000;
@@ -36,7 +36,6 @@ export function RightPanel() {
   const kcalPct = kcalTarget > 0 ? (kcal / kcalTarget) * 100 : 0;
   const proteinPct = proteinTarget > 0 ? (protein / proteinTarget) * 100 : 0;
   const waterPct = (waterMl / waterTarget) * 100;
-  const kcalArcPct = Math.min(1, kcal / kcalTarget);
 
   const firstName = profile?.name?.split(" ")[0] ?? "You";
   const goalWeight = (profile as any)?.goalWeightKg;
@@ -47,37 +46,26 @@ export function RightPanel() {
 
   return (
     <motion.aside
-      animate={{ width: expanded ? 308 : 56 }}
-      transition={SPRING}
-      className="hidden xl:flex shrink-0 flex-col bg-card border-l border-border overflow-hidden"
+      animate={{ width: expanded ? 312 : 48 }}
+      transition={reduceMotion ? { duration: 0 } : SPRING}
+      className="hidden lg:block shrink-0 h-screen border-l border-ink/8 dark:border-white/8 bg-surface dark:bg-[#090b12] overflow-hidden"
     >
-      <AnimatePresence mode="wait" initial={false}>
-        {expanded ? (
-          <motion.div
-            key="expanded"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="flex flex-col gap-4 p-5 overflow-y-auto flex-1 min-h-0 w-[308px]"
-          >
+      {expanded ? (
+          <div className="h-full w-[312px] overflow-y-auto p-4">
             {/* Header */}
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[14px] font-extrabold text-text tracking-tight">Today's snapshot</p>
-                <p className="text-[11px] text-text-muted mt-0.5 font-semibold">
-                  {new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}
-                </p>
-              </div>
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-[11px] font-extrabold uppercase tracking-[2px] text-ink/35 dark:text-white/35">Your day</span>
               <button
                 type="button"
                 onClick={toggle}
                 aria-label="Collapse snapshot"
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors"
+                className="w-7 h-7 rounded-full hover:bg-ink/5 dark:hover:bg-white/10 flex items-center justify-center text-ink/45 dark:text-white/40 cursor-pointer"
               >
-                <PanelRightClose className="h-4 w-4" strokeWidth={1.75} />
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
               </button>
             </div>
+
+            <div className="flex flex-col gap-4">
 
             {/* Focus card — dark ink */}
             <div className="rounded-[18px] bg-ink text-text-on-ink p-4">
@@ -213,53 +201,14 @@ export function RightPanel() {
                 </div>
               </div>
             )}
-          </motion.div>
+            </div>
+          </div>
         ) : (
-          <motion.div
-            key="collapsed"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
-            className="flex flex-col items-center gap-4 py-4 flex-1 w-[56px]"
-          >
-            {/* Expand button */}
-            <button
-              type="button"
-              onClick={toggle}
-              aria-label="Expand snapshot"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-text-muted hover:bg-card-elev transition-colors"
-            >
-              <PanelRightOpen className="h-4 w-4" strokeWidth={1.75} />
-            </button>
-
-            {/* Consumed kcal arc */}
-            <div className="flex flex-col items-center gap-1">
-              <div className="relative h-10 w-10">
-                <svg viewBox="0 0 40 40" className="h-10 w-10 -rotate-90">
-                  <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" strokeWidth="3.5" className="text-border" />
-                  <circle cx="20" cy="20" r="15" fill="none" stroke="currentColor" strokeWidth="3.5"
-                    strokeDasharray={`${kcalArcPct * 94.2} 94.2`} className="text-peach transition-all duration-500" strokeLinecap="round" />
-                </svg>
-              </div>
-              <span className="text-[12px] font-extrabold text-text leading-none">{kcal > 0 ? kcal.toLocaleString() : "—"}</span>
-              <span className="text-[9px] font-semibold uppercase tracking-wide text-text-muted">kcal</span>
-            </div>
-
-            {/* Burned kcal */}
-            <div className="flex flex-col items-center gap-0.5">
-              <span className="text-[12px] font-extrabold text-lavender leading-none">{burnedKcal > 0 ? burnedKcal : "—"}</span>
-              <span className="text-[9px] font-semibold uppercase tracking-wide text-text-muted">burned</span>
-            </div>
-
-            {/* Streak */}
-            <div className="flex flex-col items-center gap-0.5">
-              <span className="text-[16px] font-extrabold text-text leading-none">{streak}</span>
-              <span className="text-[9px] font-semibold uppercase tracking-wide text-text-muted">days</span>
-            </div>
-          </motion.div>
+          <button onClick={toggle} className="w-12 h-full flex flex-col items-center pt-5 gap-3 text-ink/45 dark:text-white/40 hover:text-ink dark:hover:text-white cursor-pointer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
+            <span className="[writing-mode:vertical-rl] text-[11px] font-extrabold uppercase tracking-widest">Your day</span>
+          </button>
         )}
-      </AnimatePresence>
     </motion.aside>
   );
 }

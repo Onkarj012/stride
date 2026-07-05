@@ -19,6 +19,7 @@
   --color-bubblegum: #f4b5d6;
   --color-sunshine: #ffc93b;
   --color-error: #d93025;        /* error red — readable on both light and dark */
+  --color-surface: #f8f8f8;      /* light off-white; used by ui-kit cards (fixed, not flipped) */
 
   /* ---------- Soft accent fills — use instead of /8–/15 opacity tints ---------- */
   --color-lavender-soft: #EDE8FF;

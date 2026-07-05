@@ -5,7 +5,7 @@ import {
   MessageSquare, Bot, User, LogOut, ChefHat, UtensilsCrossed, Dumbbell,
 } from "lucide-react";
 import { Brand } from "@/components/layout/Brand";
-import { StrideMark } from "@/components/primitives/StrideMark";
+import { StrideMark } from "@/components/ui-kit";
 import { Avatar } from "@/components/primitives/Avatar";
 import { useSidebar } from "@/context/SidebarContext";
 import { useUser, useClerk } from "@clerk/react";
@@ -39,24 +39,25 @@ function NavItem({
       aria-current={active ? "page" : undefined}
       title={collapsed ? label : undefined}
       className={cn(
-        "relative flex items-center rounded-[14px]",
+        "relative flex items-center rounded-md",
         "transition-colors duration-150 focus-visible:outline-none",
+        !active && "hover:bg-lavender-soft/60",
         collapsed ? "h-11 w-11 mx-auto justify-center" : "h-11 px-3 gap-3",
       )}
     >
       {active && (
         <motion.div
           layoutId="sidebar-indicator"
-          className="absolute inset-0 rounded-[14px] bg-card border border-border"
+          className="absolute inset-0 rounded-md bg-lavender-soft"
           transition={SPRING}
         />
       )}
       <Icon
         className={cn(
           "relative h-5 w-5 shrink-0 transition-colors duration-150",
-          active ? "text-text" : "text-text-muted",
+          active ? "text-lavender" : "text-text-muted",
         )}
-        strokeWidth={active ? 2 : 1.6}
+        strokeWidth={active ? 2.25 : 1.6}
       />
       {!collapsed && (
         <span
@@ -95,7 +96,7 @@ function UserChip({ collapsed }: { collapsed: boolean }) {
         type="button"
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center rounded-[14px] border border-border bg-card w-full transition-colors hover:bg-card-elev",
+          "flex items-center rounded-md border border-border bg-card w-full transition-colors hover:bg-card-elev",
           collapsed ? "h-11 w-11 mx-auto justify-center" : "gap-3 px-3 py-2.5",
         )}
       >
@@ -115,7 +116,7 @@ function UserChip({ collapsed }: { collapsed: boolean }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.97 }}
             transition={{ duration: 0.15 }}
-            className="absolute bottom-full mb-2 left-0 w-44 rounded-[14px] bg-card border border-border shadow-[var(--shadow-elev)] py-1 overflow-hidden z-50"
+            className="absolute bottom-full mb-2 left-0 w-44 rounded-md bg-card border border-border shadow-[var(--shadow-elev)] py-1 overflow-hidden z-50"
           >
             {[
               { icon: User, label: "Profile", action: () => { navigate("/profile"); setOpen(false); } },
@@ -224,7 +225,7 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
                 key={s.id}
                 type="button"
                 onClick={() => navigate(`/coach?session=${s.id}`)}
-                className="w-full text-left px-2.5 py-1.5 rounded-[9px] text-[12px] text-text-muted font-medium hover:bg-card transition-colors truncate"
+                className="w-full text-left px-2.5 py-1.5 rounded-sm text-[12px] text-text-muted font-medium hover:bg-lavender-soft/60 hover:text-text transition-colors truncate"
               >
                 {s.title}
               </button>
@@ -239,14 +240,14 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
           to="/settings"
           title={collapsed ? "Settings" : undefined}
           className={cn(
-            "flex items-center rounded-[14px] transition-colors duration-150 focus-visible:outline-none",
+            "flex items-center rounded-md transition-colors duration-150 focus-visible:outline-none",
             collapsed ? "h-11 w-11 mx-auto justify-center" : "h-11 px-3 gap-3",
-            pathname.startsWith("/settings") ? "bg-card border border-border" : "hover:bg-card",
+            pathname.startsWith("/settings") ? "bg-lavender-soft" : "hover:bg-lavender-soft/60",
           )}
         >
           <SettingsIcon
-            className={cn("h-5 w-5 shrink-0", pathname.startsWith("/settings") ? "text-text" : "text-text-muted")}
-            strokeWidth={1.75}
+            className={cn("h-5 w-5 shrink-0", pathname.startsWith("/settings") ? "text-lavender" : "text-text-muted")}
+            strokeWidth={pathname.startsWith("/settings") ? 2.25 : 1.75}
           />
           {!collapsed && (
             <span className={cn("text-[15px] font-medium", pathname.startsWith("/settings") ? "text-text font-semibold" : "text-text-muted")}>

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import { DesktopSidebar } from "@/components/layout/DesktopSidebar";
 import { RightPanel } from "@/components/layout/RightPanel";
 
@@ -8,23 +9,33 @@ type AppLayoutProps = {
 };
 
 export function AppLayout({ children, onAskStride }: AppLayoutProps) {
+  const { pathname } = useLocation();
+  const showDayRail = pathname === "/" || pathname.startsWith("/nutrition") || pathname.startsWith("/workouts");
+  const chatLike = pathname === "/" || pathname.startsWith("/coach");
+
   return (
-    <div className="min-h-dvh w-full bg-bg">
-      <div className="flex min-h-dvh">
-        <DesktopSidebar onAskStride={onAskStride} />
+    <div className="h-dvh w-full overflow-hidden bg-bg">
+      <div className="flex h-dvh">
+        <div className="hidden lg:block">
+          <DesktopSidebar onAskStride={onAskStride} />
+        </div>
 
         <main
           className="
-            flex-1 min-w-0 overflow-x-hidden
-            px-4 pt-[max(env(safe-area-inset-top),16px)]
-            pb-[max(env(safe-area-inset-bottom),1.5rem)]
+            flex-1 min-w-0 overflow-x-hidden lg:overflow-x-hidden
+            p-0
             lg:px-10 lg:py-10 lg:pb-12
           "
+          style={{ overflowY: chatLike ? "hidden" : "auto" }}
         >
           {children}
         </main>
 
-        <RightPanel />
+        {showDayRail && (
+          <div className="hidden lg:block">
+            <RightPanel />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -23,9 +23,11 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@convex/*": ["../backend/convex/*"]
+      "@convex/_generated/api": ["./src/lib/convex-api-shim.ts"],
+      "@convex/_generated/dataModel": ["../../packages/backend/convex/_generated/dataModel.d.ts"],
+      "@convex/*": ["../../packages/backend/convex/*"]
     }
   },
   "include": ["src"],
-  "exclude": ["../backend"]
+  "exclude": ["../backend", "src/components/landing/_backup"]
 }

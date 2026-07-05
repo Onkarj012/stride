@@ -24,6 +24,33 @@ const INTENSITY_COLOR: Record<string, string> = {
   high: "text-bubblegum",
 };
 
+function unitSuffix(unit?: string) {
+  if (!unit || unit === "bodyweight") return "";
+  if (unit === "machine_kg") return " kg";
+  if (unit === "machine_lbs") return " lbs";
+  return ` ${unit}`;
+}
+
+function formatExerciseSet(set: Record<string, unknown>, unit?: string) {
+  const duration = set.duration_min != null && String(set.duration_min).trim() !== ""
+    ? `${set.duration_min} min`
+    : "";
+  if (duration) {
+    const incline = set.incline != null && String(set.incline).trim() !== ""
+      ? ` · ${set.incline}% incline`
+      : "";
+    return `${duration}${incline}`;
+  }
+
+  const weight = set.weight != null && String(set.weight).trim() !== ""
+    ? `${set.weight}${unitSuffix(unit)}`
+    : "—";
+  const reps = set.reps != null && String(set.reps).trim() !== ""
+    ? `${set.reps} reps`
+    : "";
+  return reps ? `${weight} × ${reps}` : weight;
+}
+
 /* ── Editable number field ── */
 function NumField({
   label,
@@ -70,6 +97,10 @@ function MealCard({
   editing: boolean;
   onChange: (d: MealDraft) => void;
 }) {
+  const breakdownItems = Array.isArray(draft.ingredientBreakdown?.items)
+    ? draft.ingredientBreakdown.items
+    : [];
+
   return (
     <div className="space-y-4">
       {/* Macro row */}
@@ -109,7 +140,22 @@ function MealCard({
       </div>
 
       {/* Items breakdown */}
-      {draft.items.length > 0 && (
+      {breakdownItems.length > 0 ? (
+        <ul className="space-y-1.5 px-1">
+          {breakdownItems.map((item, i) => (
+            <li key={i} className="flex items-center justify-between gap-3 text-[13px] text-text-muted">
+              <span className="min-w-0 flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-peach shrink-0" />
+                <span className="truncate">{item.food_text}</span>
+              </span>
+              <span className="shrink-0 text-[12px] font-semibold tabular-nums">
+                {item.grams != null ? `${Math.round(item.grams)}g · ` : ""}
+                {item.calories_kcal != null ? `${Math.round(item.calories_kcal)} kcal` : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : draft.items.length > 0 && (
         <ul className="space-y-1.5 px-1">
           {draft.items.map((item, i) => (
             <li key={i} className="flex items-center gap-2 text-[13px] text-text-muted">
@@ -206,6 +252,43 @@ function WorkoutCard({
           </>
         )}
       </div>
+
+      {Array.isArray(draft.exercises) && draft.exercises.length > 0 && (
+        <div className="space-y-2 px-1">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-text-muted">
+              Exercises
+            </span>
+            <span className="text-[11px] font-semibold text-text-muted">
+              {draft.exercises.reduce((sum, ex) => sum + (ex.sets?.length ?? 0), 0)} sets
+            </span>
+          </div>
+          <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+            {draft.exercises.map((ex, i) => (
+              <div key={`${ex.name}-${i}`} className="rounded-xl bg-card-elev px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[13px] font-bold text-text truncate">{ex.name}</span>
+                  {ex.muscle_group && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-text-subtle shrink-0">
+                      {ex.muscle_group}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {(ex.sets ?? []).map((set, j) => (
+                    <span
+                      key={j}
+                      className="rounded-lg bg-card px-2 py-1 text-[11px] font-semibold text-text-muted tabular-nums"
+                    >
+                      {j + 1}. {formatExerciseSet(set as Record<string, unknown>, ex.weight_unit)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Calorie range from deterministic engine */}
       {(draft as any).calorieResult && (
