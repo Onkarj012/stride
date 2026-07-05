@@ -184,7 +184,7 @@ export function WorkoutsPage() {
         </button>
       </div>
 
-      <div className="hidden lg:block max-w-3xl lg:max-w-4xl mx-auto">
+      <div className="hidden lg:block page-container">
         <PageHeader
           left={
             <div>

@@ -495,7 +495,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       <input ref={docRef} type="file" accept=".md,.txt,text/markdown,text/plain" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onPickFile(f); e.target.value = ""; }} />
 
-      <div className="flex h-full min-h-0 flex-col bg-surface dark:bg-[#090b12] transition-colors duration-300">
+      <div className="flex h-full min-h-0 flex-col transition-colors duration-300">
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto" aria-live="polite" aria-label="Chat with Stry">
           <div className="max-w-[720px] mx-auto px-4 pt-5 pb-3 space-y-4">
           {!showHistory && (

@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Home, BarChart3, CalendarDays, Settings as SettingsIcon,
-  MessageSquare, Bot, User, LogOut, ChefHat, UtensilsCrossed, Dumbbell,
+  MessageSquare, Bot, User, LogOut, UtensilsCrossed, Dumbbell,
 } from "lucide-react";
 import { Brand } from "@/components/layout/Brand";
 import { StrideMark } from "@/components/ui-kit";
@@ -20,7 +20,6 @@ const NAV = [
   { to: "/workouts", label: "Workouts", icon: Dumbbell },
   { to: "/insights", label: "Insights", icon: BarChart3 },
   { to: "/history", label: "History", icon: CalendarDays },
-  { to: "/recipes", label: "Recipes", icon: ChefHat },
   { to: "/coach", label: "AI Coach", icon: Bot },
 ];
 

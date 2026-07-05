@@ -618,7 +618,7 @@ export function RecipesContent({ embedded = false }: { embedded?: boolean }) {
   const saved = (recipes ?? []).slice(4);
 
   return (
-    <div className="w-full max-w-7xl mx-auto space-y-6">
+    <div className="w-full max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         {!embedded && <h1 className="text-h2 text-text">Recipes</h1>}
         <div className={embedded ? "flex-1 flex items-center gap-2 lg:justify-end" : "flex items-center gap-2"}>

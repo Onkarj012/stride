@@ -18,7 +18,6 @@ import { HistoryPage } from "@/pages/HistoryPage";
 import { SettingsPage } from "@/pages/ProfilePage";
 import { ProfilePage } from "@/pages/ProfilePage";
 import { CoachPage } from "@/pages/CoachPage";
-import { RecipesPage } from "@/pages/RecipesPage";
 import { NutritionPage } from "@/pages/NutritionPage";
 import { WorkoutsPage } from "@/pages/WorkoutsPage";
 import { SignInPage, SignUpPage } from "@/pages/AuthPages";
@@ -30,7 +29,7 @@ const pageVariants = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 
 const pageTransition = FADE_FAST;
 const mobilePageTransition = { duration: 0.16 };
 const TAB_PATHS = ["/", "/nutrition", "/workouts", "/insights"] as const;
-const PUSH_PATHS = ["/history", "/settings", "/profile", "/recipes"] as const;
+const PUSH_PATHS = ["/history", "/settings", "/profile"] as const;
 
 function PageWrapper({ children }: { children: React.ReactNode }) {
   const reduce = useReducedMotion();
@@ -76,7 +75,7 @@ function AppRoutes() {
         <Route path="/settings" element={<PageWrapper><SettingsPage /></PageWrapper>} />
         <Route path="/profile" element={<PageWrapper><ProfilePage /></PageWrapper>} />
         <Route path="/coach" element={<PageWrapper><CoachPage /></PageWrapper>} />
-        <Route path="/recipes" element={<PageWrapper><RecipesPage /></PageWrapper>} />
+        <Route path="/recipes" element={<Navigate to="/nutrition" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AnimatePresence>
@@ -145,6 +144,8 @@ function MobileOverlayRoutes() {
   const location = useLocation();
   const overlayPath = location.pathname === "/coach"
     ? "/coach"
+    : location.pathname === "/recipes"
+      ? "/recipes"
     : PUSH_PATHS.find((path) => location.pathname.startsWith(path));
 
   return (
@@ -155,7 +156,7 @@ function MobileOverlayRoutes() {
           <Route path="/history" element={<MobileOverlayWrapper><HistoryPage /></MobileOverlayWrapper>} />
           <Route path="/settings" element={<MobileOverlayWrapper><SettingsPage /></MobileOverlayWrapper>} />
           <Route path="/profile" element={<MobileOverlayWrapper><ProfilePage /></MobileOverlayWrapper>} />
-          <Route path="/recipes" element={<MobileOverlayWrapper><RecipesPage /></MobileOverlayWrapper>} />
+          <Route path="/recipes" element={<Navigate to="/nutrition" replace />} />
         </Routes>
       )}
     </AnimatePresence>
