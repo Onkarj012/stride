@@ -6,6 +6,7 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { PageContainer } from "@/components/layout/PageContainer";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { OverlayHeader } from "@/components/mobile/MobileKit";
 import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/components/coach/EditLogModal";
@@ -408,7 +409,7 @@ export function HistoryPage() {
 
   return (
     <>
-    <div className="lg:hidden px-5 pt-2 pb-6">
+    <PageContainer className="lg:hidden pt-2 pb-6">
       <OverlayHeader title="History" back={() => navigate(-1)} />
       <div className="bg-white dark:bg-[#1a1e2e] rounded-[20px] p-5 shadow-[0_10px_30px_rgba(13,16,27,0.07)] mb-5">
         <CalendarGrid calendarData={calendarData} selected={selected} onSelect={setSelected} />
@@ -429,9 +430,9 @@ export function HistoryPage() {
         onDeleteMeal={(id) => deleteMeal({ id })}
         onDeleteWorkout={(id) => deleteWorkout({ id })}
       />
-    </div>
+    </PageContainer>
 
-    <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
+    <PageContainer className="hidden lg:block space-y-6">
       <PageHeader center="History" right={<NavTrigger className="lg:hidden" />} />
 
       {/* Mobile: stacked. Desktop: 2 columns */}
@@ -465,7 +466,7 @@ export function HistoryPage() {
           onDeleteWorkout={(id) => deleteWorkout({ id })}
         />
       </div>
-    </div>
+    </PageContainer>
     </>
   );
 }

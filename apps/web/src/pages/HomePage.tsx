@@ -178,7 +178,7 @@ export function HomePage() {
       </div>
 
       <div
-        className="hidden lg:flex lg:-mx-10 lg:-mt-10 lg:-mb-12 lg:h-dvh lg:flex-col"
+        className="hidden bg-surface transition-colors duration-300 dark:bg-[#090b12] lg:flex lg:-mx-10 lg:-mt-10 lg:-mb-12 lg:h-dvh lg:flex-col"
       >
         <div className="px-6 pt-5 pb-3 shrink-0">
           <div className="flex items-center gap-2">

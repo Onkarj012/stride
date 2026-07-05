@@ -6,6 +6,7 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Pencil, Trash2, Plus } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { PageContainer } from "@/components/layout/PageContainer";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
 import { Card } from "@/components/primitives/Card";
@@ -142,7 +143,7 @@ export function NutritionPage() {
         {adding && <AddSheet onClose={() => setAdding(false)} onPick={() => { setAdding(false); navigate("/coach"); }} />}
       </AnimatePresence>
 
-      <div className="lg:hidden px-5 pt-4 pb-6 relative">
+      <PageContainer className="lg:hidden pt-4 pb-6 relative">
         <ScreenHeader title="Nutrition" sub="Today's meals & recipes" />
         <div className="mb-5">
           <SegToggle value={activeTab} onChange={setActiveTab} layoutId="m-nutri-seg" options={[{ id: "log", label: "Today's meals" }, { id: "recipes", label: "Recipes" }]} />
@@ -173,9 +174,9 @@ export function NutritionPage() {
             <MobileIcon size={26} sw={2.6}><path d="M12 5v14M5 12h14" /></MobileIcon>
           </button>
         )}
-      </div>
+      </PageContainer>
 
-      <div className="hidden lg:block max-w-3xl lg:max-w-4xl mx-auto">
+      <PageContainer className="hidden lg:block">
         <PageHeader
           left={
             <div>
@@ -321,7 +322,7 @@ export function NutritionPage() {
           Log a meal
         </button>
         </>}
-      </div>
+      </PageContainer>
     </>
   );
 }

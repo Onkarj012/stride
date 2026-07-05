@@ -5,6 +5,7 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Pencil, Trash2, Plus } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { PageContainer } from "@/components/layout/PageContainer";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { EditLogModal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { Card } from "@/components/primitives/Card";
@@ -136,7 +137,7 @@ export function WorkoutsPage() {
         </div>
       )}
 
-      <div className="lg:hidden px-5 pt-4 pb-6">
+      <PageContainer className="lg:hidden pt-4 pb-6">
         <ScreenHeader title="Workouts" sub="Today's session" />
         <div className="flex flex-wrap gap-2 mb-5">
           <span className="bg-ink dark:bg-lavender text-white dark:text-ink rounded-full px-3.5 py-1.5 text-[12px] font-extrabold">{workouts.length} sessions</span>
@@ -182,9 +183,9 @@ export function WorkoutsPage() {
           <Plus className="h-4 w-4" strokeWidth={1.8} />
           Log a workout
         </button>
-      </div>
+      </PageContainer>
 
-      <div className="hidden lg:block max-w-3xl lg:max-w-4xl mx-auto">
+      <PageContainer className="hidden lg:block">
         <PageHeader
           left={
             <div>
@@ -297,7 +298,7 @@ export function WorkoutsPage() {
           <Plus className="h-4 w-4" strokeWidth={1.8} />
           Log a workout
         </button>
-      </div>
+      </PageContainer>
     </>
   );
 }

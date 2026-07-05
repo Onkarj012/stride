@@ -9,6 +9,7 @@ import { useQuery, useMutation } from "convex/react";
 import { useUser, useClerk } from "@clerk/react";
 import { api } from "@convex/_generated/api";
 import { NavTrigger } from "@/components/layout/NavTrigger";
+import { PageContainer } from "@/components/layout/PageContainer";
 import { OverlayHeader } from "@/components/mobile/MobileKit";
 import { Avatar } from "@/components/primitives/Avatar";
 import { Card } from "@/components/primitives/Card";
@@ -739,7 +740,7 @@ function MobileAccountLayout({ title }: { title: string }) {
   const initial = [user?.firstName?.[0], user?.lastName?.[0]].filter(Boolean).join("").toUpperCase() || user?.username?.[0]?.toUpperCase() || "?";
 
   return (
-    <div className="lg:hidden px-5 pt-2 pb-6">
+    <PageContainer className="lg:hidden pt-2 pb-6">
       <OverlayHeader
         title={title}
         back={() => navigate(-1)}
@@ -775,7 +776,7 @@ function MobileAccountLayout({ title }: { title: string }) {
         <AccountToggle label="Analytical coaching" checked={prefs.coachingStyle === "analytical"} onChange={(v) => update({ coachingStyle: v ? "analytical" : "gentle" })} />
         <AccountToggle label="Metric units" checked={prefs.units === "metric"} onChange={(v) => update({ units: v ? "metric" : "imperial" })} />
       </div>
-    </div>
+    </PageContainer>
   );
 }
 
@@ -786,7 +787,7 @@ export function ProfilePage() {
   return (
     <>
     <MobileAccountLayout title="Profile" />
-    <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
+    <PageContainer className="hidden lg:block space-y-6">
       <PageHeader center="Profile" right={<NavTrigger className="lg:hidden" />} />
       <div role="tablist" className="flex gap-1 rounded-full bg-card-elev border border-border p-1 self-start max-w-full overflow-x-auto no-scrollbar">
         {profileTabs.map((t) => {
@@ -812,7 +813,7 @@ export function ProfilePage() {
         {tab === "activity" && <ActivityTab />}
         {tab === "goals" && <GoalsTab />}
       </div>
-    </div>
+    </PageContainer>
     </>
   );
 }
@@ -821,12 +822,12 @@ export function SettingsPage() {
   return (
     <>
     <MobileAccountLayout title="Account" />
-    <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
+    <PageContainer className="hidden lg:block space-y-6">
       <PageHeader center="Settings" right={<NavTrigger className="lg:hidden" />} />
       <div>
         <SettingsTab />
       </div>
-    </div>
+    </PageContainer>
     </>
   );
 }

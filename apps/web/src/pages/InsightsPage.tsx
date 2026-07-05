@@ -10,6 +10,7 @@ import { Card } from "@/components/primitives/Card";
 import { Pill } from "@/components/primitives/Pill";
 import { MacroCard, MilestoneCard, NarrativeCard, StatChip, StreakCard } from "@/components/ui-kit";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { PageContainer } from "@/components/layout/PageContainer";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { ScreenHeader } from "@/components/mobile/MobileKit";
 import { MacroDonut } from "@/components/charts/MacroDonut";
@@ -418,7 +419,7 @@ export function InsightsPage() {
 
   return (
     <>
-    <div className="lg:hidden px-5 pt-4 pb-6">
+    <PageContainer className="lg:hidden pt-4 pb-6">
       <ScreenHeader title="Insights" sub="What's working, what to watch" />
       <div className="flex gap-2 mb-5">
         {(["today", "week", "month"] as const).map((range) => (
@@ -441,9 +442,9 @@ export function InsightsPage() {
         <StreakCard />
         <MilestoneCard milestones={milestoneItems} />
       </div>
-    </div>
+    </PageContainer>
 
-    <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
+    <PageContainer className="hidden lg:block space-y-6">
       <PageHeader
         center={
           <div className="flex flex-col items-center -space-y-0.5">
@@ -556,7 +557,7 @@ export function InsightsPage() {
         </div>
         <MilestoneList logs={logs} />
       </section>
-    </div>
+    </PageContainer>
     </>
   );
 }

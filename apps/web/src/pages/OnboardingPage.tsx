@@ -248,7 +248,7 @@ export function OnboardingPage() {
       <motion.div
         initial={reduce ? false : { opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-        className="min-h-dvh w-full bg-bg flex flex-col items-center justify-center px-4 py-8">
+        className="min-h-dvh w-full bg-bg flex flex-col items-center justify-center px-5 py-8">
         <div className="w-full max-w-md space-y-5 text-center">
           <div className="w-24 h-24 mx-auto rounded-full bg-lavender overflow-hidden grid place-items-center">
             <PixelAgent agent="main" size={96} state="idle" />
