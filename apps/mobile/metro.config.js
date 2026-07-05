@@ -16,9 +16,10 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
-// @convex alias mirrors the web Vite alias → packages/backend/convex
 config.resolver.extraNodeModules = {
   '@convex': path.resolve(workspaceRoot, 'packages/backend/convex'),
+  'nativewind': path.resolve(projectRoot, 'node_modules/nativewind'),
+  'react-native-css-interop': path.resolve(projectRoot, 'node_modules/react-native-css-interop'),
 };
 
 module.exports = withNativeWind(config, { input: './global.css' });
