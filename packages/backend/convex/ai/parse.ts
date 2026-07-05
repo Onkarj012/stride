@@ -69,6 +69,30 @@ export interface ParsedWorkoutResult {
   } | null;
 }
 
+export function extractStatedWorkoutCalories(description: string): number | null {
+  const match = description.match(/(\d+(?:\.\d+)?)\s*(?:kcal|cal(?:ories?)?)(?:\s*burned)?/i);
+  return match ? Math.round(parseFloat(match[1])) : null;
+}
+
+function adjustedCalorieResult(
+  calcResult: ReturnType<typeof calculateWorkoutCalories>,
+  hasKnownWeight: boolean,
+): NonNullable<ParsedWorkoutResult["calorieResult"]> {
+  const confidence = Math.max(
+    0.1,
+    Math.round((calcResult.confidence - (hasKnownWeight ? 0 : 0.25)) * 100) / 100,
+  );
+  const rangeWidth = Math.round(calcResult.total_kcal * (1 - confidence) * 0.25);
+
+  return {
+    total_kcal: calcResult.total_kcal,
+    confidence,
+    range_low: Math.max(0, calcResult.total_kcal - rangeWidth),
+    range_high: calcResult.total_kcal + rangeWidth,
+    breakdown: calcResult.breakdown as unknown as Record<string, number>,
+  };
+}
+
 export async function parseMealDescription(
   description: string,
   mealType: string,
@@ -202,10 +226,12 @@ Return ONLY valid JSON:
   const totalSets = exercises.reduce((sum: number, ex: any) => sum + ex.sets.length, 0);
   const setsVal = exercises.length > 0 ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets` : "–";
 
-  // Deterministic calorie calculation
+  // Deterministic calorie calculation. Use a conservative default weight when
+  // onboarding has not captured weight yet, so detailed workouts never show 0.
   let calorieResult: ParsedWorkoutResult["calorieResult"] = null;
-  if (userPhysique?.weight && exercises.length > 0) {
+  if (exercises.length > 0) {
     try {
+      const hasKnownWeight = typeof userPhysique?.weight === "number" && userPhysique.weight > 0;
       const durationMin = parseDurationMinutes(result.duration || duration || "30 min");
       const engineIntensity = mapAIIntensity(result.intensity || intensity || "HIGH");
       const engineDensity = inferDensity(exercises, durationMin);
@@ -223,7 +249,7 @@ Return ONLY valid JSON:
           weighted_met: weightedMet,
         },
         {
-          weight_kg: userPhysique?.weight ?? 70,
+          weight_kg: hasKnownWeight ? userPhysique.weight! : 70,
           age: userPhysique?.age ?? 30,
           sex: (userPhysique?.sex === "female" ? "female" : "male"),
           fitness_level: ((userPhysique?.fitnessLevel ?? "beginner") as "beginner" | "intermediate" | "advanced"),
@@ -231,24 +257,24 @@ Return ONLY valid JSON:
         },
       );
 
-      calorieResult = {
-        total_kcal: calcResult.total_kcal,
-        confidence: calcResult.confidence,
-        range_low: calcResult.range_low,
-        range_high: calcResult.range_high,
-        breakdown: calcResult.breakdown as unknown as Record<string, number>,
-      };
+      calorieResult = adjustedCalorieResult(calcResult, hasKnownWeight);
     } catch {
       // Fall back to AI estimate if engine fails
     }
   }
+
+  const explicitCalories =
+    extractStatedWorkoutCalories(description) ??
+    (typeof result.caloriesBurned === "number" && result.caloriesBurned > 0
+      ? Math.round(result.caloriesBurned)
+      : null);
 
   return {
     name: result.name || description.slice(0, 30),
     sets: setsVal,
     duration: result.duration || duration || "30 min",
     intensity: result.intensity || intensity || "HIGH",
-    caloriesBurned: calorieResult?.total_kcal ?? result.caloriesBurned ?? 0,
+    caloriesBurned: explicitCalories ?? calorieResult?.total_kcal ?? 0,
     rationale: result.rationale || "",
     exercises: exercises.length > 0 ? exercises : null,
     description,

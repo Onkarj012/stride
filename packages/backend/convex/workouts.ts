@@ -45,6 +45,11 @@ export const addWorkout = mutation({
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
     caloriesBurned: v.optional(v.number()),
+    calorieConfidence: v.optional(v.number()),
+    calorieRangeLow: v.optional(v.number()),
+    calorieRangeHigh: v.optional(v.number()),
+    calorieBreakdown: v.optional(v.string()),
+    calculationVersion: v.optional(v.number()),
     structuredSets: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -56,6 +61,11 @@ export const addWorkout = mutation({
       duration: args.duration, intensity: args.intensity || "HIGH",
       exercises: args.exercises, rationale: args.rationale,
       caloriesBurned: args.caloriesBurned,
+      calorieConfidence: args.calorieConfidence,
+      calorieRangeLow: args.calorieRangeLow,
+      calorieRangeHigh: args.calorieRangeHigh,
+      calorieBreakdown: args.calorieBreakdown,
+      calculationVersion: args.calculationVersion,
       structuredSets: args.structuredSets,
     });
     await applyDayAdjustment(ctx, userId, date);

@@ -618,13 +618,13 @@ export function RecipesContent({ embedded = false }: { embedded?: boolean }) {
   const saved = (recipes ?? []).slice(4);
 
   return (
-    <div className="w-full max-w-7xl mx-auto space-y-6">
+    <div className="w-full max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         {!embedded && <h1 className="text-h2 text-text">Recipes</h1>}
-        <div className={embedded ? "ml-auto flex items-center gap-2" : "flex items-center gap-2"}>
+        <div className={embedded ? "flex-1 flex items-center gap-2 lg:justify-end" : "flex items-center gap-2"}>
           {!embedded && <NavTrigger className="lg:hidden" />}
           <button type="button" onClick={() => setView({ mode: "new" })}
-            className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-2.5 text-[14px] font-bold">
+            className="w-full lg:w-auto inline-flex items-center justify-center gap-1.5 rounded-[14px] lg:rounded-[12px] bg-ink dark:bg-lavender text-white dark:text-ink px-5 py-3 lg:py-2.5 text-[14px] lg:text-[13px] font-extrabold active:scale-[0.98] lg:hover:scale-[1.02] lg:active:scale-95 transition-transform">
             <Plus className="h-4 w-4" strokeWidth={2.5} /> New recipe
           </button>
         </div>
@@ -642,7 +642,7 @@ export function RecipesContent({ embedded = false }: { embedded?: boolean }) {
             <p className="text-[14px] text-text-muted">Build one to log meals in a single tap.</p>
           </div>
           <button type="button" onClick={() => setView({ mode: "new" })}
-            className="inline-flex items-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-2.5 text-[14px] font-bold">
+            className="inline-flex items-center gap-1.5 rounded-[14px] bg-ink dark:bg-lavender text-white dark:text-ink px-5 py-3 text-[14px] font-extrabold active:scale-[0.98] transition-transform">
             <Plus className="h-4 w-4" strokeWidth={2.5} /> New recipe
           </button>
         </Card>

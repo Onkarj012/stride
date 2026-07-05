@@ -79,3 +79,10 @@ docs/archived-plans-prds.md
 # Local product reference (not for version control)
 PRODUCT.md
 .vercel
+
+# Docs and design system — local only, not version controlled
+docs/
+apps/web/docs/
+
+# Generated design tokens (run `pnpm build:tokens`)
+apps/web/src/styles/tokens.generated.css

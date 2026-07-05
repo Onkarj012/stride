@@ -36,6 +36,8 @@ export const addMeal = mutation({
     confidence: v.optional(v.number()),
     nutritionSource: v.optional(v.string()),
     foodMemoryId: v.optional(v.id("food_memory")),
+    structuredItems: v.optional(v.string()),
+    ingredientBreakdown: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (args.calories < 0 || args.protein < 0 || args.carbs < 0 || args.fat < 0) {
@@ -58,6 +60,8 @@ export const addMeal = mutation({
       confidence: args.confidence,
       nutritionSource: args.nutritionSource,
       foodMemoryId: args.foodMemoryId,
+      structuredItems: args.structuredItems,
+      ingredientBreakdown: args.ingredientBreakdown,
     });
     await recordBehaviorRow(ctx, userId, "log", "meal", undefined, date);
     // Learn from this meal (fire-and-forget; don't block the mutation)

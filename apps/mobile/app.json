@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Stride",
+    "slug": "stride-workspace",
+    "owner": "leoeccentric",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "stride",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0d101b",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.stride.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0d101b"
+      },
+      "package": "com.stride.mobile"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d196dbbf-4b00-4bf6-b681-b2b7be4b9b29"
+      }
+    }
+  }
+}

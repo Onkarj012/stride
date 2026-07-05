@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Trash2, Pencil, RotateCcw } from "lucide-react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -6,6 +7,7 @@ import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { NavTrigger } from "@/components/layout/NavTrigger";
+import { OverlayHeader } from "@/components/mobile/MobileKit";
 import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
@@ -374,6 +376,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
 }
 
 export function HistoryPage() {
+  const navigate = useNavigate();
   const [selected, setSelected] = useState<Date>(new Date());
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
@@ -404,7 +407,31 @@ export function HistoryPage() {
   ];
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <>
+    <div className="lg:hidden px-5 pt-2 pb-6">
+      <OverlayHeader title="History" back={() => navigate(-1)} />
+      <div className="bg-white dark:bg-[#1a1e2e] rounded-[20px] p-5 shadow-[0_10px_30px_rgba(13,16,27,0.07)] mb-5">
+        <CalendarGrid calendarData={calendarData} selected={selected} onSelect={setSelected} />
+      </div>
+      <div className="grid grid-cols-2 gap-2 mb-5">
+        {statCards.map((s) => (
+          <div key={s.label} className={cn("rounded-[14px] px-3 py-2.5", s.tone)}>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-ink/60">{s.label}</div>
+            <div className="text-[20px] font-extrabold text-ink leading-none mt-0.5">
+              {s.value}<span className="text-[11px] font-medium text-ink/70 ml-0.5">{s.unit}</span>
+            </div>
+            <div className="text-[10px] text-ink/60 mt-0.5">{s.sub}</div>
+          </div>
+        ))}
+      </div>
+      <DayDetail
+        date={selected}
+        onDeleteMeal={(id) => deleteMeal({ id })}
+        onDeleteWorkout={(id) => deleteWorkout({ id })}
+      />
+    </div>
+
+    <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
       <PageHeader center="History" right={<NavTrigger className="lg:hidden" />} />
 
       {/* Mobile: stacked. Desktop: 2 columns */}
@@ -439,5 +466,6 @@ export function HistoryPage() {
         />
       </div>
     </div>
+    </>
   );
 }

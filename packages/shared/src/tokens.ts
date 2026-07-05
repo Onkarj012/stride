@@ -7,6 +7,7 @@ export const colors = {
     mint: '#b8e5c0',
     bubblegum: '#f4b5d6',
     sunshine: '#ffc93b',
+    surface: '#f8f8f8', // light off-white; used by ui-kit cards (fixed, not flipped)
   },
 
   light: {

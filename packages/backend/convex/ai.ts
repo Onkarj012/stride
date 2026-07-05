@@ -15,7 +15,8 @@ import {
 } from "./ai/intent";
 import {
   parseMealDescription, parseWorkoutDescription, runNutritionEngine,
-  NUTRITION_ACCURACY_RULES, type UserPhysique, type ParsedWorkoutResult,
+  extractStatedWorkoutCalories, NUTRITION_ACCURACY_RULES,
+  type UserPhysique, type ParsedWorkoutResult,
 } from "./ai/parse";
 
 // callAI, parseJSON, AIMessage, model constants → ./ai/llm
@@ -1604,6 +1605,7 @@ Return ONLY:
             aiSuggestion: parsed.aiSuggestion,
             confidence: nutrition.confidence,
             nutritionSource: nutrition.nutritionSource,
+            ingredientBreakdown: nutrition.ingredientBreakdown,
           };
           const macroDecision = hasUserMacros ? applyUserMacros(baseDraft, userMacros) : { draft: baseDraft, conflict: false, reason: "" };
           drafts.push(macroDecision.draft);
@@ -1612,8 +1614,7 @@ Return ONLY:
         } else if (item.type === "workout") {
           const parsed = await parseWorkoutDescription(item.description, undefined, undefined, settingsModel, apiKey, userPhysique);
           // Extract user-stated calories from description (e.g. "75 kcal burned", "75cal")
-          const statedKcalMatch = item.description.match(/(\d+(?:\.\d+)?)\s*(?:kcal|cal(?:ories?)?)(?:\s*burned)?/i);
-          const statedKcal = statedKcalMatch ? Math.round(parseFloat(statedKcalMatch[1])) : null;
+          const statedKcal = extractStatedWorkoutCalories(item.description);
           const finalKcal = statedKcal ?? parsed.caloriesBurned ?? 0;
           drafts.push({
             kind: "workout",

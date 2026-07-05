@@ -28,6 +28,7 @@ const css = `/* ============================================================
   --color-mint: ${c.brand.mint};
   --color-bubblegum: ${c.brand.bubblegum};
   --color-sunshine: ${c.brand.sunshine};
+  --color-surface: ${c.brand.surface};
   --color-error: ${c.light.error};
 
   /* ---------- Soft accent fills ---------- */

@@ -1,3 +1,8 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+  react-native-svg: set this to true or false
+  react-native-worklets: true
