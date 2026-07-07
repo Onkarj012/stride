@@ -12,6 +12,7 @@ import {
 } from "./ai/llm";
 import {
   looksLikeLog, looksLikeFoodEstimate, extractUserMacros, applyUserMacros,
+  classifyHomepageIntent, isNegatedLogItem,
 } from "./ai/intent";
 import {
   parseMealDescription, parseWorkoutDescription, runNutritionEngine,
@@ -292,6 +293,7 @@ export const logMeal = action({
       nutritionSource: nutrition.nutritionSource,
       structuredItems,
       ingredientBreakdown: ingredientBreakdownStr,
+      logSource: "ai",
     });
     data = {
       _id: id,
@@ -364,9 +366,10 @@ export const logWorkout = action({
         exercises: parsedData.exercises,
         rationale: parsedData.rationale,
         caloriesBurned: parsedData.caloriesBurned ?? (parsedData.calorieResult?.total_kcal ?? 0),
-        structuredSets: parsedData.exercises ? JSON.stringify(parsedData.exercises) : undefined,
-        ...calorieFields,
-      });
+          structuredSets: parsedData.exercises ? JSON.stringify(parsedData.exercises) : undefined,
+          logSource: "ai",
+          ...calorieFields,
+        });
       data = { _id: id, ...parsedData };
     } else if (description) {
       const parsed = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
@@ -383,6 +386,7 @@ export const logWorkout = action({
         intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
         caloriesBurned: parsed.caloriesBurned,
         structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
+        logSource: "ai",
         ...calorieFields,
       });
       data = { _id: id, ...parsed };
@@ -601,6 +605,7 @@ Rules:
     // Parse log blocks — support multiple items and new types
     let cleanReply = reply;
     const loggedItems: any[] = [];
+    const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string }> = [];
 
     // Strip all log blocks from the reply text
     cleanReply = reply
@@ -629,11 +634,17 @@ Rules:
           aiSuggestion: parsed.aiSuggestion, mealType: parsed.mealType, components: parsed.components,
           confidence: nutrition.confidence, nutritionSource: nutrition.nutritionSource,
           structuredItems: finalStructuredItems, ingredientBreakdown: finalIngredientBreakdown,
+          logSource: "coach",
         });
         loggedItems.push({ type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat } });
+        logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: true });
         // Award gamification for today's logs — parity with the homepage confirm path.
         if (targetDate === today) await ctx.runMutation(api.gamification.recordActivity, { type: "meal" }).catch(() => {});
-      } catch (err) { console.error("Failed to log meal from AI:", err); }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logOutcomes.push({ type: "meal", name: "meal", ok: false, error: message });
+        console.error("Failed to log meal from AI:", err);
+      }
     }
 
     // Workout
@@ -658,12 +669,18 @@ Rules:
           intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
           caloriesBurned: parsed.caloriesBurned,
           structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
+          logSource: "coach",
           ...calorieFields,
         });
         loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed } });
+        logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: true });
         // Award gamification for today's logs — parity with the homepage confirm path.
         if (targetDate === today) await ctx.runMutation(api.gamification.recordActivity, { type: "workout" }).catch(() => {});
-      } catch (err) { console.error("Failed to log workout from AI:", err); }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logOutcomes.push({ type: "workout", name: "workout", ok: false, error: message });
+        console.error("Failed to log workout from AI:", err);
+      }
     }
 
     // Sleep
@@ -676,7 +693,12 @@ Rules:
         const quality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : "ok";
         const sleepId = await ctx.runMutation(api.wellness.upsertSleep, { hours, quality, date: targetDate });
         loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality } });
-      } catch (err) { console.error("Failed to log sleep from AI:", err); }
+        logOutcomes.push({ type: "sleep", name: "sleep", ok: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logOutcomes.push({ type: "sleep", name: "sleep", ok: false, error: message });
+        console.error("Failed to log sleep from AI:", err);
+      }
     }
 
     // Water
@@ -689,7 +711,12 @@ Rules:
         const time = new Date().toTimeString().slice(0, 5);
         const waterId = await ctx.runMutation(api.wellness.addWater, { ml, date: targetDate, time });
         loggedItems.push({ type: "water", data: { _id: waterId, ml } });
-      } catch (err) { console.error("Failed to log water from AI:", err); }
+        logOutcomes.push({ type: "water", name: "water", ok: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logOutcomes.push({ type: "water", name: "water", ok: false, error: message });
+        console.error("Failed to log water from AI:", err);
+      }
     }
 
     // Mood
@@ -702,7 +729,12 @@ Rules:
         const time = new Date().toTimeString().slice(0, 5);
         const moodId = await ctx.runMutation(api.wellness.addMood, { rating, date: targetDate, time, note: logData.note });
         loggedItems.push({ type: "mood", data: { _id: moodId, rating } });
-      } catch (err) { console.error("Failed to log mood from AI:", err); }
+        logOutcomes.push({ type: "mood", name: "mood", ok: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logOutcomes.push({ type: "mood", name: "mood", ok: false, error: message });
+        console.error("Failed to log mood from AI:", err);
+      }
     }
 
     // Steps
@@ -714,7 +746,28 @@ Rules:
         const count = Math.max(0, Number(logData.count) || 0);
         const stepsId = await ctx.runMutation(api.wellness.upsertSteps, { count, date: targetDate });
         loggedItems.push({ type: "steps", data: { _id: stepsId, count } });
-      } catch (err) { console.error("Failed to log steps from AI:", err); }
+        logOutcomes.push({ type: "steps", name: "steps", ok: true });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logOutcomes.push({ type: "steps", name: "steps", ok: false, error: message });
+        console.error("Failed to log steps from AI:", err);
+      }
+    }
+
+    if (logOutcomes.length > 0) {
+      const saved = logOutcomes.filter((outcome) => outcome.ok);
+      const failed = logOutcomes.filter((outcome) => !outcome.ok);
+      const statusParts: string[] = [];
+      if (saved.length > 0) {
+        statusParts.push(`Saved ${saved.map((outcome) => outcome.name).join(", ")}.`);
+      }
+      if (failed.length > 0) {
+        const duplicate = failed.some((outcome) => outcome.error?.includes("NEAR_DUPLICATE"));
+        statusParts.push(duplicate
+          ? "I did not save the duplicate-looking log. Confirm or edit it if you want to log it anyway."
+          : `I couldn't save ${failed.map((outcome) => outcome.name).join(", ")}. Please confirm or edit and try again.`);
+      }
+      cleanReply = [cleanReply, statusParts.join(" ")].filter(Boolean).join("\n\n");
     }
 
     const loggedItem = loggedItems.length === 1 ? loggedItems[0] : loggedItems.length > 1 ? { type: "multiple", items: loggedItems } : null;
@@ -1335,7 +1388,8 @@ export const homepageInput = action({
     const estimateMode = looksLikeFoodEstimate(message);
     const userMacros = extractUserMacros(message);
     const hasUserMacros = Object.values(userMacros).some((v) => v != null);
-    const heuristicSaysLog = !!image || looksLikeLog(message) || estimateMode;
+    const homepageIntent = classifyHomepageIntent(message);
+    const heuristicSaysLog = !!image || homepageIntent === "log_report" || looksLikeLog(message) || estimateMode;
 
     // Step 1: Extract ALL loggable items from the message in one LLM call.
     const yesterdayStr = new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0];
@@ -1359,6 +1413,7 @@ Return a JSON object:
 CRITICAL CLASSIFICATION RULES:
 - "isQuestion" is TRUE only when the user is asking a question, requesting advice, or chatting WITHOUT mentioning anything they did/ate/drank/slept.
 - ANY mention of food/drink consumed, exercise performed, sleep, mood, or steps is a LOG report — set isQuestion=false and add an item.
+- NEGATIONS are NOT logs: "I haven't worked out today", "didn't eat lunch", "no steps yet", "skipped breakfast" → isQuestion=false, items=[].
 - If the user reports activities AND asks a question, set isQuestion=false and still add the items (we'll handle the question separately).
 - "I had X" / "I ate X" / "just had X" / "had X for breakfast" / "X for lunch/dinner/snack" → meal log, isQuestion=false
 - "I drank X" / "X glasses of water" / "Xml of water" / "had Xl of water" → water log, isQuestion=false
@@ -1391,6 +1446,8 @@ Examples (assume today=${today}):
   → {"isQuestion": false, "items": [{"type": "sleep", "description": "slept 7h", "date": "${today}"}]}
 - USER: "How am I doing today?"
   → {"isQuestion": true, "items": []}
+- USER: "I haven't worked out today"
+  → {"isQuestion": false, "items": []}
 - USER: "Can I have 200ml milk, 3 biscuits, and whey? How many calories?"
   → {"isQuestion": false, "items": [{"type": "meal", "description": "200ml milk, 3 biscuits, and whey", "date": "${today}"}]}
 
@@ -1439,7 +1496,9 @@ Return ONLY:
     // Validate date strings — fall back to today if invalid
     const isValidDate = (d: any) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
     const allowedTypes = new Set(["meal", "workout", "sleep", "water", "mood", "steps"]);
-    extracted.items = (extracted.items ?? []).filter((it) => allowedTypes.has(it.type));
+    extracted.items = (extracted.items ?? [])
+      .filter((it) => allowedTypes.has(it.type))
+      .filter((it) => !isNegatedLogItem(message, it));
     for (const item of extracted.items) {
       if (!isValidDate(item.date)) item.date = today;
     }
@@ -1606,6 +1665,7 @@ Return ONLY:
             confidence: nutrition.confidence,
             nutritionSource: nutrition.nutritionSource,
             ingredientBreakdown: nutrition.ingredientBreakdown,
+            parseError: parsed.parseError,
           };
           const macroDecision = hasUserMacros ? applyUserMacros(baseDraft, userMacros) : { draft: baseDraft, conflict: false, reason: "" };
           drafts.push(macroDecision.draft);
@@ -1629,8 +1689,12 @@ Return ONLY:
             rationale: parsed.rationale,
             exercises: parsed.exercises,
             calorieResult: parsed.calorieResult,
+            parseError: parsed.parseError,
           });
-          summaryParts.push(`${parsed.name} (~${finalKcal} kcal burned)`);
+          const range = parsed.calorieResult
+            ? `~${parsed.calorieResult.range_low}-${parsed.calorieResult.range_high} kcal, rough`
+            : `~${finalKcal} kcal burned`;
+          summaryParts.push(`${parsed.name} (${range})`);
 
         } else if (item.type === "sleep") {
           // Parse sleep: extract hours and quality from description
@@ -1725,7 +1789,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
             title: draft.description ?? "Log this meal?",
             body: estimateMode
               ? `${rangeLow}–${rangeHigh} kcal depending on portions.`
-              : undefined,
+              : draft.parseError,
           });
         }
       } else {
@@ -1735,6 +1799,9 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
           source: draft.kind,
           draft,
           title: draft.description ?? `Log ${draft.kind}?`,
+          body: draft.kind === "workout" && draft.calorieResult
+            ? `~${draft.calorieResult.range_low}-${draft.calorieResult.range_high} kcal, rough. Refine duration or intensity if needed.`
+            : draft.parseError,
         });
       }
     }

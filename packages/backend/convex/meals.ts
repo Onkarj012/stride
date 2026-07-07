@@ -2,11 +2,43 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { recordBehaviorRow } from "./behavior";
+import {
+  buildIdempotencyKey,
+  isSimilarMeal,
+  mealContentHash,
+  minutesBetweenTimes,
+  normalizeLogSource,
+  timeWindowKey,
+  validateMealWrite,
+} from "./validation";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
   return identity.subject;
+}
+
+async function findExistingMealByIdempotencyKey(ctx: any, userId: string, date: string, idempotencyKey: string) {
+  return ctx.db
+    .query("meals")
+    .withIndex("by_user_date_and_idempotency_key", (q: any) =>
+      q.eq("userId", userId).eq("date", date).eq("idempotencyKey", idempotencyKey),
+    )
+    .first();
+}
+
+async function assertNoNearDuplicateMeal(ctx: any, userId: string, date: string, meal: any, time: string) {
+  const meals = await ctx.db
+    .query("meals")
+    .withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date))
+    .collect();
+  const duplicate = meals.find((existing: any) => {
+    const minutes = minutesBetweenTimes(existing.time, time);
+    return minutes != null && minutes <= 10 && isSimilarMeal(meal, existing);
+  });
+  if (duplicate) {
+    throw new Error("NEAR_DUPLICATE: looks like you already logged this — log anyway?");
+  }
 }
 
 export const getMeals = query({
@@ -35,43 +67,60 @@ export const addMeal = mutation({
     components: v.optional(v.string()),
     confidence: v.optional(v.number()),
     nutritionSource: v.optional(v.string()),
+    nutritionVerified: v.optional(v.boolean()),
     foodMemoryId: v.optional(v.id("food_memory")),
     structuredItems: v.optional(v.string()),
     ingredientBreakdown: v.optional(v.string()),
+    logSource: v.optional(v.string()),
+    allowDuplicate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    if (args.calories < 0 || args.protein < 0 || args.carbs < 0 || args.fat < 0) {
-      throw new Error("Calories and macros must be non-negative");
-    }
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
+    const validated = validateMealWrite(args);
+    const logSource = normalizeLogSource(args.logSource, "manual");
+    const idempotencyKey = buildIdempotencyKey({
+      userId,
+      date,
+      source: logSource,
+      contentHash: mealContentHash(validated),
+      timeWindow: timeWindowKey(validated.time),
+    });
+    const existing = await findExistingMealByIdempotencyKey(ctx, userId, date, idempotencyKey);
+    if (existing) return existing._id;
+    if (!args.allowDuplicate) {
+      await assertNoNearDuplicateMeal(ctx, userId, date, validated, validated.time);
+    }
     const id = await ctx.db.insert("meals", {
       userId,
       date,
-      name: args.name,
-      calories: args.calories,
-      protein: args.protein,
-      carbs: args.carbs,
-      fat: args.fat,
-      time: args.time,
+      name: validated.name,
+      calories: validated.calories,
+      protein: validated.protein,
+      carbs: validated.carbs,
+      fat: validated.fat,
+      time: validated.time,
       aiSuggestion: args.aiSuggestion,
       mealType: args.mealType ?? "unspecified",
       components: args.components,
-      confidence: args.confidence,
-      nutritionSource: args.nutritionSource,
+      confidence: validated.confidence,
+      nutritionSource: validated.nutritionSource,
+      nutritionVerified: args.nutritionVerified,
       foodMemoryId: args.foodMemoryId,
       structuredItems: args.structuredItems,
       ingredientBreakdown: args.ingredientBreakdown,
+      logSource,
+      idempotencyKey,
     });
     await recordBehaviorRow(ctx, userId, "log", "meal", undefined, date);
     // Learn from this meal (fire-and-forget; don't block the mutation)
     ctx.scheduler.runAfter(0, internal.food_memory.recordFromMeal, {
       userId,
-      name: args.name,
-      kcal: args.calories,
-      protein: args.protein,
-      carbs: args.carbs,
-      fat: args.fat,
+      name: validated.name,
+      kcal: validated.calories,
+      protein: validated.protein,
+      carbs: validated.carbs,
+      fat: validated.fat,
       components: args.components,
       date,
       source: "learned",
@@ -94,19 +143,26 @@ export const updateMeal = mutation({
     components: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, { id, ...fields }) => {
-    if (fields.calories < 0 || fields.protein < 0 || fields.carbs < 0 || fields.fat < 0) {
-      throw new Error("Calories and macros must be non-negative");
-    }
-    const userId = await requireUserId(ctx);
-    const meal = await ctx.db.get(id);
-    if (!meal || meal.userId !== userId) throw new Error("Not found");
-    await ctx.db.patch(id, {
+    const validated = validateMealWrite({
       name: fields.name,
       calories: fields.calories,
       protein: fields.protein,
       carbs: fields.carbs,
       fat: fields.fat,
       time: fields.time,
+    });
+    const userId = await requireUserId(ctx);
+    const meal = await ctx.db.get(id);
+    if (!meal || meal.userId !== userId) throw new Error("Not found");
+    await ctx.db.patch(id, {
+      name: validated.name,
+      calories: validated.calories,
+      protein: validated.protein,
+      carbs: validated.carbs,
+      fat: validated.fat,
+      time: validated.time,
+      confidence: Math.min(meal.confidence ?? 1, validated.confidence ?? 1),
+      nutritionSource: meal.nutritionSource ?? validated.nutritionSource,
       mealType: fields.mealType ?? "unspecified",
       aiSuggestion: fields.aiSuggestion ?? undefined,
       components: fields.components ?? undefined,
@@ -126,11 +182,11 @@ export const updateMeal = mutation({
       // Meal not memory-linked: still learn the corrected values by name
       ctx.scheduler.runAfter(0, internal.food_memory.recordFromMeal, {
         userId,
-        name: fields.name,
-        kcal: fields.calories,
-        protein: fields.protein,
-        carbs: fields.carbs,
-        fat: fields.fat,
+        name: validated.name,
+        kcal: validated.calories,
+        protein: validated.protein,
+        carbs: validated.carbs,
+        fat: validated.fat,
         components: fields.components ?? meal.components ?? undefined,
         date: meal.date ?? today,
         source: "corrected",
@@ -168,22 +224,45 @@ export const relogMeal = mutation({
     if (!src || src.userId !== userId) throw new Error("Not found");
     const targetDate = date ?? new Date().toISOString().split("T")[0];
     const targetTime = time ?? new Date().toISOString().slice(11, 16);
-    return ctx.db.insert("meals", {
-      userId,
-      date: targetDate,
+    const validated = validateMealWrite({
       name: src.name,
       calories: src.calories,
       protein: src.protein,
       carbs: src.carbs,
       fat: src.fat,
       time: targetTime,
+      confidence: src.confidence,
+      nutritionSource: src.nutritionSource,
+    });
+    const logSource = normalizeLogSource("relog", "relog");
+    const idempotencyKey = buildIdempotencyKey({
+      userId,
+      date: targetDate,
+      source: logSource,
+      contentHash: mealContentHash(validated),
+      timeWindow: timeWindowKey(targetTime),
+    });
+    const existing = await findExistingMealByIdempotencyKey(ctx, userId, targetDate, idempotencyKey);
+    if (existing) return existing._id;
+    return ctx.db.insert("meals", {
+      userId,
+      date: targetDate,
+      name: validated.name,
+      calories: validated.calories,
+      protein: validated.protein,
+      carbs: validated.carbs,
+      fat: validated.fat,
+      time: validated.time,
       aiSuggestion: src.aiSuggestion,
       mealType: src.mealType ?? "unspecified",
       components: src.components,
-      confidence: src.confidence,
-      nutritionSource: src.nutritionSource,
+      confidence: validated.confidence,
+      nutritionSource: validated.nutritionSource,
+      nutritionVerified: src.nutritionVerified,
       structuredItems: src.structuredItems,
       ingredientBreakdown: src.ingredientBreakdown,
+      logSource,
+      idempotencyKey,
     });
   },
 });
@@ -233,38 +312,58 @@ export const addMealFromAI = internalMutation({
     components: v.optional(v.string()),
     confidence: v.optional(v.number()),
     nutritionSource: v.optional(v.string()),
+    nutritionVerified: v.optional(v.boolean()),
     structuredItems: v.optional(v.string()),
     ingredientBreakdown: v.optional(v.string()),
     foodMemoryId: v.optional(v.id("food_memory")),
+    logSource: v.optional(v.string()),
+    allowDuplicate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
+    const validated = validateMealWrite(args);
+    const logSource = normalizeLogSource(args.logSource, "ai");
+    const idempotencyKey = buildIdempotencyKey({
+      userId: args.userId,
+      date: args.date,
+      source: logSource,
+      contentHash: mealContentHash(validated),
+      timeWindow: timeWindowKey(validated.time),
+    });
+    const existing = await findExistingMealByIdempotencyKey(ctx, args.userId, args.date, idempotencyKey);
+    if (existing) return existing._id;
+    if (!args.allowDuplicate) {
+      await assertNoNearDuplicateMeal(ctx, args.userId, args.date, validated, validated.time);
+    }
     const id = await ctx.db.insert("meals", {
       userId: args.userId,
       date: args.date,
-      name: args.name,
-      calories: args.calories,
-      protein: args.protein,
-      carbs: args.carbs,
-      fat: args.fat,
-      time: args.time,
+      name: validated.name,
+      calories: validated.calories,
+      protein: validated.protein,
+      carbs: validated.carbs,
+      fat: validated.fat,
+      time: validated.time,
       aiSuggestion: args.aiSuggestion,
       mealType: args.mealType ?? "unspecified",
       components: args.components,
-      confidence: args.confidence,
-      nutritionSource: args.nutritionSource,
+      confidence: validated.confidence,
+      nutritionSource: validated.nutritionSource,
+      nutritionVerified: args.nutritionVerified,
       structuredItems: args.structuredItems,
       ingredientBreakdown: args.ingredientBreakdown,
       foodMemoryId: args.foodMemoryId,
+      logSource,
+      idempotencyKey,
     });
     // Learn from AI-logged meal too (fire-and-forget)
     if (!args.foodMemoryId) {
       ctx.scheduler.runAfter(0, internal.food_memory.recordFromMeal, {
         userId: args.userId,
-        name: args.name,
-        kcal: args.calories,
-        protein: args.protein,
-        carbs: args.carbs,
-        fat: args.fat,
+        name: validated.name,
+        kcal: validated.calories,
+        protein: validated.protein,
+        carbs: validated.carbs,
+        fat: validated.fat,
         components: args.components,
         date: args.date,
         source: "learned",

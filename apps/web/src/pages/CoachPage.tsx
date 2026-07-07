@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Trash2, Barcode, ImagePlus, X } from "lucide-react";
+import { Plus, Trash2, Barcode, ImagePlus, X, RotateCcw } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -52,7 +52,9 @@ function coachToAgent(coachType?: string): Agent {
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
 type DraftMessage = { kind: "draft"; id: string; draft: LogDraft; confirmReply: string; discardReply: string; settled: boolean };
-type Message = TextMessage | DraftMessage;
+type UndoEntry = { type: "meal" | "workout"; id: string; label: string; undone?: boolean };
+type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
+type Message = TextMessage | DraftMessage | UndoMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
 type ConvexChatMessage = { role: "user" | "ai"; content: string };
 
@@ -74,6 +76,8 @@ export function CoachPage() {
   const sessions = (useQuery(api.chat.getSessions) ?? []) as ChatSessionSummary[];
   const createSession = useMutation(api.chat.createSession);
   const deleteSession = useMutation(api.chat.deleteSession);
+  const deleteMeal = useMutation(api.meals.deleteMeal);
+  const deleteWorkout = useMutation(api.workouts.deleteWorkout);
   const sendToAI = useAction(api.ai.chat);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -174,6 +178,35 @@ export function CoachPage() {
 
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
 
+  const undoAutoLog = useCallback(async (messageId: string, entry: UndoEntry) => {
+    try {
+      if (entry.type === "meal") {
+        await deleteMeal({ id: entry.id as Id<"meals"> });
+      } else {
+        await deleteWorkout({ id: entry.id as Id<"workouts"> });
+      }
+      setMessages((prev) => prev.map((m) => m.kind === "undo" && m.id === messageId
+        ? { ...m, entries: m.entries.map((e) => e.id === entry.id ? { ...e, undone: true } : e) }
+        : m));
+      toast.success("Undone", `${entry.label} removed`);
+    } catch (err) {
+      toast.error("Couldn't undo", err instanceof Error ? err.message : "Try again");
+    }
+  }, [deleteMeal, deleteWorkout, toast]);
+
+  function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
+    const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
+    return rawItems.flatMap((item: any) => {
+      const id = item?.data?._id;
+      if (!id || (item.type !== "meal" && item.type !== "workout")) return [];
+      return [{
+        type: item.type,
+        id,
+        label: item.data?.name ?? item.type,
+      }];
+    });
+  }
+
   const newChat = useCallback(() => {
     pendingHydrateRef.current = null;
     setActiveSessionId(null);
@@ -265,6 +298,11 @@ export function CoachPage() {
         } else if (loggedItem.type === "workout") {
           const d = loggedItem.data;
           toast.success(`Logged workout: ${d.name ?? "workout"}`, d.duration ? `${d.duration} · ${d.caloriesBurned ?? 0} kcal burned` : undefined);
+        }
+        const undoEntries = undoEntriesFromLoggedItem(loggedItem);
+        if (undoEntries.length > 0) {
+          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, entries: undoEntries }]);
+          scroll();
         }
       }
     } catch (err) {
@@ -403,6 +441,30 @@ export function CoachPage() {
                   >
                     <LogConfirmCard draft={m.draft} onConfirm={(d) => handleConfirm(m.id, d, m.confirmReply)} onDiscard={() => handleDiscard(m.id, m.discardReply)} />
                   </motion.div>
+                );
+              }
+              if (m.kind === "undo") {
+                if (m.entries.length === 0) return null;
+                return (
+                  <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
+                    {m.entries.map((entry) => (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        disabled={entry.undone}
+                        onClick={() => undoAutoLog(m.id, entry)}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
+                          entry.undone
+                            ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
+                            : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
+                        )}
+                      >
+                        <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
+                        {entry.undone ? `${entry.label} removed` : `Undo: ${entry.label}`}
+                      </button>
+                    ))}
+                  </div>
                 );
               }
               if (!hasUserMsg && m.id === "init") return null;

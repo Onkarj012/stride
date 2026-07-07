@@ -28,6 +28,8 @@ export const LOG_RE = new RegExp([
 
 export const FOOD_WORD_RE = /\b(milk|whey|biscuit|biscuits|marie|rice|roti|chapati|bread|oats|egg|eggs|chicken|paneer|dal|curd|yogurt|banana|apple|snack|meal|breakfast|lunch|dinner|food|eat|eating)\b/i;
 export const FOOD_ESTIMATE_RE = /\b(how many calories|how much calories|calorie|calories|kcal|macros?|estimate|can i (eat|have|take)|should i (eat|have|take)|would .* fit|might have|planning to have)\b/i;
+export const NEGATED_LOG_RE = /\b(haven't|have not|hasn't|has not|didn't|did not|don't|do not|no|none|zero|skipped|missed|without)\b[\s\S]{0,40}\b(work(?:ed)?\s*out|workout|gym|lift(?:ed)?|run|ran|walk(?:ed)?|steps?|eat|ate|eaten|meal|breakfast|lunch|dinner|snack|water|drink|drank|sleep|slept)\b|\b(no|zero)\s+(workouts?|meals?|steps?|water|sleep)\b/i;
+export const LOGGABLE_POSITIVE_RE = /\b(i|i'?ve|i've|just)\s+(had|ate|drank|consumed|finished|did|completed|ran|walked|jogged|biked|cycled|lifted|swam|hit|trained|logged)\b|\b(had|ate|drank|ran|walked|jogged|biked|cycled|lifted|swam)\b\s+(a|an|some|my|the|\d+|breakfast|lunch|dinner|snack)|\b\d+\s*(g|grams?|oz|ml|l|cups?|tbsp|tsp|pieces?|slices?|servings?|steps|km|miles?)\b/i;
 
 export interface UserMacros {
   calories?: number;
@@ -36,11 +38,43 @@ export interface UserMacros {
   fat?: number;
 }
 
+export type HomepageIntentKind = "log_report" | "negation" | "question" | "chit_chat";
+
+export function classifyHomepageIntent(message: string): HomepageIntentKind {
+  const m = message.trim();
+  if (!m) return "chit_chat";
+  const negated = NEGATED_LOG_RE.test(m);
+  const explicitPositive = LOGGABLE_POSITIVE_RE.test(m) || looksLikeFoodEstimate(m);
+  const positive = explicitPositive || (!negated && LOG_RE.test(m));
+  if (negated && !explicitPositive) return "negation";
+  if (positive && !QUESTION_RE.test(m)) return "log_report";
+  if (looksLikeFoodEstimate(m)) return "log_report";
+  if (QUESTION_RE.test(m)) return "question";
+  return negated ? "negation" : "chit_chat";
+}
+
+export function isNegatedLogItem(message: string, item: { type: string; description?: string }): boolean {
+  const text = `${item.description || ""} ${message}`.toLowerCase();
+  const typeWords: Record<string, string> = {
+    workout: "(work(?:ed)?\\s*out|workout|gym|lift(?:ed)?|run|ran|walk(?:ed)?|cardio|training)",
+    meal: "(eat|ate|eaten|meal|breakfast|lunch|dinner|snack|food)",
+    water: "(water|drink|drank|hydration)",
+    sleep: "(sleep|slept)",
+    steps: "(steps?)",
+    mood: "(mood|feeling|felt)",
+  };
+  const words = typeWords[item.type];
+  if (!words) return false;
+  const re = new RegExp(`\\b(haven't|have not|hasn't|has not|didn't|did not|don't|do not|no|none|zero|skipped|missed|without)\\b[\\s\\S]{0,50}\\b${words}\\b|\\b(no|zero)\\s+${words}\\b`, "i");
+  return re.test(text);
+}
+
 /** True when the message reads like a log report (not a question). */
 export function looksLikeLog(message: string): boolean {
   const m = message.trim();
   if (m.length === 0) return false;
   if (QUESTION_RE.test(m)) return false;
+  if (classifyHomepageIntent(m) === "negation") return false;
   return LOG_RE.test(m);
 }
 

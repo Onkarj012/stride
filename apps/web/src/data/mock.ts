@@ -119,10 +119,17 @@ export type MealDraft = {
       carbs_g?: number;
       fat_g?: number;
       source?: string;
+      verified?: boolean;
       confidence?: number;
     }>;
     unresolved?: string[];
   } | null;
+  confidence?: number;
+  nutritionSource?: string;
+  parseError?: string;
+  error?: string;
+  submitting?: boolean;
+  allowDuplicate?: boolean;
 };
 
 export type WorkoutDraft = {
@@ -156,6 +163,10 @@ export type WorkoutDraft = {
     range_high: number;
     breakdown: Record<string, number>;
   } | null;
+  parseError?: string;
+  error?: string;
+  submitting?: boolean;
+  allowDuplicate?: boolean;
 };
 
 export type LogDraft = MealDraft | WorkoutDraft;

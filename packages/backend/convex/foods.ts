@@ -1,4 +1,4 @@
-import { action, internalMutation, internalQuery, query } from "./_generated/server";
+import { action, internalAction, internalMutation, internalQuery, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -7,6 +7,7 @@ const OFF_PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product";
 const USDA_SEARCH_URL = "https://api.nal.usda.gov/fdc/v1/foods/search";
 
 const OFF_FIELDS = "product_name,brands,nutriments,code,image_front_small_url,serving_quantity,serving_quantity_unit,ingredients_text_en,completeness";
+const LIVE_LOOKUP_TIMEOUT_MS = 2500;
 
 // ─── Normalized food structure ────────────────────────────────────────────────
 
@@ -132,6 +133,77 @@ export const bumpSearchCount = internalMutation({
   handler: async (ctx, { id }) => {
     const food = await ctx.db.get(id);
     if (food) await ctx.db.patch(id, { searchCount: (food.searchCount ?? 0) + 1 });
+  },
+});
+
+async function fetchJsonWithTimeout(url: string, init?: RequestInit): Promise<any | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LIVE_LOOKUP_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function cacheFoods(ctx: any, foods: NormalizedFood[]) {
+  const cached: Array<NormalizedFood & { _id?: string }> = [];
+  for (const food of foods) {
+    try {
+      const id = await ctx.runMutation(internal.foods.cacheFood, {
+        name: food.name,
+        brand: food.brand,
+        barcode: food.barcode,
+        caloriesPer100g: food.caloriesPer100g,
+        proteinPer100g: food.proteinPer100g,
+        carbsPer100g: food.carbsPer100g,
+        fatPer100g: food.fatPer100g,
+        servingSize: food.servingSize,
+        servingUnit: food.servingUnit,
+        ingredients: food.ingredients,
+        imageUrl: food.imageUrl,
+        source: food.source,
+        verified: food.verified,
+        fdcId: food.fdcId,
+      });
+      cached.push({ ...food, _id: id });
+    } catch {
+      cached.push(food);
+    }
+  }
+  return cached;
+}
+
+export const searchFoodsLive = internalAction({
+  args: { query: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { query: q, limit = 8 }): Promise<Array<NormalizedFood & { _id?: string }>> => {
+    const trimmed = q.trim();
+    if (!trimmed) return [];
+
+    const offUrl = `${OFF_SEARCH_URL}?search_terms=${encodeURIComponent(trimmed)}&search_simple=1&action=process&json=1&page_size=${Math.min(limit, 8)}&fields=${OFF_FIELDS}`;
+    const usdaKey = process.env.USDA_API_KEY || "DEMO_KEY";
+    const usdaUrl = `${USDA_SEARCH_URL}?query=${encodeURIComponent(trimmed)}&pageSize=${Math.min(limit, 6)}&api_key=${usdaKey}`;
+
+    const [offData, usdaData] = await Promise.all([
+      fetchJsonWithTimeout(offUrl, { headers: { "User-Agent": "Stride Fitness App" } }),
+      fetchJsonWithTimeout(usdaUrl),
+    ]);
+
+    const foods: NormalizedFood[] = [];
+    for (const p of (offData?.products || [])) {
+      const norm = normalizeOFFProduct(p);
+      if (norm) foods.push(norm);
+    }
+    for (const f of (usdaData?.foods || []).slice(0, limit)) {
+      const norm = normalizeUSDAFood(f);
+      if (norm) foods.push(norm);
+    }
+
+    return (await cacheFoods(ctx, foods)).slice(0, limit);
   },
 });
 

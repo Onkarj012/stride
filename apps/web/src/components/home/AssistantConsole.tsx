@@ -217,7 +217,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   /* ── Confirm draft → actually log ── */
   const handleConfirm = useCallback(async (draft: any) => {
-    setPendingDrafts((prev) => prev.filter((d) => d !== draft));
+    const draftKey = draft._clientId ?? draft;
+    const matchesDraft = (candidate: any) => candidate?._clientId ? candidate._clientId === draftKey : candidate === draft;
+    setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? { ...d, ...draft, submitting: true, error: undefined } : d));
     const time = new Date().toTimeString().slice(0, 5);
     const today = localDateStr();
     const tier2 = pendingTier2Ref.current;
@@ -245,8 +247,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           foodMemoryId: d.foodMemoryId,
           structuredItems: ingredientBreakdown?.items ? JSON.stringify(ingredientBreakdown.items) : undefined,
           ingredientBreakdown: ingredientBreakdown ? JSON.stringify(ingredientBreakdown) : undefined,
+          logSource: "home",
+          allowDuplicate: d.allowDuplicate,
         });
         void recordBehavior({ kind: "log", key: "meal_confirm" }).catch(() => {});
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
         if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
       } else if (d.kind === "workout") {
@@ -266,27 +271,43 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           calorieBreakdown: calorieResult?.breakdown ? JSON.stringify(calorieResult.breakdown) : undefined,
           calculationVersion: calorieResult ? 1 : undefined,
           structuredSets: d.exercises ? JSON.stringify(d.exercises) : undefined,
+          logSource: "home",
         });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
         if (!isPastDay) await recordActivity({ type: "workout" }).catch(() => {});
       } else if (d.kind === "sleep") {
         await upsertSleep({ hours: d.hours, quality: d.quality, date });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Sleep logged${dateNote}`, `${d.hours.toFixed(1)}h · ${d.quality}`);
       } else if (d.kind === "water") {
         await addWater({ ml: d.ml, date, time });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Water logged${dateNote}`, `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`);
       } else if (d.kind === "mood") {
         await addMood({ rating: d.rating, date, time, note: d.description });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Mood logged${dateNote}`, `${d.rating}/5`);
       } else if (d.kind === "steps") {
         await upsertSteps({ count: d.count, date });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Steps logged${dateNote}`, `${d.count.toLocaleString()} steps`);
       }
-    } catch {
-      toast.error("Couldn't log", "Something went wrong — try again.");
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "Something went wrong — try again.";
+      const isDuplicate = raw.includes("NEAR_DUPLICATE");
+      const message = isDuplicate ? "Looks like you already logged this — log anyway?" : raw;
+      setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? {
+        ...d,
+        ...draft,
+        submitting: false,
+        error: message,
+        allowDuplicate: isDuplicate ? true : d.allowDuplicate,
+      } : d));
+      toast.error(isDuplicate ? "Possible duplicate" : "Couldn't log", message);
     }
     if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
-  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, toast, pendingDrafts.length]);
+  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, recordBehavior, setPendingDrafts, toast, pendingDrafts.length]);
 
   const handleDiscard = useCallback(() => {
     setPendingDrafts([]);
@@ -379,8 +400,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const openDraft = useCallback((draft: any) => {
     pendingTier2Ref.current = "";
-    setPendingDrafts([draft]);
-  }, []);
+    setPendingDrafts([{ ...draft, _clientId: draft._clientId ?? `draft-${Date.now()}-${Math.random().toString(36).slice(2)}` }]);
+  }, [setPendingDrafts]);
 
   const useEngineEstimate = useCallback((draft: any) => {
     if (!draft?.engineEstimate) return openDraft(draft);
@@ -543,7 +564,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           {/* Inline confirm cards */}
           <AnimatePresence>
             {pendingDrafts.map((draft, i) => (
-              <motion.div key={`draft-${i}`}
+              <motion.div key={draft._clientId ?? `draft-${i}`}
                 initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                 transition={reduceMotion ? { duration: 0 } : FADE_FAST}>
                 <div className="w-full max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
