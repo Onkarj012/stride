@@ -21,7 +21,23 @@ import { FADE_FAST } from "@/lib/motion";
 
 type AgentButton = { label: string; value: string; prompt?: string };
 type AgentAction =
-  | { type: "quick_question"; id: string; title: string; body?: string; options: AgentButton[]; queue?: Array<{ id: string; title: string; body?: string; options: AgentButton[] }> }
+  | {
+      type: "quick_question";
+      id: string;
+      source?: "registry" | "llm" | "template";
+      templateId?: string;
+      title: string;
+      body?: string;
+      answerType?: "choice" | "number" | "scale" | "yes_no";
+      options: AgentButton[];
+      unit?: string;
+      min?: number;
+      max?: number;
+      step?: number;
+      placeholder?: string;
+      window?: DailyWindow;
+      queue?: Array<{ id: string; title: string; body?: string; options: AgentButton[] }>;
+    }
   | { type: "log_draft"; title?: string; body?: string; source?: string; draft: any }
   | { type: "macro_conflict"; title?: string; body?: string; draft: any; buttons: AgentButton[] }
   | { type: "button_row"; buttons: AgentButton[] }
@@ -50,6 +66,23 @@ type HomepageMessage = {
   ts: number;
 };
 
+function filterInitialCheckIns(actions: AgentAction[], date: string): AgentAction[] {
+  return actions.filter((action) => {
+    if (action.type !== "quick_question") return true;
+    const key = `stride_checkin_shown:${date}`;
+    try {
+      if (sessionStorage.getItem(key)) return false;
+      sessionStorage.setItem(key, action.id);
+    } catch {}
+    return true;
+  });
+}
+
+function numericValueForAnswer(value: string): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function modalityForContent(content: string): { modality?: Modality; chip?: string } {
   const fileMatch = content.match(/^\[File: ([^\]]+)\]/);
   if (fileMatch) return { modality: "ocr", chip: fileMatch[1] };
@@ -58,6 +91,8 @@ function modalityForContent(content: string): { modality?: Modality; chip?: stri
 }
 
 export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, presenceLine, initialActions = [] }: AssistantConsoleProps) {
+  const today = localDateStr();
+  const dailyWindow = useDailyWindow();
   const [textValue, setTextValue] = useState("");
   const [thinking, setThinking] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
@@ -66,17 +101,29 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const [kbPad, setKbPad] = useState(0);
   // Track which message id was the fresh one (so only it animates)
   const [freshTs, setFreshTs] = useState<number | null>(null);
-  const [agentActions, setAgentActions] = useState<AgentAction[]>(initialActions);
 
-  // Sync initialActions when getTodayBrief loads (it arrives async after first render)
-  const prevInitialRef = useRef<AgentAction[]>(initialActions);
+  // Direct fallback: getTodayBrief.checkIn goes permanently null for the rest of the
+  // day once the homepage chat has any message today, so a fresh app-open later that
+  // day would otherwise never see a check-in again. Query getNextCheckIn directly and
+  // use it whenever the parent didn't hand us one via initialActions.
+  const nextCheckInFallback = useQuery(api.checkins.getNextCheckIn, { date: today, window: dailyWindow });
+  const effectiveInitialActions = useMemo<AgentAction[]>(() => {
+    if (initialActions.length > 0) return initialActions;
+    return nextCheckInFallback ? [nextCheckInFallback as AgentAction] : [];
+  }, [initialActions, nextCheckInFallback]);
+
+  const [agentActions, setAgentActions] = useState<AgentAction[]>(() => filterInitialCheckIns(effectiveInitialActions, today));
+  const [answerInputs, setAnswerInputs] = useState<Record<string, string>>({});
+
+  // Sync initialActions when getTodayBrief/getNextCheckIn loads (it arrives async after first render)
+  const prevInitialRef = useRef<AgentAction[]>(effectiveInitialActions);
   useEffect(() => {
-    if (initialActions !== prevInitialRef.current) {
-      prevInitialRef.current = initialActions;
+    if (effectiveInitialActions !== prevInitialRef.current) {
+      prevInitialRef.current = effectiveInitialActions;
       // Only inject if no actions currently showing (don't interrupt an active conversation)
-      setAgentActions((cur) => cur.length === 0 ? initialActions : cur);
+      setAgentActions((cur) => cur.length === 0 ? filterInitialCheckIns(effectiveInitialActions, today) : cur);
     }
-  }, [initialActions]);
+  }, [effectiveInitialActions, today]);
 
   // ConfirmModal queue — persisted in sessionStorage so navigation doesn't lose pending cards
   const [pendingDrafts, setPendingDraftsRaw] = useState<any[]>(() => {
@@ -97,7 +144,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const { user } = useUser();
   const { recordEngagement } = useBehavior();
   const reduceMotion = useReducedMotion();
-  const dailyWindow = useDailyWindow();
   const internalRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
@@ -107,9 +153,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const toast = useToast();
 
   // Persistent homepage chat: load history from Convex.
-  const homepageChat = useQuery(api.chat.getHomepageMessages, { date: localDateStr() });
+  const homepageChat = useQuery(api.chat.getHomepageMessages, { date: today });
   const messages = (homepageChat?.messages ?? []) as HomepageMessage[];
-  const initialActionKey = initialActions.map((a) => `${a.type}:${"id" in a ? a.id : ""}`).join("|");
+  const initialActionKey = effectiveInitialActions.map((a) => `${a.type}:${"id" in a ? a.id : ""}`).join("|");
 
   // Backend actions/mutations
   const homepageInput = useAction(api.ai.homepageInput);
@@ -122,6 +168,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const upsertSteps = useMutation(api.wellness.upsertSteps);
   const recordActivity = useMutation(api.gamification.recordActivity);
   const recordBehavior = useMutation(api.behavior.recordBehavior);
+  const submitCheckInAnswer = useMutation(api.checkins.submitAnswer);
 
   const firstName = user?.firstName ?? user?.username ?? "there";
   const greeting = greetingFor(firstName, dailyWindow);
@@ -136,8 +183,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   useEffect(() => {
     if (messages.length > 0) return;
-    setAgentActions(initialActions);
-  }, [initialActionKey, messages.length]);
+    setAgentActions((cur) => cur.length === 0 ? filterInitialCheckIns(effectiveInitialActions, today) : cur);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialActionKey, messages.length, today]);
 
   // Scroll to bottom when content changes
   useEffect(() => {
@@ -286,7 +334,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       toast.error("Couldn't log", "Something went wrong — try again.");
     }
     if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
-  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, toast, pendingDrafts.length]);
+  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, recordBehavior, toast, pendingDrafts.length]);
 
   const handleDiscard = useCallback(() => {
     setPendingDrafts([]);
@@ -315,7 +363,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       const result = await homepageInput({
         message: messageText,
         image,
-        today: localDateStr(),
+        today,
       });
 
       setThinking(false);
@@ -336,22 +384,38 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         : "Something went wrong. Try again.";
       toast.error("Couldn't reach Stry", msg);
     }
-  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile]);
+  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, today]);
+
+  const submitQuickQuestionAnswer = useCallback(async (
+    action: Extract<AgentAction, { type: "quick_question" }>,
+    value: string,
+    label?: string,
+    skipped = false,
+  ) => {
+    const answerType = action.answerType ?? "choice";
+    const numericValue = answerType === "number" || answerType === "scale" ? numericValueForAnswer(value) : undefined;
+    const booleanValue = answerType === "yes_no" ? value === "yes" : undefined;
+    try {
+      await submitCheckInAnswer({
+        questionId: action.id,
+        date: today,
+        window: action.window ?? dailyWindow,
+        source: action.source,
+        templateId: action.templateId,
+        answerType,
+        value,
+        label,
+        numericValue,
+        booleanValue,
+        skipped,
+        time: new Date().toTimeString().slice(0, 5),
+      });
+    } catch (err) {
+      toast.error("Couldn't save check-in", err instanceof Error ? err.message : "Try again");
+    }
+  }, [dailyWindow, submitCheckInAnswer, today, toast]);
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
-    if (button.value === "skip" || button.value === "done") {
-      // Record the question id (not the button value) so getTodayBrief can filter it out today
-      const questionId = action && "id" in action ? action.id : button.value;
-      void recordBehavior({ kind: "checkin", key: questionId, date: localDateStr() }).catch(() => {});
-      setAgentActions((_prev) => {
-        const current = action && "queue" in action ? action.queue ?? [] : [];
-        const [, ...rest] = current;
-        if (rest.length === 0) return [];
-        const next = rest[0];
-        return [{ type: "quick_question", ...next, queue: rest }];
-      });
-      return;
-    }
     if (button.value === "confirm_log" && pendingDrafts[0]) {
       void handleConfirm(pendingDrafts[0]);
       return;
@@ -361,21 +425,20 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       setAgentActions([]);
       return;
     }
+    if (action?.type === "quick_question") {
+      const skipped = button.value === "skip";
+      void submitQuickQuestionAnswer(action, button.value, button.label, skipped);
+      setAgentActions([]);
+      if (!skipped && button.prompt) void send(button.prompt);
+      return;
+    }
     if (button.prompt) {
-      void recordBehavior({ kind: "checkin", key: action && "id" in action ? action.id : "action", value: button.value, date: localDateStr() }).catch(() => {});
       setAgentActions([]);
       void send(button.prompt);
       return;
     }
-    void recordBehavior({ kind: "checkin", key: action && "id" in action ? action.id : "action", value: button.value, date: localDateStr() }).catch(() => {});
-    setAgentActions((prev) => {
-      const current = action && "queue" in action ? action.queue ?? [] : [];
-      const [, ...rest] = current;
-      if (rest.length === 0) return prev.filter((a) => a !== action);
-      const next = rest[0];
-      return [{ type: "quick_question", ...next, queue: rest }];
-    });
-  }, [handleConfirm, handleDiscard, pendingDrafts, recordBehavior, send]);
+    setAgentActions((prev) => prev.filter((a) => a !== action));
+  }, [handleConfirm, handleDiscard, pendingDrafts, send, submitQuickQuestionAnswer]);
 
   const openDraft = useCallback((draft: any) => {
     pendingTier2Ref.current = "";
@@ -477,6 +540,55 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       );
     }
     // quick_question — lavender tinted
+    if (action.answerType === "number") {
+      const value = answerInputs[action.id] ?? "";
+      const parsed = Number(value);
+      const valid = value.trim() !== "" && Number.isFinite(parsed)
+        && (action.min == null || parsed >= action.min)
+        && (action.max == null || parsed <= action.max);
+      const skip = action.options.find((option) => option.value === "skip");
+      return (
+        <div className="rounded-2xl border border-lavender/20 bg-lavender-soft px-3.5 py-3 space-y-2.5">
+          <p className="text-[13.5px] font-semibold text-text">{action.title}</p>
+          {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-[150px] flex-1 items-center rounded-full border border-lavender/20 bg-card px-3 py-1.5">
+              <input
+                type="number"
+                inputMode="decimal"
+                value={value}
+                min={action.min}
+                max={action.max}
+                step={action.step ?? "any"}
+                placeholder={action.placeholder}
+                onChange={(e) => setAnswerInputs((prev) => ({ ...prev, [action.id]: e.target.value }))}
+                className="min-w-0 flex-1 bg-transparent text-[0.95rem] font-semibold text-text outline-none placeholder:text-text-muted"
+              />
+              {action.unit && <span className="text-[12px] font-bold text-text-muted">{action.unit}</span>}
+            </div>
+            <button
+              type="button"
+              disabled={!valid}
+              onClick={() => {
+                if (!valid) return;
+                const label = action.unit ? `${parsed} ${action.unit}` : String(parsed);
+                void submitQuickQuestionAnswer(action, String(parsed), label, false);
+                setAnswerInputs((prev) => {
+                  const next = { ...prev };
+                  delete next[action.id];
+                  return next;
+                });
+                setAgentActions([]);
+              }}
+              className="inline-flex items-center rounded-full bg-lavender hover:bg-lavender/80 disabled:opacity-50 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-ink transition-colors"
+            >
+              Save
+            </button>
+            {skip && <Btn label={skip.label} onClick={() => handleActionButton(skip, action)} />}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="rounded-2xl border border-lavender/20 bg-lavender-soft px-3.5 py-3 space-y-2.5">
         <p className="text-[13.5px] font-semibold text-text">{action.title}</p>

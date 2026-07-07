@@ -1,6 +1,7 @@
 import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
+import { getNextCheckInForContext, getTodayCheckInAnswerContext } from "./checkins";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -115,7 +116,7 @@ export const getTodayBrief = query({
     const today = todayArg ?? localNow.toISOString().split("T")[0];
     const yesterday = dateBefore(today);
 
-    const [profile, todayMeals, todayWorkouts, yMeals, yWorkouts, water, sleep] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, yMeals, yWorkouts, water, sleep, steps, moods] = await Promise.all([
       ctx.db.query("user_profiles")
         .withIndex("by_user", (q) => q.eq("userId", userId))
         .first(),
@@ -137,6 +138,12 @@ export const getTodayBrief = query({
       ctx.db.query("sleep_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
         .first(),
+      ctx.db.query("steps_logs")
+        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
+        .first(),
+      ctx.db.query("mood_logs")
+        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
+        .take(10),
     ]);
 
     const calorieTarget = profile?.calorieTarget ?? 2000;
@@ -185,6 +192,7 @@ export const getTodayBrief = query({
       hour >= 5 && hour < 11 ? "morning" :
       hour >= 11 && hour < 18 ? "day" :
       hour >= 18 && hour < 22 ? "evening" : "night";
+    const checkInAnswerContext = await getTodayCheckInAnswerContext(ctx, userId, today);
 
     // Pick the highest-priority insight for the current window
     let headline = "";
@@ -346,118 +354,18 @@ export const getTodayBrief = query({
       };
     }
 
-    const checkInOptions = {
-      skip: { label: "Skip", value: "skip" },
-      done: { label: "Done for now", value: "done" },
-    };
-    const checkInQuestions: Array<{ id: string; title: string; body?: string; options: Array<{ label: string; value: string; prompt?: string }> }> = [];
-    if (window === "morning") {
-      if (!sleep) {
-        checkInQuestions.push({
-          id: "morning_sleep",
-          title: "How did you sleep?",
-          body: "Quick sleep context helps me shape today's plan.",
-          options: [
-            { label: "Poor", value: "poor" },
-            { label: "Okay", value: "ok" },
-            { label: "Good", value: "good" },
-            checkInOptions.skip,
-          ],
-        });
-      }
-      checkInQuestions.push({
-        id: "morning_energy",
-        title: "How's your energy this morning?",
-        options: [
-          { label: "Low", value: "low" },
-          { label: "Okay", value: "ok" },
-          { label: "Good", value: "good" },
-          checkInOptions.done,
-        ],
-      });
-      if (todayMeals.length === 0) {
-        checkInQuestions.push({
-          id: "morning_breakfast",
-          title: "Have you had breakfast?",
-          options: [
-            { label: "Not yet", value: "not_yet", prompt: "I have not had breakfast yet" },
-            { label: "Yes, log it", value: "log_breakfast", prompt: "Help me log breakfast" },
-            { label: "Suggest one", value: "suggest_breakfast", prompt: "Suggest a simple breakfast" },
-            checkInOptions.skip,
-          ],
-        });
-      }
-    } else if (window === "day") {
-      if (todayMeals.length === 0 || (todayMeals.length === 1 && hour >= 13)) {
-        checkInQuestions.push({
-          id: "lunch_check",
-          title: "What did lunch look like?",
-          body: "A rough answer is enough.",
-          options: [
-            { label: "Log lunch", value: "log_lunch", prompt: "Help me log lunch" },
-            { label: "Skipped it", value: "skipped_lunch", prompt: "I skipped lunch" },
-            { label: "Not yet", value: "not_yet", prompt: "I have not had lunch yet" },
-            checkInOptions.skip,
-          ],
-        });
-      }
-      checkInQuestions.push({
-        id: "day_energy",
-        title: "Where's your energy now?",
-        options: [
-          { label: "Low", value: "low" },
-          { label: "Steady", value: "steady" },
-          { label: "High", value: "high" },
-          checkInOptions.done,
-        ],
-      });
-    } else if (window === "evening") {
-      checkInQuestions.push({
-        id: "evening_mood",
-        title: "How was today, 1 to 5?",
-        options: [
-          { label: "1", value: "1", prompt: "Today was a 1 out of 5" },
-          { label: "3", value: "3", prompt: "Today was a 3 out of 5" },
-          { label: "5", value: "5", prompt: "Today was a 5 out of 5" },
-          checkInOptions.skip,
-        ],
-      });
-      if (todayWorkouts.length === 0) {
-        checkInQuestions.push({
-          id: "evening_workout",
-          title: "Did movement happen today?",
-          options: [
-            { label: "Yes, log it", value: "log_workout", prompt: "Help me log today's workout" },
-            { label: "No workout", value: "no_workout", prompt: "No workout today" },
-            { label: "Light walk", value: "walk", prompt: "I did a light walk today" },
-            checkInOptions.done,
-          ],
-        });
-      }
-    } else {
-      checkInQuestions.push({
-        id: "night_winddown",
-        title: "What do you need for wind-down?",
-        options: [
-          { label: "Log sleep plan", value: "sleep_plan", prompt: "Help me set a sleep plan" },
-          { label: "Stress is high", value: "stress_high", prompt: "Stress is high tonight" },
-          { label: "I'm good", value: "good", prompt: "I am good for tonight" },
-          checkInOptions.done,
-        ],
-      });
-    }
-    const checkIn = checkInQuestions.slice(0, 3);
-
-    // Filter out check-in questions already answered today (recorded via behavior events)
-    const todayStr = today;
-    const answeredToday = await ctx.db
-      .query("user_behavior")
-      .withIndex("by_user_kind", (q) => q.eq("userId", userId).eq("kind", "checkin"))
-      .filter((q) => q.eq(q.field("date"), todayStr))
-      .collect()
-      .then((rows) => new Set(rows.map((r) => r.key)));
-
-    const unansweredCheckIn = checkIn.filter((q) => !answeredToday.has(q.id));
+    const selectedCheckIn = await getNextCheckInForContext(ctx, {
+      userId,
+      date: today,
+      window,
+      profile,
+      todayMeals,
+      todayWorkouts,
+      waterMl,
+      sleep,
+      steps,
+      moodCount: moods.length,
+    });
 
     return {
       window,
@@ -471,14 +379,8 @@ export const getTodayBrief = query({
         why: doToday.reason,
         tone,
       },
-      checkIn: (unansweredCheckIn.length && !hasHomepageMessagesToday) ? {
-        type: "quick_question",
-        id: unansweredCheckIn[0].id,
-        title: unansweredCheckIn[0].title,
-        body: unansweredCheckIn[0].body,
-        options: unansweredCheckIn[0].options,
-        queue: unansweredCheckIn,
-      } : null,
+      checkIn: (!hasHomepageMessagesToday && selectedCheckIn) ? selectedCheckIn : null,
+      checkInContext: checkInAnswerContext || null,
       stats: {
         todayCals: Math.round(todayCals),
         calorieTarget,
