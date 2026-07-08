@@ -132,6 +132,7 @@ export interface TdeeBreakdown {
   tdee: number;
   finalTDEE: number;
   plannedDailyEAT: number;
+  plannedEatPerTrainingDay: number;
 }
 
 export function calculateTDEE(input: PlanInput): TdeeBreakdown {
@@ -144,10 +145,13 @@ export function calculateTDEE(input: PlanInput): TdeeBreakdown {
   const workHours = Math.min(16, Math.max(0, typeof wh === "number" && isFinite(wh) ? wh : 8));
   const neatJob = calcMETCalories(occMet, weightKg, workHours, true);
 
-  const weeklyWorkoutMinutes = (input.weeklyWorkouts ?? []).reduce(
+  const weeklyWorkouts = input.weeklyWorkouts ?? [];
+  const weeklyWorkoutMinutes = weeklyWorkouts.reduce(
     (s, w) => s + Math.max(0, w.durationMin ?? 0) * Math.max(0, w.sessionsPerWeek ?? 0),
     0,
   );
+  const maxSessionsPerWeek = weeklyWorkouts.reduce((max, w) => Math.max(max, Math.max(0, w.sessionsPerWeek ?? 0)), 0);
+  const trainingDaysPerWeek = weeklyWorkouts.length > 0 ? Math.min(7, Math.max(1, maxSessionsPerWeek)) : 0;
   const avgWorkoutHours = weeklyWorkoutMinutes / 60 / 7;
 
   const lifeMet = LIFESTYLE_MET_EXTRA[(input.lifestyleActivity as LifestyleActivity)] ?? LIFESTYLE_MET_EXTRA.light;
@@ -155,13 +159,14 @@ export function calculateTDEE(input: PlanInput): TdeeBreakdown {
   const wakingLeisureHours = Math.max(0, 16 - workHours - avgWorkoutHours);
   const neatLifestyle = lifeMet * weightKg * wakingLeisureHours;
 
-  const weeklyEat = (input.weeklyWorkouts ?? []).reduce((sum, w) => {
+  const weeklyEat = weeklyWorkouts.reduce((sum, w) => {
     const met = WORKOUT_MET[(w.type as WorkoutType)] ?? WORKOUT_MET.strength;
     const hours = Math.max(0, (w.durationMin ?? 0) / 60);
     const sessions = Math.max(0, w.sessionsPerWeek ?? 0);
     return sum + calcMETCalories(met, weightKg, hours) * sessions;
   }, 0);
   const eat = weeklyEat / 7;
+  const plannedEatPerTrainingDay = trainingDaysPerWeek > 0 ? weeklyEat / trainingDaysPerWeek : 0;
 
   const tdee = bmr + neatJob + neatLifestyle + eat;
   const finalTDEE = Math.round(tdee * TEF);
@@ -174,6 +179,7 @@ export function calculateTDEE(input: PlanInput): TdeeBreakdown {
     tdee: Math.round(tdee),
     finalTDEE,
     plannedDailyEAT: Math.round(eat),
+    plannedEatPerTrainingDay: Math.round(plannedEatPerTrainingDay),
   };
 }
 
@@ -209,6 +215,7 @@ export interface NutritionPlan extends Macros {
   breakdown: TdeeBreakdown & { goal: Goal; goalAdjustment: number };
   percentages: { protein: number; carbs: number; fat: number };
   plannedDailyEAT: number;
+  plannedEatPerTrainingDay: number;
 }
 
 export function calculateNutritionPlan(input: PlanInput): NutritionPlan {
@@ -229,6 +236,7 @@ export function calculateNutritionPlan(input: PlanInput): NutritionPlan {
     breakdown: { ...t, goal, goalAdjustment: target - t.finalTDEE },
     percentages: { protein: pct(pCal), carbs: pct(cCal), fat: pct(fCal) },
     plannedDailyEAT: t.plannedDailyEAT,
+    plannedEatPerTrainingDay: t.plannedEatPerTrainingDay,
   };
 }
 
@@ -241,11 +249,16 @@ export interface DayAdjustment {
 }
 
 /**
- * Dynamic per-day adjustment. delta = actual workout burn − plan's avg daily EAT.
+ * Dynamic per-day adjustment. delta = actual workout burn − expected training-day EAT.
  * Carbs absorb the delta (protein/fat fixed). Carbs clamped at ≥ 0.
  */
 export function adjustCaloriesForDay(plan: NutritionPlan, todayActualBurn: number): DayAdjustment {
-  const delta = Math.round((todayActualBurn || 0) - plan.plannedDailyEAT);
+  const actualBurn = todayActualBurn || 0;
+  const isTrainingDay = actualBurn > 0;
+  const trainingDayBaseline =
+    typeof plan.plannedEatPerTrainingDay === "number" ? plan.plannedEatPerTrainingDay : plan.plannedDailyEAT;
+  const baseline = isTrainingDay ? trainingDayBaseline : 0;
+  const delta = Math.round(actualBurn - baseline);
   const calorieGoal = Math.max(plan.protein * 4 + plan.fat * 9, plan.calories + delta);
   const carbGoal = Math.max(0, plan.carbs + Math.round(delta / 4));
   const note =

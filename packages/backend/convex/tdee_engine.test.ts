@@ -57,6 +57,7 @@ describe("calculateTDEE", () => {
     expect(t.finalTDEE).toBeGreaterThan(2400);
     expect(t.finalTDEE).toBeLessThan(2700);
     expect(t.plannedDailyEAT).toBe(320);
+    expect(t.plannedEatPerTrainingDay).toBe(560);
   });
 });
 
@@ -93,24 +94,52 @@ describe("calculateNutritionPlan", () => {
     expect(p.calories).toBeGreaterThan(2000);
     expect(p.calories).toBeLessThan(2600);
     expect(p.breakdown.goal).toBe("moderate_loss");
+    expect(p.plannedDailyEAT).toBe(320);
+    expect(p.plannedEatPerTrainingDay).toBe(560);
+    expect(p.breakdown.plannedEatPerTrainingDay).toBe(560);
     expect(p.percentages.protein + p.percentages.carbs + p.percentages.fat).toBeGreaterThan(95);
   });
 });
 
 describe("adjustCaloriesForDay", () => {
-  test("extra burn raises calories + carbs, protein/fat fixed", () => {
+  test("training day matching per-training-day average stays flat", () => {
     const plan = calculateNutritionPlan(EXAMPLE);
-    const adj = adjustCaloriesForDay(plan, plan.plannedDailyEAT + 400);
+    const adj = adjustCaloriesForDay(plan, plan.plannedEatPerTrainingDay);
+    expect(adj.calorieGoal).toBe(plan.calories);
+    expect(adj.carbGoal).toBe(plan.carbs);
+    expect(adj.proteinGoal).toBe(plan.protein);
+    expect(adj.fatGoal).toBe(plan.fat);
+    expect(adj.note).toBe("On plan for today");
+  });
+
+  test("unusually high training burn raises calories + carbs, protein/fat fixed", () => {
+    const plan = calculateNutritionPlan(EXAMPLE);
+    const adj = adjustCaloriesForDay(plan, plan.plannedEatPerTrainingDay + 400);
     expect(adj.calorieGoal).toBe(plan.calories + 400);
     expect(adj.carbGoal).toBe(plan.carbs + 100);
     expect(adj.proteinGoal).toBe(plan.protein);
     expect(adj.fatGoal).toBe(plan.fat);
     expect(adj.note).toMatch(/\+400 kcal/);
   });
-  test("rest day reduces vs planned average", () => {
+
+  test("rest day stays flat instead of subtracting planned average", () => {
     const plan = calculateNutritionPlan(EXAMPLE);
     const adj = adjustCaloriesForDay(plan, 0);
-    expect(adj.calorieGoal).toBeLessThan(plan.calories);
-    expect(adj.carbGoal).toBeLessThan(plan.carbs);
+    expect(adj.calorieGoal).toBe(plan.calories);
+    expect(adj.carbGoal).toBe(plan.carbs);
+    expect(adj.note).toBe("On plan for today");
+  });
+
+  test("legacy persisted plan missing per-training-day EAT falls back to planned daily EAT", () => {
+    const plan = calculateNutritionPlan(EXAMPLE);
+    const legacyPlan = { ...plan } as Omit<typeof plan, "plannedEatPerTrainingDay"> & {
+      plannedEatPerTrainingDay?: number;
+    };
+    delete legacyPlan.plannedEatPerTrainingDay;
+
+    const adj = adjustCaloriesForDay(legacyPlan as typeof plan, plan.plannedDailyEAT + 400);
+    expect(adj.calorieGoal).toBe(plan.calories + 400);
+    expect(adj.carbGoal).toBe(plan.carbs + 100);
+    expect(adj.note).toMatch(/\+400 kcal/);
   });
 });
