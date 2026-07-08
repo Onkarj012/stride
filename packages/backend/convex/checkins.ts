@@ -1,7 +1,7 @@
 import { action, internalMutation, internalQuery, mutation, query, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { callAI, parseJSON } from "./ai/llm";
 
 type CheckInWindow = "morning" | "day" | "evening" | "night";
@@ -9,6 +9,7 @@ type CheckInSource = "registry" | "llm" | "template";
 type AnswerType = "choice" | "number" | "scale" | "yes_no";
 type StructuredKind = "sleep" | "mood" | "water" | "steps" | "weight";
 type CoverageKind = "breakfast" | "lunch" | "workout" | "sleep" | "water" | "steps" | "mood";
+type UnitsPreference = "metric" | "imperial";
 
 type CheckInOption = { label: string; value: string; prompt?: string };
 
@@ -54,6 +55,7 @@ export type SelectionContext = {
 
 const DAILY_QUESTION_LIMIT = 4;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const LB_TO_KG = 0.453592;
 
 const windowValidator = v.union(
   v.literal("morning"),
@@ -291,6 +293,51 @@ function templateById(templateId?: string) {
   return TEMPLATE_DEFINITIONS.find((t) => t.templateId === templateId) ?? null;
 }
 
+function normalizeUnits(units?: string | null): UnitsPreference {
+  return units === "imperial" ? "imperial" : "metric";
+}
+
+async function getUserUnits(ctx: QueryCtx | MutationCtx, userId: string): Promise<UnitsPreference> {
+  const settings = await ctx.db
+    .query("user_settings")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .first();
+  return normalizeUnits(settings?.units);
+}
+
+function kgToLb(weightKg: number): number {
+  return weightKg / LB_TO_KG;
+}
+
+function roundToTenth(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function weightPlaceholderForUnits(placeholder: string | undefined, units: UnitsPreference): string | undefined {
+  if (units !== "imperial" || placeholder == null) return placeholder;
+  const parsed = Number(placeholder);
+  return Number.isFinite(parsed) ? String(Math.round(kgToLb(parsed))) : placeholder;
+}
+
+function templateDisplayFields(definition: typeof TEMPLATE_DEFINITIONS[number], units: UnitsPreference) {
+  if (definition.structuredKind !== "weight" || units !== "imperial") {
+    return {
+      unit: definition.unit,
+      min: definition.min,
+      max: definition.max,
+      step: definition.step,
+      placeholder: definition.placeholder,
+    };
+  }
+  return {
+    unit: "lb",
+    min: definition.min == null ? undefined : roundToTenth(kgToLb(definition.min)),
+    max: definition.max == null ? undefined : roundToTenth(kgToLb(definition.max)),
+    step: definition.step,
+    placeholder: weightPlaceholderForUnits(definition.placeholder, units),
+  };
+}
+
 async function requireUserId(ctx: QueryCtx | MutationCtx | ActionCtx): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
@@ -322,7 +369,7 @@ function hasMealType(meals: SelectionContext["meals"], type: "breakfast" | "lunc
   });
 }
 
-function isCovered(candidate: CheckInCandidate, ctx: SelectionContext): boolean {
+export function isCovered(candidate: CheckInCandidate, ctx: SelectionContext): boolean {
   switch (candidate.coverage) {
     case "breakfast":
       return hasMealType(ctx.meals, "breakfast");
@@ -458,10 +505,11 @@ function toClientQuestion(candidate: CheckInCandidate, window: CheckInWindow) {
   };
 }
 
-function templateCandidate(definition: typeof TEMPLATE_DEFINITIONS[number], window: CheckInWindow): CheckInCandidate {
+function templateCandidate(definition: typeof TEMPLATE_DEFINITIONS[number], window: CheckInWindow, units: UnitsPreference): CheckInCandidate {
   const coverage: CoverageKind | undefined =
     definition.structuredKind === "weight" ? undefined :
     definition.structuredKind;
+  const display = templateDisplayFields(definition, units);
   return {
     id: `template_${definition.templateId}`,
     source: "template",
@@ -474,11 +522,11 @@ function templateCandidate(definition: typeof TEMPLATE_DEFINITIONS[number], wind
     coverage,
     structuredKind: definition.structuredKind,
     windows: { [window]: 9 },
-    unit: definition.unit,
-    min: definition.min,
-    max: definition.max,
-    step: definition.step,
-    placeholder: definition.placeholder,
+    unit: display.unit,
+    min: display.min,
+    max: display.max,
+    step: display.step,
+    placeholder: display.placeholder,
     baseScore: 1,
   };
 }
@@ -528,22 +576,21 @@ function parseLlmCache(row: Doc<"check_in_llm_questions"> | null, fallbackWindow
   }
 }
 
-async function loadRecentHistory(ctx: QueryCtx, userId: string, candidates: CheckInCandidate[]) {
-  const rows: AnswerLite[] = [];
-  for (const candidate of candidates) {
-    const recent = await ctx.db
-      .query("check_in_answers")
-      .withIndex("by_user_question_date", (q) => q.eq("userId", userId).eq("questionId", candidate.id))
-      .order("desc")
-      .take(6);
-    rows.push(...recent.map((row) => ({
+async function loadRecentHistory(ctx: QueryCtx, userId: string, date: string, candidates: CheckInCandidate[]) {
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  if (candidateIds.size === 0) return [];
+  const rows = await ctx.db
+    .query("check_in_answers")
+    .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", dateAdd(date, -6)).lte("date", date))
+    .collect();
+  return rows
+    .filter((row) => candidateIds.has(row.questionId))
+    .map((row) => ({
       questionId: row.questionId,
       date: row.date,
       value: row.value,
       skipped: row.skipped,
-    })));
-  }
-  return rows;
+    }));
 }
 
 export async function getNextCheckInForContext(ctx: QueryCtx, args: {
@@ -557,6 +604,7 @@ export async function getNextCheckInForContext(ctx: QueryCtx, args: {
   sleep: Doc<"sleep_logs"> | null;
   steps: Doc<"steps_logs"> | null;
   moodCount: number;
+  units?: string | null;
 }) {
   assertDate(args.date);
 
@@ -580,7 +628,7 @@ export async function getNextCheckInForContext(ctx: QueryCtx, args: {
     .flatMap((row) => {
       const definition = templateById(row.templateId);
       if (!definition) return [];
-      return [templateCandidate(definition, row.window as CheckInWindow)];
+      return [templateCandidate(definition, row.window as CheckInWindow, normalizeUnits(args.units))];
     });
 
   const candidates = [
@@ -589,7 +637,7 @@ export async function getNextCheckInForContext(ctx: QueryCtx, args: {
     ...parseLlmCache(llmRow, args.window),
   ];
 
-  const history = await loadRecentHistory(ctx, args.userId, candidates);
+  const history = await loadRecentHistory(ctx, args.userId, args.date, candidates);
   const context: SelectionContext = {
     date: args.date,
     window: args.window,
@@ -613,24 +661,29 @@ export async function getNextCheckInForContext(ctx: QueryCtx, args: {
 }
 
 async function getAnswerSummary(ctx: QueryCtx, userId: string, date: string): Promise<string> {
-  const rows = await ctx.db
-    .query("check_in_answers")
-    .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-    .take(20);
+  const [rows, units] = await Promise.all([
+    ctx.db
+      .query("check_in_answers")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
+      .take(20),
+    getUserUnits(ctx, userId),
+  ]);
 
   const answered = rows.filter((row) => !row.skipped);
   if (answered.length === 0) return "";
   return answered
     .map((row) => {
       const value = row.label ?? row.value;
-      const numeric = row.numericValue != null ? ` (${row.numericValue}${unitForTemplate(row.templateId)})` : "";
+      const numeric = row.numericValue != null ? ` (${row.numericValue}${unitForTemplate(row.templateId, units)})` : "";
       return `${row.questionId}: ${value}${numeric}`;
     })
     .join("; ");
 }
 
-function unitForTemplate(templateId?: string) {
-  const unit = templateById(templateId)?.unit;
+function unitForTemplate(templateId: string | undefined, units: UnitsPreference) {
+  const definition = templateById(templateId);
+  if (!definition) return "";
+  const unit = templateDisplayFields(definition, units).unit;
   return unit ? ` ${unit}` : "";
 }
 
@@ -646,8 +699,9 @@ export const getNextCheckIn = query({
     const userId = await requireUserId(ctx);
     const resolvedWindow = window ?? windowFromDate(new Date());
 
-    const [profile, meals, workouts, water, sleep, steps, moods] = await Promise.all([
+    const [profile, settings, meals, workouts, water, sleep, steps, moods] = await Promise.all([
       ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
+      ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
       ctx.db.query("meals").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
       ctx.db.query("workouts").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
       ctx.db.query("water_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
@@ -667,6 +721,7 @@ export const getNextCheckIn = query({
       sleep,
       steps,
       moodCount: moods.length,
+      units: settings?.units,
     });
   },
 });
@@ -683,14 +738,18 @@ export const getTemplateSettings = query({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
-    const rows = await ctx.db
-      .query("check_in_template_settings")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .take(50);
+    const [rows, units] = await Promise.all([
+      ctx.db
+        .query("check_in_template_settings")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .take(50),
+      getUserUnits(ctx, userId),
+    ]);
     return TEMPLATE_DEFINITIONS.map((definition) => {
       const stored = rows.find((row) => row.templateId === definition.templateId);
       return {
         ...definition,
+        ...templateDisplayFields(definition, units),
         enabled: stored?.enabled ?? false,
         window: (stored?.window ?? definition.defaultWindow) as CheckInWindow,
       };
@@ -756,6 +815,15 @@ export const submitAnswer = mutation({
       .query("check_in_answers")
       .withIndex("by_user_date_question", (q) => q.eq("userId", userId).eq("date", args.date).eq("questionId", args.questionId))
       .first();
+    if (!existing) {
+      const todayAnswers = await ctx.db
+        .query("check_in_answers")
+        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
+        .take(DAILY_QUESTION_LIMIT);
+      if (todayAnswers.length >= DAILY_QUESTION_LIMIT) {
+        throw new ConvexError("Daily check-in limit reached");
+      }
+    }
 
     const source = args.source ?? (args.templateId ? "template" : "registry");
     const answerType = args.answerType ?? (args.numericValue != null ? "number" : "choice");
@@ -813,8 +881,10 @@ async function applyStructuredAnswer(ctx: MutationCtx, userId: string, args: {
 
   const time = args.time ?? new Date().toTimeString().slice(0, 5);
   if (kind === "weight") {
-    const weightKg = args.numericValue;
-    if (weightKg == null || weightKg <= 0) return;
+    const inputWeight = args.numericValue;
+    if (inputWeight == null || inputWeight <= 0) return;
+    const units = await getUserUnits(ctx, userId);
+    const weightKg = units === "imperial" ? inputWeight * LB_TO_KG : inputWeight;
     const profile = await ctx.db
       .query("user_profiles")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -837,7 +907,12 @@ async function applyStructuredAnswer(ctx: MutationCtx, userId: string, args: {
   } else if (kind === "water") {
     const ml = args.numericValue;
     if (ml == null || ml <= 0) return;
-    await ctx.db.insert("water_logs", { userId, date: args.date, ml, time });
+    const existing = await ctx.db
+      .query("water_logs")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
+      .first();
+    if (existing) await ctx.db.patch(existing._id, { ml, time });
+    else await ctx.db.insert("water_logs", { userId, date: args.date, ml, time });
   } else if (kind === "steps") {
     const count = Math.round(args.numericValue ?? 0);
     if (count < 0) return;
@@ -850,7 +925,13 @@ async function applyStructuredAnswer(ctx: MutationCtx, userId: string, args: {
   } else if (kind === "mood") {
     const rating = Math.round(args.numericValue ?? Number(args.value));
     if (rating < 1 || rating > 5) return;
-    await ctx.db.insert("mood_logs", { userId, date: args.date, rating, time, note: `check-in: ${args.questionId}` });
+    const mood = { rating, time, note: `check-in: ${args.questionId}` };
+    const existing = await ctx.db
+      .query("mood_logs")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
+      .first();
+    if (existing) await ctx.db.patch(existing._id, mood);
+    else await ctx.db.insert("mood_logs", { userId, date: args.date, ...mood });
   } else if (kind === "sleep") {
     const sleep = sleepFromAnswer(args.value, args.numericValue);
     if (!sleep) return;

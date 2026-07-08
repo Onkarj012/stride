@@ -8,6 +8,7 @@ import { AssistantConsole } from "@/components/home/AssistantConsole";
 import { MacroSummary, MobileIcon, ScreenHeader } from "@/components/mobile/MobileKit";
 import { AgentBadge, NarrativeCard, StatChip, StreakCard, StrideMark, WaterTracker } from "@/components/ui-kit";
 import { useShortcut } from "@/hooks/useShortcut";
+import { useDailyWindow } from "@/hooks/useDailyWindow";
 import { localDateStr } from "@/lib/utils";
 
 const LOG_PROMPTS: Record<string, string> = {
@@ -91,7 +92,8 @@ export function HomePage() {
   const navigate = useNavigate();
   const { user } = useUser();
   const today = localDateStr();
-  const brief = useQuery(api.insights.getTodayBrief, { today }) as TodayBrief | undefined;
+  const dailyWindow = useDailyWindow();
+  const brief = useQuery(api.insights.getTodayBrief, { today, window: dailyWindow }) as TodayBrief | undefined;
   const waterLogs = useQuery(api.wellness.getWater, { date: today });
   const ensureDailyLlmQuestions = useAction(api.checkins.ensureDailyLlmQuestions);
   const addWater = useMutation(api.wellness.addWater);

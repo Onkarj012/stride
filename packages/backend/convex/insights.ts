@@ -3,6 +3,14 @@ import { v } from "convex/values";
 import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
 import { getNextCheckInForContext, getTodayCheckInAnswerContext } from "./checkins";
 
+const windowValidator = v.union(
+  v.literal("morning"),
+  v.literal("day"),
+  v.literal("evening"),
+  v.literal("night"),
+);
+type DailyWindow = "morning" | "day" | "evening" | "night";
+
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
@@ -105,8 +113,8 @@ export const saveWeeklySummary = internalMutation({
 // ─── Today's Brief (for HomePage daily guidance) ─────────────────────────────
 
 export const getTodayBrief = query({
-  args: { today: v.optional(v.string()) },
-  handler: async (ctx, { today: todayArg }) => {
+  args: { today: v.optional(v.string()), window: v.optional(windowValidator) },
+  handler: async (ctx, { today: todayArg, window: windowArg }) => {
     const userId = await requireUserId(ctx);
     const settings = await ctx.db.query("user_settings")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -188,10 +196,11 @@ export const getTodayBrief = query({
     const adjustmentNote = dayAdj && dayAdj.calorieGoal !== plan!.calories ? dayAdj.note : null;
 
     const hour = localNow.getUTCHours();
-    const window: "morning" | "day" | "evening" | "night" =
+    const window: DailyWindow = windowArg ?? (
       hour >= 5 && hour < 11 ? "morning" :
       hour >= 11 && hour < 18 ? "day" :
-      hour >= 18 && hour < 22 ? "evening" : "night";
+      hour >= 18 && hour < 22 ? "evening" : "night"
+    );
     const checkInAnswerContext = await getTodayCheckInAnswerContext(ctx, userId, today);
 
     // Pick the highest-priority insight for the current window
@@ -365,6 +374,7 @@ export const getTodayBrief = query({
       sleep,
       steps,
       moodCount: moods.length,
+      units: settings?.units,
     });
 
     return {
