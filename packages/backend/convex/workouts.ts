@@ -142,9 +142,6 @@ export const updateWorkout = mutation({
       exercises: fields.exercises,
       rationale: fields.rationale,
       caloriesBurned: validated.caloriesBurned,
-      calorieConfidence: validated.calorieConfidence,
-      calorieRangeLow: validated.calorieRangeLow,
-      calorieRangeHigh: validated.calorieRangeHigh,
       calorieEstimateRough: fields.calorieEstimateRough,
     });
   },

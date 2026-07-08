@@ -1,5 +1,5 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { recordBehaviorRow } from "./behavior";
 import {
@@ -37,7 +37,11 @@ async function assertNoNearDuplicateMeal(ctx: any, userId: string, date: string,
     return minutes != null && minutes <= 10 && isSimilarMeal(meal, existing);
   });
   if (duplicate) {
-    throw new Error("NEAR_DUPLICATE: looks like you already logged this — log anyway?");
+    throw new ConvexError({
+      code: "NEAR_DUPLICATE",
+      message: "Looks like you already logged this — log anyway?",
+      mealId: duplicate._id,
+    });
   }
 }
 
@@ -150,6 +154,8 @@ export const updateMeal = mutation({
       carbs: fields.carbs,
       fat: fields.fat,
       time: fields.time,
+      confidence: 1,
+      nutritionSource: "user_corrected",
     });
     const userId = await requireUserId(ctx);
     const meal = await ctx.db.get(id);
@@ -161,8 +167,8 @@ export const updateMeal = mutation({
       carbs: validated.carbs,
       fat: validated.fat,
       time: validated.time,
-      confidence: Math.min(meal.confidence ?? 1, validated.confidence ?? 1),
-      nutritionSource: meal.nutritionSource ?? validated.nutritionSource,
+      confidence: validated.confidence,
+      nutritionSource: validated.nutritionSource,
       mealType: fields.mealType ?? "unspecified",
       aiSuggestion: fields.aiSuggestion ?? undefined,
       components: fields.components ?? undefined,

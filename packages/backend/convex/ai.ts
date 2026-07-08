@@ -1,6 +1,6 @@
 import { action, query, internalAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { findBestMatch, AUTO_APPLY_MIN_LOGGED } from "./food_memory_match";
 import { calculateWorkoutCalories, parseDurationMinutes } from "./calorie_engine";
@@ -23,6 +23,20 @@ import {
 // callAI, parseJSON, AIMessage, model constants → ./ai/llm
 // intent helpers (looksLikeLog, etc.) → ./ai/intent
 // meal/workout parsing + nutrition engine → ./ai/parse
+
+function getConvexErrorCode(err: unknown): string | undefined {
+  if (!(err instanceof ConvexError)) return undefined;
+  const data = err.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+  return (data as { code?: string }).code;
+}
+
+function getConvexErrorMessage(err: unknown): string | undefined {
+  if (!(err instanceof ConvexError)) return undefined;
+  const data = err.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+  return (data as { message?: string }).message;
+}
 
 
 // ─── Public actions ───────────────────────────────────────────────────────────
@@ -605,7 +619,7 @@ Rules:
     // Parse log blocks — support multiple items and new types
     let cleanReply = reply;
     const loggedItems: any[] = [];
-    const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string }> = [];
+    const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string; errorCode?: string }> = [];
 
     // Strip all log blocks from the reply text
     cleanReply = reply
@@ -624,6 +638,10 @@ Rules:
         const logData = JSON.parse(mealMatch[1].trim());
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", parseModel, apiKey);
+        if (parsed.parseError) {
+          logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
+          continue;
+        }
         const nutrition = await runNutritionEngine(ctx, parsed);
         const finalStructuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
         const finalIngredientBreakdown = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
@@ -641,8 +659,8 @@ Rules:
         // Award gamification for today's logs — parity with the homepage confirm path.
         if (targetDate === today) await ctx.runMutation(api.gamification.recordActivity, { type: "meal" }).catch(() => {});
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logOutcomes.push({ type: "meal", name: "meal", ok: false, error: message });
+        const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
+        logOutcomes.push({ type: "meal", name: "meal", ok: false, error: message, errorCode: getConvexErrorCode(err) });
         console.error("Failed to log meal from AI:", err);
       }
     }
@@ -762,10 +780,13 @@ Rules:
         statusParts.push(`Saved ${saved.map((outcome) => outcome.name).join(", ")}.`);
       }
       if (failed.length > 0) {
-        const duplicate = failed.some((outcome) => outcome.error?.includes("NEAR_DUPLICATE"));
+        const duplicate = failed.some((outcome) => outcome.errorCode === "NEAR_DUPLICATE");
+        const parseError = failed.some((outcome) => outcome.errorCode === "PARSE_ERROR");
         statusParts.push(duplicate
           ? "I did not save the duplicate-looking log. Confirm or edit it if you want to log it anyway."
-          : `I couldn't save ${failed.map((outcome) => outcome.name).join(", ")}. Please confirm or edit and try again.`);
+          : parseError
+            ? `I couldn't parse ${failed.map((outcome) => outcome.name).join(", ")} reliably, so I didn't save it. Please confirm or edit and try again.`
+            : `I couldn't save ${failed.map((outcome) => outcome.name).join(", ")}. Please confirm or edit and try again.`);
       }
       cleanReply = [cleanReply, statusParts.join(" ")].filter(Boolean).join("\n\n");
     }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Barcode, X, Check, Loader2 } from "lucide-react";
 import { useAction, useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,14 @@ type Props = {
   open: boolean;
   onClose: () => void;
 };
+
+function getNearDuplicateData(err: unknown): { message?: string } | null {
+  if (!(err instanceof ConvexError)) return null;
+  const data = err.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const payload = data as { code?: string; message?: string };
+  return payload.code === "NEAR_DUPLICATE" ? payload : null;
+}
 
 export function BarcodeModal({ open, onClose }: Props) {
   const [barcode, setBarcode] = useState("");
@@ -112,8 +121,12 @@ export function BarcodeModal({ open, onClose }: Props) {
       try {
         await addMeal(payload);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "";
-        if (!message.includes("NEAR_DUPLICATE") || !window.confirm("Looks like you already logged this — log anyway?")) throw err;
+        const duplicate = getNearDuplicateData(err);
+        if (!duplicate) throw err;
+        if (!window.confirm(duplicate.message ?? "Looks like you already logged this — log anyway?")) {
+          reset(); onClose();
+          return;
+        }
         await addMeal({ ...payload, allowDuplicate: true });
       }
       toast.success("Logged via barcode", `${product.name} · ${grams}g`);

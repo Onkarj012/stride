@@ -54,7 +54,11 @@ export function classifyHomepageIntent(message: string): HomepageIntentKind {
 }
 
 export function isNegatedLogItem(message: string, item: { type: string; description?: string }): boolean {
-  const text = `${item.description || ""} ${message}`.toLowerCase();
+  const clauses = message
+    .toLowerCase()
+    .split(/\b(?:but|so|however|though|although|then)\b|[,.;&]+/i)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
   const typeWords: Record<string, string> = {
     workout: "(work(?:ed)?\\s*out|workout|gym|lift(?:ed)?|run|ran|walk(?:ed)?|cardio|training)",
     meal: "(eat|ate|eaten|meal|breakfast|lunch|dinner|snack|food)",
@@ -65,8 +69,17 @@ export function isNegatedLogItem(message: string, item: { type: string; descript
   };
   const words = typeWords[item.type];
   if (!words) return false;
-  const re = new RegExp(`\\b(haven't|have not|hasn't|has not|didn't|did not|don't|do not|no|none|zero|skipped|missed|without)\\b[\\s\\S]{0,50}\\b${words}\\b|\\b(no|zero)\\s+${words}\\b`, "i");
-  return re.test(text);
+  const descriptionWords = (item.description || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 2)
+    .slice(0, 4)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const itemWords = descriptionWords.length > 0 ? `${words}|${descriptionWords.join("|")}` : words;
+  const itemRe = new RegExp(`\\b(?:${itemWords})\\b`, "i");
+  const negatedItemRe = new RegExp(`\\b(haven't|have not|hasn't|has not|didn't|did not|don't|do not|no|none|zero|skipped|missed|without)\\b(?:\\W+\\w+){0,8}?\\W+\\b(?:${itemWords})\\b|\\b(no|zero)\\s+(?:${itemWords})\\b`, "i");
+  return clauses.some((clause) => itemRe.test(clause) && negatedItemRe.test(clause));
 }
 
 /** True when the message reads like a log report (not a question). */

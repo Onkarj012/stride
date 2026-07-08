@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { X, Barcode, ImagePlus, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
@@ -49,6 +50,14 @@ type HomepageMessage = {
   content: string;
   ts: number;
 };
+
+function getNearDuplicateData(err: unknown): { message?: string } | null {
+  if (!(err instanceof ConvexError)) return null;
+  const data = err.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const payload = data as { code?: string; message?: string };
+  return payload.code === "NEAR_DUPLICATE" ? payload : null;
+}
 
 function modalityForContent(content: string): { modality?: Modality; chip?: string } {
   const fileMatch = content.match(/^\[File: ([^\]]+)\]/);
@@ -294,9 +303,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         toast.success(`Steps logged${dateNote}`, `${d.count.toLocaleString()} steps`);
       }
     } catch (err) {
+      const duplicate = getNearDuplicateData(err);
       const raw = err instanceof Error ? err.message : "Something went wrong — try again.";
-      const isDuplicate = raw.includes("NEAR_DUPLICATE");
-      const message = isDuplicate ? "Looks like you already logged this — log anyway?" : raw;
+      const isDuplicate = !!duplicate;
+      const message = duplicate?.message ?? raw;
       setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? {
         ...d,
         ...draft,
