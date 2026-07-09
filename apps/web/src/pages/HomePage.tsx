@@ -105,9 +105,16 @@ export function HomePage() {
     const key = `stride_llm_checkins:${today}`;
     try {
       if (sessionStorage.getItem(key)) return;
-      sessionStorage.setItem(key, "1");
     } catch {}
-    ensureDailyLlmQuestions({ date: today, window: brief.window }).catch(() => {});
+    void ensureDailyLlmQuestions({ date: today, window: brief.window })
+      .then((result) => {
+        if (result.ok) {
+          try {
+            sessionStorage.setItem(key, "1");
+          } catch {}
+        }
+      })
+      .catch(() => {});
   }, [brief?.window, ensureDailyLlmQuestions, today]);
 
   // Deep-link queue: ?log=<section> pre-starts the composer

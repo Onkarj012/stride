@@ -69,10 +69,10 @@ type HomepageMessage = {
 function filterInitialCheckIns(actions: AgentAction[], date: string): AgentAction[] {
   return actions.filter((action) => {
     if (action.type !== "quick_question") return true;
-    const key = `stride_checkin_shown:${date}`;
+    const key = `stride_checkin_shown:${date}:${action.id}`;
     try {
       if (sessionStorage.getItem(key)) return false;
-      sessionStorage.setItem(key, action.id);
+      sessionStorage.setItem(key, "1");
     } catch {}
     return true;
   });
