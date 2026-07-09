@@ -57,7 +57,33 @@ describe("calculateTDEE", () => {
     expect(t.finalTDEE).toBeGreaterThan(2400);
     expect(t.finalTDEE).toBeLessThan(2700);
     expect(t.plannedDailyEAT).toBe(320);
-    expect(t.plannedEatPerTrainingDay).toBe(560);
+    expect(t.plannedEatPerTrainingDay).toBe(373);
+  });
+
+  test("sums sessions across distinct workout types, capped at 7 days/week", () => {
+    const t = calculateTDEE({
+      ...EXAMPLE,
+      weeklyWorkouts: [
+        { type: "strength", durationMin: 60, sessionsPerWeek: 4 },
+        { type: "run_slow", durationMin: 45, sessionsPerWeek: 4 },
+      ],
+    });
+    // weeklyEat = 5*80*1*4 + 8*80*0.75*4 = 3520; 8 sessions capped to 7 days
+    expect(t.plannedDailyEAT).toBe(503);
+    expect(t.plannedEatPerTrainingDay).toBe(503);
+  });
+
+  test("excludes zero-duration placeholder rows from training-day count", () => {
+    const t = calculateTDEE({
+      ...EXAMPLE,
+      weeklyWorkouts: [
+        { type: "strength", durationMin: 60, sessionsPerWeek: 4 },
+        { type: "yoga", durationMin: 0, sessionsPerWeek: 7 },
+      ],
+    });
+    // weeklyEat = 5*80*1*4 = 1600; only 4 active training days
+    expect(t.plannedDailyEAT).toBe(229);
+    expect(t.plannedEatPerTrainingDay).toBe(400);
   });
 });
 
@@ -95,8 +121,8 @@ describe("calculateNutritionPlan", () => {
     expect(p.calories).toBeLessThan(2600);
     expect(p.breakdown.goal).toBe("moderate_loss");
     expect(p.plannedDailyEAT).toBe(320);
-    expect(p.plannedEatPerTrainingDay).toBe(560);
-    expect(p.breakdown.plannedEatPerTrainingDay).toBe(560);
+    expect(p.plannedEatPerTrainingDay).toBe(373);
+    expect(p.breakdown.plannedEatPerTrainingDay).toBe(373);
     expect(p.percentages.protein + p.percentages.carbs + p.percentages.fat).toBeGreaterThan(95);
   });
 });

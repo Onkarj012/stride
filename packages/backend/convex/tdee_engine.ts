@@ -150,8 +150,13 @@ export function calculateTDEE(input: PlanInput): TdeeBreakdown {
     (s, w) => s + Math.max(0, w.durationMin ?? 0) * Math.max(0, w.sessionsPerWeek ?? 0),
     0,
   );
-  const maxSessionsPerWeek = weeklyWorkouts.reduce((max, w) => Math.max(max, Math.max(0, w.sessionsPerWeek ?? 0)), 0);
-  const trainingDaysPerWeek = weeklyWorkouts.length > 0 ? Math.min(7, Math.max(1, maxSessionsPerWeek)) : 0;
+  // Sum sessions across entries that actually contribute burn; cap at 7 days/week.
+  // Exclude zero-duration / zero-session placeholder rows so they don't dilute the per-day average.
+  const activeWorkouts = weeklyWorkouts.filter(
+    (w) => Math.max(0, w.durationMin ?? 0) * Math.max(0, w.sessionsPerWeek ?? 0) > 0,
+  );
+  const summedSessionsPerWeek = activeWorkouts.reduce((sum, w) => sum + Math.max(0, w.sessionsPerWeek ?? 0), 0);
+  const trainingDaysPerWeek = activeWorkouts.length > 0 ? Math.min(7, Math.max(1, summedSessionsPerWeek)) : 0;
   const avgWorkoutHours = weeklyWorkoutMinutes / 60 / 7;
 
   const lifeMet = LIFESTYLE_MET_EXTRA[(input.lifestyleActivity as LifestyleActivity)] ?? LIFESTYLE_MET_EXTRA.light;
