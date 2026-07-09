@@ -199,7 +199,7 @@ export const logRecipe = mutation({
       ? `${ingredientList} — ${trimmedNote}`
       : ingredientList;
     const scale = portions / recipe.servings;
-    const breakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
+    const rawBreakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
     const targetDate = date ?? new Date().toISOString().split("T")[0];
     const targetTime = time ?? new Date().toISOString().slice(11, 16);
     const validated = validateMealWrite({
@@ -209,9 +209,16 @@ export const logRecipe = mutation({
       carbs: r1(ps.c * portions),
       fat: r1(ps.f * portions),
       time: targetTime,
-      confidence: breakdown.confidence,
+      confidence: rawBreakdown.confidence,
       nutritionSource: "recipe",
     });
+    const breakdown = {
+      ...rawBreakdown,
+      calories_kcal: validated.calories,
+      protein_g: validated.protein,
+      carbs_g: validated.carbs,
+      fat_g: validated.fat,
+    };
     const logSource = normalizeLogSource("recipe", "recipe");
     const idempotencyKey = buildIdempotencyKey({
       userId,

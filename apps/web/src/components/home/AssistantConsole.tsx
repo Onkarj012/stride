@@ -66,6 +66,42 @@ function modalityForContent(content: string): { modality?: Modality; chip?: stri
   return {};
 }
 
+function hashDraftSeed(seed: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function draftClientId(draft: any, index = 0): string {
+  const existing = draft?._clientId;
+  if (typeof existing === "string" && existing.trim()) return existing;
+  const seed = JSON.stringify({
+    kind: draft?.kind,
+    date: draft?.date,
+    description: draft?.description,
+    name: draft?.name,
+    kcal: draft?.kcal,
+    index,
+  });
+  return `draft-${hashDraftSeed(seed)}-${index}`;
+}
+
+function normalizeDraft(draft: any, index = 0): any | null {
+  if (!draft || typeof draft !== "object" || Array.isArray(draft)) return null;
+  return { ...draft, _clientId: draftClientId(draft, index) };
+}
+
+function normalizeDrafts(drafts: unknown): any[] {
+  if (!Array.isArray(drafts)) return [];
+  return drafts.flatMap((draft, index) => {
+    const normalized = normalizeDraft(draft, index);
+    return normalized ? [normalized] : [];
+  });
+}
+
 export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, presenceLine, initialActions = [] }: AssistantConsoleProps) {
   const [textValue, setTextValue] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -89,11 +125,15 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   // ConfirmModal queue — persisted in sessionStorage so navigation doesn't lose pending cards
   const [pendingDrafts, setPendingDraftsRaw] = useState<any[]>(() => {
-    try { return JSON.parse(sessionStorage.getItem("stride_pending_drafts") ?? "[]"); } catch { return []; }
+    try {
+      const normalized = normalizeDrafts(JSON.parse(sessionStorage.getItem("stride_pending_drafts") ?? "[]"));
+      sessionStorage.setItem("stride_pending_drafts", JSON.stringify(normalized));
+      return normalized;
+    } catch { return []; }
   });
   const setPendingDrafts = useCallback((updater: any[] | ((prev: any[]) => any[])) => {
     setPendingDraftsRaw((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
+      const next = normalizeDrafts(typeof updater === "function" ? updater(prev) : updater);
       try { sessionStorage.setItem("stride_pending_drafts", JSON.stringify(next)); } catch {}
       return next;
     });
@@ -226,20 +266,28 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   /* ── Confirm draft → actually log ── */
   const handleConfirm = useCallback(async (draft: any) => {
-    const draftKey = draft._clientId ?? draft;
-    const matchesDraft = (candidate: any) => candidate?._clientId ? candidate._clientId === draftKey : candidate === draft;
-    setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? { ...d, ...draft, submitting: true, error: undefined } : d));
+    const normalizedDraft = normalizeDraft(draft);
+    if (!normalizedDraft) return;
+    const draftKey = normalizedDraft._clientId;
+    const matchesDraft = (candidate: any) => candidate?._clientId === draftKey;
+    setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? { ...d, ...normalizedDraft, submitting: true, error: undefined } : d));
     const time = new Date().toTimeString().slice(0, 5);
     const today = localDateStr();
     const tier2 = pendingTier2Ref.current;
 
     try {
-      const d = draft as any;
+      const d = normalizedDraft as any;
       const date = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : today;
       const isPastDay = date !== today;
       const dateNote = isPastDay ? ` for ${date}` : "";
 
       if (d.kind === "meal") {
+        const isUnparsed = d.parseError && d.kcal === 0 && d.protein === 0 && d.carbs === 0 && d.fat === 0;
+        if (isUnparsed) {
+          toast.error("Couldn't parse meal", "Please edit the meal details before confirming.");
+          setPendingDrafts((prev) => prev.map((item) => matchesDraft(item) ? { ...item, ...normalizedDraft, submitting: false } : item));
+          return;
+        }
         const ingredientBreakdown = d.ingredientBreakdown ?? null;
         await addMeal({
           name: d.description,
@@ -273,6 +321,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           date,
           exercises: d.exercises ?? undefined,
           caloriesBurned: d.kcal,
+          timestamp: time,
           rationale: tier2 || d.rationale || undefined,
           calorieConfidence: calorieResult?.confidence,
           calorieRangeLow: calorieResult?.range_low,
@@ -309,7 +358,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       const message = duplicate?.message ?? raw;
       setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? {
         ...d,
-        ...draft,
+        ...normalizedDraft,
         submitting: false,
         error: message,
         allowDuplicate: isDuplicate ? true : d.allowDuplicate,
@@ -410,7 +459,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const openDraft = useCallback((draft: any) => {
     pendingTier2Ref.current = "";
-    setPendingDrafts([{ ...draft, _clientId: draft._clientId ?? `draft-${Date.now()}-${Math.random().toString(36).slice(2)}` }]);
+    const normalized = normalizeDraft(draft);
+    setPendingDrafts(normalized ? [normalized] : []);
   }, [setPendingDrafts]);
 
   const useEngineEstimate = useCallback((draft: any) => {
@@ -581,7 +631,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                   <LogConfirmCard
                     draft={draft}
                     onConfirm={handleConfirm}
-                    onDiscard={() => setPendingDrafts((prev) => prev.filter((d) => d !== draft))}
+                    onDiscard={() => setPendingDrafts((prev) => prev.filter((d) => d._clientId !== draft._clientId))}
                   />
                 </div>
               </motion.div>
@@ -657,7 +707,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </div>
       </div>
 
-      <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
+      <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} date={localDateStr()} />
       <EditLogModal kind="meal" entry={editEntry} onClose={() => setEditEntry(null)} />
     </>
   );

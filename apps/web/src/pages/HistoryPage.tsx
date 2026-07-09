@@ -236,7 +236,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
   onDeleteWorkout: (id: Id<"workouts">) => void;
 }) {
   const [tab, setTab] = useState<Tab>("meals");
-  const data = useQuery(api.history.getDayHistory, { date: toDateStr(date) });
+  const data = useQuery(api.history.getDayHistory, { date: toDateStr(date) }) as { meals?: any[]; workouts?: any[] } | undefined;
   const meals = data?.meals ?? [];
   const workouts = data?.workouts ?? [];
 
@@ -386,8 +386,8 @@ export function HistoryPage() {
 
   // Day summary from calendar data
   const dateStr = toDateStr(selected);
-  const data = useQuery(api.history.getDayHistory, { date: dateStr });
-  const waterLogs = useQuery(api.wellness.getWater, { date: dateStr }) ?? [];
+  const data = useQuery(api.history.getDayHistory, { date: dateStr }) as { meals?: any[]; workouts?: any[] } | undefined;
+  const waterLogs = (useQuery(api.wellness.getWater, { date: dateStr }) ?? []) as any[];
   const sleepLog = useQuery(api.wellness.getSleep, { date: dateStr });
   const meals = data?.meals ?? [];
   const workouts = data?.workouts ?? [];

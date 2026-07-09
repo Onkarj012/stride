@@ -275,7 +275,7 @@ export const logMeal = action({
       parsedMeal = {
         ...parsedData,
         mealType: parsedData.mealType || mealType || "unspecified",
-        time: parsedData.time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }),
+        time: parsedData.time || new Date().toTimeString().slice(0, 5),
         ingredients: parsedData.ingredients || [],
         cooking_method: parsedData.cooking_method || "unknown",
         portion_scale: parsedData.portion_scale ?? 1.0,
@@ -1525,7 +1525,10 @@ Return ONLY:
     }
 
     // If it's a question, route to chat coach (with chat history)
-    if (estimateMode && (extracted.isQuestion || extracted.items.length === 0)) {
+    const shouldFallbackToEstimate = estimateMode
+      && homepageIntent !== "negation"
+      && !isNegatedLogItem(message, { type: "meal", description: message });
+    if (shouldFallbackToEstimate && (extracted.isQuestion || extracted.items.length === 0)) {
       extracted = { isQuestion: false, items: [{ type: "meal", description: message, date: today }] };
     }
 
@@ -1641,7 +1644,7 @@ Return ONLY:
           const memMatch = findBestMatch(desc, memories as any[]);
           if (memMatch && memMatch.entry.timesLogged >= AUTO_APPLY_MIN_LOGGED) {
             const mem = memMatch.entry;
-            const time = new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+            const time = new Date().toTimeString().slice(0, 5);
             const draft = {
               kind: "meal",
               date: item.date,
@@ -1712,7 +1715,9 @@ Return ONLY:
             calorieResult: parsed.calorieResult,
             parseError: parsed.parseError,
           });
-          const range = parsed.calorieResult
+          const range = statedKcal != null
+            ? `~${statedKcal} kcal burned`
+            : parsed.calorieResult
             ? `~${parsed.calorieResult.range_low}-${parsed.calorieResult.range_high} kcal, rough`
             : `~${finalKcal} kcal burned`;
           summaryParts.push(`${parsed.name} (${range})`);

@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import {
   buildIdempotencyKey,
   normalizeLogSource,
+  stableHash,
   timeWindowKey,
   validateWorkoutWrite,
   workoutContentHash,
@@ -23,6 +24,32 @@ async function findExistingWorkoutByIdempotencyKey(ctx: any, userId: string, dat
       q.eq("userId", userId).eq("date", date).eq("idempotencyKey", idempotencyKey),
     )
     .first();
+}
+
+function hhmmFromTimestamp(timestamp?: string): string | null {
+  const trimmed = timestamp?.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(?:\d{4}-\d{2}-\d{2}T)?(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function workoutTimeWindowKey(parts: {
+  date: string;
+  contentHash: string;
+  timestamp?: string;
+  idempotencyToken?: string;
+}): string {
+  const token = parts.idempotencyToken?.trim();
+  if (token) return `token_${stableHash(token)}`;
+  const hhmm = hhmmFromTimestamp(parts.timestamp);
+  if (hhmm) return timeWindowKey(hhmm);
+  return `stable_${stableHash(`${parts.date}|${parts.contentHash}`)}`;
 }
 
 export const getWorkouts = query({
@@ -69,18 +96,26 @@ export const addWorkout = mutation({
     calculationVersion: v.optional(v.number()),
     structuredSets: v.optional(v.string()),
     logSource: v.optional(v.string()),
+    timestamp: v.optional(v.string()),
+    idempotencyToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
     const validated = validateWorkoutWrite(args);
     const logSource = normalizeLogSource(args.logSource, "manual");
+    const contentHash = workoutContentHash(validated);
     const idempotencyKey = buildIdempotencyKey({
       userId,
       date,
       source: logSource,
-      contentHash: workoutContentHash(validated),
-      timeWindow: timeWindowKey(new Date().toTimeString().slice(0, 5)),
+      contentHash,
+      timeWindow: workoutTimeWindowKey({
+        date,
+        contentHash,
+        timestamp: args.timestamp,
+        idempotencyToken: args.idempotencyToken,
+      }),
     });
     const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, date, idempotencyKey);
     if (existing) return existing._id;
@@ -104,7 +139,7 @@ export const addWorkout = mutation({
     const durationMin = args.duration ? parseFloat(args.duration) : undefined;
     await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
       userId, name: validated.name, date,
-      exercises: args.exercises ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
+      exercises: Array.isArray(args.exercises) ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
       durationMin: isNaN(durationMin as number) ? undefined : durationMin,
       intensity: validated.intensity || undefined,
       caloriesBurned: validated.caloriesBurned,
@@ -125,14 +160,20 @@ export const updateWorkout = mutation({
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
     caloriesBurned: v.optional(v.number()),
+    calorieConfidence: v.optional(v.number()),
+    calorieRangeLow: v.optional(v.number()),
+    calorieRangeHigh: v.optional(v.number()),
     calorieEstimateRough: v.optional(v.boolean()),
+    calorieBreakdown: v.optional(v.string()),
+    calculationVersion: v.optional(v.number()),
+    structuredSets: v.optional(v.string()),
   },
   handler: async (ctx, { id, ...fields }) => {
     const validated = validateWorkoutWrite(fields);
     const userId = await requireUserId(ctx);
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
-    await ctx.db.patch(id, {
+    const patch: any = {
       name: validated.name,
       sets: validated.sets,
       reps: fields.reps,
@@ -141,9 +182,16 @@ export const updateWorkout = mutation({
       intensity: validated.intensity,
       exercises: fields.exercises,
       rationale: fields.rationale,
-      caloriesBurned: validated.caloriesBurned,
-      calorieEstimateRough: fields.calorieEstimateRough,
-    });
+    };
+    if (fields.caloriesBurned !== undefined) patch.caloriesBurned = validated.caloriesBurned;
+    if (fields.calorieConfidence !== undefined) patch.calorieConfidence = validated.calorieConfidence;
+    if (fields.calorieRangeLow !== undefined) patch.calorieRangeLow = validated.calorieRangeLow;
+    if (fields.calorieRangeHigh !== undefined) patch.calorieRangeHigh = validated.calorieRangeHigh;
+    if (fields.calorieEstimateRough !== undefined) patch.calorieEstimateRough = fields.calorieEstimateRough;
+    if (fields.calorieBreakdown !== undefined) patch.calorieBreakdown = fields.calorieBreakdown;
+    if (fields.calculationVersion !== undefined) patch.calculationVersion = fields.calculationVersion;
+    if (fields.structuredSets !== undefined) patch.structuredSets = fields.structuredSets;
+    await ctx.db.patch(id, patch);
   },
 });
 
@@ -166,8 +214,10 @@ export const relogWorkout = mutation({
   args: {
     id: v.id("workouts"),
     date: v.optional(v.string()),
+    timestamp: v.optional(v.string()),
+    idempotencyToken: v.optional(v.string()),
   },
-  handler: async (ctx, { id, date }) => {
+  handler: async (ctx, { id, date, timestamp, idempotencyToken }) => {
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
@@ -183,12 +233,18 @@ export const relogWorkout = mutation({
       calorieRangeHigh: src.calorieRangeHigh,
     });
     const logSource = normalizeLogSource("relog", "relog");
+    const contentHash = workoutContentHash(validated);
     const idempotencyKey = buildIdempotencyKey({
       userId,
       date: targetDate,
       source: logSource,
-      contentHash: workoutContentHash(validated),
-      timeWindow: timeWindowKey(new Date().toTimeString().slice(0, 5)),
+      contentHash,
+      timeWindow: workoutTimeWindowKey({
+        date: targetDate,
+        contentHash,
+        timestamp,
+        idempotencyToken,
+      }),
     });
     const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, targetDate, idempotencyKey);
     if (existing) return existing._id;
@@ -279,16 +335,24 @@ export const addWorkoutFromAI = internalMutation({
     calculationVersion: v.optional(v.number()),
     structuredSets: v.optional(v.string()),
     logSource: v.optional(v.string()),
+    timestamp: v.optional(v.string()),
+    idempotencyToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const validated = validateWorkoutWrite(args);
     const logSource = normalizeLogSource(args.logSource, "ai");
+    const contentHash = workoutContentHash(validated);
     const idempotencyKey = buildIdempotencyKey({
       userId: args.userId,
       date: args.date,
       source: logSource,
-      contentHash: workoutContentHash(validated),
-      timeWindow: timeWindowKey(new Date().toTimeString().slice(0, 5)),
+      contentHash,
+      timeWindow: workoutTimeWindowKey({
+        date: args.date,
+        contentHash,
+        timestamp: args.timestamp,
+        idempotencyToken: args.idempotencyToken,
+      }),
     });
     const existing = await findExistingWorkoutByIdempotencyKey(ctx, args.userId, args.date, idempotencyKey);
     if (existing) return existing._id;
@@ -311,7 +375,7 @@ export const addWorkoutFromAI = internalMutation({
     const durationMin = args.duration ? parseFloat(args.duration) : undefined;
     await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
       userId: args.userId, name: validated.name, date: args.date,
-      exercises: args.exercises ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
+      exercises: Array.isArray(args.exercises) ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
       durationMin: isNaN(durationMin as number) ? undefined : durationMin,
       intensity: validated.intensity || undefined,
       caloriesBurned: validated.caloriesBurned,

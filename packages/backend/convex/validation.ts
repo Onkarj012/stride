@@ -91,6 +91,14 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+function assertValidMealTime(time: string): string {
+  const trimmed = time.trim();
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(trimmed)) {
+    throw new Error("Meal time must be a valid HH:MM 24-hour time");
+  }
+  return trimmed;
+}
+
 export function validateMealWrite(input: MealValidationInput): ValidationResult<MealValidationInput> {
   const flags: string[] = [];
   const calories = assertFiniteNonNegative("calories", input.calories);
@@ -108,6 +116,7 @@ export function validateMealWrite(input: MealValidationInput): ValidationResult<
     protein: round1(clampWithFlag("protein", protein, MACRO_MAX_GRAMS.protein, flags)),
     carbs: round1(clampWithFlag("carbs", carbs, MACRO_MAX_GRAMS.carbs, flags)),
     fat: round1(clampWithFlag("fat", fat, MACRO_MAX_GRAMS.fat, flags)),
+    time: assertValidMealTime(input.time),
     nutritionSource: input.nutritionSource?.trim() || "manual",
     confidence: normalizeConfidence(input.confidence, DEFAULT_MEAL_CONFIDENCE, flags),
   };

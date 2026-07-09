@@ -131,6 +131,24 @@ function ensureWorkoutExercises(description: string, parsedName: string, exercis
   }];
 }
 
+function isRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizedTimeOrNow(time: string): string {
+  const trimmed = time.trim();
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(trimmed)) return trimmed;
+  const loose = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (loose) {
+    const hours = Number(loose[1]);
+    const minutes = Number(loose[2]);
+    if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    }
+  }
+  return new Date().toTimeString().slice(0, 5);
+}
+
 function providerSourceFromItems(items: ItemBreakdown[]): string {
   const sources = [...new Set(items.map((item) => item.source).filter(Boolean))];
   if (sources.length === 1) return sources[0]!;
@@ -185,7 +203,7 @@ Return ONLY a JSON object (no other text, no markdown):
 {"name":"short descriptive name (max 4 words)","calories":450,"protein":35,"carbs":40,"fat":18,"components":"comma-separated ingredient list","suggestion":"one forward-looking next-meal tip (max 20 words)","ingredients":[{"food_text":"paneer","amount":150,"unit":"g","is_oil_or_fat":false,"confidence":0.9}],"cooking_method":"fried","portion_scale":1.0,"total_recipe_servings":2,"missing_fields":["oil_amount"]}`;
 
   const content = await callAI([{ role: "user", content: prompt }], 1000, model, apiKey);
-  const mealTime = time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const mealTime = normalizedTimeOrNow(time);
   const result = tryParseJSON<any>(content);
   if (!result || typeof result !== "object" || Array.isArray(result)) {
     return {
@@ -215,12 +233,25 @@ Return ONLY a JSON object (no other text, no markdown):
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
 
+  const calories = numberOrZero(result.calories);
+  const protein = numberOrZero(result.protein);
+  const carbs = numberOrZero(result.carbs);
+  const fat = numberOrZero(result.fat);
+  const missingFields = Array.isArray(result.missing_fields) ? result.missing_fields : [];
+  const resultParseError = typeof result.parseError === "string" && result.parseError.trim()
+    ? result.parseError.trim()
+    : undefined;
+  const zeroMacroParseError = !resultParseError && [calories, protein, carbs, fat].every((value) => value === 0)
+    ? "Couldn't parse reliably — confirm or edit portions."
+    : undefined;
+  const parseError = resultParseError ?? zeroMacroParseError;
+
   return {
     name: result.name || description.slice(0, 50),
-    calories: numberOrZero(result.calories),
-    protein: numberOrZero(result.protein),
-    carbs: numberOrZero(result.carbs),
-    fat: numberOrZero(result.fat),
+    calories,
+    protein,
+    carbs,
+    fat,
     time: mealTime,
     aiSuggestion: result.suggestion || undefined,
     components: result.components || undefined,
@@ -231,7 +262,10 @@ Return ONLY a JSON object (no other text, no markdown):
     cooking_method: result.cooking_method || "unknown",
     portion_scale: typeof result.portion_scale === "number" ? result.portion_scale : 1.0,
     total_recipe_servings: typeof result.total_recipe_servings === "number" ? result.total_recipe_servings : 1,
-    missing_fields: Array.isArray(result.missing_fields) ? result.missing_fields : [],
+    missing_fields: parseError && !missingFields.includes("parse_error") ? [...missingFields, "parse_error"] : missingFields,
+    parseError,
+    confidence: parseError ? 0.1 : undefined,
+    nutritionSource: parseError ? "parse_error" : undefined,
   };
 }
 
@@ -271,21 +305,30 @@ Return ONLY valid JSON:
     ? parsedJson
     : { name: description.slice(0, 30), exercises: [], duration, intensity, caloriesBurned: 0, rationale: "", restClues: "", parseError: "Couldn't parse reliably — confirm or edit duration/intensity." };
 
-  const parsedExercises = (result.exercises || []).map((ex: any) => ({
-    name: ex.name || "Exercise",
-    muscle_group: ex.muscle_group || "",
-    weight_unit: ex.weight_unit || "kg",
-    sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({
-      weight: String(s.weight || ""),
-      reps: String(s.reps || ""),
-      // cardio fields
-      distance_km: s.distance_km != null ? String(s.distance_km) : undefined,
-      duration_min: s.duration_min != null ? String(s.duration_min) : undefined,
-      incline: s.incline != null ? String(s.incline) : undefined,
-      pace: s.pace != null ? String(s.pace) : undefined,
-      calories_per_hr: s.calories_per_hr != null ? String(s.calories_per_hr) : undefined,
-    })) : [],
-  }));
+  const parsedExercises = (Array.isArray(result.exercises) ? result.exercises : []).flatMap((ex: unknown) => {
+    if (!isRecord(ex)) return [];
+    const sets = Array.isArray(ex.sets)
+      ? ex.sets.flatMap((s: unknown) => {
+          if (!isRecord(s)) return [];
+          return [{
+            weight: String(s.weight || ""),
+            reps: String(s.reps || ""),
+            // cardio fields
+            distance_km: s.distance_km != null ? String(s.distance_km) : undefined,
+            duration_min: s.duration_min != null ? String(s.duration_min) : undefined,
+            incline: s.incline != null ? String(s.incline) : undefined,
+            pace: s.pace != null ? String(s.pace) : undefined,
+            calories_per_hr: s.calories_per_hr != null ? String(s.calories_per_hr) : undefined,
+          }];
+        })
+      : [];
+    return [{
+      name: typeof ex.name === "string" && ex.name.trim() ? ex.name : "Exercise",
+      muscle_group: typeof ex.muscle_group === "string" ? ex.muscle_group : "",
+      weight_unit: typeof ex.weight_unit === "string" ? ex.weight_unit : "kg",
+      sets,
+    }];
+  });
   const exercises = ensureWorkoutExercises(description, result.name, parsedExercises);
   const totalSets = exercises.reduce((sum: number, ex: any) => sum + ex.sets.length, 0);
   const setsVal = exercises.length > 0 ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets` : "–";

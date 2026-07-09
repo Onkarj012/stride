@@ -27,7 +27,7 @@ function periodDays(period: Period): number {
 
 /* ── Today's meals card ── */
 function TodaysMealsCard({ date }: { date: string }) {
-  const data = useQuery(api.history.getDayHistory, { date });
+  const data = useQuery(api.history.getDayHistory, { date }) as { meals?: any[] } | undefined;
   const meals = data?.meals ?? [];
   const relogMeal = useMutation(api.meals.relogMeal);
   const deleteMeal = useMutation(api.meals.deleteMeal);
@@ -123,7 +123,7 @@ function TodaysMealsCard({ date }: { date: string }) {
 
 /* ── Today's workouts card ── */
 function TodaysWorkoutsCard({ date }: { date: string }) {
-  const data = useQuery(api.history.getDayHistory, { date });
+  const data = useQuery(api.history.getDayHistory, { date }) as { workouts?: any[] } | undefined;
   const workouts = data?.workouts ?? [];
   const relogWorkout = useMutation(api.workouts.relogWorkout);
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
@@ -213,14 +213,14 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
 }
 
 /* ── Today's AI insights & tips card ── */
-function TodaysInsightsCard({ date }: { date: string }) {
+export function TodaysInsightsCard({ date }: { date: string }) {
   const insightsData = useQuery(api.insights.getDailyInsights, { date });
   const brief = useQuery(api.insights.getTodayBrief, {});
   const generate = useAction(api.ai.generateDailyInsights);
   const toast = useToast();
   const [generating, setGenerating] = useState(false);
 
-  const insights = insightsData?.insights ?? [];
+  const insights = (insightsData?.insights ?? []) as string[];
 
   async function handleGenerate() {
     setGenerating(true);
@@ -293,7 +293,7 @@ function TodaysInsightsMini({ date }: { date: string }) {
   const brief = useQuery(api.insights.getTodayBrief, {});
   const generate = useAction(api.ai.generateDailyInsights);
   const toast = useToast();
-  const insights = insightsData?.insights ?? [];
+  const insights = (insightsData?.insights ?? []) as string[];
   const [generating, setGenerating] = useState(false);
 
   async function refresh() {
@@ -369,7 +369,15 @@ export function InsightsPage() {
   const today = localDateStr();
 
   // Convex progress data (7 or 30 days)
-  const progressRows = useQuery(api.progress.getProgress, { days, today }) ?? [];
+  const progressRows = (useQuery(api.progress.getProgress, { days, today }) ?? []) as Array<{
+    date: string;
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+    workouts: number;
+    goal: number;
+  }>;
 
   // Today's logs (used for "today" macros and milestones)
   const { logs } = useLogs();

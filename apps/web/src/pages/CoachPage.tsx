@@ -98,6 +98,8 @@ export function CoachPage() {
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [kbPad, setKbPad] = useState(0);
+  const [pendingUndoIds, setPendingUndoIds] = useState<Set<string>>(() => new Set());
+  const pendingUndoIdsRef = useRef<Set<string>>(new Set());
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const sendingRef = useRef(false);
   const { add } = useLogs();
@@ -179,6 +181,9 @@ export function CoachPage() {
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
 
   const undoAutoLog = useCallback(async (messageId: string, entry: UndoEntry) => {
+    if (entry.undone || pendingUndoIdsRef.current.has(entry.id)) return;
+    pendingUndoIdsRef.current.add(entry.id);
+    setPendingUndoIds((prev) => new Set(prev).add(entry.id));
     try {
       if (entry.type === "meal") {
         await deleteMeal({ id: entry.id as Id<"meals"> });
@@ -191,11 +196,19 @@ export function CoachPage() {
       toast.success("Undone", `${entry.label} removed`);
     } catch (err) {
       toast.error("Couldn't undo", err instanceof Error ? err.message : "Try again");
+    } finally {
+      pendingUndoIdsRef.current.delete(entry.id);
+      setPendingUndoIds((prev) => {
+        const next = new Set(prev);
+        next.delete(entry.id);
+        return next;
+      });
     }
   }, [deleteMeal, deleteWorkout, toast]);
 
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
+    if (!Array.isArray(rawItems)) return [];
     return rawItems.flatMap((item: any) => {
       const id = item?.data?._id;
       if (!id || (item.type !== "meal" && item.type !== "workout")) return [];
@@ -337,7 +350,7 @@ export function CoachPage() {
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
-      <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
+      <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} date={localDateStr()} />
 
       {/* ── Mobile header ─────────────────────────────────────────── */}
       <div className="lg:hidden px-4 pt-1 pb-3 shrink-0 flex items-center gap-2.5 border-b border-ink/6 dark:border-white/6">
@@ -451,17 +464,17 @@ export function CoachPage() {
                       <button
                         key={entry.id}
                         type="button"
-                        disabled={entry.undone}
+                        disabled={entry.undone || pendingUndoIds.has(entry.id)}
                         onClick={() => undoAutoLog(m.id, entry)}
                         className={cn(
                           "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
-                          entry.undone
+                          entry.undone || pendingUndoIds.has(entry.id)
                             ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
                             : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
                         )}
                       >
                         <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
-                        {entry.undone ? `${entry.label} removed` : `Undo: ${entry.label}`}
+                        {entry.undone ? `${entry.label} removed` : pendingUndoIds.has(entry.id) ? `Undoing: ${entry.label}` : `Undo: ${entry.label}`}
                       </button>
                     ))}
                   </div>

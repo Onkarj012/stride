@@ -24,6 +24,7 @@ type Product = {
 type Props = {
   open: boolean;
   onClose: () => void;
+  date?: string;
 };
 
 function getNearDuplicateData(err: unknown): { message?: string } | null {
@@ -34,7 +35,7 @@ function getNearDuplicateData(err: unknown): { message?: string } | null {
   return payload.code === "NEAR_DUPLICATE" ? payload : null;
 }
 
-export function BarcodeModal({ open, onClose }: Props) {
+export function BarcodeModal({ open, onClose, date }: Props) {
   const [barcode, setBarcode] = useState("");
   const [grams, setGrams] = useState<number>(100);
   const [product, setProduct] = useState<Product | null>(null);
@@ -80,6 +81,7 @@ export function BarcodeModal({ open, onClose }: Props) {
         carbs: Math.round(product.carbsPer100g * ratio * 10) / 10,
         fat: Math.round(product.fatPer100g * ratio * 10) / 10,
         time,
+        date,
         confidence: product.verified ? 0.95 : 0.82,
         nutritionSource: product.source ? `barcode_${product.source}` : "barcode",
         nutritionVerified: !!product.verified,
