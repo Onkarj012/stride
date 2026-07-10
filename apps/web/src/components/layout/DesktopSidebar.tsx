@@ -146,7 +146,7 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const activeIndex = NAV.findIndex((n) => (n.to === "/" ? pathname === "/" : pathname.startsWith(n.to)));
-  const sessions = useQuery(api.chat.getSessions) ?? [];
+  const sessions = (useQuery(api.chat.getSessions) ?? []) as Array<{ id: string; title: string }>;
   const recentChats = sessions.slice(0, 5);
 
   return (

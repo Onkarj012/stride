@@ -2,11 +2,27 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { v } from "convex/values";
 import { applyDayAdjustment } from "./goals";
 import { internal } from "./_generated/api";
+import {
+  buildIdempotencyKey,
+  normalizeLogSource,
+  validateWorkoutWrite,
+  workoutTimeWindowKey,
+  workoutContentHash,
+} from "./validation";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
   return identity.subject;
+}
+
+async function findExistingWorkoutByIdempotencyKey(ctx: any, userId: string, date: string, idempotencyKey: string) {
+  return ctx.db
+    .query("workouts")
+    .withIndex("by_user_date_and_idempotency_key", (q: any) =>
+      q.eq("userId", userId).eq("date", date).eq("idempotencyKey", idempotencyKey),
+    )
+    .first();
 }
 
 export const getWorkouts = query({
@@ -48,34 +64,59 @@ export const addWorkout = mutation({
     calorieConfidence: v.optional(v.number()),
     calorieRangeLow: v.optional(v.number()),
     calorieRangeHigh: v.optional(v.number()),
+    calorieEstimateRough: v.optional(v.boolean()),
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
     structuredSets: v.optional(v.string()),
+    logSource: v.optional(v.string()),
+    timestamp: v.optional(v.string()),
+    idempotencyToken: v.optional(v.string()),
+    parseError: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
+    const validated = validateWorkoutWrite(args);
+    const logSource = normalizeLogSource(args.logSource, "manual");
+    const contentHash = workoutContentHash(validated);
+    const idempotencyKey = buildIdempotencyKey({
+      userId,
+      date,
+      source: logSource,
+      contentHash,
+      timeWindow: workoutTimeWindowKey({
+        date,
+        contentHash,
+        timestamp: args.timestamp,
+        idempotencyToken: args.idempotencyToken,
+      }),
+    });
+    const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, date, idempotencyKey);
+    if (existing) return existing._id;
     const id = await ctx.db.insert("workouts", {
       userId, date,
-      name: args.name, sets: args.sets, reps: args.reps, weight: args.weight,
-      duration: args.duration, intensity: args.intensity || "HIGH",
+      name: validated.name, sets: validated.sets, reps: args.reps, weight: args.weight,
+      duration: validated.duration, intensity: validated.intensity || "HIGH",
       exercises: args.exercises, rationale: args.rationale,
-      caloriesBurned: args.caloriesBurned,
-      calorieConfidence: args.calorieConfidence,
-      calorieRangeLow: args.calorieRangeLow,
-      calorieRangeHigh: args.calorieRangeHigh,
+      caloriesBurned: validated.caloriesBurned,
+      calorieConfidence: validated.calorieConfidence,
+      calorieRangeLow: validated.calorieRangeLow,
+      calorieRangeHigh: validated.calorieRangeHigh,
+      calorieEstimateRough: args.calorieEstimateRough,
       calorieBreakdown: args.calorieBreakdown,
       calculationVersion: args.calculationVersion,
       structuredSets: args.structuredSets,
+      logSource,
+      idempotencyKey,
     });
     await applyDayAdjustment(ctx, userId, date);
     const durationMin = args.duration ? parseFloat(args.duration) : undefined;
     await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
-      userId, name: args.name, date,
-      exercises: args.exercises ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
+      userId, name: validated.name, date,
+      exercises: Array.isArray(args.exercises) ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
       durationMin: isNaN(durationMin as number) ? undefined : durationMin,
-      intensity: args.intensity || undefined,
-      caloriesBurned: args.caloriesBurned,
+      intensity: validated.intensity || undefined,
+      caloriesBurned: validated.caloriesBurned,
     }).catch(() => {});
     return id;
   },
@@ -93,22 +134,38 @@ export const updateWorkout = mutation({
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
     caloriesBurned: v.optional(v.number()),
+    calorieConfidence: v.optional(v.number()),
+    calorieRangeLow: v.optional(v.number()),
+    calorieRangeHigh: v.optional(v.number()),
+    calorieEstimateRough: v.optional(v.boolean()),
+    calorieBreakdown: v.optional(v.string()),
+    calculationVersion: v.optional(v.number()),
+    structuredSets: v.optional(v.string()),
   },
   handler: async (ctx, { id, ...fields }) => {
+    const validated = validateWorkoutWrite(fields);
     const userId = await requireUserId(ctx);
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
-    await ctx.db.patch(id, {
-      name: fields.name,
-      sets: fields.sets,
+    const patch: any = {
+      name: validated.name,
+      sets: validated.sets,
       reps: fields.reps,
       weight: fields.weight,
-      duration: fields.duration,
-      intensity: fields.intensity,
+      duration: validated.duration,
+      intensity: validated.intensity,
       exercises: fields.exercises,
       rationale: fields.rationale,
-      caloriesBurned: fields.caloriesBurned,
-    });
+    };
+    if (fields.caloriesBurned !== undefined) patch.caloriesBurned = validated.caloriesBurned;
+    if (fields.calorieConfidence !== undefined) patch.calorieConfidence = validated.calorieConfidence;
+    if (fields.calorieRangeLow !== undefined) patch.calorieRangeLow = validated.calorieRangeLow;
+    if (fields.calorieRangeHigh !== undefined) patch.calorieRangeHigh = validated.calorieRangeHigh;
+    if (fields.calorieEstimateRough !== undefined) patch.calorieEstimateRough = fields.calorieEstimateRough;
+    if (fields.calorieBreakdown !== undefined) patch.calorieBreakdown = fields.calorieBreakdown;
+    if (fields.calculationVersion !== undefined) patch.calculationVersion = fields.calculationVersion;
+    if (fields.structuredSets !== undefined) patch.structuredSets = fields.structuredSets;
+    await ctx.db.patch(id, patch);
   },
 });
 
@@ -131,30 +188,61 @@ export const relogWorkout = mutation({
   args: {
     id: v.id("workouts"),
     date: v.optional(v.string()),
+    timestamp: v.optional(v.string()),
+    idempotencyToken: v.optional(v.string()),
   },
-  handler: async (ctx, { id, date }) => {
+  handler: async (ctx, { id, date, timestamp, idempotencyToken }) => {
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
     const targetDate = date ?? new Date().toISOString().split("T")[0];
-    return ctx.db.insert("workouts", {
-      userId,
-      date: targetDate,
+    const validated = validateWorkoutWrite({
       name: src.name,
       sets: src.sets,
-      reps: src.reps,
-      weight: src.weight,
       duration: src.duration,
       intensity: src.intensity,
-      exercises: src.exercises,
-      rationale: src.rationale,
       caloriesBurned: src.caloriesBurned,
       calorieConfidence: src.calorieConfidence,
       calorieRangeLow: src.calorieRangeLow,
       calorieRangeHigh: src.calorieRangeHigh,
+    });
+    const logSource = normalizeLogSource("relog", "relog");
+    const contentHash = workoutContentHash(validated);
+    const idempotencyKey = buildIdempotencyKey({
+      userId,
+      date: targetDate,
+      source: logSource,
+      contentHash,
+      timeWindow: workoutTimeWindowKey({
+        date: targetDate,
+        contentHash,
+        timestamp,
+        idempotencyToken,
+      }),
+    });
+    const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, targetDate, idempotencyKey);
+    if (existing) return existing._id;
+    return ctx.db.insert("workouts", {
+      userId,
+      date: targetDate,
+      name: validated.name,
+      sets: validated.sets,
+      reps: src.reps,
+      weight: src.weight,
+      duration: validated.duration,
+      intensity: validated.intensity,
+      exercises: src.exercises,
+      rationale: src.rationale,
+      caloriesBurned: validated.caloriesBurned,
+      calorieConfidence: validated.calorieConfidence,
+      calorieRangeLow: validated.calorieRangeLow,
+      calorieRangeHigh: validated.calorieRangeHigh,
+      calorieEstimateRough: src.calorieEstimateRough,
       calorieBreakdown: src.calorieBreakdown,
       calculationVersion: src.calculationVersion,
       structuredSets: src.structuredSets,
+      logSource,
+      idempotencyKey,
     });
   },
 });
@@ -216,31 +304,55 @@ export const addWorkoutFromAI = internalMutation({
     calorieConfidence: v.optional(v.number()),
     calorieRangeLow: v.optional(v.number()),
     calorieRangeHigh: v.optional(v.number()),
+    calorieEstimateRough: v.optional(v.boolean()),
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
     structuredSets: v.optional(v.string()),
+    logSource: v.optional(v.string()),
+    timestamp: v.optional(v.string()),
+    idempotencyToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const validated = validateWorkoutWrite(args);
+    const logSource = normalizeLogSource(args.logSource, "ai");
+    const contentHash = workoutContentHash(validated);
+    const idempotencyKey = buildIdempotencyKey({
+      userId: args.userId,
+      date: args.date,
+      source: logSource,
+      contentHash,
+      timeWindow: workoutTimeWindowKey({
+        date: args.date,
+        contentHash,
+        timestamp: args.timestamp,
+        idempotencyToken: args.idempotencyToken,
+      }),
+    });
+    const existing = await findExistingWorkoutByIdempotencyKey(ctx, args.userId, args.date, idempotencyKey);
+    if (existing) return existing._id;
     const id = await ctx.db.insert("workouts", {
       userId: args.userId, date: args.date,
-      name: args.name, sets: args.sets, duration: args.duration,
-      intensity: args.intensity || "HIGH",
+      name: validated.name, sets: validated.sets, duration: validated.duration,
+      intensity: validated.intensity || "HIGH",
       exercises: args.exercises, rationale: args.rationale,
-      caloriesBurned: args.caloriesBurned,
-      calorieConfidence: args.calorieConfidence,
-      calorieRangeLow: args.calorieRangeLow,
-      calorieRangeHigh: args.calorieRangeHigh,
+      caloriesBurned: validated.caloriesBurned,
+      calorieConfidence: validated.calorieConfidence,
+      calorieRangeLow: validated.calorieRangeLow,
+      calorieRangeHigh: validated.calorieRangeHigh,
+      calorieEstimateRough: args.calorieEstimateRough,
       calorieBreakdown: args.calorieBreakdown,
       calculationVersion: args.calculationVersion,
       structuredSets: args.structuredSets,
+      logSource,
+      idempotencyKey,
     });
     const durationMin = args.duration ? parseFloat(args.duration) : undefined;
     await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
-      userId: args.userId, name: args.name, date: args.date,
-      exercises: args.exercises ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
+      userId: args.userId, name: validated.name, date: args.date,
+      exercises: Array.isArray(args.exercises) ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
       durationMin: isNaN(durationMin as number) ? undefined : durationMin,
-      intensity: args.intensity || undefined,
-      caloriesBurned: args.caloriesBurned,
+      intensity: validated.intensity || undefined,
+      caloriesBurned: validated.caloriesBurned,
     }).catch(() => {});
     return id;
   },

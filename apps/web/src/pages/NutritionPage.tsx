@@ -80,7 +80,7 @@ function AddSheet({ onClose, onPick }: { onClose: () => void; onPick: () => void
 export function NutritionPage() {
   const navigate = useNavigate();
   const today = localDateStr();
-  const meals = useQuery(api.meals.getMeals, { date: today }) ?? [];
+  const meals = (useQuery(api.meals.getMeals, { date: today }) ?? []) as any[];
   const profile = useQuery(api.profile.getProfile);
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const toast = useToast();
@@ -98,7 +98,6 @@ export function NutritionPage() {
   const kcalTarget = profile?.calorieTarget ?? 2000;
   const proteinTarget = profile?.proteinTarget ?? 90;
   const carbTarget = 200;
-  const fatTarget = 65;
 
   const kcalPct = kcalTarget > 0 ? (kcal / kcalTarget) * 100 : 0;
   const groups = groupByTime(meals as any);

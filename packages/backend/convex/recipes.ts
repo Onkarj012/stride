@@ -6,6 +6,13 @@ import {
   type ItemBreakdown,
   type NutritionResult,
 } from "./nutrition_engine";
+import {
+  buildIdempotencyKey,
+  mealContentHash,
+  normalizeLogSource,
+  timeWindowKey,
+  validateMealWrite,
+} from "./validation";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -192,22 +199,59 @@ export const logRecipe = mutation({
       ? `${ingredientList} — ${trimmedNote}`
       : ingredientList;
     const scale = portions / recipe.servings;
-    const breakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
-
-    return ctx.db.insert("meals", {
-      userId,
-      date: date ?? new Date().toISOString().split("T")[0],
+    const rawBreakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
+    const targetDate = date ?? new Date().toISOString().split("T")[0];
+    const targetTime = time ?? new Date().toISOString().slice(11, 16);
+    const validated = validateMealWrite({
       name: recipe.name,
       calories: Math.round(ps.kcal * portions),
       protein: r1(ps.p * portions),
       carbs: r1(ps.c * portions),
       fat: r1(ps.f * portions),
-      time: time ?? new Date().toISOString().slice(11, 16),
-      mealType: "unspecified",
+      time: targetTime,
+      confidence: rawBreakdown.confidence,
       nutritionSource: "recipe",
+    });
+    const breakdown = {
+      ...rawBreakdown,
+      calories_kcal: validated.calories,
+      protein_g: validated.protein,
+      carbs_g: validated.carbs,
+      fat_g: validated.fat,
+    };
+    const logSource = normalizeLogSource("recipe", "recipe");
+    const idempotencyKey = buildIdempotencyKey({
+      userId,
+      date: targetDate,
+      source: logSource,
+      contentHash: mealContentHash(validated),
+      timeWindow: timeWindowKey(targetTime),
+    });
+    const existing = await ctx.db
+      .query("meals")
+      .withIndex("by_user_date_and_idempotency_key", (q) =>
+        q.eq("userId", userId).eq("date", targetDate).eq("idempotencyKey", idempotencyKey),
+      )
+      .first();
+    if (existing) return existing._id;
+
+    return ctx.db.insert("meals", {
+      userId,
+      date: targetDate,
+      name: validated.name,
+      calories: validated.calories,
+      protein: validated.protein,
+      carbs: validated.carbs,
+      fat: validated.fat,
+      time: validated.time,
+      mealType: "unspecified",
+      confidence: validated.confidence,
+      nutritionSource: validated.nutritionSource,
       components,
       structuredItems: JSON.stringify(breakdown.items),
       ingredientBreakdown: JSON.stringify(breakdown),
+      logSource,
+      idempotencyKey,
     });
   },
 });

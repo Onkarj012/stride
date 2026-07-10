@@ -106,8 +106,8 @@ export async function callAI(messages: AIMessage[], maxTokens = 500, model?: str
   throw lastError || new Error("OpenRouter failed after maximum retries");
 }
 
-/** Extract and parse the first JSON object/array from LLM text, or fallback. */
-export function parseJSON<T>(text: string, fallback: T): T {
+/** Extract and parse the first JSON object/array from LLM text, or null. */
+export function tryParseJSON<T>(text: string): T | null {
   const objIdx = text.indexOf("{");
   const arrIdx = text.indexOf("[");
   const start =
@@ -116,7 +116,7 @@ export function parseJSON<T>(text: string, fallback: T): T {
     Math.min(objIdx, arrIdx);
 
   if (start === -1) {
-    try { return JSON.parse(text) as T; } catch { return fallback; }
+    try { return JSON.parse(text) as T; } catch { return null; }
   }
 
   const open = text[start];
@@ -138,9 +138,16 @@ export function parseJSON<T>(text: string, fallback: T): T {
     else if (ch === close) {
       depth--;
       if (depth === 0) {
-        try { return JSON.parse(text.slice(start, i + 1)) as T; } catch { return fallback; }
+        try { return JSON.parse(text.slice(start, i + 1)) as T; } catch { return null; }
       }
     }
   }
-  return fallback;
+  return null;
+}
+
+/** Extract and parse the first JSON object/array from LLM text, or fallback. */
+export function parseJSON<T>(text: string, fallback: T): T {
+  const parsed = tryParseJSON<T>(text);
+  if (parsed == null) return fallback;
+  return parsed;
 }

@@ -4,6 +4,7 @@ import {
   looksLikeFoodEstimate,
   extractUserMacros,
   applyUserMacros,
+  isNegatedLogItem,
 } from "./intent";
 
 describe("looksLikeLog", () => {
@@ -45,6 +46,29 @@ describe("looksLikeFoodEstimate", () => {
   test("requires both a food word and an estimate cue", () => {
     expect(looksLikeFoodEstimate("how many calories did I burn?")).toBe(false); // no food word
     expect(looksLikeFoodEstimate("I love chicken")).toBe(false); // no estimate cue
+  });
+});
+
+describe("isNegatedLogItem", () => {
+  test("does not drop a meal after a negated cooking clause", () => {
+    expect(isNegatedLogItem("Didn't feel like cooking so I ate a burger", {
+      type: "meal",
+      description: "burger",
+    })).toBe(false);
+  });
+
+  test("does not drop steps after a negated gym clause", () => {
+    expect(isNegatedLogItem("No gym today but I walked 8000 steps", {
+      type: "steps",
+      description: "8000 steps",
+    })).toBe(false);
+  });
+
+  test("drops a workout negated in the same clause", () => {
+    expect(isNegatedLogItem("I haven't worked out today", {
+      type: "workout",
+      description: "worked out",
+    })).toBe(true);
   });
 });
 

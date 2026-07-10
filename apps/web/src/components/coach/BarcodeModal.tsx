@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Barcode, X, Check, Loader2 } from "lucide-react";
 import { useAction, useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
@@ -16,14 +17,25 @@ type Product = {
   servingSize?: number;
   servingUnit?: string;
   imageUrl?: string;
+  source?: string;
+  verified?: boolean;
 };
 
 type Props = {
   open: boolean;
   onClose: () => void;
+  date?: string;
 };
 
-export function BarcodeModal({ open, onClose }: Props) {
+function getNearDuplicateData(err: unknown): { message?: string } | null {
+  if (!(err instanceof ConvexError)) return null;
+  const data = err.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const payload = data as { code?: string; message?: string };
+  return payload.code === "NEAR_DUPLICATE" ? payload : null;
+}
+
+export function BarcodeModal({ open, onClose, date }: Props) {
   const [barcode, setBarcode] = useState("");
   const [grams, setGrams] = useState<number>(100);
   const [product, setProduct] = useState<Product | null>(null);
@@ -62,14 +74,63 @@ export function BarcodeModal({ open, onClose }: Props) {
     const ratio = grams / 100;
     const time = new Date().toTimeString().slice(0, 5);
     try {
-      await addMeal({
+      const payload = {
         name: product.brand ? `${product.brand} ${product.name}` : product.name,
         calories: Math.round(product.caloriesPer100g * ratio),
         protein: Math.round(product.proteinPer100g * ratio * 10) / 10,
         carbs: Math.round(product.carbsPer100g * ratio * 10) / 10,
         fat: Math.round(product.fatPer100g * ratio * 10) / 10,
         time,
-      });
+        date,
+        confidence: product.verified ? 0.95 : 0.82,
+        nutritionSource: product.source ? `barcode_${product.source}` : "barcode",
+        nutritionVerified: !!product.verified,
+        logSource: "barcode",
+        components: product.name,
+        structuredItems: JSON.stringify([{
+          food_text: product.name,
+          matched_food_name: product.name,
+          grams,
+          calories_kcal: Math.round(product.caloriesPer100g * ratio),
+          protein_g: Math.round(product.proteinPer100g * ratio * 10) / 10,
+          carbs_g: Math.round(product.carbsPer100g * ratio * 10) / 10,
+          fat_g: Math.round(product.fatPer100g * ratio * 10) / 10,
+          source: product.source ?? "barcode",
+          verified: product.verified,
+          confidence: product.verified ? 0.95 : 0.82,
+        }]),
+        ingredientBreakdown: JSON.stringify({
+          calories_kcal: Math.round(product.caloriesPer100g * ratio),
+          protein_g: Math.round(product.proteinPer100g * ratio * 10) / 10,
+          carbs_g: Math.round(product.carbsPer100g * ratio * 10) / 10,
+          fat_g: Math.round(product.fatPer100g * ratio * 10) / 10,
+          confidence: product.verified ? 0.95 : 0.82,
+          items: [{
+            food_text: product.name,
+            matched_food_name: product.name,
+            grams,
+            calories_kcal: Math.round(product.caloriesPer100g * ratio),
+            protein_g: Math.round(product.proteinPer100g * ratio * 10) / 10,
+            carbs_g: Math.round(product.carbsPer100g * ratio * 10) / 10,
+            fat_g: Math.round(product.fatPer100g * ratio * 10) / 10,
+            source: product.source ?? "barcode",
+            verified: product.verified,
+            confidence: product.verified ? 0.95 : 0.82,
+          }],
+          unresolved: [],
+        }),
+      };
+      try {
+        await addMeal(payload);
+      } catch (err) {
+        const duplicate = getNearDuplicateData(err);
+        if (!duplicate) throw err;
+        if (!window.confirm(duplicate.message ?? "Looks like you already logged this — log anyway?")) {
+          reset(); onClose();
+          return;
+        }
+        await addMeal({ ...payload, allowDuplicate: true });
+      }
       toast.success("Logged via barcode", `${product.name} · ${grams}g`);
       reset(); onClose();
     } catch (err) {
@@ -138,6 +199,14 @@ export function BarcodeModal({ open, onClose }: Props) {
                       <p className="text-[14px] font-bold text-text">{product.name}</p>
                       <p className="text-[12px] text-text-muted mt-0.5">
                         Per 100g: {product.caloriesPer100g}kcal · {product.proteinPer100g}p · {product.carbsPer100g}c · {product.fatPer100g}f
+                      </p>
+                      <p className="mt-1 flex flex-wrap gap-1.5 text-[10.5px] font-bold uppercase tracking-wide text-text-subtle">
+                        <span className="rounded-full bg-card-elev border border-border px-2 py-0.5">
+                          {product.source === "off" ? "Open Food Facts" : product.source === "usda" ? "USDA" : product.source ?? "Barcode"}
+                        </span>
+                        {product.verified && (
+                          <span className="rounded-full bg-mint-soft text-mint px-2 py-0.5">Verified</span>
+                        )}
                       </p>
                     </div>
                   </div>

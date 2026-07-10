@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Check, X, Pencil, Flame, Dumbbell, Footprints, Zap, Moon, Droplets, Smile, Activity } from "lucide-react";
 import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
@@ -49,6 +49,21 @@ function formatExerciseSet(set: Record<string, unknown>, unit?: string) {
     ? `${set.reps} reps`
     : "";
   return reps ? `${weight} × ${reps}` : weight;
+}
+
+function formatNutritionSource(source?: string) {
+  if (!source) return "Manual";
+  const normalized = source.toLowerCase();
+  if (normalized === "database") return "DB matched";
+  if (normalized === "mixed") return "DB + AI";
+  if (normalized === "ai" || normalized === "ai_estimated") return "AI-estimated";
+  if (normalized === "memory") return "Memory";
+  if (normalized === "recipe") return "Recipe";
+  if (normalized.includes("off")) return "Open Food Facts";
+  if (normalized.includes("usda")) return "USDA";
+  if (normalized.includes("barcode")) return "Barcode";
+  if (normalized === "parse_error") return "Needs edit";
+  return source.replace(/_/g, " ");
 }
 
 /* ── Editable number field ── */
@@ -178,8 +193,15 @@ function MealCard({
           <span className="text-[10.5px] text-text-muted whitespace-nowrap">
             {Math.round((draft as any).confidence * 100)}% confidence
             {(draft as any).nutritionSource && (
-              <> · <span className="capitalize">{(draft as any).nutritionSource === "database" ? "USDA data" : (draft as any).nutritionSource === "mixed" ? "DB + AI" : "AI estimate"}</span></>
+              <> · <span className="capitalize">{formatNutritionSource((draft as any).nutritionSource)}</span></>
             )}
+          </span>
+        </div>
+      )}
+      {breakdownItems.some((item) => item.verified) && (
+        <div className="px-1">
+          <span className="inline-flex rounded-full bg-mint-soft px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-mint">
+            Verified food data
           </span>
         </div>
       )}
@@ -238,7 +260,19 @@ function WorkoutCard({
       <div className="flex items-center gap-3 px-1">
         <div className="flex items-center gap-1.5">
           <Zap className={cn("h-4 w-4", INTENSITY_COLOR[draft.intensity])} strokeWidth={2} />
-          <span className="text-[13px] font-semibold text-text capitalize">{draft.intensity} intensity</span>
+          {editing ? (
+            <select
+              value={draft.intensity}
+              onChange={(e) => onChange({ ...draft, intensity: e.target.value as WorkoutDraft["intensity"] })}
+              className="rounded-lg bg-input border border-border px-2 py-1 text-[12px] font-bold text-text focus:outline-none focus:border-lavender"
+            >
+              <option value="light">light</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+            </select>
+          ) : (
+            <span className="text-[13px] font-semibold text-text capitalize">{draft.intensity} intensity</span>
+          )}
         </div>
         {draft.distance != null && (
           <>
@@ -300,7 +334,7 @@ function WorkoutCard({
             />
           </div>
           <span className="text-[10.5px] text-text-muted whitespace-nowrap">
-            {Math.round((draft as any).calorieResult.confidence * 100)}% · range {(draft as any).calorieResult.range_low}–{(draft as any).calorieResult.range_high} kcal
+            ~{(draft as any).calorieResult.range_low}-{(draft as any).calorieResult.range_high} kcal, rough · {Math.round((draft as any).calorieResult.confidence * 100)}%
           </span>
         </div>
       )}
@@ -379,11 +413,13 @@ function StepsCard({ draft, editing, onChange }: { draft: StepsDraft; editing: b
 export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Props) {
   const [draft, setDraft] = useState<AnyDraft>(initialDraft);
   const [editing, setEditing] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
+
+  useEffect(() => {
+    setDraft(initialDraft);
+  }, [initialDraft]);
 
   function handleConfirm() {
-    setConfirmed(true);
-    setTimeout(() => onConfirm(draft), 350);
+    onConfirm(draft);
   }
 
   // Header config per draft kind
@@ -401,7 +437,7 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
   return (
     <motion.div
       initial={{ opacity: 0, y: 8, scale: 0.97 }}
-      animate={{ opacity: confirmed ? 0 : 1, y: confirmed ? -8 : 0, scale: confirmed ? 0.96 : 1 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={SPRING}
       className="rounded-[20px] rounded-bl-[6px] bg-card border border-border overflow-hidden shadow-[var(--shadow-elev)] w-full max-w-md"
     >
@@ -421,6 +457,11 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
 
       {/* Body */}
       <div className="px-4 py-4">
+        {((draft as any).parseError || (draft as any).error) && (
+          <div className="mb-3 rounded-xl border border-peach/30 bg-peach-soft px-3 py-2 text-[12px] font-semibold text-text">
+            {(draft as any).error || (draft as any).parseError}
+          </div>
+        )}
         {draft.kind === "meal" && <MealCard draft={draft as MealDraft} editing={editing} onChange={(d) => setDraft(d)} />}
         {draft.kind === "workout" && <WorkoutCard draft={draft as WorkoutDraft} editing={editing} onChange={(d) => setDraft(d)} />}
         {draft.kind === "sleep" && <SleepCard draft={draft as SleepDraft} editing={editing} onChange={(d) => setDraft(d)} />}
@@ -431,13 +472,24 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
 
       {/* Actions */}
       <div className="flex items-center gap-2 px-4 pb-4">
+        {draft.kind === "workout" && (draft as any).calorieResult && (
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            type="button"
+            onClick={() => setEditing(true)}
+            className="inline-flex items-center justify-center rounded-full border border-lavender/25 bg-lavender-soft px-3 py-2.5 text-[12px] font-bold text-text"
+          >
+            Refine
+          </motion.button>
+        )}
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={handleConfirm}
+          disabled={(draft as any).submitting}
           className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink py-2.5 text-[13px] font-bold"
         >
           <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-          Confirm
+          {(draft as any).submitting ? "Logging..." : (draft as any).allowDuplicate ? "Log anyway" : "Confirm"}
         </motion.button>
         <motion.button
           whileTap={{ scale: 0.95 }}
