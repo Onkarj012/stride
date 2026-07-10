@@ -1,7 +1,8 @@
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import schema from "./schema";
 import { api } from "./_generated/api";
+import { callAI } from "./ai/llm";
 import {
   chooseCheckInCandidate,
   isCovered,
@@ -10,6 +11,13 @@ import {
   type CheckInCandidate,
   type SelectionContext,
 } from "./checkins";
+
+vi.mock("./ai/llm", async () => {
+  const actual = await vi.importActual<typeof import("./ai/llm")>("./ai/llm");
+  return { ...actual, callAI: vi.fn() };
+});
+
+const mockedCallAI = vi.mocked(callAI);
 
 const modules = (import.meta as ImportMeta & {
   glob: (pattern: string) => Record<string, () => Promise<any>>;
@@ -28,6 +36,42 @@ const BASE_CONTEXT: SelectionContext = {
 };
 
 describe("check-in selection", () => {
+  beforeEach(() => {
+    mockedCallAI.mockReset();
+  });
+
+  test("regenerates an empty daily LLM cache instead of treating it as complete", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    await t.run(async (ctx) => {
+      await ctx.db.insert("check_in_llm_questions", {
+        userId: "user1",
+        date: "2026-07-07",
+        questions: "[]",
+        generatedAt: Date.now(),
+      });
+    });
+    mockedCallAI.mockResolvedValue(JSON.stringify([{
+      id: "recovery",
+      window: "morning",
+      title: "How is recovery feeling?",
+      options: [{ label: "Great", value: "great" }, { label: "Low", value: "low" }],
+    }]));
+
+    const result = await asUser.action(api.checkins.ensureDailyLlmQuestions, {
+      date: "2026-07-07",
+      window: "morning",
+    });
+
+    expect(result).toMatchObject({ ok: true, cached: false, count: 1 });
+    expect(mockedCallAI).toHaveBeenCalledTimes(1);
+    const cache = await t.run(async (ctx) => ctx.db
+      .query("check_in_llm_questions")
+      .withIndex("by_user_date", (q) => q.eq("userId", "user1").eq("date", "2026-07-07"))
+      .first());
+    expect(JSON.parse(cache!.questions)).toHaveLength(1);
+  });
+
   test("uses check_in_answers and the same date key for dedupe", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });

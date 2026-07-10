@@ -1060,7 +1060,8 @@ export const ensureDailyLlmQuestions = action({
     assertDate(date);
     const userId = await requireUserId(ctx);
     const existing: Doc<"check_in_llm_questions"> | null = await ctx.runQuery(internal.checkins.getLlmQuestionCache, { userId, date });
-    if (existing) return { ok: true, cached: true, count: parseLlmCache(existing, window ?? "day").length };
+    const cachedQuestions = parseLlmCache(existing, window ?? "day");
+    if (cachedQuestions.length > 0) return { ok: true, cached: true, count: cachedQuestions.length };
 
     const [settings, daily]: [any, DailyLlmContext] = await Promise.all([
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
@@ -1099,6 +1100,9 @@ ${JSON.stringify(daily)}`;
         body: candidate.body,
         options: (candidate.options ?? []).slice(0, 3),
       }));
+      if (sanitized.length === 0) {
+        return { ok: false, cached: false, count: 0, error: "LLM returned no usable check-in questions" };
+      }
       await ctx.runMutation(internal.checkins.saveDailyLlmQuestions, { userId, date, questions: sanitized });
       return { ok: true, cached: false, count: sanitized.length };
     } catch (error) {

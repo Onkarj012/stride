@@ -72,7 +72,6 @@ function filterInitialCheckIns(actions: AgentAction[], date: string): AgentActio
     const key = `stride_checkin_shown:${date}:${action.id}`;
     try {
       if (sessionStorage.getItem(key)) return false;
-      sessionStorage.setItem(key, "1");
     } catch {}
     return true;
   });
@@ -114,6 +113,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const [agentActions, setAgentActions] = useState<AgentAction[]>(() => filterInitialCheckIns(effectiveInitialActions, today));
   const [answerInputs, setAnswerInputs] = useState<Record<string, string>>({});
+  const [savingCheckInId, setSavingCheckInId] = useState<string | null>(null);
 
   // Sync initialActions when getTodayBrief/getNextCheckIn loads (it arrives async after first render)
   const prevInitialRef = useRef<AgentAction[]>(effectiveInitialActions);
@@ -392,6 +392,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     label?: string,
     skipped = false,
   ) => {
+    if (savingCheckInId === action.id) return;
+    setSavingCheckInId(action.id);
     const answerType = action.answerType ?? "choice";
     const numericValue = answerType === "number" || answerType === "scale" ? numericValueForAnswer(value) : undefined;
     const booleanValue = answerType === "yes_no" ? value === "yes" : undefined;
@@ -410,10 +412,16 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         skipped,
         time: new Date().toTimeString().slice(0, 5),
       });
+      try {
+        sessionStorage.setItem(`stride_checkin_shown:${today}:${action.id}`, "1");
+      } catch {}
+      setAgentActions((actions) => actions.filter((candidate) => candidate !== action));
     } catch (err) {
       toast.error("Couldn't save check-in", err instanceof Error ? err.message : "Try again");
+    } finally {
+      setSavingCheckInId(null);
     }
-  }, [dailyWindow, submitCheckInAnswer, today, toast]);
+  }, [dailyWindow, savingCheckInId, submitCheckInAnswer, today, toast]);
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
     if (button.value === "confirm_log" && pendingDrafts[0]) {
@@ -428,7 +436,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     if (action?.type === "quick_question") {
       const skipped = button.value === "skip";
       void submitQuickQuestionAnswer(action, button.value, button.label, skipped);
-      setAgentActions([]);
       if (!skipped && button.prompt) void send(button.prompt);
       return;
     }
@@ -474,9 +481,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   ];
 
   // Inline action button — themed to design system
-  const Btn = ({ label, onClick }: { label: string; onClick: () => void }) => (
-    <button type="button" onClick={onClick}
-      className="inline-flex items-center rounded-full bg-lavender-soft hover:bg-lavender/25 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
+  const Btn = ({ label, onClick, disabled = false }: { label: string; onClick: () => void; disabled?: boolean }) => (
+    <button type="button" onClick={onClick} disabled={disabled}
+      className="inline-flex items-center rounded-full bg-lavender-soft hover:bg-lavender/25 disabled:opacity-50 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
       {label}
     </button>
   );
@@ -541,6 +548,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
     // quick_question — lavender tinted
     if (action.answerType === "number") {
+      const saving = savingCheckInId === action.id;
       const value = answerInputs[action.id] ?? "";
       const parsed = Number(value);
       const valid = value.trim() !== "" && Number.isFinite(parsed)
@@ -568,33 +576,28 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             </div>
             <button
               type="button"
-              disabled={!valid}
+              disabled={!valid || saving}
               onClick={() => {
                 if (!valid) return;
                 const label = action.unit ? `${parsed} ${action.unit}` : String(parsed);
                 void submitQuickQuestionAnswer(action, String(parsed), label, false);
-                setAnswerInputs((prev) => {
-                  const next = { ...prev };
-                  delete next[action.id];
-                  return next;
-                });
-                setAgentActions([]);
               }}
               className="inline-flex items-center rounded-full bg-lavender hover:bg-lavender/80 disabled:opacity-50 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-ink transition-colors"
             >
               Save
             </button>
-            {skip && <Btn label={skip.label} onClick={() => handleActionButton(skip, action)} />}
+            {skip && <Btn label={skip.label} disabled={saving} onClick={() => handleActionButton(skip, action)} />}
           </div>
         </div>
       );
     }
+    const saving = savingCheckInId === action.id;
     return (
       <div className="rounded-2xl border border-lavender/20 bg-lavender-soft px-3.5 py-3 space-y-2.5">
         <p className="text-[13.5px] font-semibold text-text">{action.title}</p>
         {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
         <div className="flex flex-wrap gap-2">
-          {action.options.map((b) => <Btn key={b.value} label={b.label} onClick={() => handleActionButton(b, action)} />)}
+          {action.options.map((b) => <Btn key={b.value} label={b.label} disabled={saving} onClick={() => handleActionButton(b, action)} />)}
         </div>
       </div>
     );
