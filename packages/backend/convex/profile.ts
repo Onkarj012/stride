@@ -325,7 +325,7 @@ const planArgs = {
   goal: v.optional(v.string()),
 };
 
-function toPlanInput(a: any): PlanInput {
+export function toPlanInput(a: any): PlanInput {
   return {
     weightKg: a.weightKg,
     heightCm: a.heightCm,

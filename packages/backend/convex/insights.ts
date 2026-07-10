@@ -1,6 +1,7 @@
 import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
+import { resolvePlanForDayAdjustment } from "./plan_resolve";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -173,7 +174,7 @@ export const getTodayBrief = query({
     let plan: NutritionPlan | null = null;
     try {
       const p = profile?.planBreakdown ? JSON.parse(profile.planBreakdown) : null;
-      if (p && typeof p.plannedDailyEAT === "number") plan = p as NutritionPlan;
+      if (p && typeof p.plannedDailyEAT === "number") plan = resolvePlanForDayAdjustment(p as NutritionPlan, profile ?? {});
     } catch { /* no plan */ }
     const todayBurn = todayWorkouts.reduce((s, w) => s + (w.caloriesBurned ?? 0), 0);
     const dayAdj = plan ? adjustCaloriesForDay(plan, todayBurn) : null;
