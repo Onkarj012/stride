@@ -150,7 +150,7 @@ export function calculateTDEE(input: PlanInput): TdeeBreakdown {
     (s, w) => s + Math.max(0, w.durationMin ?? 0) * Math.max(0, w.sessionsPerWeek ?? 0),
     0,
   );
-  // Sum sessions across entries that actually contribute burn; cap at 7 days/week.
+  // There is no per-day schedule, so assume active sessions fall on separate days; cap at 7 days/week.
   // Exclude zero-duration / zero-session placeholder rows so they don't dilute the per-day average.
   const activeWorkouts = weeklyWorkouts.filter(
     (w) => Math.max(0, w.durationMin ?? 0) * Math.max(0, w.sessionsPerWeek ?? 0) > 0,

@@ -60,7 +60,20 @@ describe("calculateTDEE", () => {
     expect(t.plannedEatPerTrainingDay).toBe(373);
   });
 
-  test("sums sessions across distinct workout types, capped at 7 days/week", () => {
+  test("sums sessions across workout types scheduled on different days", () => {
+    const t = calculateTDEE({
+      ...EXAMPLE,
+      weeklyWorkouts: [
+        { type: "strength", durationMin: 60, sessionsPerWeek: 3 },
+        { type: "run_slow", durationMin: 45, sessionsPerWeek: 2 },
+      ],
+    });
+    // weeklyEat = 5*80*1*3 + 8*80*0.75*2 = 2160; 5 training days
+    expect(t.plannedDailyEAT).toBe(309);
+    expect(t.plannedEatPerTrainingDay).toBe(432);
+  });
+
+  test("uses the capped session sum when workout rows may overlap", () => {
     const t = calculateTDEE({
       ...EXAMPLE,
       weeklyWorkouts: [
@@ -68,7 +81,7 @@ describe("calculateTDEE", () => {
         { type: "run_slow", durationMin: 45, sessionsPerWeek: 4 },
       ],
     });
-    // weeklyEat = 5*80*1*4 + 8*80*0.75*4 = 3520; 8 sessions capped to 7 days
+    // The model has no weekday schedule, so 8 active sessions use the 7-day cap.
     expect(t.plannedDailyEAT).toBe(503);
     expect(t.plannedEatPerTrainingDay).toBe(503);
   });
