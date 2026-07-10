@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useSignIn, useSignUp } from "@clerk/react";
 import { Eye, EyeOff, Loader2, Mail, Lock, User, KeyRound } from "lucide-react";
@@ -342,7 +342,6 @@ export function SignInPage() {
 /* ── Sign Up ── */
 export function SignUpPage() {
   const { signUp } = useSignUp();
-  const navigate = useNavigate();
   const [step, setStep] = useState<"form" | "verify">("form");
   const [firstName, setFirstName] = useState("");
   const [email, setEmail] = useState("");

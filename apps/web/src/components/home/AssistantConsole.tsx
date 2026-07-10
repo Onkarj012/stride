@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { X, Barcode, ImagePlus, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
@@ -82,11 +83,55 @@ function numericValueForAnswer(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function getNearDuplicateData(err: unknown): { message?: string } | null {
+  if (!(err instanceof ConvexError)) return null;
+  const data = err.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const payload = data as { code?: string; message?: string };
+  return payload.code === "NEAR_DUPLICATE" ? payload : null;
+}
+
 function modalityForContent(content: string): { modality?: Modality; chip?: string } {
   const fileMatch = content.match(/^\[File: ([^\]]+)\]/);
   if (fileMatch) return { modality: "ocr", chip: fileMatch[1] };
   if (content === "[image]" || content === "Photo of meal") return { modality: "photo", chip: "Attached image" };
   return {};
+}
+
+function hashDraftSeed(seed: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function draftClientId(draft: any, index = 0): string {
+  const existing = draft?._clientId;
+  if (typeof existing === "string" && existing.trim()) return existing;
+  const seed = JSON.stringify({
+    kind: draft?.kind,
+    date: draft?.date,
+    description: draft?.description,
+    name: draft?.name,
+    kcal: draft?.kcal,
+    index,
+  });
+  return `draft-${hashDraftSeed(seed)}-${index}`;
+}
+
+function normalizeDraft(draft: any, index = 0): any | null {
+  if (!draft || typeof draft !== "object" || Array.isArray(draft)) return null;
+  return { ...draft, _clientId: draftClientId(draft, index) };
+}
+
+function normalizeDrafts(drafts: unknown): any[] {
+  if (!Array.isArray(drafts)) return [];
+  return drafts.flatMap((draft, index) => {
+    const normalized = normalizeDraft(draft, index);
+    return normalized ? [normalized] : [];
+  });
 }
 
 export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, presenceLine, initialActions = [] }: AssistantConsoleProps) {
@@ -127,11 +172,15 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   // ConfirmModal queue — persisted in sessionStorage so navigation doesn't lose pending cards
   const [pendingDrafts, setPendingDraftsRaw] = useState<any[]>(() => {
-    try { return JSON.parse(sessionStorage.getItem("stride_pending_drafts") ?? "[]"); } catch { return []; }
+    try {
+      const normalized = normalizeDrafts(JSON.parse(sessionStorage.getItem("stride_pending_drafts") ?? "[]"));
+      sessionStorage.setItem("stride_pending_drafts", JSON.stringify(normalized));
+      return normalized;
+    } catch { return []; }
   });
   const setPendingDrafts = useCallback((updater: any[] | ((prev: any[]) => any[])) => {
     setPendingDraftsRaw((prev) => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
+      const next = normalizeDrafts(typeof updater === "function" ? updater(prev) : updater);
       try { sessionStorage.setItem("stride_pending_drafts", JSON.stringify(next)); } catch {}
       return next;
     });
@@ -265,18 +314,28 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   /* ── Confirm draft → actually log ── */
   const handleConfirm = useCallback(async (draft: any) => {
-    setPendingDrafts((prev) => prev.filter((d) => d !== draft));
+    const normalizedDraft = normalizeDraft(draft);
+    if (!normalizedDraft) return;
+    const draftKey = normalizedDraft._clientId;
+    const matchesDraft = (candidate: any) => candidate?._clientId === draftKey;
+    setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? { ...d, ...normalizedDraft, submitting: true, error: undefined } : d));
     const time = new Date().toTimeString().slice(0, 5);
     const today = localDateStr();
     const tier2 = pendingTier2Ref.current;
 
     try {
-      const d = draft as any;
+      const d = normalizedDraft as any;
       const date = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : today;
       const isPastDay = date !== today;
       const dateNote = isPastDay ? ` for ${date}` : "";
 
       if (d.kind === "meal") {
+        const isUnparsed = d.parseError && d.kcal === 0 && d.protein === 0 && d.carbs === 0 && d.fat === 0;
+        if (isUnparsed) {
+          toast.error("Couldn't parse meal", "Please edit the meal details before confirming.");
+          setPendingDrafts((prev) => prev.map((item) => matchesDraft(item) ? { ...item, ...normalizedDraft, submitting: false } : item));
+          return;
+        }
         const ingredientBreakdown = d.ingredientBreakdown ?? null;
         await addMeal({
           name: d.description,
@@ -293,8 +352,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           foodMemoryId: d.foodMemoryId,
           structuredItems: ingredientBreakdown?.items ? JSON.stringify(ingredientBreakdown.items) : undefined,
           ingredientBreakdown: ingredientBreakdown ? JSON.stringify(ingredientBreakdown) : undefined,
+          logSource: "home",
+          allowDuplicate: d.allowDuplicate,
         });
         void recordBehavior({ kind: "log", key: "meal_confirm" }).catch(() => {});
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
         if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
       } else if (d.kind === "workout") {
@@ -307,6 +369,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           date,
           exercises: d.exercises ?? undefined,
           caloriesBurned: d.kcal,
+          timestamp: time,
           rationale: tier2 || d.rationale || undefined,
           calorieConfidence: calorieResult?.confidence,
           calorieRangeLow: calorieResult?.range_low,
@@ -314,27 +377,45 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           calorieBreakdown: calorieResult?.breakdown ? JSON.stringify(calorieResult.breakdown) : undefined,
           calculationVersion: calorieResult ? 1 : undefined,
           structuredSets: d.exercises ? JSON.stringify(d.exercises) : undefined,
+          logSource: "home",
+          parseError: d.parseError,
         });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
         if (!isPastDay) await recordActivity({ type: "workout" }).catch(() => {});
       } else if (d.kind === "sleep") {
         await upsertSleep({ hours: d.hours, quality: d.quality, date });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Sleep logged${dateNote}`, `${d.hours.toFixed(1)}h · ${d.quality}`);
       } else if (d.kind === "water") {
         await addWater({ ml: d.ml, date, time });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Water logged${dateNote}`, `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`);
       } else if (d.kind === "mood") {
         await addMood({ rating: d.rating, date, time, note: d.description });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Mood logged${dateNote}`, `${d.rating}/5`);
       } else if (d.kind === "steps") {
         await upsertSteps({ count: d.count, date });
+        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Steps logged${dateNote}`, `${d.count.toLocaleString()} steps`);
       }
-    } catch {
-      toast.error("Couldn't log", "Something went wrong — try again.");
+    } catch (err) {
+      const duplicate = getNearDuplicateData(err);
+      const raw = err instanceof Error ? err.message : "Something went wrong — try again.";
+      const isDuplicate = !!duplicate;
+      const message = duplicate?.message ?? raw;
+      setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? {
+        ...d,
+        ...normalizedDraft,
+        submitting: false,
+        error: message,
+        allowDuplicate: isDuplicate ? true : d.allowDuplicate,
+      } : d));
+      toast.error(isDuplicate ? "Possible duplicate" : "Couldn't log", message);
     }
     if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
-  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, recordBehavior, toast, pendingDrafts.length]);
+  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, recordBehavior, setPendingDrafts, toast, pendingDrafts.length]);
 
   const handleDiscard = useCallback(() => {
     setPendingDrafts([]);
@@ -449,8 +530,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const openDraft = useCallback((draft: any) => {
     pendingTier2Ref.current = "";
-    setPendingDrafts([draft]);
-  }, []);
+    const normalized = normalizeDraft(draft);
+    setPendingDrafts(normalized ? [normalized] : []);
+  }, [setPendingDrafts]);
 
   const useEngineEstimate = useCallback((draft: any) => {
     if (!draft?.engineEstimate) return openDraft(draft);
@@ -658,14 +740,14 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           {/* Inline confirm cards */}
           <AnimatePresence>
             {pendingDrafts.map((draft, i) => (
-              <motion.div key={`draft-${i}`}
+              <motion.div key={draft._clientId ?? `draft-${i}`}
                 initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                 transition={reduceMotion ? { duration: 0 } : FADE_FAST}>
                 <div className="w-full max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
                   <LogConfirmCard
                     draft={draft}
                     onConfirm={handleConfirm}
-                    onDiscard={() => setPendingDrafts((prev) => prev.filter((d) => d !== draft))}
+                    onDiscard={() => setPendingDrafts((prev) => prev.filter((d) => d._clientId !== draft._clientId))}
                   />
                 </div>
               </motion.div>
@@ -741,7 +823,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </div>
       </div>
 
-      <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} />
+      <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} date={localDateStr()} />
       <EditLogModal kind="meal" entry={editEntry} onClose={() => setEditEntry(null)} />
     </>
   );

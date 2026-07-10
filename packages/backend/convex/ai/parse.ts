@@ -6,7 +6,7 @@
  */
 
 import { internal } from "../_generated/api";
-import { callAI, parseJSON } from "./llm";
+import { callAI, tryParseJSON } from "./llm";
 import {
   calculateWorkoutCalories,
   parseDurationMinutes,
@@ -65,8 +65,10 @@ export interface ParsedWorkoutResult {
     confidence: number;
     range_low: number;
     range_high: number;
+    rough: boolean;
     breakdown: Record<string, number>;
   } | null;
+  parseError?: string;
 }
 
 export function extractStatedWorkoutCalories(description: string): number | null {
@@ -77,10 +79,11 @@ export function extractStatedWorkoutCalories(description: string): number | null
 function adjustedCalorieResult(
   calcResult: ReturnType<typeof calculateWorkoutCalories>,
   hasKnownWeight: boolean,
+  roughDuration: boolean,
 ): NonNullable<ParsedWorkoutResult["calorieResult"]> {
   const confidence = Math.max(
     0.1,
-    Math.round((calcResult.confidence - (hasKnownWeight ? 0 : 0.25)) * 100) / 100,
+    Math.round((calcResult.confidence - (hasKnownWeight ? 0 : 0.25) - (roughDuration ? 0.2 : 0)) * 100) / 100,
   );
   const rangeWidth = Math.round(calcResult.total_kcal * (1 - confidence) * 0.25);
 
@@ -89,8 +92,68 @@ function adjustedCalorieResult(
     confidence,
     range_low: Math.max(0, calcResult.total_kcal - rangeWidth),
     range_high: calcResult.total_kcal + rangeWidth,
+    rough: roughDuration,
     breakdown: calcResult.breakdown as unknown as Record<string, number>,
   };
+}
+
+function fallbackWorkoutCalorieResult(durationMin: number, rough: boolean): NonNullable<ParsedWorkoutResult["calorieResult"]> {
+  const total = Math.max(30, Math.round(durationMin * 5));
+  const spread = Math.max(25, Math.round(total * 0.3));
+  return {
+    total_kcal: total,
+    confidence: 0.25,
+    range_low: Math.max(1, total - spread),
+    range_high: total + spread,
+    rough,
+    breakdown: {
+      fallback_kcal_per_min: 5,
+      duration_min: durationMin,
+    },
+  };
+}
+
+function inferDurationFromExercises(exercises: Array<{ sets: any[] }>): number {
+  const totalSets = exercises.reduce((sum, ex) => sum + Math.max(1, ex.sets?.length ?? 0), 0);
+  if (totalSets === 0) return 20;
+  return Math.max(12, Math.min(90, Math.round(totalSets * 2.5 + exercises.length * 2)));
+}
+
+function ensureWorkoutExercises(description: string, parsedName: string, exercises: any[]) {
+  if (exercises.length > 0) return exercises;
+  const name = parsedName || description.slice(0, 30) || "Workout";
+  return [{
+    name,
+    muscle_group: "",
+    weight_unit: "bodyweight",
+    sets: [{ weight: "", reps: "" }],
+    inferred: true,
+  }];
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizedTimeOrNow(time: string): string {
+  const trimmed = time.trim();
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(trimmed)) return trimmed;
+  const loose = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (loose) {
+    const hours = Number(loose[1]);
+    const minutes = Number(loose[2]);
+    if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    }
+  }
+  return new Date().toTimeString().slice(0, 5);
+}
+
+function providerSourceFromItems(items: ItemBreakdown[]): string {
+  const sources = [...new Set(items.map((item) => item.source).filter(Boolean))];
+  if (sources.length === 1) return sources[0]!;
+  if (sources.length > 1) return "database";
+  return "database";
 }
 
 export async function parseMealDescription(
@@ -133,34 +196,62 @@ Instructions:
 5. Estimate total_recipe_servings if mentioned.
 6. In "components", list the key ingredients detected (e.g. "paneer, rice, ghee"). Be specific.
 7. In "suggestion", give ONE forward-looking sentence about what the user should focus on in their NEXT meal (not criticism of this meal).
-8. ALSO estimate total calories, protein (g), carbs (g), and fat (g) for the user's consumed portion. These serve as fallback values when the food database doesn't have complete data for every ingredient.
+8. ALSO estimate total calories, protein (g), carbs (g), and fat (g) for the user's consumed portion. These are AI-estimated values used only when the food database cannot resolve every ingredient.
 9. If the portion is ambiguous, choose a realistic middle estimate and add the ambiguity to missing_fields (for example "rice_amount", "oil_amount", "serving_size").
 
 Return ONLY a JSON object (no other text, no markdown):
 {"name":"short descriptive name (max 4 words)","calories":450,"protein":35,"carbs":40,"fat":18,"components":"comma-separated ingredient list","suggestion":"one forward-looking next-meal tip (max 20 words)","ingredients":[{"food_text":"paneer","amount":150,"unit":"g","is_oil_or_fat":false,"confidence":0.9}],"cooking_method":"fried","portion_scale":1.0,"total_recipe_servings":2,"missing_fields":["oil_amount"]}`;
 
   const content = await callAI([{ role: "user", content: prompt }], 1000, model, apiKey);
-  const result = parseJSON<any>(content, {
-    name: description.slice(0, 50),
-    calories: 400,
-    protein: 20,
-    carbs: 35,
-    fat: 15,
-    components: "",
-    suggestion: "",
-    ingredients: [],
-    cooking_method: "unknown",
-    portion_scale: 1.0,
-    total_recipe_servings: 1,
-    missing_fields: [],
-  });
-  const mealTime = time || new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const mealTime = normalizedTimeOrNow(time);
+  const result = tryParseJSON<any>(content);
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return {
+      name: description.slice(0, 50) || "Unparsed meal",
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+      time: mealTime,
+      aiSuggestion: "Couldn't parse reliably — confirm or edit portions.",
+      components: undefined,
+      mealType: mealType || "unspecified",
+      description,
+      ingredients: [],
+      cooking_method: "unknown",
+      portion_scale: 1.0,
+      total_recipe_servings: 1,
+      missing_fields: ["parse_error"],
+      parseError: "Couldn't parse reliably — confirm or edit portions.",
+      confidence: 0.1,
+      nutritionSource: "parse_error",
+    };
+  }
+
+  const numberOrZero = (value: unknown) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+
+  const calories = numberOrZero(result.calories);
+  const protein = numberOrZero(result.protein);
+  const carbs = numberOrZero(result.carbs);
+  const fat = numberOrZero(result.fat);
+  const missingFields = Array.isArray(result.missing_fields) ? result.missing_fields : [];
+  const resultParseError = typeof result.parseError === "string" && result.parseError.trim()
+    ? result.parseError.trim()
+    : undefined;
+  const zeroMacroParseError = !resultParseError && [calories, protein, carbs, fat].every((value) => value === 0)
+    ? "Couldn't parse reliably — confirm or edit portions."
+    : undefined;
+  const parseError = resultParseError ?? zeroMacroParseError;
+
   return {
     name: result.name || description.slice(0, 50),
-    calories: result.calories || 400,
-    protein: result.protein || 20,
-    carbs: result.carbs || 35,
-    fat: result.fat || 15,
+    calories,
+    protein,
+    carbs,
+    fat,
     time: mealTime,
     aiSuggestion: result.suggestion || undefined,
     components: result.components || undefined,
@@ -171,7 +262,10 @@ Return ONLY a JSON object (no other text, no markdown):
     cooking_method: result.cooking_method || "unknown",
     portion_scale: typeof result.portion_scale === "number" ? result.portion_scale : 1.0,
     total_recipe_servings: typeof result.total_recipe_servings === "number" ? result.total_recipe_servings : 1,
-    missing_fields: Array.isArray(result.missing_fields) ? result.missing_fields : [],
+    missing_fields: parseError && !missingFields.includes("parse_error") ? [...missingFields, "parse_error"] : missingFields,
+    parseError,
+    confidence: parseError ? 0.1 : undefined,
+    nutritionSource: parseError ? "parse_error" : undefined,
   };
 }
 
@@ -197,7 +291,7 @@ Rules:
 4. Include "weight_unit": "kg" | "lbs" | "bodyweight" | "machine_kg" | "machine_lbs".
 5. For cardio, use a single set with "distance_km", "duration_min", "incline", "pace", "calories_per_hr" fields instead of weight/reps.
 6. Estimate total session duration if not provided. Determine intensity from volume/load.
-7. If the user explicitly states calories burned (e.g. "75 kcal burned", "75cal burned"), set caloriesBurned to that value. Otherwise set caloriesBurned to 0 — do NOT estimate.
+7. If the user explicitly states calories burned (e.g. "75 kcal burned", "75cal burned"), set caloriesBurned to that value. Otherwise set caloriesBurned to 0; the app calculates a visible calorie range separately.
 8. Use the exact exercise names the user typed.
 9. Session name: max 3 words.
 10. Look for rest pattern clues.
@@ -206,25 +300,44 @@ Return ONLY valid JSON:
 {"name":"session name","exercises":[{"name":"exercise name","muscle_group":"chest","weight_unit":"kg","sets":[{"weight":"12.5","reps":"15"}]},{"name":"cardio name","muscle_group":"cardio","weight_unit":"bodyweight","sets":[{"distance_km":"0.75","duration_min":"10","incline":"11","pace":"13.2","calories_per_hr":"425"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":0,"rationale":"one coaching tip (max 15 words)","restClues":"any rest pattern info"}`;
 
   const content = await callAI([{ role: "user", content: prompt }], 1200, model, apiKey);
-  const result = parseJSON<any>(content, { name: description.slice(0, 30), exercises: [], duration: duration || "30 min", intensity: intensity || "HIGH", caloriesBurned: 0, rationale: "", restClues: "" });
+  const parsedJson = tryParseJSON<any>(content);
+  const result = parsedJson && typeof parsedJson === "object" && !Array.isArray(parsedJson)
+    ? parsedJson
+    : { name: description.slice(0, 30), exercises: [], duration, intensity, caloriesBurned: 0, rationale: "", restClues: "", parseError: "Couldn't parse reliably — confirm or edit duration/intensity." };
 
-  const exercises = (result.exercises || []).map((ex: any) => ({
-    name: ex.name || "Exercise",
-    muscle_group: ex.muscle_group || "",
-    weight_unit: ex.weight_unit || "kg",
-    sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({
-      weight: String(s.weight || ""),
-      reps: String(s.reps || ""),
-      // cardio fields
-      distance_km: s.distance_km != null ? String(s.distance_km) : undefined,
-      duration_min: s.duration_min != null ? String(s.duration_min) : undefined,
-      incline: s.incline != null ? String(s.incline) : undefined,
-      pace: s.pace != null ? String(s.pace) : undefined,
-      calories_per_hr: s.calories_per_hr != null ? String(s.calories_per_hr) : undefined,
-    })) : [],
-  }));
+  const parsedExercises = (Array.isArray(result.exercises) ? result.exercises : []).flatMap((ex: unknown) => {
+    if (!isRecord(ex)) return [];
+    const sets = Array.isArray(ex.sets)
+      ? ex.sets.flatMap((s: unknown) => {
+          if (!isRecord(s)) return [];
+          return [{
+            weight: String(s.weight || ""),
+            reps: String(s.reps || ""),
+            // cardio fields
+            distance_km: s.distance_km != null ? String(s.distance_km) : undefined,
+            duration_min: s.duration_min != null ? String(s.duration_min) : undefined,
+            incline: s.incline != null ? String(s.incline) : undefined,
+            pace: s.pace != null ? String(s.pace) : undefined,
+            calories_per_hr: s.calories_per_hr != null ? String(s.calories_per_hr) : undefined,
+          }];
+        })
+      : [];
+    return [{
+      name: typeof ex.name === "string" && ex.name.trim() ? ex.name : "Exercise",
+      muscle_group: typeof ex.muscle_group === "string" ? ex.muscle_group : "",
+      weight_unit: typeof ex.weight_unit === "string" ? ex.weight_unit : "kg",
+      sets,
+    }];
+  });
+  const exercises = ensureWorkoutExercises(description, result.name, parsedExercises);
   const totalSets = exercises.reduce((sum: number, ex: any) => sum + ex.sets.length, 0);
   const setsVal = exercises.length > 0 ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets` : "–";
+  const userProvidedDurationMin = parseDurationMinutes(duration);
+  const parsedDurationMin = parseDurationMinutes(result.duration || duration);
+  const roughDuration = userProvidedDurationMin <= 0;
+  const durationMin = parsedDurationMin > 0 ? parsedDurationMin : inferDurationFromExercises(exercises);
+  const durationLabel = result.duration || duration || `~${durationMin} min`;
+  const roughCalorieEstimate = roughDuration || !intensity || !!result.parseError;
 
   // Deterministic calorie calculation. Use a conservative default weight when
   // onboarding has not captured weight yet, so detailed workouts never show 0.
@@ -232,7 +345,6 @@ Return ONLY valid JSON:
   if (exercises.length > 0) {
     try {
       const hasKnownWeight = typeof userPhysique?.weight === "number" && userPhysique.weight > 0;
-      const durationMin = parseDurationMinutes(result.duration || duration || "30 min");
       const engineIntensity = mapAIIntensity(result.intensity || intensity || "HIGH");
       const engineDensity = inferDensity(exercises, durationMin);
       const exerciseMetas = matchExercises(exercises);
@@ -257,10 +369,14 @@ Return ONLY valid JSON:
         },
       );
 
-      calorieResult = adjustedCalorieResult(calcResult, hasKnownWeight);
+      calorieResult = adjustedCalorieResult(calcResult, hasKnownWeight, roughCalorieEstimate);
     } catch {
       // Fall back to AI estimate if engine fails
     }
+  }
+
+  if (!calorieResult && exercises.length > 0) {
+    calorieResult = fallbackWorkoutCalorieResult(durationMin, true);
   }
 
   const explicitCalories =
@@ -272,13 +388,14 @@ Return ONLY valid JSON:
   return {
     name: result.name || description.slice(0, 30),
     sets: setsVal,
-    duration: result.duration || duration || "30 min",
+    duration: durationLabel,
     intensity: result.intensity || intensity || "HIGH",
     caloriesBurned: explicitCalories ?? calorieResult?.total_kcal ?? 0,
     rationale: result.rationale || "",
     exercises: exercises.length > 0 ? exercises : null,
     description,
     calorieResult,
+    parseError: result.parseError,
   };
 }
 
@@ -301,6 +418,18 @@ export async function runNutritionEngine(
   const unresolved: string[] = [];
   const ingredients = parsedMeal.ingredients || [];
 
+  if (parsedMeal.parseError) {
+    return {
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+      confidence: 0.1,
+      nutritionSource: "parse_error",
+      ingredientBreakdown: null,
+    };
+  }
+
   if (ingredients.length > 0) {
     try {
       for (const ingredient of ingredients) {
@@ -314,7 +443,11 @@ export async function runNutritionEngine(
         const grams = conversion.grams;
 
         const cachedResults: any[] = await ctx.runQuery(internal.foods.searchFoodsInCache, { query: foodText });
-        const bestMatch = matchBestFood(foodText, cachedResults);
+        let bestMatch = matchBestFood(foodText, cachedResults);
+        if (!bestMatch && typeof ctx.runAction === "function") {
+          const liveResults = await ctx.runAction(internal.foods.searchFoodsLive, { query: foodText, limit: 8 }).catch(() => []);
+          bestMatch = matchBestFood(foodText, liveResults as any[]);
+        }
 
         if (bestMatch) {
           const nutrition = computeNutrition(bestMatch, grams);
@@ -327,9 +460,12 @@ export async function runNutritionEngine(
             carbs_g: nutrition.carbs_g,
             fat_g: nutrition.fat_g,
             source: bestMatch.source || "cache",
+            verified: bestMatch.verified,
             confidence: conversion.confidence,
           });
-          ctx.runMutation(internal.foods.bumpSearchCount, { id: bestMatch._id }).catch(() => {});
+          if ((bestMatch as any)._id) {
+            ctx.runMutation(internal.foods.bumpSearchCount, { id: (bestMatch as any)._id }).catch(() => {});
+          }
         } else if (ingredient.is_oil_or_fat) {
           const oilCals = Math.round(grams * 8.84);
           breakdownItems.push({
@@ -379,10 +515,14 @@ export async function runNutritionEngine(
 
   // Blend engine result with AI fallback when the engine result is incomplete
   const hasUnresolved = unresolved.length > 0;
-  const aiCals = parsedMeal.calories || 400;
-  const aiProtein = parsedMeal.protein || 20;
-  const aiCarbs = parsedMeal.carbs || 35;
-  const aiFat = parsedMeal.fat || 15;
+  const numberOrZero = (value: unknown) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  const aiCals = numberOrZero(parsedMeal.calories);
+  const aiProtein = numberOrZero(parsedMeal.protein);
+  const aiCarbs = numberOrZero(parsedMeal.carbs);
+  const aiFat = numberOrZero(parsedMeal.fat);
 
   let finalCalories: number;
   let finalProtein: number;
@@ -401,7 +541,7 @@ export async function runNutritionEngine(
       finalCarbs = engine.carbs_g;
       finalFat = engine.fat_g;
       finalConfidence = engine.confidence;
-      finalSource = "database";
+      finalSource = providerSourceFromItems(engine.items);
     } else {
       // Some ingredients unresolved → blend cautiously. The database total is
       // trustworthy for matched ingredients; the AI fallback is only a guardrail
@@ -419,13 +559,13 @@ export async function runNutritionEngine(
       finalSource = "mixed";
     }
   } else {
-    // Nothing resolved → pure AI fallback
+    // Nothing resolved -> pure AI estimate, if the parser produced one.
     finalCalories = aiCals;
     finalProtein = aiProtein;
     finalCarbs = aiCarbs;
     finalFat = aiFat;
-    finalConfidence = 0.3;
-    finalSource = "ai";
+    finalConfidence = aiCals > 0 || aiProtein > 0 || aiCarbs > 0 || aiFat > 0 ? 0.3 : 0.1;
+    finalSource = aiCals > 0 || aiProtein > 0 || aiCarbs > 0 || aiFat > 0 ? "ai_estimated" : "parse_error";
   }
 
   return {

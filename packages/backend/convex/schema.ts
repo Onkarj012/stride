@@ -23,11 +23,16 @@ export default defineSchema({
     // NEW: Nutrition engine fields
     confidence: v.optional(v.number()),
     nutritionSource: v.optional(v.string()),
+    nutritionVerified: v.optional(v.boolean()),
     structuredItems: v.optional(v.string()),
     ingredientBreakdown: v.optional(v.string()),
     // Diet memory: set when auto-applied from food_memory
     foodMemoryId: v.optional(v.id("food_memory")),
-  }).index("by_user_date", ["userId", "date"]),
+    logSource: v.optional(v.string()),
+    idempotencyKey: v.optional(v.string()),
+  })
+    .index("by_user_date", ["userId", "date"])
+    .index("by_user_date_and_idempotency_key", ["userId", "date", "idempotencyKey"]),
 
   workouts: defineTable({
     userId: v.string(),
@@ -45,11 +50,16 @@ export default defineSchema({
     calorieConfidence: v.optional(v.number()),
     calorieRangeLow: v.optional(v.number()),
     calorieRangeHigh: v.optional(v.number()),
+    calorieEstimateRough: v.optional(v.boolean()),
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
     // Structured exercise data — JSON: ExerciseEntry[]
     structuredSets: v.optional(v.string()),
-  }).index("by_user_date", ["userId", "date"]),
+    logSource: v.optional(v.string()),
+    idempotencyKey: v.optional(v.string()),
+  })
+    .index("by_user_date", ["userId", "date"])
+    .index("by_user_date_and_idempotency_key", ["userId", "date", "idempotencyKey"]),
 
   daily_goals: defineTable({
     userId: v.string(),
