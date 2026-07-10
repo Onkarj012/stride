@@ -286,6 +286,7 @@ export const logMeal = action({
     } else {
       throw new Error("description or parsedData required");
     }
+    if (parsedMeal.parseError) throw new Error("Meal could not be parsed. Edit it before saving.");
 
     // Run deterministic nutrition calculation from structured ingredients
     const nutrition = await runNutritionEngine(ctx, parsedMeal);
@@ -360,6 +361,7 @@ export const logWorkout = action({
 
     let data: any;
     if (parsedData) {
+      if (parsedData.parseError) throw new Error("Workout could not be parsed. Edit it before saving.");
       // If passed parsed data, run through calorie engine if it has exercises
       let calorieFields: any = {};
       if (parsedData.calorieResult) {
@@ -387,6 +389,7 @@ export const logWorkout = action({
       data = { _id: id, ...parsedData };
     } else if (description) {
       const parsed = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
+      if (parsed.parseError) throw new Error("Workout could not be parsed. Edit it before saving.");
       const calorieFields = parsed.calorieResult ? {
         calorieConfidence: parsed.calorieResult.confidence,
         calorieRangeLow: parsed.calorieResult.range_low,
@@ -678,6 +681,10 @@ Rules:
           metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
         } : undefined;
         const parsed = await parseWorkoutDescription(logData.description || message, undefined, undefined, parseModel, apiKey, userPhysique);
+        if (parsed.parseError) {
+          logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
+          continue;
+        }
         const calorieFields = parsed.calorieResult ? {
           calorieConfidence: parsed.calorieResult.confidence, calorieRangeLow: parsed.calorieResult.range_low,
           calorieRangeHigh: parsed.calorieResult.range_high, calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
@@ -1697,6 +1704,10 @@ Return ONLY:
 
         } else if (item.type === "workout") {
           const parsed = await parseWorkoutDescription(item.description, undefined, undefined, settingsModel, apiKey, userPhysique);
+          if (parsed.parseError) {
+            summaryParts.push("Workout needs details before it can be logged");
+            continue;
+          }
           // Extract user-stated calories from description (e.g. "75 kcal burned", "75cal")
           const statedKcal = extractStatedWorkoutCalories(item.description);
           const finalKcal = statedKcal ?? parsed.caloriesBurned ?? 0;

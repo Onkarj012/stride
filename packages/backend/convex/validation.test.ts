@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { validateMealWrite, validateWorkoutWrite } from "./validation";
+import { timeWindowKey, validateMealWrite, validateWorkoutWrite, workoutTimeWindowKey } from "./validation";
 
 const validMeal = {
   name: "Chicken rice",
@@ -25,6 +25,13 @@ describe("validateMealWrite", () => {
 
   test("rejects meals over 5000 kcal", () => {
     expect(() => validateMealWrite({ ...validMeal, calories: 5001 })).toThrow(/unrealistically high/);
+  });
+
+  test("rejects parse-error nutrition and invalid times before persistence or bucketing", () => {
+    expect(() => validateMealWrite({ ...validMeal, nutritionSource: "parse_error" })).toThrow(/could not be parsed/i);
+    expect(() => validateMealWrite({ ...validMeal, time: "" })).toThrow(/valid HH:MM/i);
+    expect(() => validateMealWrite({ ...validMeal, time: "25:99" })).toThrow(/valid HH:MM/i);
+    expect(timeWindowKey(validMeal.time)).toBe("12:00");
   });
 
   test("clamps borderline values and flags 4/4/9 calorie mismatch", () => {
@@ -56,5 +63,20 @@ describe("validateWorkoutWrite", () => {
 
   test("rejects workouts over 3000 kcal", () => {
     expect(() => validateWorkoutWrite({ ...validWorkout, caloriesBurned: 3001 })).toThrow(/unrealistically high/);
+  });
+
+  test("rejects parse-error workouts", () => {
+    expect(() => validateWorkoutWrite({ ...validWorkout, parseError: "unparseable" })).toThrow(/could not be parsed/i);
+  });
+});
+
+describe("workoutTimeWindowKey", () => {
+  test("uses a stable token for retries while distinguishing intentional relogs", () => {
+    const base = { date: "2026-07-10", contentHash: "same-workout" };
+
+    expect(workoutTimeWindowKey({ ...base, idempotencyToken: "request-1" }))
+      .toBe(workoutTimeWindowKey({ ...base, idempotencyToken: "request-1" }));
+    expect(workoutTimeWindowKey({ ...base, idempotencyToken: "request-1" }))
+      .not.toBe(workoutTimeWindowKey({ ...base, idempotencyToken: "request-2" }));
   });
 });

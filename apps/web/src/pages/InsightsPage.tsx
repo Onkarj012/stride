@@ -132,7 +132,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
 
   async function handleRelog(id: Id<"workouts">, name: string) {
     try {
-      await relogWorkout({ id });
+      await relogWorkout({ id, idempotencyToken: crypto.randomUUID() });
       toast.success("Logged again", name);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");

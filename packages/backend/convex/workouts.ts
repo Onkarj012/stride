@@ -5,9 +5,8 @@ import { internal } from "./_generated/api";
 import {
   buildIdempotencyKey,
   normalizeLogSource,
-  stableHash,
-  timeWindowKey,
   validateWorkoutWrite,
+  workoutTimeWindowKey,
   workoutContentHash,
 } from "./validation";
 
@@ -24,32 +23,6 @@ async function findExistingWorkoutByIdempotencyKey(ctx: any, userId: string, dat
       q.eq("userId", userId).eq("date", date).eq("idempotencyKey", idempotencyKey),
     )
     .first();
-}
-
-function hhmmFromTimestamp(timestamp?: string): string | null {
-  const trimmed = timestamp?.trim();
-  if (!trimmed) return null;
-  const match = trimmed.match(/^(?:\d{4}-\d{2}-\d{2}T)?(\d{1,2}):(\d{2})/);
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
-    return null;
-  }
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-}
-
-function workoutTimeWindowKey(parts: {
-  date: string;
-  contentHash: string;
-  timestamp?: string;
-  idempotencyToken?: string;
-}): string {
-  const token = parts.idempotencyToken?.trim();
-  if (token) return `token_${stableHash(token)}`;
-  const hhmm = hhmmFromTimestamp(parts.timestamp);
-  if (hhmm) return timeWindowKey(hhmm);
-  return `stable_${stableHash(`${parts.date}|${parts.contentHash}`)}`;
 }
 
 export const getWorkouts = query({
@@ -98,6 +71,7 @@ export const addWorkout = mutation({
     logSource: v.optional(v.string()),
     timestamp: v.optional(v.string()),
     idempotencyToken: v.optional(v.string()),
+    parseError: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);

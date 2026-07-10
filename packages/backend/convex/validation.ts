@@ -11,6 +11,7 @@ export type MealValidationInput = {
   time: string;
   confidence?: number;
   nutritionSource?: string;
+  parseError?: string;
 };
 
 export type WorkoutValidationInput = {
@@ -22,6 +23,7 @@ export type WorkoutValidationInput = {
   calorieConfidence?: number;
   calorieRangeLow?: number;
   calorieRangeHigh?: number;
+  parseError?: string;
 };
 
 const MEAL_REJECT_MAX_KCAL = 5000;
@@ -99,8 +101,15 @@ function assertValidMealTime(time: string): string {
   return trimmed;
 }
 
+function assertNotParseError(parseError: string | undefined, nutritionSource?: string): void {
+  if (parseError?.trim() || nutritionSource?.trim().toLowerCase() === "parse_error") {
+    throw new Error("This entry could not be parsed. Edit it before saving.");
+  }
+}
+
 export function validateMealWrite(input: MealValidationInput): ValidationResult<MealValidationInput> {
   const flags: string[] = [];
+  assertNotParseError(input.parseError, input.nutritionSource);
   const calories = assertFiniteNonNegative("calories", input.calories);
   if (calories > MEAL_REJECT_MAX_KCAL) {
     throw new Error("Meal calories are unrealistically high");
@@ -139,6 +148,7 @@ export function validateMealWrite(input: MealValidationInput): ValidationResult<
 
 export function validateWorkoutWrite(input: WorkoutValidationInput): ValidationResult<WorkoutValidationInput> {
   const flags: string[] = [];
+  assertNotParseError(input.parseError);
   const sanitized: WorkoutValidationInput = { ...input };
 
   if (input.caloriesBurned != null) {
@@ -193,6 +203,26 @@ export function timeWindowKey(time: string | undefined, windowMinutes = 10): str
   const hh = String(Math.floor(bucket / 60)).padStart(2, "0");
   const mm = String(bucket % 60).padStart(2, "0");
   return `${hh}:${mm}`;
+}
+
+export function workoutTimeWindowKey(parts: {
+  date: string;
+  contentHash: string;
+  timestamp?: string;
+  idempotencyToken?: string;
+}): string {
+  const token = parts.idempotencyToken?.trim();
+  if (token) return `token_${stableHash(token)}`;
+  const timestamp = parts.timestamp?.trim();
+  const match = timestamp?.match(/^(?:\d{4}-\d{2}-\d{2}T)?(\d{1,2}):(\d{2})/);
+  if (match) {
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    if (Number.isInteger(hours) && Number.isInteger(minutes) && hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      return timeWindowKey(`${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`);
+    }
+  }
+  return `stable_${stableHash(`${parts.date}|${parts.contentHash}`)}`;
 }
 
 export function stableHash(input: string): string {

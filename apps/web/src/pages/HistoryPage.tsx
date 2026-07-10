@@ -264,7 +264,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
     if (relogging) return;
     setRelogging(id);
     try {
-      await relogWorkout({ id });
+      await relogWorkout({ id, idempotencyToken: crypto.randomUUID() });
       toast.success("Logged again", `${name} added to today`);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
