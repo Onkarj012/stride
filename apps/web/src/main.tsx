@@ -4,8 +4,14 @@ import { BrowserRouter } from "react-router-dom";
 import { ClerkProvider, useAuth } from "@clerk/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { ConvexReactClient } from "convex/react";
+import { registerSW } from "virtual:pwa-register";
 import App from "./App";
 import "./styles/global.css";
+
+// Installable PWA: register the generated service worker. registerType is
+// "autoUpdate" so new builds take over silently on the next navigation —
+// no update prompt needed for v1.
+registerSW({ immediate: true });
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string;
 const CONVEX_URL = import.meta.env.VITE_CONVEX_URL as string;

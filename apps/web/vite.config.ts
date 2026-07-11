@@ -1,10 +1,69 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { VitePWA } from "vite-plugin-pwa";
 import path from "node:path";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      registerType: "autoUpdate",
+      injectRegister: null,
+      includeAssets: ["stride.svg", "apple-touch-icon.png"],
+      manifest: {
+        name: "Stride",
+        short_name: "Stride",
+        description:
+          "Stride is your adaptive AI wellness companion — nutrition and workout tracking with AI-driven guidance.",
+        start_url: "/",
+        display: "standalone",
+        background_color: "#f8f8f8",
+        theme_color: "#f8f8f8",
+        icons: [
+          {
+            src: "/icons/icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+            purpose: "any",
+          },
+          {
+            src: "/icons/icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "any",
+          },
+          {
+            src: "/icons/maskable-icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable",
+          },
+        ],
+      },
+      workbox: {
+        // Precache the app shell only. Never let Workbox intercept or cache
+        // Convex (data/API/websocket) or Clerk (auth) traffic — the app is
+        // realtime and those requests must always hit the network directly.
+        navigateFallbackDenylist: [/^\/api\//],
+        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+        runtimeCaching: [
+          {
+            urlPattern: ({ url }) =>
+              /\.convex\.cloud$/.test(url.hostname) ||
+              /\.convex\.site$/.test(url.hostname) ||
+              /clerk\./.test(url.hostname) ||
+              /\.clerk\.accounts\.dev$/.test(url.hostname),
+            handler: "NetworkOnly",
+          },
+        ],
+      },
+      devOptions: {
+        enabled: false,
+      },
+    }),
+  ],
   resolve: {
     dedupe: ['react', 'react-dom'],
     alias: {
