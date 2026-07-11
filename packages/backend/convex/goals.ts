@@ -1,6 +1,7 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
+import { resolvePlanForDayAdjustment } from "./plan_resolve";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -92,13 +93,14 @@ export async function applyDayAdjustment(ctx: any, userId: string, date: string)
     .first();
   const plan = parsePlan(profile?.planBreakdown);
   if (!plan) return null;
+  const resolvedPlan = resolvePlanForDayAdjustment(plan, profile ?? {});
 
   const workouts = await ctx.db
     .query("workouts")
     .withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date))
     .collect();
   const burn = workouts.reduce((s: number, w: any) => s + (w.caloriesBurned ?? 0), 0);
-  const adj = adjustCaloriesForDay(plan, burn);
+  const adj = adjustCaloriesForDay(resolvedPlan, burn);
 
   const existing = await ctx.db
     .query("daily_goals")

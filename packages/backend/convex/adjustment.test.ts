@@ -20,8 +20,8 @@ test("logging an extra-burn workout raises calorie + carb goals; protein/fat fix
   const t = convexTest(schema, modules);
   const asUser = t.withIdentity({ subject: "user1" });
   const plan = await asUser.mutation(api.profile.upsertPlanFromOnboarding, PLAN_INPUT);
-  // plannedDailyEAT is 320 for this profile.
-  const extraBurn = plan.plannedDailyEAT + 500; // delta +500
+  // extra burn is +500 vs the per-training-day average.
+  const extraBurn = plan.plannedEatPerTrainingDay + 500;
 
   await asUser.mutation(api.workouts.addWorkout, {
     name: "Long HIIT", sets: "n/a", intensity: "HIGH",
@@ -41,7 +41,7 @@ test("getTodayBrief surfaces adjusted target + note", async () => {
   const plan = await asUser.mutation(api.profile.upsertPlanFromOnboarding, PLAN_INPUT);
   await asUser.mutation(api.workouts.addWorkout, {
     name: "Long HIIT", sets: "n/a", intensity: "HIGH",
-    date: "2026-05-29", caloriesBurned: plan.plannedDailyEAT + 600,
+    date: "2026-05-29", caloriesBurned: plan.plannedEatPerTrainingDay + 600,
   });
   const brief = await asUser.query(api.insights.getTodayBrief, { today: "2026-05-29" });
   expect(brief.stats.adjustedCalorieTarget).toBe(plan.calories + 600);
