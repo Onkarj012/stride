@@ -231,7 +231,7 @@ export const parseWorkout = action({
       const [settings, profile, metabolicProfile] = await Promise.all([
         ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
         ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-        ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {}),
+        ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
       ]);
       model = settings?.openRouterModel ?? undefined;
       apiKey = settings?.openRouterKey ?? undefined;
@@ -346,7 +346,7 @@ export const logWorkout = action({
     const [settings, profile, metabolicProfile] = await Promise.all([
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-      ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {}),
+      ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
     ]);
     const model = settings?.openRouterModel ?? undefined;
     const apiKey = settings?.openRouterKey ?? undefined;
@@ -369,6 +369,7 @@ export const logWorkout = action({
           calorieConfidence: parsedData.calorieResult.confidence,
           calorieRangeLow: parsedData.calorieResult.range_low,
           calorieRangeHigh: parsedData.calorieResult.range_high,
+          calorieEstimateRough: parsedData.calorieResult.rough,
           calorieBreakdown: JSON.stringify(parsedData.calorieResult.breakdown),
           calculationVersion: 1,
         };
@@ -394,6 +395,7 @@ export const logWorkout = action({
         calorieConfidence: parsed.calorieResult.confidence,
         calorieRangeLow: parsed.calorieResult.range_low,
         calorieRangeHigh: parsed.calorieResult.range_high,
+        calorieEstimateRough: parsed.calorieResult.rough,
         calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown),
         calculationVersion: 1,
       } : {};
@@ -728,10 +730,10 @@ Rules:
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const errorCode = getConvexErrorCode(err);
         logOutcomes.push({ type: "meal", name: "meal", ok: false, error: message, errorCode });
-        if (retryArgs) {
+        if (retryArgs && errorCode === "NEAR_DUPLICATE") {
           failedItems.push({
             kind: "meal",
-            code: errorCode ?? "LOG_FAILED",
+            code: errorCode,
             description: retryDescription,
             retryArgs,
           });
@@ -764,6 +766,7 @@ Rules:
         const calorieFields = parsed.calorieResult ? {
           calorieConfidence: parsed.calorieResult.confidence, calorieRangeLow: parsed.calorieResult.range_low,
           calorieRangeHigh: parsed.calorieResult.range_high, calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
+          calorieEstimateRough: parsed.calorieResult.rough,
         } : {};
         retryArgs = {
           name: parsed.name,
@@ -796,10 +799,10 @@ Rules:
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const errorCode = getConvexErrorCode(err);
         logOutcomes.push({ type: "workout", name: "workout", ok: false, error: message, errorCode });
-        if (retryArgs) {
+        if (retryArgs && errorCode === "NEAR_DUPLICATE") {
           failedItems.push({
             kind: "workout",
-            code: errorCode ?? "LOG_FAILED",
+            code: errorCode,
             description: retryDescription,
             retryArgs,
           });
@@ -888,12 +891,16 @@ Rules:
       }
       if (failed.length > 0) {
         const duplicate = failed.some((outcome) => outcome.errorCode === "NEAR_DUPLICATE");
-        const parseError = failed.some((outcome) => outcome.errorCode === "PARSE_ERROR");
-        statusParts.push(duplicate
-          ? "I did not save the duplicate-looking log. Confirm or edit it if you want to log it anyway."
-          : parseError
-            ? `I couldn't parse ${failed.map((outcome) => outcome.name).join(", ")} reliably, so I didn't save it. Please confirm or edit and try again.`
-            : `I couldn't save ${failed.map((outcome) => outcome.name).join(", ")}. Please confirm or edit and try again.`);
+        const otherFailures = failed.filter((outcome) => outcome.errorCode !== "NEAR_DUPLICATE");
+        if (duplicate) {
+          statusParts.push("I did not save the duplicate-looking log. Confirm or edit it if you want to log it anyway.");
+        }
+        if (otherFailures.length > 0) {
+          const parseError = otherFailures.some((outcome) => outcome.errorCode === "PARSE_ERROR");
+          statusParts.push(parseError
+            ? `I couldn't parse ${otherFailures.map((outcome) => outcome.name).join(", ")} reliably, so I didn't save it. Please confirm or edit and try again.`
+            : `I couldn't save ${otherFailures.map((outcome) => outcome.name).join(", ")}. Please confirm or edit and try again.`);
+        }
       }
       cleanReply = [cleanReply, statusParts.join(" ")].filter(Boolean).join("\n\n");
     }
@@ -1097,7 +1104,7 @@ export const suggestWorkout = action({
       ctx.runQuery(internal.workouts.getRecentWorkoutsDetailed, { userId }),
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-      ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {}),
+      ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
     ]);
 
     let userContext = "";
@@ -1729,7 +1736,7 @@ Return ONLY:
     // Step 2: Parse each item in parallel
     const [profile, metabolicProfile, userIngredients] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-      ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {}),
+      ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
       ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
     ]);
     const userPhysique: UserPhysique | undefined = profile ? {

@@ -110,6 +110,7 @@ export function CoachPage() {
   const [pendingUndoIds, setPendingUndoIds] = useState<Set<string>>(() => new Set());
   const [pendingRetryIds, setPendingRetryIds] = useState<Set<string>>(() => new Set());
   const pendingUndoIdsRef = useRef<Set<string>>(new Set());
+  const pendingRetryIdsRef = useRef<Set<string>>(new Set());
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const sendingRef = useRef(false);
   const { add } = useLogs();
@@ -218,7 +219,8 @@ export function CoachPage() {
 
   const retryFailedLog = useCallback(async (messageId: string, itemIndex: number, item: FailedLogItem) => {
     const retryId = `${messageId}:${itemIndex}`;
-    if (item.logged || pendingRetryIds.has(retryId)) return;
+    if (item.logged || pendingRetryIdsRef.current.has(retryId)) return;
+    pendingRetryIdsRef.current.add(retryId);
     setPendingRetryIds((prev) => new Set(prev).add(retryId));
     try {
       const id = item.kind === "meal"
@@ -235,13 +237,14 @@ export function CoachPage() {
     } catch (err) {
       toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");
     } finally {
+      pendingRetryIdsRef.current.delete(retryId);
       setPendingRetryIds((prev) => {
         const next = new Set(prev);
         next.delete(retryId);
         return next;
       });
     }
-  }, [addMeal, addWorkout, pendingRetryIds, scroll, toast]);
+  }, [addMeal, addWorkout, scroll, toast]);
 
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
