@@ -218,6 +218,55 @@ export default defineSchema({
     count: v.number(),
   }).index("by_user_date", ["userId", "date"]),
 
+  weight_logs: defineTable({
+    userId: v.string(),
+    date: v.string(),
+    weightKg: v.number(),
+    source: v.string(), // check_in | profile
+    createdAt: v.number(),
+  })
+    .index("by_user_date", ["userId", "date"])
+    .index("by_user", ["userId"]),
+
+  // ─── Check-ins ────────────────────────────────────────────────────────────
+
+  check_in_answers: defineTable({
+    userId: v.string(),
+    date: v.string(), // YYYY-MM-DD, same client-local convention used by brief + logs
+    questionId: v.string(),
+    source: v.string(), // registry | llm | template
+    window: v.string(), // morning | day | evening | night
+    answerType: v.string(), // choice | number | scale | yes_no
+    value: v.string(),
+    label: v.optional(v.string()),
+    numericValue: v.optional(v.number()),
+    booleanValue: v.optional(v.boolean()),
+    templateId: v.optional(v.string()),
+    skipped: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.optional(v.number()),
+  })
+    .index("by_user_date", ["userId", "date"])
+    .index("by_user_date_question", ["userId", "date", "questionId"])
+    .index("by_user_question_date", ["userId", "questionId", "date"]),
+
+  check_in_template_settings: defineTable({
+    userId: v.string(),
+    templateId: v.string(),
+    enabled: v.boolean(),
+    window: v.string(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_template", ["userId", "templateId"]),
+
+  check_in_llm_questions: defineTable({
+    userId: v.string(),
+    date: v.string(),
+    questions: v.string(), // JSON: generated candidate question array
+    generatedAt: v.number(),
+  }).index("by_user_date", ["userId", "date"]),
+
   // ─── Calorie Engine ────────────────────────────────────────────────────────
 
   user_metabolic_profiles: defineTable({

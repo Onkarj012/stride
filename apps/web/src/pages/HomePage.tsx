@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Doc, Id } from "@convex/_generated/dataModel";
 import { useUser } from "@clerk/react";
@@ -8,6 +8,7 @@ import { AssistantConsole } from "@/components/home/AssistantConsole";
 import { MacroSummary, MobileIcon, ScreenHeader } from "@/components/mobile/MobileKit";
 import { AgentBadge, NarrativeCard, StatChip, StreakCard, StrideMark, WaterTracker } from "@/components/ui-kit";
 import { useShortcut } from "@/hooks/useShortcut";
+import { useDailyWindow } from "@/hooks/useDailyWindow";
 import { localDateStr } from "@/lib/utils";
 
 const LOG_PROMPTS: Record<string, string> = {
@@ -33,9 +34,18 @@ type TodayBrief = {
   checkIn?: {
     type: "quick_question";
     id: string;
+    source?: "registry" | "llm" | "template";
+    templateId?: string;
     title: string;
     body?: string;
+    answerType?: "choice" | "number" | "scale" | "yes_no";
     options: Array<{ label: string; value: string; prompt?: string }>;
+    unit?: string;
+    min?: number;
+    max?: number;
+    step?: number;
+    placeholder?: string;
+    window?: "morning" | "day" | "evening" | "night";
     queue?: Array<{
       id: string;
       title: string;
@@ -81,12 +91,31 @@ export function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useUser();
-  const brief = useQuery(api.insights.getTodayBrief, {}) as TodayBrief | undefined;
   const today = localDateStr();
+  const dailyWindow = useDailyWindow();
+  const brief = useQuery(api.insights.getTodayBrief, { today, window: dailyWindow }) as TodayBrief | undefined;
   const waterLogs = useQuery(api.wellness.getWater, { date: today });
+  const ensureDailyLlmQuestions = useAction(api.checkins.ensureDailyLlmQuestions);
   const addWater = useMutation(api.wellness.addWater);
   const deleteWater = useMutation(api.wellness.deleteWater);
   useShortcut("k", () => inputRef.current?.focus(), { meta: true });
+
+  useEffect(() => {
+    if (!brief?.window) return;
+    const key = `stride_llm_checkins:${today}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+    } catch {}
+    void ensureDailyLlmQuestions({ date: today, window: brief.window })
+      .then((result) => {
+        if (result.ok) {
+          try {
+            sessionStorage.setItem(key, "1");
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, [brief?.window, ensureDailyLlmQuestions, today]);
 
   // Deep-link queue: ?log=<section> pre-starts the composer
   useEffect(() => {

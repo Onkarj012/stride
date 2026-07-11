@@ -436,7 +436,7 @@ export const chat = action({
     const today = todayArg ?? new Date().toISOString().split("T")[0];
 
     // Gather context
-    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory, userIngredients] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory, userIngredients, checkInAnswers] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
@@ -449,6 +449,7 @@ export const chat = action({
       ctx.runQuery(internal.recipes.getTopRecipesForContext, { userId }),
       ctx.runQuery(internal.workout_memory.getTopForContext, { userId, limit: 6 }),
       ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
+      ctx.runQuery(internal.checkins.getAnswerContextForContext, { userId, date: today }),
     ]);
 
     const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
@@ -493,6 +494,9 @@ export const chat = action({
       });
     }
     contextBlock += `\nRECENT 7-DAY TREND:\n${recentCals.map((d: any) => `${d.date}: ${d.cals}cal`).join(", ")}`;
+    if (checkInAnswers) {
+      contextBlock += `\n\nTODAY'S CHECK-IN ANSWERS:\n${checkInAnswers}\n`;
+    }
 
     const loggingPrompt = `\n\nDIRECT LOGGING CAPABILITY:
 You can log multiple items directly when the user describes them. Append log blocks at the very end of your response.
@@ -1542,7 +1546,7 @@ Return ONLY:
     if (extracted.isQuestion || extracted.items.length === 0) {
       const coachType: CoachType = classifyCoachType(message);
       const coach = getCoach(coachType);
-      const [todayMealsList, todayWorkoutsList, profile, history, topMemories, lastSleepQ, patternsQ, topRecipesQ, topWkMemQ, behaviorQ, settingsQ, userIngredientsQ] = await Promise.all([
+      const [todayMealsList, todayWorkoutsList, profile, history, topMemories, lastSleepQ, patternsQ, topRecipesQ, topWkMemQ, behaviorQ, settingsQ, userIngredientsQ, checkInAnswersQ] = await Promise.all([
         ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
         ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
         ctx.runQuery(internal.profile.getProfileForContext, { userId }),
@@ -1555,6 +1559,7 @@ Return ONLY:
         ctx.runQuery(internal.behavior.getBehaviorProfileForContext, { userId }),
         ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
         ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
+        ctx.runQuery(internal.checkins.getAnswerContextForContext, { userId, date: today }),
       ]);
       const userName = identity.name ?? "Athlete";
       let context = `USER: ${userName}\n`;
@@ -1581,6 +1586,9 @@ Return ONLY:
       }
       if (lastSleepQ) {
         context += `Last sleep: ${(lastSleepQ as any).hours}h, ${(lastSleepQ as any).quality}\n`;
+      }
+      if (checkInAnswersQ) {
+        context += `Today's check-in answers: ${checkInAnswersQ}\n`;
       }
       if (Array.isArray(patternsQ) && patternsQ.length > 0) {
         context += `Patterns: ${(patternsQ as string[]).join(" | ")}\n`;

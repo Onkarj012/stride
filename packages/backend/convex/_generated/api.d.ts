@@ -16,6 +16,7 @@ import type * as ai_parse from "../ai/parse.js";
 import type * as behavior from "../behavior.js";
 import type * as calibration from "../calibration.js";
 import type * as calorie_engine from "../calorie_engine.js";
+import type * as checkins from "../checkins.js";
 import type * as chat from "../chat.js";
 import type * as coaches from "../coaches.js";
 import type * as crons from "../crons.js";
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   behavior: typeof behavior;
   calibration: typeof calibration;
   calorie_engine: typeof calorie_engine;
+  checkins: typeof checkins;
   chat: typeof chat;
   coaches: typeof coaches;
   crons: typeof crons;

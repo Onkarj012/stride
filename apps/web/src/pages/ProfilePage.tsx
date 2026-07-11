@@ -538,6 +538,64 @@ function AIProviderCard() {
   );
 }
 
+const CHECKIN_WINDOWS = [
+  { value: "morning", label: "Morning" },
+  { value: "day", label: "Day" },
+  { value: "evening", label: "Evening" },
+  { value: "night", label: "Night" },
+] as const;
+
+function CheckInTemplatesCard({ compact = false }: { compact?: boolean }) {
+  const templates = useQuery(api.checkins.getTemplateSettings) ?? [];
+  const upsert = useMutation(api.checkins.upsertTemplateSetting);
+  const toast = useToast();
+
+  async function save(template: any, patch: { enabled?: boolean; window?: string }) {
+    try {
+      await upsert({
+        templateId: template.templateId,
+        enabled: patch.enabled ?? template.enabled,
+        window: (patch.window ?? template.window) as "morning" | "day" | "evening" | "night",
+      });
+    } catch (err) {
+      toast.error("Couldn't save check-in", err instanceof Error ? err.message : "Try again");
+    }
+  }
+
+  return (
+    <Card tone="card" radius="lg" padding={compact ? "none" : "lg"} className={compact ? "overflow-hidden" : "space-y-4"}>
+      <div className={compact ? "px-4 py-3 border-b border-border" : ""}>
+        <h3 className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Check-in templates</h3>
+        {!compact && <p className="text-[13px] text-text-muted mt-1">Choose the recurring metrics Stry may ask for.</p>}
+      </div>
+      <div className={compact ? "divide-y divide-border" : "space-y-2.5"}>
+        {templates.map((template: any) => (
+          <div key={template.templateId} className={compact ? "px-4 py-3" : "rounded-[16px] border border-border bg-card p-3"}>
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[14px] font-bold text-text">{template.title}</p>
+                <p className="mt-0.5 text-[12px] text-text-muted">{template.description}</p>
+              </div>
+              <Switch checked={template.enabled} onChange={(enabled) => save(template, { enabled })} label={`Toggle ${template.title}`} />
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <span className="text-[12px] font-semibold text-text-muted">Window</span>
+              <select
+                value={template.window}
+                disabled={!template.enabled}
+                onChange={(e) => save(template, { window: e.target.value })}
+                className="rounded-lg border border-border bg-input px-2.5 py-1.5 text-[12px] font-semibold text-text disabled:opacity-50 focus:outline-none focus:border-lavender"
+              >
+                {CHECKIN_WINDOWS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+              </select>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function ChangePasswordRow() {
   const { user } = useUser();
   const toast = useToast();
@@ -624,6 +682,8 @@ function SettingsTab() {
       <ProfileHeaderCard />
 
       <AIProviderCard />
+
+      <CheckInTemplatesCard />
 
       <Card tone="card" radius="lg" padding="lg" className="space-y-4">
         <div>
@@ -774,6 +834,10 @@ function MobileAccountLayout({ title }: { title: string }) {
         <AccountToggle label="Reduced motion" checked={prefs.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
         <AccountToggle label="Analytical coaching" checked={prefs.coachingStyle === "analytical"} onChange={(v) => update({ coachingStyle: v ? "analytical" : "gentle" })} />
         <AccountToggle label="Metric units" checked={prefs.units === "metric"} onChange={(v) => update({ units: v ? "metric" : "imperial" })} />
+      </div>
+
+      <div className="mt-6">
+        <CheckInTemplatesCard compact />
       </div>
     </div>
   );

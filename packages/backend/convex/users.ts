@@ -32,6 +32,7 @@ export const clearAllData = mutation({
     const byUserDate = [
       "meals", "workouts", "daily_goals", "insights",
       "water_logs", "sleep_logs", "mood_logs", "steps_logs",
+      "weight_logs", "check_in_answers", "check_in_llm_questions",
     ] as const;
     for (const table of byUserDate) {
       const rows = await (ctx.db.query(table as any) as any)
@@ -44,6 +45,7 @@ export const clearAllData = mutation({
       "chat_messages", "chat_sessions", "user_behavior", "nudges",
       "recipes", "food_memory", "workout_memory", "user_ingredients",
       "user_profiles", "user_settings", "user_metabolic_profiles", "calorie_feedback",
+      "check_in_template_settings",
     ] as const;
     for (const table of byUser) {
       const rows = await (ctx.db.query(table as any) as any)
@@ -74,6 +76,7 @@ export const exportAllData = query({
     const [
       meals, workouts, daily_goals, insights,
       water_logs, sleep_logs, mood_logs, steps_logs,
+      weight_logs, check_in_answers, check_in_llm_questions,
     ] = await Promise.all([
       ctx.db.query("meals").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("workouts").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
@@ -83,6 +86,9 @@ export const exportAllData = query({
       ctx.db.query("sleep_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("mood_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("steps_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("weight_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("check_in_answers").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("check_in_llm_questions").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
     ]);
 
     const [
@@ -91,6 +97,7 @@ export const exportAllData = query({
       user_profiles, user_gamification,
       chat_messages, user_behavior, nudges,
       user_settings, user_metabolic_profiles, calorie_feedback,
+      check_in_template_settings,
     ] = await Promise.all([
       ctx.db.query("weekly_summaries").withIndex("by_user_week", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("chat_sessions").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
@@ -106,12 +113,14 @@ export const exportAllData = query({
       ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("user_metabolic_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("calorie_feedback").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("check_in_template_settings").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
     ]);
 
     return {
       exportedAt: Date.now(),
       meals, workouts, daily_goals, insights,
       water_logs, sleep_logs, mood_logs, steps_logs,
+      weight_logs, check_in_answers, check_in_llm_questions, check_in_template_settings,
       weekly_summaries, chat_sessions, chat_messages, recipes,
       food_memory, workout_memory, user_ingredients,
       user_profiles, user_behavior, nudges,
