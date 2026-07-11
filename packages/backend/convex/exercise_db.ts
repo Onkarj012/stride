@@ -11,6 +11,7 @@ export interface ExerciseMeta {
   is_compound: boolean;
   muscle_groups: string[];
   category: "strength" | "cardio" | "flexibility" | "sport";
+  rough?: boolean;
 }
 
 export interface ParsedExercise {
@@ -156,6 +157,26 @@ for (const entry of EXERCISE_DB) {
   }
 }
 
+// Broad workout labels cannot be matched to one exercise reliably. These METs
+// use representative exercises from the table above and are marked as rough.
+const CATEGORY_FALLBACKS: Array<{
+  keywords: RegExp;
+  canonical_name: string;
+  met_value: number;
+  muscle_groups: string[];
+  category: ExerciseMeta["category"];
+}> = [
+  { keywords: /\b(?:cardio|aerobic)\b/, canonical_name: "Cardio", met_value: 7.5, muscle_groups: ["full body", "cardiovascular"], category: "cardio" },
+  { keywords: /\b(?:full[ -]?body|total[ -]?body)\b/, canonical_name: "Full Body Workout", met_value: 6.0, muscle_groups: ["full body"], category: "strength" },
+  { keywords: /\b(?:leg day|legs?|lower[ -]?body)\b/, canonical_name: "Lower Body Workout", met_value: 5.0, muscle_groups: ["quadriceps", "hamstrings", "glutes"], category: "strength" },
+  { keywords: /\b(?:chest|push)\b/, canonical_name: "Chest Workout", met_value: 4.5, muscle_groups: ["chest", "triceps", "shoulders"], category: "strength" },
+  { keywords: /\b(?:back|pull)\b/, canonical_name: "Back Workout", met_value: 4.8, muscle_groups: ["back", "biceps", "lats"], category: "strength" },
+  { keywords: /\b(?:upper[ -]?body)\b/, canonical_name: "Upper Body Workout", met_value: 4.5, muscle_groups: ["chest", "back", "shoulders", "arms"], category: "strength" },
+  { keywords: /\b(?:core|abs?|abdominals?)\b/, canonical_name: "Core Workout", met_value: 3.5, muscle_groups: ["core", "abs"], category: "strength" },
+  { keywords: /\b(?:arms?|arm day|biceps?|triceps?)\b/, canonical_name: "Arm Workout", met_value: 3.5, muscle_groups: ["biceps", "triceps"], category: "strength" },
+  { keywords: /\b(?:shoulders?|shoulder day|delts?)\b/, canonical_name: "Shoulder Workout", met_value: 4.0, muscle_groups: ["shoulders", "triceps"], category: "strength" },
+];
+
 /**
  * Levenshtein distance for fuzzy matching.
  */
@@ -216,6 +237,19 @@ export function lookupExercise(name: string): ExerciseMeta | null {
   // Accept fuzzy match if distance is reasonable (<= 3 edits)
   if (bestMatch && bestDistance <= 3) {
     return exerciseToMeta(bestMatch);
+  }
+
+  const categoryFallback = CATEGORY_FALLBACKS.find(({ keywords }) => keywords.test(stripped));
+  if (categoryFallback) {
+    return {
+      canonical_name: categoryFallback.canonical_name,
+      aliases: [],
+      met_value: categoryFallback.met_value,
+      is_compound: categoryFallback.muscle_groups.length > 2,
+      muscle_groups: categoryFallback.muscle_groups,
+      category: categoryFallback.category,
+      rough: true,
+    };
   }
 
   return null;

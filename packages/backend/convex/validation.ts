@@ -311,3 +311,37 @@ export function isSimilarMeal(
   const kcalTolerance = Math.max(120, Math.round(Math.max(incoming.calories, existing.calories, 1) * 0.35));
   return kcalDelta <= kcalTolerance;
 }
+
+export function normalizedWorkoutName(name: string): string {
+  return normalizeForHash(name)
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(the|a|an|workout|session|training|exercise)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function isSimilarWorkout(
+  incoming: Pick<WorkoutValidationInput, "name" | "caloriesBurned">,
+  existing: Pick<WorkoutValidationInput, "name" | "caloriesBurned">,
+): boolean {
+  const a = normalizedWorkoutName(incoming.name);
+  const b = normalizedWorkoutName(existing.name);
+  if (!a || !b) return false;
+
+  const aTokens = new Set(a.split(/\s+/));
+  const bTokens = new Set(b.split(/\s+/));
+  const common = [...aTokens].filter((token) => bTokens.has(token)).length;
+  const overlap = common / Math.max(1, Math.min(aTokens.size, bTokens.size));
+  const nameSimilar = a === b || a.includes(b) || b.includes(a) || overlap >= 0.8;
+  if (!nameSimilar) return false;
+
+  if (incoming.caloriesBurned == null || existing.caloriesBurned == null) {
+    return a === b || a.includes(b) || b.includes(a);
+  }
+  const kcalDelta = Math.abs(Math.round(incoming.caloriesBurned) - Math.round(existing.caloriesBurned));
+  const kcalTolerance = Math.max(
+    50,
+    Math.round(Math.max(incoming.caloriesBurned, existing.caloriesBurned, 1) * 0.2),
+  );
+  return kcalDelta <= kcalTolerance;
+}

@@ -379,6 +379,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           structuredSets: d.exercises ? JSON.stringify(d.exercises) : undefined,
           logSource: "home",
           parseError: d.parseError,
+          allowDuplicate: d.allowDuplicate,
         });
         setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);

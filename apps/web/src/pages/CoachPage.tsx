@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { Plus, Trash2, Barcode, ImagePlus, X, RotateCcw } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
+import type { FunctionArgs } from "convex/server";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
@@ -54,7 +55,13 @@ type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text:
 type DraftMessage = { kind: "draft"; id: string; draft: LogDraft; confirmReply: string; discardReply: string; settled: boolean };
 type UndoEntry = { type: "meal" | "workout"; id: string; label: string; undone?: boolean };
 type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
-type Message = TextMessage | DraftMessage | UndoMessage;
+type MealRetryArgs = Omit<FunctionArgs<typeof api.meals.addMeal>, "allowDuplicate">;
+type WorkoutRetryArgs = Omit<FunctionArgs<typeof api.workouts.addWorkout>, "allowDuplicate">;
+type FailedLogItem =
+  | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs; logged?: boolean }
+  | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs; logged?: boolean };
+type DuplicateMessage = { kind: "duplicate"; id: string; items: FailedLogItem[] };
+type Message = TextMessage | DraftMessage | UndoMessage | DuplicateMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
 type ConvexChatMessage = { role: "user" | "ai"; content: string };
 
@@ -78,6 +85,8 @@ export function CoachPage() {
   const deleteSession = useMutation(api.chat.deleteSession);
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
+  const addMeal = useMutation(api.meals.addMeal);
+  const addWorkout = useMutation(api.workouts.addWorkout);
   const sendToAI = useAction(api.ai.chat);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -99,6 +108,7 @@ export function CoachPage() {
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [kbPad, setKbPad] = useState(0);
   const [pendingUndoIds, setPendingUndoIds] = useState<Set<string>>(() => new Set());
+  const [pendingRetryIds, setPendingRetryIds] = useState<Set<string>>(() => new Set());
   const pendingUndoIdsRef = useRef<Set<string>>(new Set());
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const sendingRef = useRef(false);
@@ -206,6 +216,33 @@ export function CoachPage() {
     }
   }, [deleteMeal, deleteWorkout, toast]);
 
+  const retryFailedLog = useCallback(async (messageId: string, itemIndex: number, item: FailedLogItem) => {
+    const retryId = `${messageId}:${itemIndex}`;
+    if (item.logged || pendingRetryIds.has(retryId)) return;
+    setPendingRetryIds((prev) => new Set(prev).add(retryId));
+    try {
+      const id = item.kind === "meal"
+        ? await addMeal({ ...item.retryArgs, allowDuplicate: true })
+        : await addWorkout({ ...item.retryArgs, allowDuplicate: true });
+      setMessages((prev) => [
+        ...prev.map((message) => message.kind === "duplicate" && message.id === messageId
+          ? { ...message, items: message.items.map((candidate, index) => index === itemIndex ? { ...candidate, logged: true } : candidate) }
+          : message),
+        { kind: "undo", id: `undo-${Date.now()}`, entries: [{ type: item.kind, id, label: item.description }] },
+      ]);
+      toast.success(item.kind === "meal" ? `Logged: ${item.description}` : `Logged workout: ${item.description}`);
+      scroll();
+    } catch (err) {
+      toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");
+    } finally {
+      setPendingRetryIds((prev) => {
+        const next = new Set(prev);
+        next.delete(retryId);
+        return next;
+      });
+    }
+  }, [addMeal, addWorkout, pendingRetryIds, scroll, toast]);
+
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
     if (!Array.isArray(rawItems)) return [];
@@ -300,9 +337,25 @@ export function CoachPage() {
       const agent = coachToAgent(coachType);
       const loggedItem = (r.loggedItem && typeof r.loggedItem === "object" && "type" in (r.loggedItem as object))
         ? r.loggedItem as { type: string; data: any } : undefined;
+      const failedItems = Array.isArray(r.failedItems)
+        ? r.failedItems.filter((item): item is FailedLogItem => {
+            if (!item || typeof item !== "object") return false;
+            const candidate = item as Partial<FailedLogItem>;
+            return (candidate.kind === "meal" || candidate.kind === "workout")
+              && typeof candidate.code === "string"
+              && typeof candidate.description === "string"
+              && !!candidate.retryArgs
+              && typeof candidate.retryArgs === "object";
+          })
+        : [];
 
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: reply, agent, streamed: true }]);
       scroll();
+
+      if (failedItems.length > 0) {
+        setMessages((prev) => [...prev, { kind: "duplicate", id: `duplicate-${Date.now()}`, items: failedItems }]);
+        scroll();
+      }
 
       if (loggedItem) {
         if (loggedItem.type === "meal") {
@@ -477,6 +530,34 @@ export function CoachPage() {
                         {entry.undone ? `${entry.label} removed` : pendingUndoIds.has(entry.id) ? `Undoing: ${entry.label}` : `Undo: ${entry.label}`}
                       </button>
                     ))}
+                  </div>
+                );
+              }
+              if (m.kind === "duplicate") {
+                if (m.items.length === 0) return null;
+                return (
+                  <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
+                    {m.items.map((item, itemIndex) => {
+                      const retryId = `${m.id}:${itemIndex}`;
+                      const pending = pendingRetryIds.has(retryId);
+                      return (
+                        <button
+                          key={`${item.kind}-${itemIndex}`}
+                          type="button"
+                          disabled={item.logged || pending}
+                          onClick={() => retryFailedLog(m.id, itemIndex, item)}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
+                            item.logged || pending
+                              ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
+                              : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
+                          )}
+                        >
+                          <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
+                          {item.logged ? `Logged: ${item.description}` : pending ? `Logging: ${item.description}` : `Log anyway: ${item.description}`}
+                        </button>
+                      );
+                    })}
                   </div>
                 );
               }

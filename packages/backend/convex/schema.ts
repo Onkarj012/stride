@@ -55,6 +55,7 @@ export default defineSchema({
     calculationVersion: v.optional(v.number()),
     // Structured exercise data — JSON: ExerciseEntry[]
     structuredSets: v.optional(v.string()),
+    timestamp: v.optional(v.string()),
     logSource: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
   })

@@ -350,6 +350,7 @@ Return ONLY valid JSON:
       const exerciseMetas = matchExercises(exercises);
       const compoundRatio = countCompoundRatio(exerciseMetas);
       const weightedMet = getWeightedMET(exercises);
+      const roughExerciseMatch = exerciseMetas.some((meta) => meta.rough === true);
 
       const calcResult = calculateWorkoutCalories(
         {
@@ -369,7 +370,11 @@ Return ONLY valid JSON:
         },
       );
 
-      calorieResult = adjustedCalorieResult(calcResult, hasKnownWeight, roughCalorieEstimate);
+      calorieResult = adjustedCalorieResult(
+        calcResult,
+        hasKnownWeight,
+        roughCalorieEstimate || roughExerciseMatch,
+      );
     } catch {
       // Fall back to AI estimate if engine fails
     }

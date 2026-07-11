@@ -627,6 +627,45 @@ Rules:
     let cleanReply = reply;
     const loggedItems: any[] = [];
     const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string; errorCode?: string }> = [];
+    type MealRetryArgs = {
+      name: string;
+      calories: number;
+      protein: number;
+      carbs: number;
+      fat: number;
+      time: string;
+      date: string;
+      aiSuggestion?: string;
+      mealType?: string;
+      components?: string;
+      confidence?: number;
+      nutritionSource?: string;
+      structuredItems?: string;
+      ingredientBreakdown?: string;
+      logSource: string;
+    };
+    type WorkoutRetryArgs = {
+      name: string;
+      sets: string;
+      duration?: string;
+      intensity: string;
+      date: string;
+      exercises?: unknown;
+      rationale?: string;
+      caloriesBurned?: number;
+      structuredSets?: string;
+      timestamp: string;
+      logSource: string;
+      calorieConfidence?: number;
+      calorieRangeLow?: number;
+      calorieRangeHigh?: number;
+      calorieBreakdown?: string;
+      calculationVersion?: number;
+    };
+    type FailedLogItem =
+      | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs }
+      | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs };
+    const failedItems: FailedLogItem[] = [];
 
     // Strip all log blocks from the reply text
     cleanReply = reply
@@ -641,8 +680,11 @@ Rules:
     // Meal
     const mealMatches = [...reply.matchAll(/⟦LOG_MEAL⟧([\s\S]*?)⟦\/LOG_MEAL⟧/g)];
     for (const mealMatch of mealMatches) {
+      let retryArgs: MealRetryArgs | undefined;
+      let retryDescription = "meal";
       try {
         const logData = JSON.parse(mealMatch[1].trim());
+        retryDescription = logData.description || message;
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", parseModel, apiKey);
         if (parsed.parseError) {
@@ -652,6 +694,23 @@ Rules:
         const nutrition = await runNutritionEngine(ctx, parsed);
         const finalStructuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
         const finalIngredientBreakdown = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
+        retryArgs = {
+          name: parsed.name,
+          calories: nutrition.calories,
+          protein: nutrition.protein,
+          carbs: nutrition.carbs,
+          fat: nutrition.fat,
+          time: parsed.time,
+          date: targetDate,
+          aiSuggestion: parsed.aiSuggestion,
+          mealType: parsed.mealType,
+          components: parsed.components,
+          confidence: nutrition.confidence,
+          nutritionSource: nutrition.nutritionSource,
+          structuredItems: finalStructuredItems,
+          ingredientBreakdown: finalIngredientBreakdown,
+          logSource: "coach",
+        };
         const mealId = await ctx.runMutation(internal.meals.addMealFromAI, {
           userId, date: targetDate,
           name: parsed.name, calories: nutrition.calories, protein: nutrition.protein,
@@ -667,7 +726,16 @@ Rules:
         if (targetDate === today) await ctx.runMutation(api.gamification.recordActivity, { type: "meal" }).catch(() => {});
       } catch (err) {
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
-        logOutcomes.push({ type: "meal", name: "meal", ok: false, error: message, errorCode: getConvexErrorCode(err) });
+        const errorCode = getConvexErrorCode(err);
+        logOutcomes.push({ type: "meal", name: "meal", ok: false, error: message, errorCode });
+        if (retryArgs) {
+          failedItems.push({
+            kind: "meal",
+            code: errorCode ?? "LOG_FAILED",
+            description: retryDescription,
+            retryArgs,
+          });
+        }
         console.error("Failed to log meal from AI:", err);
       }
     }
@@ -675,10 +743,14 @@ Rules:
     // Workout
     const workoutMatches = [...reply.matchAll(/⟦LOG_WORKOUT⟧([\s\S]*?)⟦\/LOG_WORKOUT⟧/g)];
     for (const workoutMatch of workoutMatches) {
+      let retryArgs: WorkoutRetryArgs | undefined;
+      let retryDescription = "workout";
       try {
         const logData = JSON.parse(workoutMatch[1].trim());
+        retryDescription = logData.description || message;
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
-        const metabolicProfile: any = await ctx.runQuery(internal.calibration.getMetabolicProfileForContext, {});
+        const timestamp = new Date().toISOString().slice(11, 16);
+        const metabolicProfile: any = await ctx.runQuery(api.calibration.getMetabolicProfileForContext, {});
         const userPhysique: UserPhysique | undefined = profile ? {
           weight: profile.weight, height: profile.height, age: profile.age, sex: profile.sex,
           fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
@@ -693,11 +765,26 @@ Rules:
           calorieConfidence: parsed.calorieResult.confidence, calorieRangeLow: parsed.calorieResult.range_low,
           calorieRangeHigh: parsed.calorieResult.range_high, calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
         } : {};
+        retryArgs = {
+          name: parsed.name,
+          sets: parsed.sets,
+          duration: parsed.duration,
+          intensity: parsed.intensity,
+          date: targetDate,
+          exercises: parsed.exercises,
+          rationale: parsed.rationale,
+          caloriesBurned: parsed.caloriesBurned,
+          structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
+          timestamp,
+          logSource: "coach",
+          ...calorieFields,
+        };
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
           userId, date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
           intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
           caloriesBurned: parsed.caloriesBurned,
           structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
+          timestamp,
           logSource: "coach",
           ...calorieFields,
         });
@@ -706,8 +793,17 @@ Rules:
         // Award gamification for today's logs — parity with the homepage confirm path.
         if (targetDate === today) await ctx.runMutation(api.gamification.recordActivity, { type: "workout" }).catch(() => {});
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logOutcomes.push({ type: "workout", name: "workout", ok: false, error: message });
+        const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
+        const errorCode = getConvexErrorCode(err);
+        logOutcomes.push({ type: "workout", name: "workout", ok: false, error: message, errorCode });
+        if (retryArgs) {
+          failedItems.push({
+            kind: "workout",
+            code: errorCode ?? "LOG_FAILED",
+            description: retryDescription,
+            retryArgs,
+          });
+        }
         console.error("Failed to log workout from AI:", err);
       }
     }
@@ -830,7 +926,7 @@ Rules:
       }
     }
 
-    return { reply: cleanReply, loggedItem, coachType: detectedCoach };
+    return { reply: cleanReply, loggedItem, failedItems, coachType: detectedCoach };
   },
 });
 

@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { Check, X, Pencil, Flame, Dumbbell, Footprints, Zap, Moon, Droplets, Smile, Activity } from "lucide-react";
 import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import { cn } from "@/lib/utils";
+import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 type SleepDraft = { kind: "sleep"; description: string; hours: number; quality: "poor"|"ok"|"good"|"great" };
 type WaterDraft = { kind: "water"; description: string; ml: number };
@@ -49,21 +50,6 @@ function formatExerciseSet(set: Record<string, unknown>, unit?: string) {
     ? `${set.reps} reps`
     : "";
   return reps ? `${weight} × ${reps}` : weight;
-}
-
-function formatNutritionSource(source?: string) {
-  if (!source) return "Manual";
-  const normalized = source.toLowerCase();
-  if (normalized === "database") return "DB matched";
-  if (normalized === "mixed") return "DB + AI";
-  if (normalized === "ai" || normalized === "ai_estimated") return "AI-estimated";
-  if (normalized === "memory") return "Memory";
-  if (normalized === "recipe") return "Recipe";
-  if (normalized.includes("off")) return "Open Food Facts";
-  if (normalized.includes("usda")) return "USDA";
-  if (normalized.includes("barcode")) return "Barcode";
-  if (normalized === "parse_error") return "Needs edit";
-  return source.replace(/_/g, " ");
 }
 
 /* ── Editable number field ── */
@@ -192,17 +178,13 @@ function MealCard({
           </div>
           <span className="text-[10.5px] text-text-muted whitespace-nowrap">
             {Math.round((draft as any).confidence * 100)}% confidence
-            {(draft as any).nutritionSource && (
-              <> · <span className="capitalize">{formatNutritionSource((draft as any).nutritionSource)}</span></>
-            )}
           </span>
+          <NutritionSourceBadge source={(draft as any).nutritionSource} />
         </div>
       )}
       {breakdownItems.some((item) => item.verified) && (
         <div className="px-1">
-          <span className="inline-flex rounded-full bg-mint-soft px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-mint">
-            Verified food data
-          </span>
+          <NutritionSourceBadge verified />
         </div>
       )}
     </div>

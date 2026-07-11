@@ -11,6 +11,7 @@ import { OverlayHeader } from "@/components/mobile/MobileKit";
 import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
+import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 const DAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
@@ -151,6 +152,7 @@ function WorkoutRow({ w, onEdit, onRelog, onDelete, relogging }: {
             {w.duration && <span>{w.duration}</span>}
             <span className="capitalize">{w.intensity?.toLowerCase()}</span>
             {(w.caloriesBurned ?? 0) > 0 && <span>{w.caloriesBurned} kcal</span>}
+            <NutritionSourceBadge source={w.calculationVersion ? "calorie_engine" : undefined} confidence={w.calorieConfidence ?? undefined} />
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
@@ -310,6 +312,7 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
                       <div className="flex flex-wrap gap-x-3 text-[12px] text-text-muted">
                         <span>{m.calories} kcal</span><span>{m.protein}g protein</span>
                         <span>{m.carbs}g carbs</span><span>{m.fat}g fat</span>
+                        <NutritionSourceBadge source={m.nutritionSource ?? undefined} confidence={m.confidence ?? undefined} verified={m.nutritionVerified ?? false} />
                       </div>
                       {m.aiSuggestion && <p className="text-[12px] italic text-text-subtle line-clamp-2">Stry: {m.aiSuggestion}</p>}
                     </div>
