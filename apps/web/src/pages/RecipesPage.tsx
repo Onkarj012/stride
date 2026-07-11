@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { Plus, Trash2, Utensils, ChefHat, Sparkles, Loader2, ArrowLeft, Pencil } from "lucide-react";
+import { Plus, Trash2, ChefHat, Sparkles, Loader2, ArrowLeft, Pencil } from "lucide-react";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { Card } from "@/components/primitives/Card";
 import { type PickedFood } from "@/components/food/FoodSearch";

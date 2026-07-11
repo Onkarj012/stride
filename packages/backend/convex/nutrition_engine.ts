@@ -40,6 +40,7 @@ export interface ItemBreakdown {
   carbs_g: number;
   fat_g: number;
   source: string;
+  verified?: boolean;
   confidence: number;
 }
 
@@ -57,7 +58,7 @@ export interface NutritionResult {
  * Search cache results type — matches what searchFoodsInCache returns.
  */
 interface CachedFoodDoc {
-  _id: string;
+  _id?: string;
   name: string;
   caloriesPer100g: number;
   proteinPer100g: number;

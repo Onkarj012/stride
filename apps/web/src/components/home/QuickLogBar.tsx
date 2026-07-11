@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import { Zap } from "lucide-react";
 import { useToast } from "@/context/ToastContext";
@@ -10,6 +11,14 @@ interface QuickItem {
   label: string;
   kcal: number;
   run: () => Promise<void>;
+}
+
+function getNearDuplicateData(err: unknown): { message?: string } | null {
+  if (!(err instanceof ConvexError)) return null;
+  const data = err.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const payload = data as { code?: string; message?: string };
+  return payload.code === "NEAR_DUPLICATE" ? payload : null;
 }
 
 /**
@@ -49,7 +58,7 @@ export function QuickLogBar() {
         run: async () => {
           const time = new Date().toTimeString().slice(0, 5);
           // Log exactly 100g; label makes the portion explicit.
-          await addMeal({
+          const payload = {
             name: f.name,
             calories: Math.round(f.caloriesPer100g),
             protein: Math.round(f.proteinPer100g * 10) / 10,
@@ -57,7 +66,19 @@ export function QuickLogBar() {
             fat: Math.round(f.fatPer100g * 10) / 10,
             time,
             date: localDateStr(),
-          });
+            confidence: f.verified ? 0.95 : 0.8,
+            nutritionSource: f.source ?? "quick_log",
+            nutritionVerified: !!f.verified,
+            logSource: "quick",
+          };
+          try {
+            await addMeal(payload);
+          } catch (err) {
+            const duplicate = getNearDuplicateData(err);
+            if (!duplicate) throw err;
+            if (!window.confirm(duplicate.message ?? "Looks like you already logged this — log anyway?")) return;
+            await addMeal({ ...payload, allowDuplicate: true });
+          }
           await recordActivity({ type: "meal" }).catch(() => {});
           await recordBehavior({ kind: "suggestion", key: f.name }).catch(() => {});
           toast.success(`Logged ${f.name}`, "100g portion");

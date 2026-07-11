@@ -21,11 +21,11 @@ function todayDate(): string {
 export function useLogs(date?: string) {
   const d = date ?? todayDate();
 
-  const meals = useQuery(api.meals.getMeals, { date: d });
-  const workouts = useQuery(api.workouts.getWorkouts, { date: d });
-  const water = useQuery(api.wellness.getWater, { date: d });
+  const meals = useQuery(api.meals.getMeals, { date: d }) as any[] | undefined;
+  const workouts = useQuery(api.workouts.getWorkouts, { date: d }) as any[] | undefined;
+  const water = useQuery(api.wellness.getWater, { date: d }) as any[] | undefined;
   const sleep = useQuery(api.wellness.getSleep, { date: d });
-  const mood = useQuery(api.wellness.getMood, { date: d });
+  const mood = useQuery(api.wellness.getMood, { date: d }) as any[] | undefined;
   const steps = useQuery(api.wellness.getSteps, { date: d });
 
   const addMeal = useMutation(api.meals.addMeal);
@@ -123,6 +123,7 @@ export function useLogs(date?: string) {
           intensity: w?.intensity?.toUpperCase() ?? "MEDIUM",
           date: targetDate,
           caloriesBurned: w?.kcal,
+          timestamp: time,
           rationale: extra?.aiInsight,
         });
       } else if (category === "water") {
