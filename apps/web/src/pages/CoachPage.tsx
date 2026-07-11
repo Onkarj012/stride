@@ -5,23 +5,19 @@ import { Plus, Trash2, Barcode, ImagePlus, X, RotateCcw } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { AgentBadge } from "@/components/ui-kit/AgentBadge";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
 import { CoachBubble, InputBar } from "@/components/ui-kit";
 import type { AgentType, AttachItem, InputMode, Modality } from "@/components/ui-kit";
-import { useLogs } from "@/hooks/useLogs";
 import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useToast } from "@/context/ToastContext";
 import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
 import { cn, localDateStr } from "@/lib/utils";
-import { FADE_FAST } from "@/lib/motion";
 import { MobileIcon, StatusBar } from "@/components/mobile/MobileKit";
-import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import type { Agent, CoachingStyle } from "@/lib/storage";
 
 const COACH_SUGGESTIONS = [
@@ -51,10 +47,9 @@ function coachToAgent(coachType?: string): Agent {
 }
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type DraftMessage = { kind: "draft"; id: string; draft: LogDraft; confirmReply: string; discardReply: string; settled: boolean };
 type UndoEntry = { type: "meal" | "workout"; id: string; label: string; undone?: boolean };
 type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
-type Message = TextMessage | DraftMessage | UndoMessage;
+type Message = TextMessage | UndoMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
 type ConvexChatMessage = { role: "user" | "ai"; content: string };
 
@@ -102,7 +97,6 @@ export function CoachPage() {
   const pendingUndoIdsRef = useRef<Set<string>>(new Set());
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const sendingRef = useRef(false);
-  const { add } = useLogs();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -230,45 +224,6 @@ export function CoachPage() {
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
   const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : "type";
-
-  const handleConfirm = useCallback((msgId: string, draft: any, confirmReply: string) => {
-    const draftDate: string | undefined = draft.date;
-    const dateNote = draftDate && draftDate !== localDateStr() ? ` for ${draftDate}` : "";
-    if (draft.kind === "meal") {
-      const d = draft as MealDraft;
-      add("meal", d.description, { agent: "diet", meal: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, items: d.items } }, draftDate);
-      toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
-    } else if (draft.kind === "workout") {
-      const d = draft as WorkoutDraft;
-      add("workout", d.description, { agent: "workout", workout: { type: d.type, duration: d.duration, distance: d.distance, kcal: d.kcal, intensity: d.intensity } }, draftDate);
-      toast.success(`Logged workout${dateNote}`, `${d.duration} min · ${d.kcal} kcal`);
-    } else if (draft.kind === "sleep") {
-      add("sleep", draft.description, { agent: "sleep", sleep: { hours: draft.hours, quality: draft.quality } }, draftDate);
-      toast.success(`Sleep logged${dateNote}`, `${draft.hours.toFixed(1)}h · ${draft.quality}`);
-    } else if (draft.kind === "water") {
-      add("water", "water", { agent: "water", water: { ml: draft.ml } }, draftDate);
-      toast.success(`Water logged${dateNote}`, `${draft.ml}ml`);
-    } else if (draft.kind === "mood") {
-      add("mood", draft.description, { agent: "wellness", mood: { rating: draft.rating, note: draft.description } }, draftDate);
-      toast.success(`Mood logged${dateNote}`, `${draft.rating}/5`);
-    } else if (draft.kind === "steps") {
-      add("steps", `${draft.count} steps`, { agent: "habit", steps: { count: draft.count } }, draftDate);
-      toast.success(`Steps logged${dateNote}`, `${draft.count.toLocaleString()} steps`);
-    }
-    setMessages((prev) => prev.map((m) => m.id === msgId && m.kind === "draft" ? { ...m, settled: true } : m));
-    setTimeout(() => {
-      setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: confirmReply, agent: draft.kind === "meal" ? "diet" : "workout", streamed: true }]);
-      scroll();
-    }, 400);
-  }, [add, scroll, toast]);
-
-  const handleDiscard = useCallback((msgId: string, discardReply: string) => {
-    setMessages((prev) => prev.map((m) => m.id === msgId && m.kind === "draft" ? { ...m, settled: true } : m));
-    setTimeout(() => {
-      setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: discardReply, streamed: true }]);
-      scroll();
-    }, 300);
-  }, [scroll]);
 
   const send = useCallback(async (text: string, image?: string) => {
     if (sendingRef.current) return;
@@ -441,21 +396,6 @@ export function CoachPage() {
             )}
 
             {messages.map((m, i) => {
-              if (m.kind === "draft") {
-                if (m.settled) return null;
-                return (
-                  <motion.div
-                    key={m.id}
-                    initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={reduceMotion ? { duration: 0 } : FADE_FAST}
-                    className="max-w-[92%]"
-                    style={{ zoom: 0.72 } as React.CSSProperties}
-                  >
-                    <LogConfirmCard draft={m.draft} onConfirm={(d) => handleConfirm(m.id, d, m.confirmReply)} onDiscard={() => handleDiscard(m.id, m.discardReply)} />
-                  </motion.div>
-                );
-              }
               if (m.kind === "undo") {
                 if (m.entries.length === 0) return null;
                 return (

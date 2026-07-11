@@ -8,6 +8,16 @@ const USDA_SEARCH_URL = "https://api.nal.usda.gov/fdc/v1/foods/search";
 
 const OFF_FIELDS = "product_name,brands,nutriments,code,image_front_small_url,serving_quantity,serving_quantity_unit,ingredients_text_en,completeness";
 const LIVE_LOOKUP_TIMEOUT_MS = 2500;
+let warnedAboutUsdaDemoKey = false;
+
+function getUsdaApiKey(): string {
+  const apiKey = process.env.USDA_API_KEY;
+  if (!apiKey && !warnedAboutUsdaDemoKey) {
+    console.warn("USDA_API_KEY is not set; falling back to DEMO_KEY.");
+    warnedAboutUsdaDemoKey = true;
+  }
+  return apiKey || "DEMO_KEY";
+}
 
 // ─── Normalized food structure ────────────────────────────────────────────────
 
@@ -185,7 +195,7 @@ export const searchFoodsLive = internalAction({
     if (!trimmed) return [];
 
     const offUrl = `${OFF_SEARCH_URL}?search_terms=${encodeURIComponent(trimmed)}&search_simple=1&action=process&json=1&page_size=${Math.min(limit, 8)}&fields=${OFF_FIELDS}`;
-    const usdaKey = process.env.USDA_API_KEY || "DEMO_KEY";
+    const usdaKey = getUsdaApiKey();
     const usdaUrl = `${USDA_SEARCH_URL}?query=${encodeURIComponent(trimmed)}&pageSize=${Math.min(limit, 6)}&api_key=${usdaKey}`;
 
     const [offData, usdaData] = await Promise.all([
@@ -272,7 +282,7 @@ export const searchFoods = action({
     // 3. Query USDA for generic/raw foods
     const usdaResults: NormalizedFood[] = [];
     try {
-      const apiKey = process.env.USDA_API_KEY || "DEMO_KEY";
+      const apiKey = getUsdaApiKey();
       const url = `${USDA_SEARCH_URL}?query=${encodeURIComponent(trimmed)}&pageSize=6&api_key=${apiKey}`;
       const res = await fetch(url);
       if (res.ok) {

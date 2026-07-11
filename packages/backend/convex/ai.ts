@@ -369,6 +369,7 @@ export const logWorkout = action({
           calorieConfidence: parsedData.calorieResult.confidence,
           calorieRangeLow: parsedData.calorieResult.range_low,
           calorieRangeHigh: parsedData.calorieResult.range_high,
+          calorieEstimateRough: parsedData.calorieResult.rough,
           calorieBreakdown: JSON.stringify(parsedData.calorieResult.breakdown),
           calculationVersion: 1,
         };
@@ -394,6 +395,7 @@ export const logWorkout = action({
         calorieConfidence: parsed.calorieResult.confidence,
         calorieRangeLow: parsed.calorieResult.range_low,
         calorieRangeHigh: parsed.calorieResult.range_high,
+        calorieEstimateRough: parsed.calorieResult.rough,
         calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown),
         calculationVersion: 1,
       } : {};
@@ -691,7 +693,8 @@ Rules:
         }
         const calorieFields = parsed.calorieResult ? {
           calorieConfidence: parsed.calorieResult.confidence, calorieRangeLow: parsed.calorieResult.range_low,
-          calorieRangeHigh: parsed.calorieResult.range_high, calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
+          calorieRangeHigh: parsed.calorieResult.range_high, calorieEstimateRough: parsed.calorieResult.rough,
+          calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
         } : {};
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
           userId, date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,

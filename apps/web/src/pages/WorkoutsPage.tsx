@@ -36,6 +36,9 @@ type WorkoutRow = {
   exercises?: unknown;
   rationale?: string | null;
   caloriesBurned?: number | null;
+  calorieRangeLow?: number | null;
+  calorieRangeHigh?: number | null;
+  calorieEstimateRough?: boolean | null;
   structuredSets?: string | null;
 };
 
@@ -229,7 +232,18 @@ export function WorkoutsPage() {
                 <div className="absolute -top-2 -right-2 z-10 flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                   <button
                     type="button"
-                    onClick={() => setEditEntry({ _id: w._id, name: w.name, intensity: w.intensity ?? "medium", duration: w.duration, caloriesBurned: w.caloriesBurned, rationale: w.rationale, sets: w.sets })}
+                    onClick={() => setEditEntry({
+                      _id: w._id,
+                      name: w.name,
+                      intensity: w.intensity ?? "medium",
+                      duration: w.duration,
+                      caloriesBurned: w.caloriesBurned,
+                      calorieRangeLow: w.calorieRangeLow,
+                      calorieRangeHigh: w.calorieRangeHigh,
+                      calorieEstimateRough: w.calorieEstimateRough,
+                      rationale: w.rationale,
+                      sets: w.sets,
+                    })}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-card-elev text-text-muted hover:text-text transition-colors shadow-[var(--shadow-elev)]"
                     aria-label="Edit workout"
                   >
