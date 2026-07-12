@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { applyDayAdjustment } from "./goals";
 import { internal } from "./_generated/api";
 import {
+  assertValidDateStr,
   buildIdempotencyKey,
   normalizeLogSource,
   validateWorkoutWrite,
@@ -195,7 +196,7 @@ export const relogWorkout = mutation({
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
-    const targetDate = date ?? new Date().toISOString().split("T")[0];
+    const targetDate = date ? assertValidDateStr(date) : new Date().toISOString().split("T")[0];
     const validated = validateWorkoutWrite({
       name: src.name,
       sets: src.sets,

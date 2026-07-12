@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { timeWindowKey, validateMealWrite, validateWorkoutWrite, workoutTimeWindowKey } from "./validation";
+import { assertValidDateStr, timeWindowKey, validateMealWrite, validateWorkoutWrite, workoutTimeWindowKey } from "./validation";
 
 const validMeal = {
   name: "Chicken rice",
@@ -67,6 +67,19 @@ describe("validateWorkoutWrite", () => {
 
   test("rejects parse-error workouts", () => {
     expect(() => validateWorkoutWrite({ ...validWorkout, parseError: "unparseable" })).toThrow(/could not be parsed/i);
+  });
+});
+
+describe("assertValidDateStr", () => {
+  test("accepts YYYY-MM-DD and trims whitespace", () => {
+    expect(assertValidDateStr("2026-07-12")).toBe("2026-07-12");
+    expect(assertValidDateStr(" 2026-07-12 ")).toBe("2026-07-12");
+  });
+
+  test("rejects non-YYYY-MM-DD formats", () => {
+    expect(() => assertValidDateStr("07/12/2026")).toThrow(/YYYY-MM-DD/);
+    expect(() => assertValidDateStr("2026-7-12")).toThrow(/YYYY-MM-DD/);
+    expect(() => assertValidDateStr("not-a-date")).toThrow(/YYYY-MM-DD/);
   });
 });
 

@@ -93,6 +93,17 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+const DATE_STR_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Validate a client-supplied calendar date string (YYYY-MM-DD). */
+export function assertValidDateStr(date: string): string {
+  const trimmed = date.trim();
+  if (!DATE_STR_RE.test(trimmed)) {
+    throw new Error("date must be YYYY-MM-DD");
+  }
+  return trimmed;
+}
+
 function assertValidMealTime(time: string): string {
   const trimmed = time.trim();
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(trimmed)) {

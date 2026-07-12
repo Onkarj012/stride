@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { recordBehaviorRow } from "./behavior";
 import {
+  assertValidDateStr,
   buildIdempotencyKey,
   isSimilarMeal,
   mealContentHash,
@@ -228,7 +229,7 @@ export const relogMeal = mutation({
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
-    const targetDate = date ?? new Date().toISOString().split("T")[0];
+    const targetDate = date ? assertValidDateStr(date) : new Date().toISOString().split("T")[0];
     const targetTime = time ?? new Date().toISOString().slice(11, 16);
     const validated = validateMealWrite({
       name: src.name,
