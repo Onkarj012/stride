@@ -415,11 +415,14 @@ export function InsightsPage() {
   const weeklySummary = useQuery(api.insights.getWeeklySummary);
   const profile = useQuery(api.profile.getProfile);
 
+  // undefined = still loading (null = no profile); gate milestones so
+  // thresholds don't flash from fallback to plan values.
+  const profileLoaded = profile !== undefined;
   const macroTarget = {
     kcal: avgGoal * days,
     protein: (profile?.proteinTarget ?? 150) * days,
-    carbs: (profile?.carbTarget ?? 200) * days,
-    fat: (profile?.fatTarget ?? 60) * days,
+    carbs: (profile?.carbTarget ?? 250) * days,
+    fat: (profile?.fatTarget ?? 65) * days,
   };
   const milestoneItems = [
     { label: "Protein", achieved: todayProtein >= macroTarget.protein * 0.7 },
@@ -453,7 +456,7 @@ export function InsightsPage() {
         <NarrativeCard type={period === "today" ? "daily" : "weekly"} narrative={mobileNarrative} date={period === "today" ? "Today" : period === "week" ? "Last 7 days" : "Last 30 days"} />
         <MacroCard kcal={Math.round(todayKcal)} protein={Math.round(todayProtein)} carbs={Math.round(todayCarbs)} fat={Math.round(todayFat)} />
         <StreakCard />
-        <MilestoneCard milestones={milestoneItems} />
+        {profileLoaded && <MilestoneCard milestones={milestoneItems} />}
       </div>
     </div>
 

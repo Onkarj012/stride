@@ -138,7 +138,7 @@ export function HomePage() {
   const target = {
     kcal: Math.round(stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 2000),
     protein: Math.round(stats?.proteinTarget ?? 90),
-    carbs: Math.round(stats?.carbTarget ?? 200),
+    carbs: Math.round(stats?.carbTarget ?? 250),
     fat: Math.round(stats?.fatTarget ?? 65),
   };
   const todayLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });

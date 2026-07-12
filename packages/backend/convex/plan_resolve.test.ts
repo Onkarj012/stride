@@ -30,10 +30,28 @@ const PROFILE = {
 };
 
 describe("resolvePlanForDayAdjustment", () => {
-  test("returns the same plan when plannedEatPerTrainingDay is already a number", () => {
+  test("recomputes stale gross-MET baselines stored before the net-MET change", () => {
     const plan = calculateNutritionPlan(PLAN_INPUT);
+    // Plans persisted before the net-MET change stored gross baselines
+    // (e.g. 320/373 for this profile instead of the net 263/307).
+    const stalePlan: NutritionPlan = { ...plan, plannedDailyEAT: 320, plannedEatPerTrainingDay: 373 };
 
-    expect(resolvePlanForDayAdjustment(plan, PROFILE)).toBe(plan);
+    const result = resolvePlanForDayAdjustment(stalePlan, PROFILE);
+
+    expect(result.plannedDailyEAT).toBe(plan.plannedDailyEAT);
+    expect(result.plannedEatPerTrainingDay).toBe(plan.plannedEatPerTrainingDay);
+    // Base plan untouched.
+    expect(result.calories).toBe(stalePlan.calories);
+    expect(result.protein).toBe(stalePlan.protein);
+    expect(result.carbs).toBe(stalePlan.carbs);
+    expect(result.fat).toBe(stalePlan.fat);
+  });
+
+  test("keeps stored baselines when profile inputs for recomputation are missing", () => {
+    const plan = calculateNutritionPlan(PLAN_INPUT);
+    const { weeklyWorkouts: _weeklyWorkouts, ...profileWithoutWeeklyWorkouts } = PROFILE;
+
+    expect(resolvePlanForDayAdjustment(plan, profileWithoutWeeklyWorkouts)).toBe(plan);
   });
 
   test("recomputes plannedEatPerTrainingDay from profile when missing", () => {
@@ -101,7 +119,8 @@ describe("resolvePlanForDayAdjustment", () => {
     expect(result.protein).toBe(legacyPlan.protein);
     expect(result.carbs).toBe(legacyPlan.carbs);
     expect(result.fat).toBe(legacyPlan.fat);
-    expect(result.plannedDailyEAT).toBe(legacyPlan.plannedDailyEAT);
+    // Baselines recomputed against the (empty) schedule, not the stored value.
+    expect(result.plannedDailyEAT).toBe(0);
   });
 
   test("falls back to original plan when required fields are missing", () => {

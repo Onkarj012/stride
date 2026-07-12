@@ -99,7 +99,7 @@ export function NutritionPage() {
   const stats = brief?.stats;
   const kcalTarget = Math.round(stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 2000);
   const proteinTarget = Math.round(stats?.proteinTarget ?? 90);
-  const carbTarget = Math.round(stats?.carbTarget ?? 200);
+  const carbTarget = Math.round(stats?.carbTarget ?? 250);
   const fatTarget = Math.round(stats?.fatTarget ?? 65);
 
   const kcalPct = kcalTarget > 0 ? (kcal / kcalTarget) * 100 : 0;

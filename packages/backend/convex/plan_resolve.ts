@@ -12,12 +12,22 @@ export function parseStoredPlan(planBreakdown?: string | null): NutritionPlan | 
   }
 }
 
+/**
+ * Resolve the planned-EAT baselines used by adjustCaloriesForDay.
+ *
+ * Stored planBreakdown JSON may carry stale baselines: legacy plans lack
+ * plannedEatPerTrainingDay entirely, and plans persisted before the net-MET
+ * change carry gross-MET values that overstate expected burn. So whenever the
+ * profile still holds the inputs the engine needs (weight/height/age + workout
+ * schedule), recompute both baselines instead of trusting the stored numbers.
+ * Stored plan calories/macros are never touched — only the two comparison
+ * baselines. If the inputs are missing or invalid, the stored plan is returned
+ * as-is.
+ */
 export function resolvePlanForDayAdjustment(
   plan: NutritionPlan,
   rawProfile: { weight?: number; height?: number; age?: number; sex?: string; bodyFat?: number; occupationType?: string; workHoursPerDay?: number; lifestyleActivity?: string; weeklyWorkouts?: string; goal?: string }
 ): NutritionPlan {
-  if (typeof plan.plannedEatPerTrainingDay === "number") return plan;
-
   const weight = rawProfile.weight;
   const height = rawProfile.height;
   const age = rawProfile.age;
@@ -50,7 +60,11 @@ export function resolvePlanForDayAdjustment(
         goal: rawProfile.goal,
       })
     );
-    return { ...plan, plannedEatPerTrainingDay: recomputed.plannedEatPerTrainingDay };
+    return {
+      ...plan,
+      plannedDailyEAT: recomputed.plannedDailyEAT,
+      plannedEatPerTrainingDay: recomputed.plannedEatPerTrainingDay,
+    };
   } catch {
     return plan;
   }
