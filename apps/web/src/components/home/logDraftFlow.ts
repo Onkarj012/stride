@@ -80,9 +80,10 @@ export function splitActions<T extends { type: string; draft?: any }>(
 
 /* ── Race-free card ordering ──
  * Actions returned by `send()` are held in a "staged" state until the
- * `messages` query has caught up with the persisted AI reply, so the
- * confirm card never renders before its text bubble. A fallback timeout
- * (see STAGED_FALLBACK_MS) guarantees staged actions never get stuck.
+ * `messages` query has caught up with the persisted AI reply (the caller
+ * passes the AI-message count at send time and again as the query updates),
+ * so the confirm card never renders before its text bubble. A fallback
+ * timeout (see STAGED_FALLBACK_MS) guarantees staged actions never get stuck.
  */
 export type StagedActions<T> = { actions: T[]; countAtSend: number } | null;
 
@@ -92,10 +93,10 @@ export function stageActions<T>(actions: T[], countAtSend: number): StagedAction
 
 export function promoteOnMessages<T>(
   staged: StagedActions<T>,
-  messagesLength: number,
+  deliveredCount: number,
 ): { staged: StagedActions<T>; promote: T[] | null } {
   if (!staged) return { staged, promote: null };
-  if (messagesLength > staged.countAtSend) return { staged: null, promote: staged.actions };
+  if (deliveredCount > staged.countAtSend) return { staged: null, promote: staged.actions };
   return { staged, promote: null };
 }
 

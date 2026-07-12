@@ -185,7 +185,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   // Actions returned by send() are held here until the messages query reflects the
   // persisted AI reply (or a fallback timeout elapses) — see logDraftFlow.ts.
+  // Gated on the AI-message count (not total length) so the user's own echoed
+  // message arriving first can't promote the cards ahead of the text bubble.
   const [staged, setStaged] = useState<StagedActions<AgentAction>>(null);
+  const aiMessageCount = useMemo(() => messages.filter((m) => m.role === "ai").length, [messages]);
 
   const promoteActions = useCallback((actions: AgentAction[]) => {
     const { drafts, rest } = splitActions(actions);
@@ -195,12 +198,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   useEffect(() => {
     if (!staged) return;
-    const { staged: next, promote } = promoteOnMessages(staged, messages.length);
+    const { staged: next, promote } = promoteOnMessages(staged, aiMessageCount);
     if (promote) {
       promoteActions(promote);
       setStaged(next);
     }
-  }, [messages.length, staged, promoteActions]);
+  }, [aiMessageCount, staged, promoteActions]);
 
   useEffect(() => {
     if (!staged) return;
@@ -447,7 +450,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     // Reset textarea height
     if (activeRef.current) activeRef.current.style.height = "auto";
     recordEngagement(dailyWindow);
-    const countAtSend = messages.length;
+    const countAtSend = aiMessageCount;
 
     try {
       const result = await homepageInput({
@@ -477,7 +480,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         : "Something went wrong. Try again.";
       toast.error("Couldn't reach Stry", msg);
     }
-  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, today, messages.length]);
+  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, today, aiMessageCount]);
 
   const submitQuickQuestionAnswer = useCallback(async (
     action: Extract<AgentAction, { type: "quick_question" }>,
