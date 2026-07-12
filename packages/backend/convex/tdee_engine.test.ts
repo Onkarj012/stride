@@ -7,6 +7,7 @@ import {
   calculateMacros,
   calculateNutritionPlan,
   adjustCaloriesForDay,
+  WORKOUT_MET,
   type PlanInput,
 } from "./tdee_engine";
 
@@ -56,8 +57,9 @@ describe("calculateTDEE", () => {
     expect(t.eat).toBe(320);
     expect(t.finalTDEE).toBeGreaterThan(2400);
     expect(t.finalTDEE).toBeLessThan(2700);
-    expect(t.plannedDailyEAT).toBe(320);
-    expect(t.plannedEatPerTrainingDay).toBe(373);
+    // Net-MET baselines: weeklyEatNet = 4*80*1*4 + 7*80*0.5*2 = 1840
+    expect(t.plannedDailyEAT).toBe(263);
+    expect(t.plannedEatPerTrainingDay).toBe(307);
   });
 
   test("sums sessions across workout types scheduled on different days", () => {
@@ -68,9 +70,9 @@ describe("calculateTDEE", () => {
         { type: "run_slow", durationMin: 45, sessionsPerWeek: 2 },
       ],
     });
-    // weeklyEat = 5*80*1*3 + 8*80*0.75*2 = 2160; 5 training days
-    expect(t.plannedDailyEAT).toBe(309);
-    expect(t.plannedEatPerTrainingDay).toBe(432);
+    // weeklyEatNet = 4*80*1*3 + 7*80*0.75*2 = 1800; 5 training days
+    expect(t.plannedDailyEAT).toBe(257);
+    expect(t.plannedEatPerTrainingDay).toBe(360);
   });
 
   test("uses the capped session sum when workout rows may overlap", () => {
@@ -82,8 +84,9 @@ describe("calculateTDEE", () => {
       ],
     });
     // The model has no weekday schedule, so 8 active sessions use the 7-day cap.
-    expect(t.plannedDailyEAT).toBe(503);
-    expect(t.plannedEatPerTrainingDay).toBe(503);
+    // weeklyEatNet = 4*80*1*4 + 7*80*0.75*4 = 2960
+    expect(t.plannedDailyEAT).toBe(423);
+    expect(t.plannedEatPerTrainingDay).toBe(423);
   });
 
   test("excludes zero-duration placeholder rows from training-day count", () => {
@@ -94,9 +97,17 @@ describe("calculateTDEE", () => {
         { type: "yoga", durationMin: 0, sessionsPerWeek: 7 },
       ],
     });
-    // weeklyEat = 5*80*1*4 = 1600; only 4 active training days
-    expect(t.plannedDailyEAT).toBe(229);
-    expect(t.plannedEatPerTrainingDay).toBe(400);
+    // weeklyEatNet = 4*80*1*4 = 1280; only 4 active training days
+    expect(t.plannedDailyEAT).toBe(183);
+    expect(t.plannedEatPerTrainingDay).toBe(320);
+  });
+
+  test("planned baselines use net MET so they match logged-burn convention", () => {
+    const t = calculateTDEE(EXAMPLE);
+    // Gross EAT still feeds TDEE (base plan unchanged) …
+    expect(t.eat).toBe(320);
+    // … but the adjustment baselines subtract the 1-MET resting floor.
+    expect(t.plannedEatPerTrainingDay).toBeLessThan(t.eat * 7 / 6);
   });
 });
 
@@ -133,9 +144,9 @@ describe("calculateNutritionPlan", () => {
     expect(p.calories).toBeGreaterThan(2000);
     expect(p.calories).toBeLessThan(2600);
     expect(p.breakdown.goal).toBe("moderate_loss");
-    expect(p.plannedDailyEAT).toBe(320);
-    expect(p.plannedEatPerTrainingDay).toBe(373);
-    expect(p.breakdown.plannedEatPerTrainingDay).toBe(373);
+    expect(p.plannedDailyEAT).toBe(263);
+    expect(p.plannedEatPerTrainingDay).toBe(307);
+    expect(p.breakdown.plannedEatPerTrainingDay).toBe(307);
     expect(p.percentages.protein + p.percentages.carbs + p.percentages.fat).toBeGreaterThan(95);
   });
 });
@@ -166,6 +177,24 @@ describe("adjustCaloriesForDay", () => {
     const adj = adjustCaloriesForDay(plan, 0);
     expect(adj.calorieGoal).toBe(plan.calories);
     expect(adj.carbGoal).toBe(plan.carbs);
+    expect(adj.note).toBe("On plan for today");
+  });
+
+  test("doing exactly the planned workout produces ~zero delta (net-MET parity)", () => {
+    // Single workout type so the per-training-day average IS the planned session.
+    const plan = calculateNutritionPlan({
+      ...EXAMPLE,
+      weeklyWorkouts: [{ type: "strength", durationMin: 60, sessionsPerWeek: 4 }],
+    });
+    // Actual logged burn uses the calorie_engine convention: (MET − 1) × kg × h.
+    const actualBurn = (WORKOUT_MET.strength - 1) * EXAMPLE.weightKg * 1;
+    expect(plan.plannedEatPerTrainingDay).toBe(actualBurn);
+
+    const adj = adjustCaloriesForDay(plan, actualBurn);
+    expect(adj.calorieGoal).toBe(plan.calories);
+    expect(adj.carbGoal).toBe(plan.carbs);
+    expect(adj.proteinGoal).toBe(plan.protein);
+    expect(adj.fatGoal).toBe(plan.fat);
     expect(adj.note).toBe("On plan for today");
   });
 
