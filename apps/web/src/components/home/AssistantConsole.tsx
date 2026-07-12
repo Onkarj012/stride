@@ -19,6 +19,19 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useToast } from "@/context/ToastContext";
 import { localDateStr } from "@/lib/utils";
 import { FADE_FAST } from "@/lib/motion";
+import {
+  normalizeDraft,
+  normalizeDrafts,
+  mergeDrafts,
+  splitActions,
+  stageActions,
+  promoteOnMessages,
+  promoteOnTimeout,
+  STAGED_FALLBACK_MS,
+  loadPendingDrafts,
+  savePendingDrafts,
+  type StagedActions,
+} from "./logDraftFlow";
 
 type AgentButton = { label: string; value: string; prompt?: string };
 type AgentAction =
@@ -98,42 +111,6 @@ function modalityForContent(content: string): { modality?: Modality; chip?: stri
   return {};
 }
 
-function hashDraftSeed(seed: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function draftClientId(draft: any, index = 0): string {
-  const existing = draft?._clientId;
-  if (typeof existing === "string" && existing.trim()) return existing;
-  const seed = JSON.stringify({
-    kind: draft?.kind,
-    date: draft?.date,
-    description: draft?.description,
-    name: draft?.name,
-    kcal: draft?.kcal,
-    index,
-  });
-  return `draft-${hashDraftSeed(seed)}-${index}`;
-}
-
-function normalizeDraft(draft: any, index = 0): any | null {
-  if (!draft || typeof draft !== "object" || Array.isArray(draft)) return null;
-  return { ...draft, _clientId: draftClientId(draft, index) };
-}
-
-function normalizeDrafts(drafts: unknown): any[] {
-  if (!Array.isArray(drafts)) return [];
-  return drafts.flatMap((draft, index) => {
-    const normalized = normalizeDraft(draft, index);
-    return normalized ? [normalized] : [];
-  });
-}
-
 export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, presenceLine, initialActions = [] }: AssistantConsoleProps) {
   const today = localDateStr();
   const dailyWindow = useDailyWindow();
@@ -170,21 +147,21 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
   }, [effectiveInitialActions, today]);
 
-  // ConfirmModal queue — persisted in sessionStorage so navigation doesn't lose pending cards
+  // ConfirmModal queue — persisted in sessionStorage (scoped to today's date, see
+  // logDraftFlow.ts) so navigation doesn't lose pending cards, but a stale tab left
+  // open overnight doesn't leak yesterday's drafts into today's thread.
   const [pendingDrafts, setPendingDraftsRaw] = useState<any[]>(() => {
-    try {
-      const normalized = normalizeDrafts(JSON.parse(sessionStorage.getItem("stride_pending_drafts") ?? "[]"));
-      sessionStorage.setItem("stride_pending_drafts", JSON.stringify(normalized));
-      return normalized;
-    } catch { return []; }
+    const restored = loadPendingDrafts(sessionStorage, today);
+    savePendingDrafts(sessionStorage, today, restored);
+    return restored;
   });
   const setPendingDrafts = useCallback((updater: any[] | ((prev: any[]) => any[])) => {
     setPendingDraftsRaw((prev) => {
       const next = normalizeDrafts(typeof updater === "function" ? updater(prev) : updater);
-      try { sessionStorage.setItem("stride_pending_drafts", JSON.stringify(next)); } catch {}
+      savePendingDrafts(sessionStorage, today, next);
       return next;
     });
-  }, []);
+  }, [today]);
   const pendingTier2Ref = useRef<string>("");
 
   // Auto-applied memory drafts — removed (all drafts now go through confirm card)
@@ -205,6 +182,37 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const homepageChat = useQuery(api.chat.getHomepageMessages, { date: today });
   const messages = (homepageChat?.messages ?? []) as HomepageMessage[];
   const initialActionKey = effectiveInitialActions.map((a) => `${a.type}:${"id" in a ? a.id : ""}`).join("|");
+
+  // Actions returned by send() are held here until the messages query reflects the
+  // persisted AI reply (or a fallback timeout elapses) — see logDraftFlow.ts.
+  const [staged, setStaged] = useState<StagedActions<AgentAction>>(null);
+
+  const promoteActions = useCallback((actions: AgentAction[]) => {
+    const { drafts, rest } = splitActions(actions);
+    if (drafts.length > 0) setPendingDrafts((prev) => mergeDrafts(prev, drafts));
+    setAgentActions(rest);
+  }, [setPendingDrafts]);
+
+  useEffect(() => {
+    if (!staged) return;
+    const { staged: next, promote } = promoteOnMessages(staged, messages.length);
+    if (promote) {
+      promoteActions(promote);
+      setStaged(next);
+    }
+  }, [messages.length, staged, promoteActions]);
+
+  useEffect(() => {
+    if (!staged) return;
+    const timer = setTimeout(() => {
+      const { promote } = promoteOnTimeout(staged);
+      if (promote) {
+        promoteActions(promote);
+        setStaged(null);
+      }
+    }, STAGED_FALLBACK_MS);
+    return () => clearTimeout(timer);
+  }, [staged, promoteActions]);
 
   // Backend actions/mutations
   const homepageInput = useAction(api.ai.homepageInput);
@@ -439,6 +447,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     // Reset textarea height
     if (activeRef.current) activeRef.current.style.height = "auto";
     recordEngagement(dailyWindow);
+    const countAtSend = messages.length;
 
     try {
       const result = await homepageInput({
@@ -449,8 +458,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
       setThinking(false);
       setFreshTs(Date.now());
-      // actions always contain log_draft cards for every draft — just show them
-      setAgentActions(Array.isArray(result.actions) ? result.actions : []);
+      const actions = Array.isArray(result.actions) ? result.actions : [];
+      // Hold the new cards until the AI reply lands in `messages` (or the fallback
+      // timeout fires) so the confirm card never renders before its text bubble.
+      if (actions.length === 0) setAgentActions([]);
+      else setStaged(stageActions(actions, countAtSend));
     } catch (err) {
       setThinking(false);
       const raw = err instanceof Error ? err.message : "";
@@ -465,7 +477,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         : "Something went wrong. Try again.";
       toast.error("Couldn't reach Stry", msg);
     }
-  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, today]);
+  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, today, messages.length]);
 
   const submitQuickQuestionAnswer = useCallback(async (
     action: Extract<AgentAction, { type: "quick_question" }>,
@@ -530,8 +542,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
   const openDraft = useCallback((draft: any) => {
     pendingTier2Ref.current = "";
-    const normalized = normalizeDraft(draft);
-    setPendingDrafts(normalized ? [normalized] : []);
+    setPendingDrafts((prev) => mergeDrafts(prev, [draft]));
   }, [setPendingDrafts]);
 
   const useEngineEstimate = useCallback((draft: any) => {
@@ -590,32 +601,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </div>
       );
     }
-    if (action.type === "log_draft") {
-      return (
-        <div className="rounded-2xl border border-mint/25 bg-mint-soft px-3.5 py-3 space-y-2.5">
-          <p className="text-[0.95rem] font-semibold text-text">{action.title ?? action.draft?.description ?? "Review this log"}</p>
-          {action.draft?.kind === "meal" && (
-            <div className="flex gap-3 text-[12px] font-bold">
-              <span className="text-peach">{action.draft.kcal} kcal</span>
-              <span className="text-lavender">{action.draft.protein}g P</span>
-              <span className="text-sky">{action.draft.carbs}g C</span>
-              <span className="text-mint">{action.draft.fat}g F</span>
-            </div>
-          )}
-          {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => { openDraft(action.draft); setAgentActions([]); }}
-              className="inline-flex items-center rounded-full bg-mint/20 hover:bg-mint/30 border border-mint/25 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
-              Confirm
-            </button>
-            <button type="button" onClick={() => setAgentActions([])}
-              className="inline-flex items-center rounded-full bg-card-elev hover:bg-border border border-border px-3 py-1.5 text-[0.95rem] font-medium text-text-muted transition-colors">
-              Discard
-            </button>
-          </div>
-        </div>
-      );
-    }
+    // log_draft actions are promoted straight into pendingDrafts (see promoteActions)
+    // and rendered as LogConfirmCard — they never reach this card renderer.
+    if (action.type === "log_draft") return null;
     if (action.type === "macro_conflict") {
       return (
         <div className="rounded-2xl border border-peach/25 bg-peach-soft border-l-4 border-l-peach px-3.5 py-3 space-y-2.5">

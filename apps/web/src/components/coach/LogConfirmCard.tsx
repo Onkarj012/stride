@@ -251,7 +251,9 @@ function WorkoutCard({
           value={draft.kcal}
           unit="kcal"
           editing={editing}
-          onChange={(v) => onChange({ ...draft, kcal: v })}
+          // Manually edited kcal invalidates the engine's range/confidence — clear it
+          // so a saved record never pairs a user's number with a stale calorieResult.
+          onChange={(v) => onChange({ ...draft, kcal: v, calorieResult: null })}
           color="text-peach"
         />
       </div>
