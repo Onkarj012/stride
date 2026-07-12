@@ -413,8 +413,14 @@ export function InsightsPage() {
   ).size;
 
   const weeklySummary = useQuery(api.insights.getWeeklySummary);
+  const profile = useQuery(api.profile.getProfile);
 
-  const macroTarget = { kcal: avgGoal * days, protein: 150 * days, carbs: 200 * days, fat: 60 * days };
+  const macroTarget = {
+    kcal: avgGoal * days,
+    protein: (profile?.proteinTarget ?? 150) * days,
+    carbs: (profile?.carbTarget ?? 200) * days,
+    fat: (profile?.fatTarget ?? 60) * days,
+  };
   const milestoneItems = [
     { label: "Protein", achieved: todayProtein >= macroTarget.protein * 0.7 },
     { label: "Training", achieved: period === "today" ? workoutMin > 0 : totalWorkouts > 0 },
