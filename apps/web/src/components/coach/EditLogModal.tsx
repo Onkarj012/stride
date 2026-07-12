@@ -30,6 +30,9 @@ export type EditableWorkout = {
   intensity: string;
   duration?: string | null;
   caloriesBurned?: number | null;
+  calorieRangeLow?: number | null;
+  calorieRangeHigh?: number | null;
+  calorieEstimateRough?: boolean | null;
   rationale?: string | null;
   sets?: string | null;
 };
@@ -111,6 +114,9 @@ export function EditLogModal(props: Props) {
           duration: workoutForm.duration ?? undefined,
           intensity: workoutForm.intensity || "MEDIUM",
           caloriesBurned: workoutForm.caloriesBurned ?? undefined,
+          calorieRangeLow: workoutForm.calorieRangeLow ?? undefined,
+          calorieRangeHigh: workoutForm.calorieRangeHigh ?? undefined,
+          calorieEstimateRough: workoutForm.calorieEstimateRough ?? undefined,
           rationale: workoutForm.rationale ?? undefined,
         });
         toast.success("Workout updated", workoutForm.name);

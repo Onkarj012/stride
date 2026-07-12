@@ -113,6 +113,12 @@ export function useLogs(date?: string) {
           time, date: targetDate,
           aiSuggestion: extra?.aiInsight,
           components: meal?.items?.join(", "),
+          confidence: meal?.confidence,
+          nutritionSource: meal?.nutritionSource,
+          nutritionVerified: meal?.nutritionVerified,
+          structuredItems: meal?.structuredItems,
+          ingredientBreakdown: meal?.ingredientBreakdown,
+          logSource: meal?.logSource,
         });
       } else if (category === "workout") {
         const w = extra?.workout;
@@ -125,6 +131,14 @@ export function useLogs(date?: string) {
           caloriesBurned: w?.kcal,
           timestamp: time,
           rationale: extra?.aiInsight,
+          calorieConfidence: w?.calorieConfidence,
+          calorieRangeLow: w?.calorieRangeLow,
+          calorieRangeHigh: w?.calorieRangeHigh,
+          calorieEstimateRough: w?.calorieEstimateRough,
+          calorieBreakdown: w?.calorieBreakdown,
+          calculationVersion: w?.calculationVersion,
+          structuredSets: w?.structuredSets,
+          logSource: w?.logSource,
         });
       } else if (category === "water") {
         const ml = extra?.water?.ml ?? 250;
