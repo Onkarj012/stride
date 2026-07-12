@@ -26,6 +26,15 @@ const VOLUME_TO_ML: Record<string, number> = {
   pint: 473,
   quart: 946,
   gallon: 3785,
+  // Household/regional vessels (approximate capacities)
+  katori: 150,
+  katoris: 150,
+  glass: 250,
+  glasses: 250,
+  tumbler: 200,
+  tumblers: 200,
+  mug: 300,
+  mugs: 300,
 };
 
 // Known piece weights in grams (average/common sizes)
@@ -179,9 +188,9 @@ export interface ConversionResult {
 /**
  * Convert an amount + unit to grams.
  * - "g", "gram", "grams" → direct (exact)
- * - "ml", "cup", "tbsp", etc → volume × density (medium confidence)
+ * - "ml", "cup", "tbsp", "katori", "glass", etc → volume × density (medium confidence)
  * - "piece", "slice", "egg", etc → known piece weights (low confidence)
- * - Unknown → defaults to 100g (very low confidence)
+ * - Unknown → treated as servings (~100g each), never as raw grams (very low confidence)
  */
 export function toGrams(
   amount: number,
@@ -283,8 +292,10 @@ export function toGrams(
     return { grams: amount * pieceWeight, confidence: 0.5, method: "piece" };
   }
 
-  // Default: assume it's grams
-  return { grams: amount, confidence: 0.3, method: "estimated" };
+  // Default: treat the amount as servings (~100g each, same as the serving
+  // path above). Treating unknown units as grams would collapse
+  // "2 katori dal"-style inputs to 2g, which is never a plausible portion.
+  return { grams: amount * 100, confidence: 0.25, method: "estimated" };
 }
 
 /**
