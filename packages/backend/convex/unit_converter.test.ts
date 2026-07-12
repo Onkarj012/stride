@@ -7,6 +7,15 @@ describe("toGrams — existing behaviors", () => {
     expect(toGrams(150, "grams", "rice")).toEqual({ grams: 150, confidence: 1.0, method: "exact" });
   });
 
+  test("common weight abbreviations are recognized as exact weights", () => {
+    for (const unit of ["gms", "gm.", "gr", "grm"]) {
+      expect(toGrams(200, unit, "paneer")).toEqual({ grams: 200, confidence: 1.0, method: "exact" });
+    }
+    for (const unit of ["kgs", "kilo", "kilos"]) {
+      expect(toGrams(2, unit, "rice")).toEqual({ grams: 2000, confidence: 1.0, method: "exact" });
+    }
+  });
+
   test("ml uses volume × density", () => {
     const r = toGrams(200, "ml", "milk");
     expect(r.grams).toBe(Math.round(200 * 1.03));

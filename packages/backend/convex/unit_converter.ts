@@ -201,11 +201,18 @@ export function toGrams(
   const foodLower = foodName.toLowerCase().trim();
 
   // Direct weight units — highest confidence
-  if (unitLower === "g" || unitLower === "gram" || unitLower === "grams" || unitLower === "gm") {
+  if (
+    unitLower === "g" || unitLower === "gram" || unitLower === "grams" ||
+    unitLower === "gm" || unitLower === "gms" || unitLower === "gm." ||
+    unitLower === "gr" || unitLower === "grm"
+  ) {
     return { grams: amount, confidence: 1.0, method: "exact" };
   }
 
-  if (unitLower === "kg" || unitLower === "kilogram" || unitLower === "kilograms") {
+  if (
+    unitLower === "kg" || unitLower === "kgs" || unitLower === "kilogram" ||
+    unitLower === "kilograms" || unitLower === "kilo" || unitLower === "kilos"
+  ) {
     return { grams: amount * 1000, confidence: 1.0, method: "exact" };
   }
 
