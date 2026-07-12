@@ -88,6 +88,31 @@ export const upsertSleep = mutation({
   },
 });
 
+export const logSleepFromCoach = mutation({
+  args: {
+    hours: v.number(),
+    quality: v.string(),
+    date: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, { hours, quality, date, note }) => {
+    if (hours < 0 || hours > 24) throw new Error("hours out of range");
+    const userId = await requireUserId(ctx);
+    const d = date ?? todayDate();
+    const existing = await ctx.db
+      .query("sleep_logs")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
+      .first();
+    const previous = existing ? { hours: existing.hours, quality: existing.quality, note: existing.note } : null;
+    if (existing) {
+      await ctx.db.patch(existing._id, { hours, quality, note });
+      return { id: existing._id, previous };
+    }
+    const id = await ctx.db.insert("sleep_logs", { userId, date: d, hours, quality, note });
+    return { id, previous };
+  },
+});
+
 export const deleteSleep = mutation({
   args: { id: v.id("sleep_logs") },
   handler: async (ctx, { id }) => {
@@ -102,11 +127,15 @@ export const undoSleepLog = mutation({
   args: {
     id: v.id("sleep_logs"),
     previous: v.union(v.null(), v.object({ hours: v.number(), quality: v.string(), note: v.optional(v.string()) })),
+    expected: v.object({ hours: v.number(), quality: v.string() }),
   },
-  handler: async (ctx, { id, previous }) => {
+  handler: async (ctx, { id, previous, expected }) => {
     const userId = await requireUserId(ctx);
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
+    if (row.hours !== expected.hours || row.quality !== expected.quality) {
+      throw new Error("This log has changed since — can't undo");
+    }
     if (previous) {
       await ctx.db.patch(id, previous);
     } else {
@@ -189,15 +218,39 @@ export const upsertSteps = mutation({
   },
 });
 
+export const logStepsFromCoach = mutation({
+  args: { count: v.number(), date: v.optional(v.string()) },
+  handler: async (ctx, { count, date }) => {
+    if (count < 0) throw new Error("count must be non-negative");
+    const userId = await requireUserId(ctx);
+    const d = date ?? todayDate();
+    const existing = await ctx.db
+      .query("steps_logs")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
+      .first();
+    const previous = existing ? { count: existing.count } : null;
+    if (existing) {
+      await ctx.db.patch(existing._id, { count });
+      return { id: existing._id, previous };
+    }
+    const id = await ctx.db.insert("steps_logs", { userId, date: d, count });
+    return { id, previous };
+  },
+});
+
 export const undoStepsLog = mutation({
   args: {
     id: v.id("steps_logs"),
     previous: v.union(v.null(), v.object({ count: v.number() })),
+    expected: v.object({ count: v.number() }),
   },
-  handler: async (ctx, { id, previous }) => {
+  handler: async (ctx, { id, previous, expected }) => {
     const userId = await requireUserId(ctx);
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
+    if (row.count !== expected.count) {
+      throw new Error("This log has changed since — can't undo");
+    }
     if (previous) {
       await ctx.db.patch(id, previous);
     } else {

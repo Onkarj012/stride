@@ -47,7 +47,7 @@ function coachToAgent(coachType?: string): Agent {
 }
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null };
+type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string } | { count: number } };
 type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
 type Message = TextMessage | UndoMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
@@ -191,7 +191,7 @@ export function CoachPage() {
           await deleteWorkout({ id: entry.id as Id<"workouts"> });
           break;
         case "sleep":
-          await undoSleepLog({ id: entry.id as Id<"sleep_logs">, previous: (entry.previous as { hours: number; quality: string; note?: string } | undefined) ?? null });
+          await undoSleepLog({ id: entry.id as Id<"sleep_logs">, previous: (entry.previous as { hours: number; quality: string; note?: string } | undefined) ?? null, expected: entry.expected as { hours: number; quality: string } });
           break;
         case "water":
           await deleteWater({ id: entry.id as Id<"water_logs"> });
@@ -200,7 +200,7 @@ export function CoachPage() {
           await deleteMood({ id: entry.id as Id<"mood_logs"> });
           break;
         case "steps":
-          await undoStepsLog({ id: entry.id as Id<"steps_logs">, previous: (entry.previous as { count: number } | undefined) ?? null });
+          await undoStepsLog({ id: entry.id as Id<"steps_logs">, previous: (entry.previous as { count: number } | undefined) ?? null, expected: entry.expected as { count: number } });
           break;
         default:
           return;
@@ -232,13 +232,13 @@ export function CoachPage() {
         case "workout":
           return [{ type: item.type, id, label: item.data?.name ?? item.type }];
         case "sleep":
-          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null }];
+          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality } }];
         case "water":
           return [{ type: "water" as const, id, label: `Water (${item.data?.ml}ml)` }];
         case "mood":
           return [{ type: "mood" as const, id, label: `Mood (${item.data?.rating}/5)` }];
         case "steps":
-          return [{ type: "steps" as const, id, label: `Steps (${item.data?.count})`, previous: item.data?.previous ?? null }];
+          return [{ type: "steps" as const, id, label: `Steps (${item.data?.count})`, previous: item.data?.previous ?? null, expected: { count: item.data?.count } }];
         default:
           return [];
       }

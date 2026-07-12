@@ -723,9 +723,7 @@ Rules:
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const hours = Math.max(0.5, Math.min(24, Number(logData.hours) || 7));
         const quality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : "ok";
-        const existingSleep = await ctx.runQuery(api.wellness.getSleep, { date: targetDate });
-        const sleepId = await ctx.runMutation(api.wellness.upsertSleep, { hours, quality, date: targetDate });
-        const previous = existingSleep ? { hours: existingSleep.hours, quality: existingSleep.quality, note: existingSleep.note } : null;
+        const { id: sleepId, previous } = await ctx.runMutation(api.wellness.logSleepFromCoach, { hours, quality, date: targetDate });
         loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality, previous } });
         logOutcomes.push({ type: "sleep", name: "sleep", ok: true });
       } catch (err) {
@@ -778,9 +776,7 @@ Rules:
         const logData = JSON.parse(stepsMatch[1].trim());
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const count = Math.max(0, Number(logData.count) || 0);
-        const existingSteps = await ctx.runQuery(api.wellness.getSteps, { date: targetDate });
-        const stepsId = await ctx.runMutation(api.wellness.upsertSteps, { count, date: targetDate });
-        const previous = existingSteps ? { count: existingSteps.count } : null;
+        const { id: stepsId, previous } = await ctx.runMutation(api.wellness.logStepsFromCoach, { count, date: targetDate });
         loggedItems.push({ type: "steps", data: { _id: stepsId, count, previous } });
         logOutcomes.push({ type: "steps", name: "steps", ok: true });
       } catch (err) {
