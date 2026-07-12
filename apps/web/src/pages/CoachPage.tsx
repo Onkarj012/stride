@@ -47,7 +47,7 @@ function coachToAgent(coachType?: string): Agent {
 }
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string } | { count: number } };
+type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string; note?: string } | { count: number } };
 type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
 type Message = TextMessage | UndoMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
@@ -191,7 +191,7 @@ export function CoachPage() {
           await deleteWorkout({ id: entry.id as Id<"workouts"> });
           break;
         case "sleep":
-          await undoSleepLog({ id: entry.id as Id<"sleep_logs">, previous: (entry.previous as { hours: number; quality: string; note?: string } | undefined) ?? null, expected: entry.expected as { hours: number; quality: string } });
+          await undoSleepLog({ id: entry.id as Id<"sleep_logs">, previous: (entry.previous as { hours: number; quality: string; note?: string } | undefined) ?? null, expected: entry.expected as { hours: number; quality: string; note?: string } });
           break;
         case "water":
           await deleteWater({ id: entry.id as Id<"water_logs"> });
@@ -232,7 +232,7 @@ export function CoachPage() {
         case "workout":
           return [{ type: item.type, id, label: item.data?.name ?? item.type }];
         case "sleep":
-          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality } }];
+          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality, note: item.data?.note } }];
         case "water":
           return [{ type: "water" as const, id, label: `Water (${item.data?.ml}ml)` }];
         case "mood":

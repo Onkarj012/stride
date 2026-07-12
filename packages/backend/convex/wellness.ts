@@ -127,13 +127,13 @@ export const undoSleepLog = mutation({
   args: {
     id: v.id("sleep_logs"),
     previous: v.union(v.null(), v.object({ hours: v.number(), quality: v.string(), note: v.optional(v.string()) })),
-    expected: v.object({ hours: v.number(), quality: v.string() }),
+    expected: v.object({ hours: v.number(), quality: v.string(), note: v.optional(v.string()) }),
   },
   handler: async (ctx, { id, previous, expected }) => {
     const userId = await requireUserId(ctx);
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
-    if (row.hours !== expected.hours || row.quality !== expected.quality) {
+    if (row.hours !== expected.hours || row.quality !== expected.quality || row.note !== expected.note) {
       throw new Error("This log has changed since — can't undo");
     }
     if (previous) {
