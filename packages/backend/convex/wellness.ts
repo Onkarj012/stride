@@ -98,6 +98,23 @@ export const deleteSleep = mutation({
   },
 });
 
+export const undoSleepLog = mutation({
+  args: {
+    id: v.id("sleep_logs"),
+    previous: v.union(v.null(), v.object({ hours: v.number(), quality: v.string(), note: v.optional(v.string()) })),
+  },
+  handler: async (ctx, { id, previous }) => {
+    const userId = await requireUserId(ctx);
+    const row = await ctx.db.get(id);
+    if (!row || row.userId !== userId) throw new Error("Not found");
+    if (previous) {
+      await ctx.db.patch(id, previous);
+    } else {
+      await ctx.db.delete(id);
+    }
+  },
+});
+
 // ─── Mood ────────────────────────────────────────────────────────────────
 
 export const getMood = query({
@@ -169,6 +186,23 @@ export const upsertSteps = mutation({
       return existing._id;
     }
     return ctx.db.insert("steps_logs", { userId, date: d, count });
+  },
+});
+
+export const undoStepsLog = mutation({
+  args: {
+    id: v.id("steps_logs"),
+    previous: v.union(v.null(), v.object({ count: v.number() })),
+  },
+  handler: async (ctx, { id, previous }) => {
+    const userId = await requireUserId(ctx);
+    const row = await ctx.db.get(id);
+    if (!row || row.userId !== userId) throw new Error("Not found");
+    if (previous) {
+      await ctx.db.patch(id, previous);
+    } else {
+      await ctx.db.delete(id);
+    }
   },
 });
 

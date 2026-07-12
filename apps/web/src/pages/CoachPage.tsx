@@ -47,7 +47,7 @@ function coachToAgent(coachType?: string): Agent {
 }
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood"; id: string; label: string; undone?: boolean };
+type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null };
 type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
 type Message = TextMessage | UndoMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
@@ -73,9 +73,10 @@ export function CoachPage() {
   const deleteSession = useMutation(api.chat.deleteSession);
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
-  const deleteSleep = useMutation(api.wellness.deleteSleep);
+  const undoSleepLog = useMutation(api.wellness.undoSleepLog);
   const deleteWater = useMutation(api.wellness.deleteWater);
   const deleteMood = useMutation(api.wellness.deleteMood);
+  const undoStepsLog = useMutation(api.wellness.undoStepsLog);
   const sendToAI = useAction(api.ai.chat);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -190,13 +191,16 @@ export function CoachPage() {
           await deleteWorkout({ id: entry.id as Id<"workouts"> });
           break;
         case "sleep":
-          await deleteSleep({ id: entry.id as Id<"sleep_logs"> });
+          await undoSleepLog({ id: entry.id as Id<"sleep_logs">, previous: (entry.previous as { hours: number; quality: string; note?: string } | undefined) ?? null });
           break;
         case "water":
           await deleteWater({ id: entry.id as Id<"water_logs"> });
           break;
         case "mood":
           await deleteMood({ id: entry.id as Id<"mood_logs"> });
+          break;
+        case "steps":
+          await undoStepsLog({ id: entry.id as Id<"steps_logs">, previous: (entry.previous as { count: number } | undefined) ?? null });
           break;
         default:
           return;
@@ -215,7 +219,7 @@ export function CoachPage() {
         return next;
       });
     }
-  }, [deleteMeal, deleteWorkout, deleteSleep, deleteWater, deleteMood, toast]);
+  }, [deleteMeal, deleteWorkout, undoSleepLog, deleteWater, deleteMood, undoStepsLog, toast]);
 
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
@@ -228,11 +232,13 @@ export function CoachPage() {
         case "workout":
           return [{ type: item.type, id, label: item.data?.name ?? item.type }];
         case "sleep":
-          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)` }];
+          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null }];
         case "water":
           return [{ type: "water" as const, id, label: `Water (${item.data?.ml}ml)` }];
         case "mood":
           return [{ type: "mood" as const, id, label: `Mood (${item.data?.rating}/5)` }];
+        case "steps":
+          return [{ type: "steps" as const, id, label: `Steps (${item.data?.count})`, previous: item.data?.previous ?? null }];
         default:
           return [];
       }
