@@ -1,9 +1,11 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { applyDayAdjustment } from "./goals";
 import { internal } from "./_generated/api";
 import {
   buildIdempotencyKey,
+  isSimilarWorkout,
+  minutesBetweenTimes,
   normalizeLogSource,
   validateWorkoutWrite,
   workoutTimeWindowKey,
@@ -23,6 +25,30 @@ async function findExistingWorkoutByIdempotencyKey(ctx: any, userId: string, dat
       q.eq("userId", userId).eq("date", date).eq("idempotencyKey", idempotencyKey),
     )
     .first();
+}
+
+export async function assertNoNearDuplicateWorkout(
+  ctx: any,
+  userId: string,
+  date: string,
+  workout: any,
+  timestamp: string,
+) {
+  const workouts = await ctx.db
+    .query("workouts")
+    .withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date))
+    .collect();
+  const duplicate = workouts.find((existing: any) => {
+    const minutes = minutesBetweenTimes(existing.timestamp, timestamp);
+    return minutes != null && minutes <= 10 && isSimilarWorkout(workout, existing);
+  });
+  if (duplicate) {
+    throw new ConvexError({
+      code: "NEAR_DUPLICATE",
+      message: "Looks like you already logged this — log anyway?",
+      workoutId: duplicate._id,
+    });
+  }
 }
 
 export const getWorkouts = query({
@@ -72,6 +98,7 @@ export const addWorkout = mutation({
     timestamp: v.optional(v.string()),
     idempotencyToken: v.optional(v.string()),
     parseError: v.optional(v.string()),
+    allowDuplicate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
@@ -93,6 +120,10 @@ export const addWorkout = mutation({
     });
     const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, date, idempotencyKey);
     if (existing) return existing._id;
+    const timestamp = args.timestamp ?? new Date().toISOString().slice(11, 16);
+    if (!args.allowDuplicate) {
+      await assertNoNearDuplicateWorkout(ctx, userId, date, validated, timestamp);
+    }
     const id = await ctx.db.insert("workouts", {
       userId, date,
       name: validated.name, sets: validated.sets, reps: args.reps, weight: args.weight,
@@ -106,6 +137,7 @@ export const addWorkout = mutation({
       calorieBreakdown: args.calorieBreakdown,
       calculationVersion: args.calculationVersion,
       structuredSets: args.structuredSets,
+      timestamp,
       logSource,
       idempotencyKey,
     });
@@ -241,6 +273,7 @@ export const relogWorkout = mutation({
       calorieBreakdown: src.calorieBreakdown,
       calculationVersion: src.calculationVersion,
       structuredSets: src.structuredSets,
+      timestamp: timestamp ?? new Date().toISOString().slice(11, 16),
       logSource,
       idempotencyKey,
     });
@@ -311,6 +344,7 @@ export const addWorkoutFromAI = internalMutation({
     logSource: v.optional(v.string()),
     timestamp: v.optional(v.string()),
     idempotencyToken: v.optional(v.string()),
+    allowDuplicate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const validated = validateWorkoutWrite(args);
@@ -330,6 +364,10 @@ export const addWorkoutFromAI = internalMutation({
     });
     const existing = await findExistingWorkoutByIdempotencyKey(ctx, args.userId, args.date, idempotencyKey);
     if (existing) return existing._id;
+    const timestamp = args.timestamp ?? new Date().toISOString().slice(11, 16);
+    if (!args.allowDuplicate) {
+      await assertNoNearDuplicateWorkout(ctx, args.userId, args.date, validated, timestamp);
+    }
     const id = await ctx.db.insert("workouts", {
       userId: args.userId, date: args.date,
       name: validated.name, sets: validated.sets, duration: validated.duration,
@@ -343,6 +381,7 @@ export const addWorkoutFromAI = internalMutation({
       calorieBreakdown: args.calorieBreakdown,
       calculationVersion: args.calculationVersion,
       structuredSets: args.structuredSets,
+      timestamp,
       logSource,
       idempotencyKey,
     });

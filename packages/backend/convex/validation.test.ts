@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { timeWindowKey, validateMealWrite, validateWorkoutWrite, workoutTimeWindowKey } from "./validation";
+import { isSimilarWorkout, timeWindowKey, validateMealWrite, validateWorkoutWrite, workoutTimeWindowKey } from "./validation";
+import { assertNoNearDuplicateWorkout } from "./workouts";
 
 const validMeal = {
   name: "Chicken rice",
@@ -78,5 +79,117 @@ describe("workoutTimeWindowKey", () => {
       .toBe(workoutTimeWindowKey({ ...base, idempotencyToken: "request-1" }));
     expect(workoutTimeWindowKey({ ...base, idempotencyToken: "request-1" }))
       .not.toBe(workoutTimeWindowKey({ ...base, idempotencyToken: "request-2" }));
+  });
+});
+
+describe("isSimilarWorkout", () => {
+  test("matches normalized workout names with reasonably close calorie estimates", () => {
+    expect(isSimilarWorkout(
+      { name: "Leg day workout", caloriesBurned: 420 },
+      { name: "Leg day", caloriesBurned: 360 },
+    )).toBe(true);
+  });
+
+  test("rejects different workout descriptions or materially different calorie burns", () => {
+    expect(isSimilarWorkout(
+      { name: "Chest and triceps", caloriesBurned: 300 },
+      { name: "Long distance run", caloriesBurned: 310 },
+    )).toBe(false);
+    expect(isSimilarWorkout(
+      { name: "Morning run", caloriesBurned: 300 },
+      { name: "Morning run", caloriesBurned: 500 },
+    )).toBe(false);
+  });
+});
+
+describe("assertNoNearDuplicateWorkout", () => {
+  test("throws a structured near-duplicate error inside the ten-minute window", async () => {
+    const existing = {
+      _id: "workout-1",
+      name: "Leg day",
+      caloriesBurned: 400,
+      timestamp: "18:00",
+    };
+    const ctx = {
+      db: {
+        query: () => ({
+          withIndex: (_name: string, applyIndex: (q: any) => unknown) => {
+            const q = { eq: () => q };
+            applyIndex(q);
+            return { collect: async () => [existing] };
+          },
+        }),
+      },
+    };
+
+    await expect(assertNoNearDuplicateWorkout(
+      ctx,
+      "user-1",
+      "2026-07-11",
+      { name: "Leg day workout", caloriesBurned: 450 },
+      "18:08",
+    )).rejects.toMatchObject({
+      data: {
+        code: "NEAR_DUPLICATE",
+        workoutId: "workout-1",
+      },
+    });
+  });
+
+  test("allows a similar workout outside the ten-minute window", async () => {
+    const ctx = {
+      db: {
+        query: () => ({
+          withIndex: (_name: string, applyIndex: (q: any) => unknown) => {
+            const q = { eq: () => q };
+            applyIndex(q);
+            return {
+              collect: async () => [{
+                _id: "workout-1",
+                name: "Leg day",
+                caloriesBurned: 400,
+                timestamp: "18:00",
+              }],
+            };
+          },
+        }),
+      },
+    };
+
+    await expect(assertNoNearDuplicateWorkout(
+      ctx,
+      "user-1",
+      "2026-07-11",
+      { name: "Leg day workout", caloriesBurned: 450 },
+      "18:11",
+    )).resolves.toBeUndefined();
+  });
+
+  test("ignores legacy workouts without a timestamp", async () => {
+    const ctx = {
+      db: {
+        query: () => ({
+          withIndex: (_name: string, applyIndex: (q: any) => unknown) => {
+            const q = { eq: () => q };
+            applyIndex(q);
+            return {
+              collect: async () => [{
+                _id: "workout-1",
+                name: "Leg day",
+                caloriesBurned: 400,
+              }],
+            };
+          },
+        }),
+      },
+    };
+
+    await expect(assertNoNearDuplicateWorkout(
+      ctx,
+      "user-1",
+      "2026-07-11",
+      { name: "Leg day workout", caloriesBurned: 450 },
+      "18:08",
+    )).resolves.toBeUndefined();
   });
 });

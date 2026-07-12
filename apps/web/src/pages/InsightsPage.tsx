@@ -20,6 +20,7 @@ import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/compone
 import { useToast } from "@/context/ToastContext";
 import { useLogs } from "@/hooks/useLogs";
 import { localDateStr } from "@/lib/utils";
+import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 function periodDays(period: Period): number {
   return period === "today" ? 1 : period === "week" ? 7 : 30;
@@ -77,6 +78,7 @@ function TodaysMealsCard({ date }: { date: string }) {
                     <span>{Math.round(m.protein)}g protein</span>
                     <span>{Math.round(m.carbs)}g carbs</span>
                     <span>{Math.round(m.fat)}g fat</span>
+                    <NutritionSourceBadge source={m.nutritionSource ?? undefined} confidence={m.confidence ?? undefined} verified={m.nutritionVerified ?? false} />
                   </div>
                   {m.aiSuggestion && (
                     <p className="text-[12px] italic text-text-subtle line-clamp-2">{m.aiSuggestion}</p>
@@ -168,6 +170,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-text-muted">
                     {w.duration && <span>{w.duration} min</span>}
                     {w.caloriesBurned != null && <span>{Math.round(w.caloriesBurned)} kcal burned</span>}
+                    <NutritionSourceBadge source={w.calculationVersion ? "calorie_engine" : undefined} confidence={w.calorieConfidence ?? undefined} rough={w.calorieEstimateRough} />
                   </div>
                   {w.rationale && (
                     <p className="text-[12px] italic text-text-subtle line-clamp-2">{w.rationale}</p>

@@ -19,6 +19,43 @@ function getUsdaApiKey(): string {
   return apiKey || "DEMO_KEY";
 }
 
+const FOOD_QUERY_SYNONYMS: Record<string, string> = {
+  roti: "chapati",
+  phulka: "chapati",
+  chawal: "cooked rice",
+  "rice cooked": "cooked rice",
+  dal: "cooked lentils",
+  daal: "cooked lentils",
+  dahl: "cooked lentils",
+  paneer: "cottage cheese",
+  dahi: "yogurt",
+  curd: "yogurt",
+  aubergine: "eggplant",
+  brinjal: "eggplant",
+  capsicum: "bell pepper",
+  "garbanzo beans": "chickpeas",
+  chana: "chickpeas",
+  rajma: "kidney beans",
+  sweetcorn: "corn",
+  "minced meat": "ground meat",
+  porridge: "oatmeal",
+  oats: "oatmeal",
+  fries: "french fries",
+  soda: "soft drink",
+  "wholemeal bread": "whole wheat bread",
+};
+
+/** Canonicalize common food aliases so cache and live searches share keys. */
+export function normalizeFoodQuery(query: string): string {
+  let normalized = query.toLowerCase().trim().replace(/\s+/g, " ");
+  for (const [alias, canonical] of Object.entries(FOOD_QUERY_SYNONYMS)
+    .sort(([a], [b]) => b.length - a.length)) {
+    const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    normalized = normalized.replace(new RegExp(`\\b${escapedAlias}\\b`, "g"), canonical);
+  }
+  return normalized.replace(/\s+/g, " ").trim();
+}
+
 // ─── Normalized food structure ────────────────────────────────────────────────
 
 interface NormalizedFood {
@@ -91,10 +128,11 @@ function normalizeUSDAFood(food: any): NormalizedFood | null {
 export const searchFoodsInCache = internalQuery({
   args: { query: v.string() },
   handler: async (ctx, { query: q }) => {
-    if (!q.trim()) return [];
+    const normalizedQuery = normalizeFoodQuery(q);
+    if (!normalizedQuery) return [];
     return ctx.db
       .query("food_cache")
-      .withSearchIndex("by_name_search", (s) => s.search("name", q))
+      .withSearchIndex("by_name_search", (s) => s.search("name", normalizedQuery))
       .take(12);
   },
 });
@@ -191,7 +229,7 @@ async function cacheFoods(ctx: any, foods: NormalizedFood[]) {
 export const searchFoodsLive = internalAction({
   args: { query: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, { query: q, limit = 8 }): Promise<Array<NormalizedFood & { _id?: string }>> => {
-    const trimmed = q.trim();
+    const trimmed = normalizeFoodQuery(q);
     if (!trimmed) return [];
 
     const offUrl = `${OFF_SEARCH_URL}?search_terms=${encodeURIComponent(trimmed)}&search_simple=1&action=process&json=1&page_size=${Math.min(limit, 8)}&fields=${OFF_FIELDS}`;
@@ -237,11 +275,11 @@ export const getRecentFoods = query({
 export const searchFoods = action({
   args: { query: v.string() },
   handler: async (ctx, { query: q }): Promise<NormalizedFood[]> => {
-    const trimmed = q.trim();
+    const trimmed = normalizeFoodQuery(q);
     if (!trimmed) return [];
 
     // 1. Search local cache first
-    const cached = (await ctx.runQuery(internal.foods.searchFoodsInCache, { query: trimmed })) as any[];
+    const cached = (await ctx.runQuery(internal.foods.searchFoodsInCache, { query: q })) as any[];
 
     // Rank: verified + high searchCount first, exact match boosted
     const ranked = cached
