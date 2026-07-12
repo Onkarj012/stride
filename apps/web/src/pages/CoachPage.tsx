@@ -47,7 +47,7 @@ function coachToAgent(coachType?: string): Agent {
 }
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type UndoEntry = { type: "meal" | "workout"; id: string; label: string; undone?: boolean };
+type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood"; id: string; label: string; undone?: boolean };
 type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
 type Message = TextMessage | UndoMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
@@ -73,6 +73,9 @@ export function CoachPage() {
   const deleteSession = useMutation(api.chat.deleteSession);
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
+  const deleteSleep = useMutation(api.wellness.deleteSleep);
+  const deleteWater = useMutation(api.wellness.deleteWater);
+  const deleteMood = useMutation(api.wellness.deleteMood);
   const sendToAI = useAction(api.ai.chat);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -179,10 +182,24 @@ export function CoachPage() {
     pendingUndoIdsRef.current.add(entry.id);
     setPendingUndoIds((prev) => new Set(prev).add(entry.id));
     try {
-      if (entry.type === "meal") {
-        await deleteMeal({ id: entry.id as Id<"meals"> });
-      } else {
-        await deleteWorkout({ id: entry.id as Id<"workouts"> });
+      switch (entry.type) {
+        case "meal":
+          await deleteMeal({ id: entry.id as Id<"meals"> });
+          break;
+        case "workout":
+          await deleteWorkout({ id: entry.id as Id<"workouts"> });
+          break;
+        case "sleep":
+          await deleteSleep({ id: entry.id as Id<"sleep_logs"> });
+          break;
+        case "water":
+          await deleteWater({ id: entry.id as Id<"water_logs"> });
+          break;
+        case "mood":
+          await deleteMood({ id: entry.id as Id<"mood_logs"> });
+          break;
+        default:
+          return;
       }
       setMessages((prev) => prev.map((m) => m.kind === "undo" && m.id === messageId
         ? { ...m, entries: m.entries.map((e) => e.id === entry.id ? { ...e, undone: true } : e) }
@@ -198,19 +215,27 @@ export function CoachPage() {
         return next;
       });
     }
-  }, [deleteMeal, deleteWorkout, toast]);
+  }, [deleteMeal, deleteWorkout, deleteSleep, deleteWater, deleteMood, toast]);
 
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
     if (!Array.isArray(rawItems)) return [];
     return rawItems.flatMap((item: any) => {
       const id = item?.data?._id;
-      if (!id || (item.type !== "meal" && item.type !== "workout")) return [];
-      return [{
-        type: item.type,
-        id,
-        label: item.data?.name ?? item.type,
-      }];
+      if (!id) return [];
+      switch (item.type) {
+        case "meal":
+        case "workout":
+          return [{ type: item.type, id, label: item.data?.name ?? item.type }];
+        case "sleep":
+          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)` }];
+        case "water":
+          return [{ type: "water" as const, id, label: `Water (${item.data?.ml}ml)` }];
+        case "mood":
+          return [{ type: "mood" as const, id, label: `Mood (${item.data?.rating}/5)` }];
+        default:
+          return [];
+      }
     });
   }
 
@@ -266,6 +291,18 @@ export function CoachPage() {
         } else if (loggedItem.type === "workout") {
           const d = loggedItem.data;
           toast.success(`Logged workout: ${d.name ?? "workout"}`, d.duration ? `${d.duration} · ${d.caloriesBurned ?? 0} kcal burned` : undefined);
+        } else if (loggedItem.type === "sleep") {
+          const d = loggedItem.data;
+          toast.success("Logged sleep", `${d.hours}h · ${d.quality}`);
+        } else if (loggedItem.type === "water") {
+          const d = loggedItem.data;
+          toast.success("Logged water", `${d.ml}ml`);
+        } else if (loggedItem.type === "mood") {
+          const d = loggedItem.data;
+          toast.success("Logged mood", `rating ${d.rating}/5`);
+        } else if (loggedItem.type === "steps") {
+          const d = loggedItem.data;
+          toast.success("Logged steps", `${d.count} steps`);
         }
         const undoEntries = undoEntriesFromLoggedItem(loggedItem);
         if (undoEntries.length > 0) {
