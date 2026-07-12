@@ -177,6 +177,44 @@ describe("AssistantConsole logging flow", () => {
     expect(screen.getByRole("button", { name: /confirm/i })).toBeInTheDocument();
   });
 
+  it("a stale fallback timer firing after message-promotion does not resurrect a confirmed draft", async () => {
+    vi.useFakeTimers();
+    // Simulate the exact-simultaneity race: the timer macrotask is already
+    // dequeued when promotion clears `staged`, so the effect cleanup's
+    // clearTimeout can't stop it. No-op clearTimeout to keep the stale
+    // callback alive past the cleanup.
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout").mockImplementation(() => {});
+    try {
+      homepageInputMock.mockResolvedValue({ actions: [waterAction] });
+      const { rerender } = render(consoleUi());
+
+      await sendMessage("drank a litre of water");
+      // AI message arrives → staged batch promotes, staged cleared
+      deliverMessages(rerender, [
+        { role: "user", content: "drank a litre of water", ts: 1 },
+        { role: "ai", content: "Water: 1L. Confirm to log.", ts: 2 },
+      ]);
+      // Promotion happens synchronously on rerender (findBy* hangs under
+      // fake timers when clearTimeout is stubbed out)
+      const confirm = screen.getByRole("button", { name: /confirm/i });
+
+      // User confirms; the card is removed (mutation mock resolves in-act)
+      await act(async () => {
+        fireEvent.click(confirm);
+      });
+      expect(screen.queryByRole("button", { name: /confirm/i })).not.toBeInTheDocument();
+
+      // The stale timer finally fires — it must not re-promote the old batch
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(STAGED_FALLBACK_MS + 50);
+      });
+      expect(screen.queryByRole("button", { name: /confirm/i })).not.toBeInTheDocument();
+      expect(screen.queryByText("1L of water")).not.toBeInTheDocument();
+    } finally {
+      clearTimeoutSpy.mockRestore();
+    }
+  });
+
   it("does not restore pending drafts persisted under a previous date (bug D)", () => {
     sessionStorage.setItem(
       "stride_pending_drafts",

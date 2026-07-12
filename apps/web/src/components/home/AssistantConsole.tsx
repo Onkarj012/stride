@@ -188,6 +188,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Gated on the AI-message count (not total length) so the user's own echoed
   // message arriving first can't promote the cards ahead of the text bubble.
   const [staged, setStaged] = useState<StagedActions<AgentAction>>(null);
+  // Live mirror of `staged` for the fallback timer: a queued timeout callback can
+  // fire after message-promotion already consumed the batch, and acting on its
+  // stale closure snapshot would re-promote just-confirmed drafts as ghost cards.
+  const stagedRef = useRef<StagedActions<AgentAction>>(staged);
+  useEffect(() => { stagedRef.current = staged; }, [staged]);
   const aiMessageCount = useMemo(() => messages.filter((m) => m.role === "ai").length, [messages]);
 
   const promoteActions = useCallback((actions: AgentAction[]) => {
@@ -208,7 +213,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   useEffect(() => {
     if (!staged) return;
     const timer = setTimeout(() => {
-      const { promote } = promoteOnTimeout(staged);
+      // Read the live value, not the closure snapshot — bails if the batch was
+      // already promoted (or replaced) before this callback got to run.
+      const { promote } = promoteOnTimeout(stagedRef.current);
       if (promote) {
         promoteActions(promote);
         setStaged(null);
@@ -532,16 +539,18 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     if (action?.type === "quick_question") {
       const skipped = button.value === "skip";
       void submitQuickQuestionAnswer(action, button.value, button.label, skipped);
-      if (!skipped && button.prompt) void send(button.prompt);
+      // A second in-flight send would overwrite the single staged slot
+      if (!skipped && button.prompt && !thinking) void send(button.prompt);
       return;
     }
     if (button.prompt) {
+      if (thinking) return;
       setAgentActions([]);
       void send(button.prompt);
       return;
     }
     setAgentActions((prev) => prev.filter((a) => a !== action));
-  }, [handleConfirm, handleDiscard, pendingDrafts, send, submitQuickQuestionAnswer]);
+  }, [handleConfirm, handleDiscard, pendingDrafts, send, submitQuickQuestionAnswer, thinking]);
 
   const openDraft = useCallback((draft: any) => {
     pendingTier2Ref.current = "";
