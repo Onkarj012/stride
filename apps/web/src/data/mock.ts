@@ -126,6 +126,7 @@ export type MealDraft = {
   } | null;
   confidence?: number;
   nutritionSource?: string;
+  nutritionVerified?: boolean;
   parseError?: string;
   error?: string;
   submitting?: boolean;
@@ -161,6 +162,7 @@ export type WorkoutDraft = {
     confidence: number;
     range_low: number;
     range_high: number;
+    rough?: boolean;
     breakdown: Record<string, number>;
   } | null;
   parseError?: string;

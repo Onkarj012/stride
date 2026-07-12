@@ -37,13 +37,29 @@ export type LogEntry = {
   category: LogCategory;
   text: string;
   createdAt: number;
-  meal?: MacroData & { items?: string[] };
+  meal?: MacroData & {
+    items?: string[];
+    confidence?: number;
+    nutritionSource?: string;
+    nutritionVerified?: boolean;
+    structuredItems?: string;
+    ingredientBreakdown?: string;
+    logSource?: string;
+  };
   workout?: {
     type: string;
     duration: number;
     distance?: number;
     kcal: number;
     intensity: "light" | "medium" | "high";
+    calorieConfidence?: number;
+    calorieRangeLow?: number;
+    calorieRangeHigh?: number;
+    calorieEstimateRough?: boolean;
+    calorieBreakdown?: string;
+    calculationVersion?: number;
+    structuredSets?: string;
+    logSource?: string;
   };
   sleep?: { hours: number; quality: "poor" | "ok" | "good" | "great" };
   water?: { ml: number };

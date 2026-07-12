@@ -369,6 +369,7 @@ export const logWorkout = action({
           calorieConfidence: parsedData.calorieResult.confidence,
           calorieRangeLow: parsedData.calorieResult.range_low,
           calorieRangeHigh: parsedData.calorieResult.range_high,
+          calorieEstimateRough: parsedData.calorieResult.rough,
           calorieBreakdown: JSON.stringify(parsedData.calorieResult.breakdown),
           calculationVersion: 1,
         };
@@ -394,6 +395,7 @@ export const logWorkout = action({
         calorieConfidence: parsed.calorieResult.confidence,
         calorieRangeLow: parsed.calorieResult.range_low,
         calorieRangeHigh: parsed.calorieResult.range_high,
+        calorieEstimateRough: parsed.calorieResult.rough,
         calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown),
         calculationVersion: 1,
       } : {};
@@ -691,7 +693,8 @@ Rules:
         }
         const calorieFields = parsed.calorieResult ? {
           calorieConfidence: parsed.calorieResult.confidence, calorieRangeLow: parsed.calorieResult.range_low,
-          calorieRangeHigh: parsed.calorieResult.range_high, calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
+          calorieRangeHigh: parsed.calorieResult.range_high, calorieEstimateRough: parsed.calorieResult.rough,
+          calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
         } : {};
         const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
           userId, date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
@@ -720,8 +723,8 @@ Rules:
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const hours = Math.max(0.5, Math.min(24, Number(logData.hours) || 7));
         const quality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : "ok";
-        const sleepId = await ctx.runMutation(api.wellness.upsertSleep, { hours, quality, date: targetDate });
-        loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality } });
+        const { id: sleepId, previous } = await ctx.runMutation(api.wellness.logSleepFromCoach, { hours, quality, date: targetDate });
+        loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality, previous } });
         logOutcomes.push({ type: "sleep", name: "sleep", ok: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -773,8 +776,8 @@ Rules:
         const logData = JSON.parse(stepsMatch[1].trim());
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const count = Math.max(0, Number(logData.count) || 0);
-        const stepsId = await ctx.runMutation(api.wellness.upsertSteps, { count, date: targetDate });
-        loggedItems.push({ type: "steps", data: { _id: stepsId, count } });
+        const { id: stepsId, previous } = await ctx.runMutation(api.wellness.logStepsFromCoach, { count, date: targetDate });
+        loggedItems.push({ type: "steps", data: { _id: stepsId, count, previous } });
         logOutcomes.push({ type: "steps", name: "steps", ok: true });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

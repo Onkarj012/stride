@@ -5,23 +5,19 @@ import { Plus, Trash2, Barcode, ImagePlus, X, RotateCcw } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
 import { AgentBadge } from "@/components/ui-kit/AgentBadge";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
 import { CoachBubble, InputBar } from "@/components/ui-kit";
 import type { AgentType, AttachItem, InputMode, Modality } from "@/components/ui-kit";
-import { useLogs } from "@/hooks/useLogs";
 import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useToast } from "@/context/ToastContext";
 import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
 import { cn, localDateStr } from "@/lib/utils";
-import { FADE_FAST } from "@/lib/motion";
 import { MobileIcon, StatusBar } from "@/components/mobile/MobileKit";
-import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import type { Agent, CoachingStyle } from "@/lib/storage";
 
 const COACH_SUGGESTIONS = [
@@ -51,10 +47,9 @@ function coachToAgent(coachType?: string): Agent {
 }
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type DraftMessage = { kind: "draft"; id: string; draft: LogDraft; confirmReply: string; discardReply: string; settled: boolean };
-type UndoEntry = { type: "meal" | "workout"; id: string; label: string; undone?: boolean };
+type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string; note?: string } | { count: number } };
 type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
-type Message = TextMessage | DraftMessage | UndoMessage;
+type Message = TextMessage | UndoMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
 type ConvexChatMessage = { role: "user" | "ai"; content: string };
 
@@ -78,6 +73,10 @@ export function CoachPage() {
   const deleteSession = useMutation(api.chat.deleteSession);
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
+  const undoSleepLog = useMutation(api.wellness.undoSleepLog);
+  const deleteWater = useMutation(api.wellness.deleteWater);
+  const deleteMood = useMutation(api.wellness.deleteMood);
+  const undoStepsLog = useMutation(api.wellness.undoStepsLog);
   const sendToAI = useAction(api.ai.chat);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -102,7 +101,6 @@ export function CoachPage() {
   const pendingUndoIdsRef = useRef<Set<string>>(new Set());
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const sendingRef = useRef(false);
-  const { add } = useLogs();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -185,10 +183,27 @@ export function CoachPage() {
     pendingUndoIdsRef.current.add(entry.id);
     setPendingUndoIds((prev) => new Set(prev).add(entry.id));
     try {
-      if (entry.type === "meal") {
-        await deleteMeal({ id: entry.id as Id<"meals"> });
-      } else {
-        await deleteWorkout({ id: entry.id as Id<"workouts"> });
+      switch (entry.type) {
+        case "meal":
+          await deleteMeal({ id: entry.id as Id<"meals"> });
+          break;
+        case "workout":
+          await deleteWorkout({ id: entry.id as Id<"workouts"> });
+          break;
+        case "sleep":
+          await undoSleepLog({ id: entry.id as Id<"sleep_logs">, previous: (entry.previous as { hours: number; quality: string; note?: string } | undefined) ?? null, expected: entry.expected as { hours: number; quality: string; note?: string } });
+          break;
+        case "water":
+          await deleteWater({ id: entry.id as Id<"water_logs"> });
+          break;
+        case "mood":
+          await deleteMood({ id: entry.id as Id<"mood_logs"> });
+          break;
+        case "steps":
+          await undoStepsLog({ id: entry.id as Id<"steps_logs">, previous: (entry.previous as { count: number } | undefined) ?? null, expected: entry.expected as { count: number } });
+          break;
+        default:
+          return;
       }
       setMessages((prev) => prev.map((m) => m.kind === "undo" && m.id === messageId
         ? { ...m, entries: m.entries.map((e) => e.id === entry.id ? { ...e, undone: true } : e) }
@@ -204,19 +219,29 @@ export function CoachPage() {
         return next;
       });
     }
-  }, [deleteMeal, deleteWorkout, toast]);
+  }, [deleteMeal, deleteWorkout, undoSleepLog, deleteWater, deleteMood, undoStepsLog, toast]);
 
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
     if (!Array.isArray(rawItems)) return [];
     return rawItems.flatMap((item: any) => {
       const id = item?.data?._id;
-      if (!id || (item.type !== "meal" && item.type !== "workout")) return [];
-      return [{
-        type: item.type,
-        id,
-        label: item.data?.name ?? item.type,
-      }];
+      if (!id) return [];
+      switch (item.type) {
+        case "meal":
+        case "workout":
+          return [{ type: item.type, id, label: item.data?.name ?? item.type }];
+        case "sleep":
+          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality, note: item.data?.note } }];
+        case "water":
+          return [{ type: "water" as const, id, label: `Water (${item.data?.ml}ml)` }];
+        case "mood":
+          return [{ type: "mood" as const, id, label: `Mood (${item.data?.rating}/5)` }];
+        case "steps":
+          return [{ type: "steps" as const, id, label: `Steps (${item.data?.count})`, previous: item.data?.previous ?? null, expected: { count: item.data?.count } }];
+        default:
+          return [];
+      }
     });
   }
 
@@ -230,45 +255,6 @@ export function CoachPage() {
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
   const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : "type";
-
-  const handleConfirm = useCallback((msgId: string, draft: any, confirmReply: string) => {
-    const draftDate: string | undefined = draft.date;
-    const dateNote = draftDate && draftDate !== localDateStr() ? ` for ${draftDate}` : "";
-    if (draft.kind === "meal") {
-      const d = draft as MealDraft;
-      add("meal", d.description, { agent: "diet", meal: { kcal: d.kcal, protein: d.protein, carbs: d.carbs, fat: d.fat, items: d.items } }, draftDate);
-      toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
-    } else if (draft.kind === "workout") {
-      const d = draft as WorkoutDraft;
-      add("workout", d.description, { agent: "workout", workout: { type: d.type, duration: d.duration, distance: d.distance, kcal: d.kcal, intensity: d.intensity } }, draftDate);
-      toast.success(`Logged workout${dateNote}`, `${d.duration} min · ${d.kcal} kcal`);
-    } else if (draft.kind === "sleep") {
-      add("sleep", draft.description, { agent: "sleep", sleep: { hours: draft.hours, quality: draft.quality } }, draftDate);
-      toast.success(`Sleep logged${dateNote}`, `${draft.hours.toFixed(1)}h · ${draft.quality}`);
-    } else if (draft.kind === "water") {
-      add("water", "water", { agent: "water", water: { ml: draft.ml } }, draftDate);
-      toast.success(`Water logged${dateNote}`, `${draft.ml}ml`);
-    } else if (draft.kind === "mood") {
-      add("mood", draft.description, { agent: "wellness", mood: { rating: draft.rating, note: draft.description } }, draftDate);
-      toast.success(`Mood logged${dateNote}`, `${draft.rating}/5`);
-    } else if (draft.kind === "steps") {
-      add("steps", `${draft.count} steps`, { agent: "habit", steps: { count: draft.count } }, draftDate);
-      toast.success(`Steps logged${dateNote}`, `${draft.count.toLocaleString()} steps`);
-    }
-    setMessages((prev) => prev.map((m) => m.id === msgId && m.kind === "draft" ? { ...m, settled: true } : m));
-    setTimeout(() => {
-      setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: confirmReply, agent: draft.kind === "meal" ? "diet" : "workout", streamed: true }]);
-      scroll();
-    }, 400);
-  }, [add, scroll, toast]);
-
-  const handleDiscard = useCallback((msgId: string, discardReply: string) => {
-    setMessages((prev) => prev.map((m) => m.id === msgId && m.kind === "draft" ? { ...m, settled: true } : m));
-    setTimeout(() => {
-      setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: discardReply, streamed: true }]);
-      scroll();
-    }, 300);
-  }, [scroll]);
 
   const send = useCallback(async (text: string, image?: string) => {
     if (sendingRef.current) return;
@@ -311,6 +297,18 @@ export function CoachPage() {
         } else if (loggedItem.type === "workout") {
           const d = loggedItem.data;
           toast.success(`Logged workout: ${d.name ?? "workout"}`, d.duration ? `${d.duration} · ${d.caloriesBurned ?? 0} kcal burned` : undefined);
+        } else if (loggedItem.type === "sleep") {
+          const d = loggedItem.data;
+          toast.success("Logged sleep", `${d.hours}h · ${d.quality}`);
+        } else if (loggedItem.type === "water") {
+          const d = loggedItem.data;
+          toast.success("Logged water", `${d.ml}ml`);
+        } else if (loggedItem.type === "mood") {
+          const d = loggedItem.data;
+          toast.success("Logged mood", `rating ${d.rating}/5`);
+        } else if (loggedItem.type === "steps") {
+          const d = loggedItem.data;
+          toast.success("Logged steps", `${d.count} steps`);
         }
         const undoEntries = undoEntriesFromLoggedItem(loggedItem);
         if (undoEntries.length > 0) {
@@ -441,21 +439,6 @@ export function CoachPage() {
             )}
 
             {messages.map((m, i) => {
-              if (m.kind === "draft") {
-                if (m.settled) return null;
-                return (
-                  <motion.div
-                    key={m.id}
-                    initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={reduceMotion ? { duration: 0 } : FADE_FAST}
-                    className="max-w-[92%]"
-                    style={{ zoom: 0.72 } as React.CSSProperties}
-                  >
-                    <LogConfirmCard draft={m.draft} onConfirm={(d) => handleConfirm(m.id, d, m.confirmReply)} onDiscard={() => handleDiscard(m.id, m.discardReply)} />
-                  </motion.div>
-                );
-              }
               if (m.kind === "undo") {
                 if (m.entries.length === 0) return null;
                 return (

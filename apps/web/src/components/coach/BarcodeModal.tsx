@@ -41,13 +41,14 @@ export function BarcodeModal({ open, onClose, date }: Props) {
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duplicateError, setDuplicateError] = useState<string | null>(null);
 
   const lookup = useAction(api.foods.lookupBarcode);
   const addMeal = useMutation(api.meals.addMeal);
   const toast = useToast();
 
   function reset() {
-    setBarcode(""); setProduct(null); setError(null); setGrams(100);
+    setBarcode(""); setProduct(null); setError(null); setDuplicateError(null); setGrams(100);
   }
 
   async function search() {
@@ -60,6 +61,7 @@ export function BarcodeModal({ open, onClose, date }: Props) {
         setError("Product not found in Open Food Facts. Try another barcode or log manually.");
       } else {
         setProduct(result);
+        setDuplicateError(null);
         if (result.servingSize) setGrams(result.servingSize);
       }
     } catch (err) {
@@ -69,8 +71,9 @@ export function BarcodeModal({ open, onClose, date }: Props) {
     }
   }
 
-  async function logIt() {
+  async function logIt(allowDuplicate = false) {
     if (!product) return;
+    setDuplicateError(null);
     const ratio = grams / 100;
     const time = new Date().toTimeString().slice(0, 5);
     try {
@@ -120,20 +123,15 @@ export function BarcodeModal({ open, onClose, date }: Props) {
           unresolved: [],
         }),
       };
-      try {
-        await addMeal(payload);
-      } catch (err) {
-        const duplicate = getNearDuplicateData(err);
-        if (!duplicate) throw err;
-        if (!window.confirm(duplicate.message ?? "Looks like you already logged this — log anyway?")) {
-          reset(); onClose();
-          return;
-        }
-        await addMeal({ ...payload, allowDuplicate: true });
-      }
+      await addMeal({ ...payload, allowDuplicate: allowDuplicate || undefined });
       toast.success("Logged via barcode", `${product.name} · ${grams}g`);
       reset(); onClose();
     } catch (err) {
+      const duplicate = getNearDuplicateData(err);
+      if (duplicate) {
+        setDuplicateError(duplicate.message ?? "Looks like you already logged this — log anyway?");
+        return;
+      }
       toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");
     }
   }
@@ -224,12 +222,25 @@ export function BarcodeModal({ open, onClose, date }: Props) {
                     </p>
                   </div>
 
+                  {duplicateError && (
+                    <div className="rounded-xl border border-bubblegum/25 bg-bubblegum/10 px-3 py-2.5">
+                      <p className="text-[12px] text-text">{duplicateError}</p>
+                      <button
+                        type="button"
+                        onClick={() => void logIt(true)}
+                        className="mt-2 rounded-full bg-ink px-3 py-1.5 text-[12px] font-semibold text-text-on-ink"
+                      >
+                        Log anyway
+                      </button>
+                    </div>
+                  )}
+
                   <div className="flex gap-2 pt-1">
                     <button type="button" onClick={() => setProduct(null)}
                       className="flex-1 rounded-full border border-border bg-card px-3 py-2 text-[13px] font-semibold text-text-muted hover:text-text">
                       Cancel
                     </button>
-                    <button type="button" onClick={logIt}
+                    <button type="button" onClick={() => void logIt()}
                       className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink px-3 py-2 text-[13px] font-semibold">
                       <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
                       Log meal

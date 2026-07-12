@@ -326,16 +326,23 @@ function WorkoutCard({
 
       {/* Calorie range from deterministic engine */}
       {(draft as any).calorieResult && (
-        <div className="flex items-center gap-2 px-1">
-          <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
-            <div
-              className="h-full rounded-full bg-lavender transition-all"
-              style={{ width: `${Math.round((draft as any).calorieResult.confidence * 100)}%` }}
-            />
+        <div className="space-y-1.5 px-1">
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1 rounded-full bg-border overflow-hidden">
+              <div
+                className="h-full rounded-full bg-lavender transition-all"
+                style={{ width: `${Math.round((draft as any).calorieResult.confidence * 100)}%` }}
+              />
+            </div>
+            <span className="text-[10.5px] text-text-muted whitespace-nowrap">
+              ~{(draft as any).calorieResult.range_low}-{(draft as any).calorieResult.range_high} kcal · {Math.round((draft as any).calorieResult.confidence * 100)}%
+            </span>
           </div>
-          <span className="text-[10.5px] text-text-muted whitespace-nowrap">
-            ~{(draft as any).calorieResult.range_low}-{(draft as any).calorieResult.range_high} kcal, rough · {Math.round((draft as any).calorieResult.confidence * 100)}%
-          </span>
+          {(draft as any).calorieResult.rough && (
+            <span className="inline-flex rounded-full bg-lavender-soft px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-lavender">
+              Rough estimate
+            </span>
+          )}
         </div>
       )}
     </div>
