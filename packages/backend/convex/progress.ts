@@ -1,5 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { adjustCaloriesForDay } from "./tdee_engine";
+import { parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -20,7 +22,7 @@ export const getProgress = query({
       .toISOString()
       .split("T")[0];
 
-    const [allMeals, allWorkouts, allGoals] = await Promise.all([
+    const [allMeals, allWorkouts, allGoals, profile] = await Promise.all([
       ctx.db
         .query("meals")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
@@ -36,6 +38,10 @@ export const getProgress = query({
         .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
         .filter((q) => q.lte(q.field("date"), endDate))
         .collect(),
+      ctx.db
+        .query("user_profiles")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .first(),
     ]);
 
     const mealsByDate = new Map<string, { cals: number; prot: number; carbs: number; fat: number }>();
@@ -45,14 +51,26 @@ export const getProgress = query({
     }
 
     const workoutsByDate = new Map<string, number>();
+    const burnByDate = new Map<string, number>();
     for (const w of allWorkouts) {
       workoutsByDate.set(w.date, (workoutsByDate.get(w.date) ?? 0) + 1);
+      burnByDate.set(w.date, (burnByDate.get(w.date) ?? 0) + (w.caloriesBurned ?? 0));
     }
 
     const goalsByDate = new Map<string, number>();
     for (const g of allGoals) {
       goalsByDate.set(g.date, g.calorieGoal);
     }
+
+    // Days without a stored daily_goals row get a live-computed goal from the
+    // user's plan (same resolution as insights.getTodayBrief) instead of a
+    // hardcoded constant.
+    const parsed = parseStoredPlan(profile?.planBreakdown);
+    const plan = parsed ? resolvePlanForDayAdjustment(parsed, profile ?? {}) : null;
+    const fallbackGoalForDay = (date: string): number => {
+      if (plan) return adjustCaloriesForDay(plan, burnByDate.get(date) ?? 0).calorieGoal;
+      return profile?.calorieTarget ?? 2400;
+    };
 
     const result = [];
     const endMs = new Date(endDate + "T00:00:00").getTime();
@@ -68,7 +86,7 @@ export const getProgress = query({
         carbs: Math.round(m?.carbs ?? 0),
         fat: Math.round(m?.fat ?? 0),
         workouts: workoutsByDate.get(date) ?? 0,
-        goal: goalsByDate.get(date) ?? 2400,
+        goal: goalsByDate.get(date) ?? fallbackGoalForDay(date),
       });
     }
     return result;

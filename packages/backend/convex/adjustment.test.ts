@@ -1,7 +1,7 @@
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 import schema from "./schema";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -46,4 +46,42 @@ test("getTodayBrief surfaces adjusted target + note", async () => {
   const brief = await asUser.query(api.insights.getTodayBrief, { today: "2026-05-29" });
   expect(brief.stats.adjustedCalorieTarget).toBe(plan.calories + 600);
   expect(brief.stats.adjustmentNote).toMatch(/\+600 kcal/);
+});
+
+test("relogWorkout refreshes the target day's daily_goals", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const plan = await asUser.mutation(api.profile.upsertPlanFromOnboarding, PLAN_INPUT);
+  const extraBurn = plan.plannedEatPerTrainingDay + 300;
+
+  const srcId = await asUser.mutation(api.workouts.addWorkout, {
+    name: "Long HIIT", sets: "n/a", intensity: "HIGH",
+    date: "2026-05-29", caloriesBurned: extraBurn,
+  });
+  // Re-log the same workout onto a later day with no daily_goals row yet.
+  await asUser.mutation(api.workouts.relogWorkout, { id: srcId, date: "2026-05-30" });
+
+  const day = await asUser.query(api.goals.getDailyGoal, { date: "2026-05-30" });
+  expect(day.calorieGoal).toBe(plan.calories + 300);
+  expect(day.carbGoal).toBe(plan.carbs + 75); // 300/4
+  expect(day.proteinGoal).toBe(plan.protein);
+  expect(day.fatGoal).toBe(plan.fat);
+});
+
+test("addWorkoutFromAI refreshes the target day's daily_goals", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const plan = await asUser.mutation(api.profile.upsertPlanFromOnboarding, PLAN_INPUT);
+  const extraBurn = plan.plannedEatPerTrainingDay + 200;
+
+  await t.mutation(internal.workouts.addWorkoutFromAI, {
+    userId: "user1", name: "AI logged run", sets: "n/a", intensity: "HIGH",
+    date: "2026-05-30", caloriesBurned: extraBurn,
+  });
+
+  const day = await asUser.query(api.goals.getDailyGoal, { date: "2026-05-30" });
+  expect(day.calorieGoal).toBe(plan.calories + 200);
+  expect(day.carbGoal).toBe(plan.carbs + 50); // 200/4
+  expect(day.proteinGoal).toBe(plan.protein);
+  expect(day.fatGoal).toBe(plan.fat);
 });

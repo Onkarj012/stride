@@ -222,7 +222,7 @@ export const relogWorkout = mutation({
     });
     const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, targetDate, idempotencyKey);
     if (existing) return existing._id;
-    return ctx.db.insert("workouts", {
+    const newId = await ctx.db.insert("workouts", {
       userId,
       date: targetDate,
       name: validated.name,
@@ -244,6 +244,8 @@ export const relogWorkout = mutation({
       logSource,
       idempotencyKey,
     });
+    await applyDayAdjustment(ctx, userId, targetDate);
+    return newId;
   },
 });
 
@@ -346,6 +348,7 @@ export const addWorkoutFromAI = internalMutation({
       logSource,
       idempotencyKey,
     });
+    await applyDayAdjustment(ctx, args.userId, args.date);
     const durationMin = args.duration ? parseFloat(args.duration) : undefined;
     await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
       userId: args.userId, name: validated.name, date: args.date,

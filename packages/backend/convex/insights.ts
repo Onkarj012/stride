@@ -1,8 +1,8 @@
 import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
+import { adjustCaloriesForDay } from "./tdee_engine";
 import { getNextCheckInForContext, getTodayCheckInAnswerContext } from "./checkins";
-import { resolvePlanForDayAdjustment } from "./plan_resolve";
+import { parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 
 const windowValidator = v.union(
   v.literal("morning"),
@@ -186,11 +186,8 @@ export const getTodayBrief = query({
     }
 
     // Task 19: dynamic per-day target from base plan + today's actual burn.
-    let plan: NutritionPlan | null = null;
-    try {
-      const p = profile?.planBreakdown ? JSON.parse(profile.planBreakdown) : null;
-      if (p && typeof p.plannedDailyEAT === "number") plan = resolvePlanForDayAdjustment(p as NutritionPlan, profile ?? {});
-    } catch { /* no plan */ }
+    const parsed = parseStoredPlan(profile?.planBreakdown);
+    const plan = parsed ? resolvePlanForDayAdjustment(parsed, profile ?? {}) : null;
     const todayBurn = todayWorkouts.reduce((s, w) => s + (w.caloriesBurned ?? 0), 0);
     const dayAdj = plan ? adjustCaloriesForDay(plan, todayBurn) : null;
     const adjustedCalorieTarget = dayAdj?.calorieGoal ?? calorieTarget;

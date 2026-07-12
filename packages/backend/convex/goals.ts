@@ -1,7 +1,7 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
-import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
-import { resolvePlanForDayAdjustment } from "./plan_resolve";
+import { adjustCaloriesForDay } from "./tdee_engine";
+import { parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -70,16 +70,6 @@ export const getDailyGoalForContext = internalQuery({
 
 // ─── Dynamic per-day adjustment (Task 19) ────────────────────────────────────
 
-function parsePlan(planBreakdown?: string | null): NutritionPlan | null {
-  if (!planBreakdown) return null;
-  try {
-    const p = JSON.parse(planBreakdown);
-    return typeof p?.plannedDailyEAT === "number" ? (p as NutritionPlan) : null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Recompute a day's goals from the user's base plan + that day's actual workout
  * burn (sum of logged caloriesBurned). Idempotent: always derived from the base
@@ -91,7 +81,7 @@ export async function applyDayAdjustment(ctx: any, userId: string, date: string)
     .query("user_profiles")
     .withIndex("by_user", (q: any) => q.eq("userId", userId))
     .first();
-  const plan = parsePlan(profile?.planBreakdown);
+  const plan = parseStoredPlan(profile?.planBreakdown);
   if (!plan) return null;
   const resolvedPlan = resolvePlanForDayAdjustment(plan, profile ?? {});
 

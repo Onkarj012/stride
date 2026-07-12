@@ -1,6 +1,17 @@
 import { calculateNutritionPlan, type NutritionPlan, type PlanInput } from "./tdee_engine";
 import { toPlanInput } from "./profile";
 
+/** Parse a stored `user_profiles.planBreakdown` JSON string into a NutritionPlan. */
+export function parseStoredPlan(planBreakdown?: string | null): NutritionPlan | null {
+  if (!planBreakdown) return null;
+  try {
+    const p = JSON.parse(planBreakdown);
+    return typeof p?.plannedDailyEAT === "number" ? (p as NutritionPlan) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function resolvePlanForDayAdjustment(
   plan: NutritionPlan,
   rawProfile: { weight?: number; height?: number; age?: number; sex?: string; bodyFat?: number; occupationType?: string; workHoursPerDay?: number; lifestyleActivity?: string; weeklyWorkouts?: string; goal?: string }
