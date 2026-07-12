@@ -9,8 +9,10 @@ import App from "./App";
 import "./styles/global.css";
 
 // Installable PWA: register the generated service worker. registerType is
-// "autoUpdate" so new builds take over silently on the next navigation —
-// no update prompt needed for v1.
+// "autoUpdate": when a new build's SW activates (isUpdate/isExternal), the
+// register client calls window.location.reload() — a forced full-page
+// reload, including tabs where the update was detected by another tab.
+// No update prompt/UI for v1.
 registerSW({ immediate: true });
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string;

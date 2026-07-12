@@ -11,7 +11,9 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: null,
-      includeAssets: ["stride.svg", "apple-touch-icon.png"],
+      // Icons are already precached via the workbox glob below; avoid
+      // duplicate precache entries.
+      includeManifestIcons: false,
       manifest: {
         name: "Stride",
         short_name: "Stride",
@@ -48,6 +50,9 @@ export default defineConfig({
         // realtime and those requests must always hit the network directly.
         navigateFallbackDenylist: [/^\/api\//],
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+        // The 3D voxel textures are large, lazily loaded, and not part of
+        // the app shell — keep them out of the precache manifest.
+        globIgnores: ["**/voxels/**"],
         runtimeCaching: [
           {
             urlPattern: ({ url }) =>
