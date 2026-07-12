@@ -2,6 +2,7 @@ type NutritionSourceBadgeProps = {
   source?: string;
   confidence?: number;
   verified?: boolean;
+  rough?: boolean;
 };
 
 export function formatNutritionSource(source?: string) {
@@ -19,19 +20,21 @@ export function formatNutritionSource(source?: string) {
   return source.replace(/_/g, " ");
 }
 
-export function NutritionSourceBadge({ source, confidence, verified }: NutritionSourceBadgeProps) {
-  if (!source && confidence == null && !verified) return null;
+export function NutritionSourceBadge({ source, confidence, verified, rough }: NutritionSourceBadgeProps) {
+  if (!source && confidence == null && !verified && !rough) return null;
 
   const confidenceLabel = confidence == null
     ? null
     : `${Math.round(Math.max(0, Math.min(1, confidence)) * 100)}%`;
+  const isRough = rough && !verified;
 
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-bold tracking-wide ${
-      verified ? "bg-mint-soft uppercase text-mint" : "bg-card-elev text-text-muted"
+      verified ? "bg-mint-soft uppercase text-mint" : isRough ? "bg-peach-soft text-peach" : "bg-card-elev text-text-muted"
     }`}>
       {verified ? "Verified food data" : formatNutritionSource(source)}
       {!verified && confidenceLabel ? ` · ${confidenceLabel}` : ""}
+      {isRough ? " · rough" : ""}
     </span>
   );
 }

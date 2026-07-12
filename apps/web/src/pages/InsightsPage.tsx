@@ -170,7 +170,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[12px] text-text-muted">
                     {w.duration && <span>{w.duration} min</span>}
                     {w.caloriesBurned != null && <span>{Math.round(w.caloriesBurned)} kcal burned</span>}
-                    <NutritionSourceBadge source={w.calculationVersion ? "calorie_engine" : undefined} confidence={w.calorieConfidence ?? undefined} />
+                    <NutritionSourceBadge source={w.calculationVersion ? "calorie_engine" : undefined} confidence={w.calorieConfidence ?? undefined} rough={w.calorieEstimateRough} />
                   </div>
                   {w.rationale && (
                     <p className="text-[12px] italic text-text-subtle line-clamp-2">{w.rationale}</p>

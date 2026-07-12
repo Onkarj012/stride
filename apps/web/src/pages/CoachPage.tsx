@@ -87,6 +87,7 @@ export function CoachPage() {
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
   const addMeal = useMutation(api.meals.addMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
+  const recordActivity = useMutation(api.gamification.recordActivity);
   const sendToAI = useAction(api.ai.chat);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -226,6 +227,8 @@ export function CoachPage() {
       const id = item.kind === "meal"
         ? await addMeal({ ...item.retryArgs, allowDuplicate: true })
         : await addWorkout({ ...item.retryArgs, allowDuplicate: true });
+      const isPastDay = !!item.retryArgs.date && item.retryArgs.date !== localDateStr();
+      if (!isPastDay) await recordActivity({ type: item.kind }).catch(() => {});
       setMessages((prev) => [
         ...prev.map((message) => message.kind === "duplicate" && message.id === messageId
           ? { ...message, items: message.items.map((candidate, index) => index === itemIndex ? { ...candidate, logged: true } : candidate) }
@@ -244,7 +247,7 @@ export function CoachPage() {
         return next;
       });
     }
-  }, [addMeal, addWorkout, scroll, toast]);
+  }, [addMeal, addWorkout, recordActivity, scroll, toast]);
 
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];

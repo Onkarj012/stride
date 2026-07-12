@@ -152,7 +152,7 @@ function WorkoutRow({ w, onEdit, onRelog, onDelete, relogging }: {
             {w.duration && <span>{w.duration}</span>}
             <span className="capitalize">{w.intensity?.toLowerCase()}</span>
             {(w.caloriesBurned ?? 0) > 0 && <span>{w.caloriesBurned} kcal</span>}
-            <NutritionSourceBadge source={w.calculationVersion ? "calorie_engine" : undefined} confidence={w.calorieConfidence ?? undefined} />
+            <NutritionSourceBadge source={w.calculationVersion ? "calorie_engine" : undefined} confidence={w.calorieConfidence ?? undefined} rough={w.calorieEstimateRough} />
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
