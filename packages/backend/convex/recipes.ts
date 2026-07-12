@@ -63,10 +63,9 @@ function nutritionBreakdownFromRecipeIngredients(
   return buildNutritionResult(items, []);
 }
 
-/** Pure: sum ingredient macros (total) and divide by servings (per-serving). */
-export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: number) {
-  const s = Math.max(1, servings || 1);
-  const total = ingredients.reduce(
+/** Pure: sum ingredient macros without rounding (used to avoid double rounding when logging). */
+export function computeRawRecipeTotal(ingredients: RecipeIngredient[]) {
+  return ingredients.reduce(
     (acc, ing) => {
       const ratio = Math.max(0, ing.grams) / 100;
       acc.kcal += Math.max(0, ing.caloriesPer100g || 0) * ratio;
@@ -77,6 +76,12 @@ export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: n
     },
     { kcal: 0, p: 0, c: 0, f: 0 },
   );
+}
+
+/** Pure: sum ingredient macros (total) and divide by servings (per-serving). */
+export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: number) {
+  const s = Math.max(1, servings || 1);
+  const total = computeRawRecipeTotal(ingredients);
   const round = (o: typeof total) => ({ kcal: Math.round(o.kcal), p: r1(o.p), c: r1(o.c), f: r1(o.f) });
   return {
     total: round(total),
@@ -192,7 +197,9 @@ export const logRecipe = mutation({
     if (!recipe || recipe.userId !== userId) throw new Error("Not found");
     const portions = Math.max(0.25, servings ?? 1);
     const ings: RecipeIngredient[] = ingredients ?? JSON.parse(recipe.ingredients);
-    const { perServing: ps } = computeRecipeTotals(ings, recipe.servings);
+    // Scale from raw (unrounded) totals so logged amounts round exactly once;
+    // the recipe's stored per-serving values stay rounded for display only.
+    const rawTotal = computeRawRecipeTotal(ings);
     const ingredientList = ings.map((i) => `${i.name} (${i.grams}g)`).join(", ");
     const trimmedNote = note?.trim();
     const components = trimmedNote
@@ -204,10 +211,10 @@ export const logRecipe = mutation({
     const targetTime = time ?? new Date().toISOString().slice(11, 16);
     const validated = validateMealWrite({
       name: recipe.name,
-      calories: Math.round(ps.kcal * portions),
-      protein: r1(ps.p * portions),
-      carbs: r1(ps.c * portions),
-      fat: r1(ps.f * portions),
+      calories: Math.round(rawTotal.kcal * scale),
+      protein: r1(rawTotal.p * scale),
+      carbs: r1(rawTotal.c * scale),
+      fat: r1(rawTotal.f * scale),
       time: targetTime,
       confidence: rawBreakdown.confidence,
       nutritionSource: "recipe",

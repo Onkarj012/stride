@@ -2,7 +2,7 @@ import { convexTest } from "convex-test";
 import { expect, test, describe } from "vitest";
 import schema from "./schema";
 import { api } from "./_generated/api";
-import { computeRecipeTotals } from "./recipes";
+import { computeRawRecipeTotal, computeRecipeTotals } from "./recipes";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -17,6 +17,11 @@ describe("computeRecipeTotals (pure)", () => {
     // Oats: 311.2 kcal, Milk: 84 kcal → 395
     expect(total.kcal).toBe(395);
     expect(perServing.kcal).toBe(198); // 395/2 rounded
+  });
+
+  test("computeRawRecipeTotal keeps unrounded sums", () => {
+    const raw = computeRawRecipeTotal(INGREDIENTS);
+    expect(raw.kcal).toBeCloseTo(395.2, 5);
   });
 });
 
@@ -44,6 +49,19 @@ test("updateRecipe recomputes; logRecipe scales into a meal", async () => {
   expect(meals).toHaveLength(1);
   expect(meals[0].calories).toBe(790); // 395 per serving × 2
   expect(meals[0].nutritionSource).toBe("recipe");
+});
+
+test("logRecipe with fractional portions rounds once from raw totals", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const id = await asUser.mutation(api.recipes.createRecipe, { name: "Oats", servings: 2, ingredients: INGREDIENTS });
+  await asUser.mutation(api.recipes.logRecipe, { id, servings: 1.5, date: "2026-05-31" });
+  const meals = await asUser.query(api.meals.getMeals, { date: "2026-05-31" });
+  expect(meals).toHaveLength(1);
+  // Raw total 395.2 kcal → round(395.2 × 1.5 / 2) = 296.
+  // Double rounding (per-serving round 198 × 1.5 = 297) would drift by 1.
+  expect(meals[0].calories).toBe(Math.round((395.2 * 1.5) / 2));
+  expect(meals[0].calories).toBe(296);
 });
 
 test("logRecipe appends user note to components, not aiSuggestion", async () => {
