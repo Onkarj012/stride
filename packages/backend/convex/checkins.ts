@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { ConvexError, v } from "convex/values";
 import { callAI, parseJSON } from "./ai/llm";
+import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 
 type CheckInWindow = "morning" | "day" | "evening" | "night";
 type CheckInSource = "registry" | "llm" | "template";
@@ -907,41 +908,37 @@ async function applyStructuredAnswer(ctx: MutationCtx, userId: string, args: {
   } else if (kind === "water") {
     const ml = args.numericValue;
     if (ml == null || ml <= 0) return;
-    const existing = await ctx.db
-      .query("water_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, { ml, time });
-    else await ctx.db.insert("water_logs", { userId, date: args.date, ml, time });
+    await writeCheckinRecovery(ctx, userId, args, { kind: "water", ml, mode: "upsert", time });
   } else if (kind === "steps") {
     const count = Math.round(args.numericValue ?? 0);
     if (count < 0) return;
-    const existing = await ctx.db
-      .query("steps_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, { count });
-    else await ctx.db.insert("steps_logs", { userId, date: args.date, count });
+    await writeCheckinRecovery(ctx, userId, args, { kind: "steps", count, time });
   } else if (kind === "mood") {
     const rating = Math.round(args.numericValue ?? Number(args.value));
     if (rating < 1 || rating > 5) return;
     const mood = { rating, time, note: `check-in: ${args.questionId}` };
-    const existing = await ctx.db
-      .query("mood_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, mood);
-    else await ctx.db.insert("mood_logs", { userId, date: args.date, ...mood });
+    await writeCheckinRecovery(ctx, userId, args, { kind: "mood", ...mood, mode: "upsert" });
   } else if (kind === "sleep") {
     const sleep = sleepFromAnswer(args.value, args.numericValue);
     if (!sleep) return;
-    const existing = await ctx.db
-      .query("sleep_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, sleep);
-    else await ctx.db.insert("sleep_logs", { userId, date: args.date, ...sleep });
+    await writeCheckinRecovery(ctx, userId, args, { kind: "sleep", ...sleep });
   }
+}
+
+async function writeCheckinRecovery(ctx: MutationCtx, userId: string, source: { questionId: string; date: string; value: string }, payload: Record<string, any>) {
+  const rawInput = JSON.stringify({ questionId: source.questionId, date: source.date, value: source.value, payload });
+  const groupKey = deriveGroupKey({ userId, sourceSurface: "checkin", rawInput });
+  return ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+    group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "checkin", rawInput },
+    member: {
+      memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "recovery", payloadFingerprint: JSON.stringify(payload), ordinal: 0 }),
+      payload: { date: source.date, ...payload },
+      provenance: "user_reported",
+      validation: { status: "valid", messages: [] },
+      reversible: true,
+      resolvedDate: source.date,
+    },
+  });
 }
 
 function registryStructuredKind(questionId: string): StructuredKind | null {

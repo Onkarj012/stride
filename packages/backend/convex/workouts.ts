@@ -3,6 +3,8 @@ import { ConvexError, v } from "convex/values";
 import { applyDayAdjustment } from "./goals";
 import { internal } from "./_generated/api";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { recordBehaviorRow } from "./behavior";
+import { recordActivityForUser } from "./gamification";
 import {
   buildIdempotencyKey,
   isSimilarWorkout,
@@ -50,6 +52,74 @@ export async function assertNoNearDuplicateWorkout(
       workoutId: duplicate._id,
     });
   }
+}
+
+export async function writeWorkoutDomain(
+  ctx: any,
+  args: any,
+  options: { emitBehavior?: boolean; emitGamification?: boolean } = {},
+) {
+  const validated = validateWorkoutWrite(args);
+  const date = args.date ?? new Date().toISOString().split("T")[0];
+  const logSource = normalizeLogSource(args.logSource, "manual");
+  const contentHash = workoutContentHash(validated);
+  const idempotencyKey = buildIdempotencyKey({
+    userId: args.userId,
+    date,
+    source: logSource,
+    contentHash,
+    timeWindow: workoutTimeWindowKey({
+      date,
+      contentHash,
+      timestamp: args.timestamp,
+      idempotencyToken: args.idempotencyToken,
+    }),
+  });
+  const existing = await findExistingWorkoutByIdempotencyKey(ctx, args.userId, date, idempotencyKey);
+  if (existing) return existing._id;
+  const timestamp = args.timestamp ?? new Date().toISOString().slice(11, 16);
+  if (!args.allowDuplicate) {
+    await assertNoNearDuplicateWorkout(ctx, args.userId, date, validated, timestamp);
+  }
+  const id = await ctx.db.insert("workouts", {
+    userId: args.userId,
+    date,
+    name: validated.name,
+    sets: validated.sets,
+    reps: args.reps,
+    weight: args.weight,
+    duration: validated.duration,
+    intensity: validated.intensity || "HIGH",
+    exercises: args.exercises,
+    rationale: args.rationale,
+    caloriesBurned: validated.caloriesBurned,
+    calorieConfidence: validated.calorieConfidence,
+    calorieRangeLow: validated.calorieRangeLow,
+    calorieRangeHigh: validated.calorieRangeHigh,
+    calorieEstimateRough: args.calorieEstimateRough,
+    calorieBreakdown: args.calorieBreakdown,
+    calculationVersion: args.calculationVersion,
+    structuredSets: args.structuredSets,
+    timestamp,
+    logSource,
+    idempotencyKey,
+  });
+  if (options.emitBehavior) await recordBehaviorRow(ctx, args.userId, "log", "workout", undefined, date);
+  if (options.emitGamification && date === new Date().toISOString().split("T")[0]) {
+    await recordActivityForUser(ctx, args.userId, { type: "workout", date });
+  }
+  await applyDayAdjustment(ctx, args.userId, date);
+  const durationMin = args.duration ? parseFloat(args.duration) : undefined;
+  await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
+    userId: args.userId,
+    name: validated.name,
+    date,
+    exercises: Array.isArray(args.exercises) ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
+    durationMin: isNaN(durationMin as number) ? undefined : durationMin,
+    intensity: validated.intensity || undefined,
+    caloriesBurned: validated.caloriesBurned,
+  }).catch(() => {});
+  return id;
 }
 
 export const getWorkouts = query({
@@ -104,54 +174,7 @@ export const addWorkout = mutation({
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
-    const validated = validateWorkoutWrite(args);
-    const logSource = normalizeLogSource(args.logSource, "manual");
-    const contentHash = workoutContentHash(validated);
-    const idempotencyKey = buildIdempotencyKey({
-      userId,
-      date,
-      source: logSource,
-      contentHash,
-      timeWindow: workoutTimeWindowKey({
-        date,
-        contentHash,
-        timestamp: args.timestamp,
-        idempotencyToken: args.idempotencyToken,
-      }),
-    });
-    const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, date, idempotencyKey);
-    if (existing) return existing._id;
-    const timestamp = args.timestamp ?? new Date().toISOString().slice(11, 16);
-    if (!args.allowDuplicate) {
-      await assertNoNearDuplicateWorkout(ctx, userId, date, validated, timestamp);
-    }
-    const id = await ctx.db.insert("workouts", {
-      userId, date,
-      name: validated.name, sets: validated.sets, reps: args.reps, weight: args.weight,
-      duration: validated.duration, intensity: validated.intensity || "HIGH",
-      exercises: args.exercises, rationale: args.rationale,
-      caloriesBurned: validated.caloriesBurned,
-      calorieConfidence: validated.calorieConfidence,
-      calorieRangeLow: validated.calorieRangeLow,
-      calorieRangeHigh: validated.calorieRangeHigh,
-      calorieEstimateRough: args.calorieEstimateRough,
-      calorieBreakdown: args.calorieBreakdown,
-      calculationVersion: args.calculationVersion,
-      structuredSets: args.structuredSets,
-      timestamp,
-      logSource,
-      idempotencyKey,
-    });
-    await applyDayAdjustment(ctx, userId, date);
-    const durationMin = args.duration ? parseFloat(args.duration) : undefined;
-    await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
-      userId, name: validated.name, date,
-      exercises: Array.isArray(args.exercises) ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
-      durationMin: isNaN(durationMin as number) ? undefined : durationMin,
-      intensity: validated.intensity || undefined,
-      caloriesBurned: validated.caloriesBurned,
-    }).catch(() => {});
-    return id;
+    return writeWorkoutDomain(ctx, { ...args, userId, date }, { emitBehavior: true, emitGamification: true });
   },
 });
 
@@ -360,53 +383,7 @@ export const addWorkoutFromAI = internalMutation({
     allowDuplicate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const validated = validateWorkoutWrite(args);
-    const logSource = normalizeLogSource(args.logSource, "ai");
-    const contentHash = workoutContentHash(validated);
-    const idempotencyKey = buildIdempotencyKey({
-      userId: args.userId,
-      date: args.date,
-      source: logSource,
-      contentHash,
-      timeWindow: workoutTimeWindowKey({
-        date: args.date,
-        contentHash,
-        timestamp: args.timestamp,
-        idempotencyToken: args.idempotencyToken,
-      }),
-    });
-    const existing = await findExistingWorkoutByIdempotencyKey(ctx, args.userId, args.date, idempotencyKey);
-    if (existing) return existing._id;
-    const timestamp = args.timestamp ?? new Date().toISOString().slice(11, 16);
-    if (!args.allowDuplicate) {
-      await assertNoNearDuplicateWorkout(ctx, args.userId, args.date, validated, timestamp);
-    }
-    const id = await ctx.db.insert("workouts", {
-      userId: args.userId, date: args.date,
-      name: validated.name, sets: validated.sets, duration: validated.duration,
-      intensity: validated.intensity || "HIGH",
-      exercises: args.exercises, rationale: args.rationale,
-      caloriesBurned: validated.caloriesBurned,
-      calorieConfidence: validated.calorieConfidence,
-      calorieRangeLow: validated.calorieRangeLow,
-      calorieRangeHigh: validated.calorieRangeHigh,
-      calorieEstimateRough: args.calorieEstimateRough,
-      calorieBreakdown: args.calorieBreakdown,
-      calculationVersion: args.calculationVersion,
-      structuredSets: args.structuredSets,
-      timestamp,
-      logSource,
-      idempotencyKey,
-    });
-    const durationMin = args.duration ? parseFloat(args.duration) : undefined;
-    await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
-      userId: args.userId, name: validated.name, date: args.date,
-      exercises: Array.isArray(args.exercises) ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
-      durationMin: isNaN(durationMin as number) ? undefined : durationMin,
-      intensity: validated.intensity || undefined,
-      caloriesBurned: validated.caloriesBurned,
-    }).catch(() => {});
-    return id;
+    return writeWorkoutDomain(ctx, args, { emitBehavior: false, emitGamification: false });
   },
 });
 

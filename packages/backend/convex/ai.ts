@@ -1,5 +1,6 @@
 import { action, query, internalAction } from "./_generated/server";
 import { internal, api } from "./_generated/api";
+import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 import { ConvexError, v } from "convex/values";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { findBestMatch, AUTO_APPLY_MIN_LOGGED } from "./food_memory_match";
@@ -36,6 +37,19 @@ function getConvexErrorMessage(err: unknown): string | undefined {
   const data = err.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
   return (data as { message?: string }).message;
+}
+
+function markerMember(groupKey: string, actionType: "meal" | "workout" | "recovery", payload: any, ordinal: number, confidence?: number) {
+  return {
+    memberIdempotencyKey: deriveMemberKey({ groupKey, actionType, payloadFingerprint: JSON.stringify(payload), ordinal }),
+    payload,
+    provenance: "ai_extracted" as const,
+    confidence,
+    validation: { status: "valid" as const, messages: [] },
+    reversible: true,
+    resolvedDate: payload.date,
+    resolvedTime: payload.time ?? payload.timestamp,
+  };
 }
 
 
@@ -668,6 +682,8 @@ Rules:
       | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs }
       | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs };
     const failedItems: FailedLogItem[] = [];
+    const chatGroupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput: message });
+    const chatGroup = { userId, groupIdempotencyKey: chatGroupKey, sourceSurface: "chat" as const, rawInput: message };
 
     // Strip all log blocks from the reply text
     cleanReply = reply
@@ -681,7 +697,7 @@ Rules:
 
     // Meal
     const mealMatches = [...reply.matchAll(/⟦LOG_MEAL⟧([\s\S]*?)⟦\/LOG_MEAL⟧/g)];
-    for (const mealMatch of mealMatches) {
+    for (const [mealIndex, mealMatch] of mealMatches.entries()) {
       let retryArgs: MealRetryArgs | undefined;
       let retryDescription = "meal";
       try {
@@ -713,19 +729,20 @@ Rules:
           ingredientBreakdown: finalIngredientBreakdown,
           logSource: "coach",
         };
-        const mealId = await ctx.runMutation(internal.meals.addMealFromAI, {
-          userId, date: targetDate,
-          name: parsed.name, calories: nutrition.calories, protein: nutrition.protein,
+        const mealPayload = {
+          date: targetDate, name: parsed.name, calories: nutrition.calories, protein: nutrition.protein,
           carbs: nutrition.carbs, fat: nutrition.fat, time: parsed.time,
           aiSuggestion: parsed.aiSuggestion, mealType: parsed.mealType, components: parsed.components,
           confidence: nutrition.confidence, nutritionSource: nutrition.nutritionSource,
-          structuredItems: finalStructuredItems, ingredientBreakdown: finalIngredientBreakdown,
-          logSource: "coach",
+          structuredItems: finalStructuredItems, ingredientBreakdown: finalIngredientBreakdown, logSource: "coach",
+        };
+        const mealId = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
+          group: chatGroup,
+          member: markerMember(chatGroupKey, "meal", mealPayload, mealIndex, nutrition.confidence),
         });
         loggedItems.push({ type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat } });
         logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: true });
         // Award gamification for today's logs — parity with the homepage confirm path.
-        if (targetDate === today) await ctx.runMutation(api.gamification.recordActivity, { type: "meal" }).catch(() => {});
       } catch (err) {
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const errorCode = getConvexErrorCode(err);
@@ -744,7 +761,7 @@ Rules:
 
     // Workout
     const workoutMatches = [...reply.matchAll(/⟦LOG_WORKOUT⟧([\s\S]*?)⟦\/LOG_WORKOUT⟧/g)];
-    for (const workoutMatch of workoutMatches) {
+    for (const [workoutIndex, workoutMatch] of workoutMatches.entries()) {
       let retryArgs: WorkoutRetryArgs | undefined;
       let retryDescription = "workout";
       try {
@@ -782,19 +799,20 @@ Rules:
           logSource: "coach",
           ...calorieFields,
         };
-        const workoutId = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
-          userId, date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
+        const workoutPayload = {
+          date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
           intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
           caloriesBurned: parsed.caloriesBurned,
           structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
-          timestamp,
-          logSource: "coach",
-          ...calorieFields,
+          timestamp, logSource: "coach", ...calorieFields,
+        };
+        const workoutId = await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, {
+          group: chatGroup,
+          member: markerMember(chatGroupKey, "workout", workoutPayload, workoutIndex),
         });
         loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed } });
         logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: true });
         // Award gamification for today's logs — parity with the homepage confirm path.
-        if (targetDate === today) await ctx.runMutation(api.gamification.recordActivity, { type: "workout" }).catch(() => {});
       } catch (err) {
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const errorCode = getConvexErrorCode(err);
@@ -813,13 +831,17 @@ Rules:
 
     // Sleep
     const sleepMatches = [...reply.matchAll(/⟦LOG_SLEEP⟧([\s\S]*?)⟦\/LOG_SLEEP⟧/g)];
-    for (const sleepMatch of sleepMatches) {
+    for (const [sleepIndex, sleepMatch] of sleepMatches.entries()) {
       try {
         const logData = JSON.parse(sleepMatch[1].trim());
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const hours = Math.max(0.5, Math.min(24, Number(logData.hours) || 7));
         const quality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : "ok";
-        const { id: sleepId, previous } = await ctx.runMutation(api.wellness.logSleepFromCoach, { hours, quality, date: targetDate });
+        const sleepPayload = { kind: "sleep", hours, quality, date: targetDate };
+        const { id: sleepId, previous } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+          group: chatGroup,
+          member: markerMember(chatGroupKey, "recovery", sleepPayload, sleepIndex),
+        });
         loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality, previous } });
         logOutcomes.push({ type: "sleep", name: "sleep", ok: true });
       } catch (err) {
@@ -831,13 +853,17 @@ Rules:
 
     // Water
     const waterMatches = [...reply.matchAll(/⟦LOG_WATER⟧([\s\S]*?)⟦\/LOG_WATER⟧/g)];
-    for (const waterMatch of waterMatches) {
+    for (const [waterIndex, waterMatch] of waterMatches.entries()) {
       try {
         const logData = JSON.parse(waterMatch[1].trim());
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const ml = Math.max(50, Math.min(5000, Number(logData.ml) || 250));
         const time = new Date().toTimeString().slice(0, 5);
-        const waterId = await ctx.runMutation(api.wellness.addWater, { ml, date: targetDate, time });
+        const waterPayload = { kind: "water", ml, date: targetDate, time };
+        const { id: waterId } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+          group: chatGroup,
+          member: markerMember(chatGroupKey, "recovery", waterPayload, waterIndex),
+        });
         loggedItems.push({ type: "water", data: { _id: waterId, ml } });
         logOutcomes.push({ type: "water", name: "water", ok: true });
       } catch (err) {
@@ -849,13 +875,17 @@ Rules:
 
     // Mood
     const moodMatches = [...reply.matchAll(/⟦LOG_MOOD⟧([\s\S]*?)⟦\/LOG_MOOD⟧/g)];
-    for (const moodMatch of moodMatches) {
+    for (const [moodIndex, moodMatch] of moodMatches.entries()) {
       try {
         const logData = JSON.parse(moodMatch[1].trim());
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const rating = Math.max(1, Math.min(5, Number(logData.rating) || 3)) as 1|2|3|4|5;
         const time = new Date().toTimeString().slice(0, 5);
-        const moodId = await ctx.runMutation(api.wellness.addMood, { rating, date: targetDate, time, note: logData.note });
+        const moodPayload = { kind: "mood", rating, date: targetDate, time, note: logData.note };
+        const { id: moodId } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+          group: chatGroup,
+          member: markerMember(chatGroupKey, "recovery", moodPayload, moodIndex),
+        });
         loggedItems.push({ type: "mood", data: { _id: moodId, rating } });
         logOutcomes.push({ type: "mood", name: "mood", ok: true });
       } catch (err) {
@@ -867,12 +897,16 @@ Rules:
 
     // Steps
     const stepsMatches = [...reply.matchAll(/⟦LOG_STEPS⟧([\s\S]*?)⟦\/LOG_STEPS⟧/g)];
-    for (const stepsMatch of stepsMatches) {
+    for (const [stepsIndex, stepsMatch] of stepsMatches.entries()) {
       try {
         const logData = JSON.parse(stepsMatch[1].trim());
         const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
         const count = Math.max(0, Number(logData.count) || 0);
-        const { id: stepsId, previous } = await ctx.runMutation(api.wellness.logStepsFromCoach, { count, date: targetDate });
+        const stepsPayload = { kind: "steps", count, date: targetDate };
+        const { id: stepsId, previous } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+          group: chatGroup,
+          member: markerMember(chatGroupKey, "recovery", stepsPayload, stepsIndex),
+        });
         loggedItems.push({ type: "steps", data: { _id: stepsId, count, previous } });
         logOutcomes.push({ type: "steps", name: "steps", ok: true });
       } catch (err) {

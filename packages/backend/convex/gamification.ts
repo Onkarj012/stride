@@ -1,4 +1,4 @@
-import { internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -41,7 +41,7 @@ export const getStateInternal = internalQuery({
   handler: async (ctx, { userId }) => {
     return ctx.db
       .query("user_gamification")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
       .unique();
   },
 });
@@ -94,21 +94,7 @@ export const getState = query({
 
 // ─── Update progress mutation ─────────────────────────────────────────────────
 
-export const recordActivity = mutation({
-  args: {
-    type: v.union(v.literal("meal"), v.literal("workout")),
-    date: v.optional(v.string()),
-    // For macro adherence checks
-    totalCalories: v.optional(v.number()),
-    totalProtein: v.optional(v.number()),
-    calorieTarget: v.optional(v.number()),
-    proteinTarget: v.optional(v.number()),
-    mealsLoggedToday: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
-    const userId = identity.subject;
+export async function recordActivityForUser(ctx: any, userId: string, args: any) {
     const today = args.date ?? new Date().toISOString().split("T")[0];
 
     let state = await ctx.db
@@ -257,7 +243,37 @@ export const recordActivity = mutation({
       streakDays,
       newFreezes: newFreezes > existing.streakFreezes,
     };
+}
+
+export const recordActivity = mutation({
+  args: {
+    type: v.union(v.literal("meal"), v.literal("workout")),
+    date: v.optional(v.string()),
+    totalCalories: v.optional(v.number()),
+    totalProtein: v.optional(v.number()),
+    calorieTarget: v.optional(v.number()),
+    proteinTarget: v.optional(v.number()),
+    mealsLoggedToday: v.optional(v.number()),
   },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    return recordActivityForUser(ctx, identity.subject, args);
+  },
+});
+
+export const recordActivityFor = internalMutation({
+  args: {
+    userId: v.string(),
+    type: v.union(v.literal("meal"), v.literal("workout")),
+    date: v.optional(v.string()),
+    totalCalories: v.optional(v.number()),
+    totalProtein: v.optional(v.number()),
+    calorieTarget: v.optional(v.number()),
+    proteinTarget: v.optional(v.number()),
+    mealsLoggedToday: v.optional(v.number()),
+  },
+  handler: async (ctx, { userId, ...args }) => recordActivityForUser(ctx, userId, args),
 });
 
 // ─── Use streak freeze ────────────────────────────────────────────────────────

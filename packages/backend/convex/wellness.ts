@@ -1,5 +1,6 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { recordBehaviorRow } from "./behavior";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -9,6 +10,69 @@ async function requireUserId(ctx: any): Promise<string> {
 
 function todayDate(): string {
   return new Date().toISOString().split("T")[0];
+}
+
+export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBehavior?: boolean } = {}) {
+  const date = args.date ?? todayDate();
+  const time = args.time ?? new Date().toTimeString().slice(0, 5);
+  let id: any;
+  let previous: any = undefined;
+  switch (args.kind) {
+    case "water": {
+      if (args.ml <= 0) throw new Error("ml must be positive");
+      const existing = args.mode === "upsert"
+        ? await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).first()
+        : null;
+      if (existing) {
+        await ctx.db.patch(existing._id, { ml: args.ml, time });
+        id = existing._id;
+      } else {
+        id = await ctx.db.insert("water_logs", { userId: args.userId, date, ml: args.ml, time });
+      }
+      break;
+    }
+    case "sleep": {
+      if (args.hours < 0 || args.hours > 24) throw new Error("hours out of range");
+      const existing = await ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).first();
+      previous = existing ? { hours: existing.hours, quality: existing.quality, note: existing.note } : null;
+      if (existing) {
+        await ctx.db.patch(existing._id, { hours: args.hours, quality: args.quality, note: args.note });
+        id = existing._id;
+      } else {
+        id = await ctx.db.insert("sleep_logs", { userId: args.userId, date, hours: args.hours, quality: args.quality, note: args.note });
+      }
+      break;
+    }
+    case "mood": {
+      if (args.rating < 1 || args.rating > 5) throw new Error("rating must be 1..5");
+      const existing = args.mode === "upsert"
+        ? await ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).first()
+        : null;
+      if (existing) {
+        await ctx.db.patch(existing._id, { rating: args.rating, note: args.note, time });
+        id = existing._id;
+      } else {
+        id = await ctx.db.insert("mood_logs", { userId: args.userId, date, rating: args.rating, note: args.note, time });
+      }
+      break;
+    }
+    case "steps": {
+      if (args.count < 0) throw new Error("count must be non-negative");
+      const existing = await ctx.db.query("steps_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).first();
+      previous = existing ? { count: existing.count } : null;
+      if (existing) {
+        await ctx.db.patch(existing._id, { count: args.count });
+        id = existing._id;
+      } else {
+        id = await ctx.db.insert("steps_logs", { userId: args.userId, date, count: args.count });
+      }
+      break;
+    }
+    default:
+      throw new Error("Unsupported recovery action");
+  }
+  if (options.emitBehavior) await recordBehaviorRow(ctx, args.userId, "log", args.kind, undefined, date);
+  return { id, previous };
 }
 
 // ─── Water ───────────────────────────────────────────────────────────────
@@ -31,14 +95,8 @@ export const addWater = mutation({
     time: v.optional(v.string()),
   },
   handler: async (ctx, { ml, date, time }) => {
-    if (ml <= 0) throw new Error("ml must be positive");
     const userId = await requireUserId(ctx);
-    return ctx.db.insert("water_logs", {
-      userId,
-      date: date ?? todayDate(),
-      ml,
-      time: time ?? new Date().toTimeString().slice(0, 5),
-    });
+    return (await writeRecoveryDomain(ctx, { kind: "water", userId, ml, date, time })).id;
   },
 });
 
@@ -73,18 +131,8 @@ export const upsertSleep = mutation({
     note: v.optional(v.string()),
   },
   handler: async (ctx, { hours, quality, date, note }) => {
-    if (hours < 0 || hours > 24) throw new Error("hours out of range");
     const userId = await requireUserId(ctx);
-    const d = date ?? todayDate();
-    const existing = await ctx.db
-      .query("sleep_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-      .first();
-    if (existing) {
-      await ctx.db.patch(existing._id, { hours, quality, note });
-      return existing._id;
-    }
-    return ctx.db.insert("sleep_logs", { userId, date: d, hours, quality, note });
+    return (await writeRecoveryDomain(ctx, { kind: "sleep", userId, hours, quality, date, note })).id;
   },
 });
 
@@ -96,20 +144,8 @@ export const logSleepFromCoach = mutation({
     note: v.optional(v.string()),
   },
   handler: async (ctx, { hours, quality, date, note }) => {
-    if (hours < 0 || hours > 24) throw new Error("hours out of range");
     const userId = await requireUserId(ctx);
-    const d = date ?? todayDate();
-    const existing = await ctx.db
-      .query("sleep_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-      .first();
-    const previous = existing ? { hours: existing.hours, quality: existing.quality, note: existing.note } : null;
-    if (existing) {
-      await ctx.db.patch(existing._id, { hours, quality, note });
-      return { id: existing._id, previous };
-    }
-    const id = await ctx.db.insert("sleep_logs", { userId, date: d, hours, quality, note });
-    return { id, previous };
+    return writeRecoveryDomain(ctx, { kind: "sleep", userId, hours, quality, date, note });
   },
 });
 
@@ -165,15 +201,8 @@ export const addMood = mutation({
     time: v.optional(v.string()),
   },
   handler: async (ctx, { rating, date, note, time }) => {
-    if (rating < 1 || rating > 5) throw new Error("rating must be 1..5");
     const userId = await requireUserId(ctx);
-    return ctx.db.insert("mood_logs", {
-      userId,
-      date: date ?? todayDate(),
-      rating,
-      note,
-      time: time ?? new Date().toTimeString().slice(0, 5),
-    });
+    return (await writeRecoveryDomain(ctx, { kind: "mood", userId, rating, date, note, time })).id;
   },
 });
 
@@ -203,38 +232,16 @@ export const getSteps = query({
 export const upsertSteps = mutation({
   args: { count: v.number(), date: v.optional(v.string()) },
   handler: async (ctx, { count, date }) => {
-    if (count < 0) throw new Error("count must be non-negative");
     const userId = await requireUserId(ctx);
-    const d = date ?? todayDate();
-    const existing = await ctx.db
-      .query("steps_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-      .first();
-    if (existing) {
-      await ctx.db.patch(existing._id, { count });
-      return existing._id;
-    }
-    return ctx.db.insert("steps_logs", { userId, date: d, count });
+    return (await writeRecoveryDomain(ctx, { kind: "steps", userId, count, date })).id;
   },
 });
 
 export const logStepsFromCoach = mutation({
   args: { count: v.number(), date: v.optional(v.string()) },
   handler: async (ctx, { count, date }) => {
-    if (count < 0) throw new Error("count must be non-negative");
     const userId = await requireUserId(ctx);
-    const d = date ?? todayDate();
-    const existing = await ctx.db
-      .query("steps_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-      .first();
-    const previous = existing ? { count: existing.count } : null;
-    if (existing) {
-      await ctx.db.patch(existing._id, { count });
-      return { id: existing._id, previous };
-    }
-    const id = await ctx.db.insert("steps_logs", { userId, date: d, count });
-    return { id, previous };
+    return writeRecoveryDomain(ctx, { kind: "steps", userId, count, date });
   },
 });
 

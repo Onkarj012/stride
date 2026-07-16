@@ -1,5 +1,7 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 import {
   buildNutritionResult,
   computeNutrition,
@@ -186,7 +188,7 @@ export const logRecipe = mutation({
     ingredients: v.optional(ingredientValidator),
     note: v.optional(v.string()),
   },
-  handler: async (ctx, { id, servings, date, time, ingredients, note }) => {
+  handler: async (ctx, { id, servings, date, time, ingredients, note }): Promise<any> => {
     const userId = await requireUserId(ctx);
     const recipe = await ctx.db.get(id);
     if (!recipe || recipe.userId !== userId) throw new Error("Not found");
@@ -227,31 +229,35 @@ export const logRecipe = mutation({
       contentHash: mealContentHash(validated),
       timeWindow: timeWindowKey(targetTime),
     });
-    const existing = await ctx.db
-      .query("meals")
-      .withIndex("by_user_date_and_idempotency_key", (q) =>
-        q.eq("userId", userId).eq("date", targetDate).eq("idempotencyKey", idempotencyKey),
-      )
-      .first();
-    if (existing) return existing._id;
-
-    return ctx.db.insert("meals", {
-      userId,
-      date: targetDate,
-      name: validated.name,
-      calories: validated.calories,
-      protein: validated.protein,
-      carbs: validated.carbs,
-      fat: validated.fat,
-      time: validated.time,
-      mealType: "unspecified",
-      confidence: validated.confidence,
-      nutritionSource: validated.nutritionSource,
-      components,
-      structuredItems: JSON.stringify(breakdown.items),
-      ingredientBreakdown: JSON.stringify(breakdown),
-      logSource,
-      idempotencyKey,
+    const rawInput = JSON.stringify({ id, portions, targetDate, targetTime, ingredients: ings, note: trimmedNote });
+    const groupKey = deriveGroupKey({ userId, sourceSurface: "recipe", rawInput });
+    return ctx.runMutation((internal as any).actions_writer.writeMealAction, {
+      group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "recipe", rawInput },
+      member: {
+        memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "meal", payloadFingerprint: idempotencyKey, ordinal: 0 }),
+        payload: {
+          date: targetDate,
+          name: validated.name,
+          calories: validated.calories,
+          protein: validated.protein,
+          carbs: validated.carbs,
+          fat: validated.fat,
+          time: validated.time,
+          mealType: "unspecified",
+          confidence: validated.confidence,
+          nutritionSource: validated.nutritionSource,
+          components,
+          structuredItems: JSON.stringify(breakdown.items),
+          ingredientBreakdown: JSON.stringify(breakdown),
+          logSource,
+        },
+        provenance: "database_match",
+        confidence: validated.confidence,
+        validation: { status: "valid", messages: [] },
+        reversible: true,
+        resolvedDate: targetDate,
+        resolvedTime: targetTime,
+      },
     });
   },
 });

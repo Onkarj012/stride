@@ -9,6 +9,8 @@
  */
 
 import type * as actions_envelope from "../actions_envelope.js";
+import type * as actions_idempotency from "../actions_idempotency.js";
+import type * as actions_writer from "../actions_writer.js";
 import type * as agents from "../agents.js";
 import type * as ai from "../ai.js";
 import type * as ai_intent from "../ai/intent.js";
@@ -57,6 +59,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   actions_envelope: typeof actions_envelope;
+  actions_idempotency: typeof actions_idempotency;
+  actions_writer: typeof actions_writer;
   agents: typeof agents;
   ai: typeof ai;
   "ai/intent": typeof ai_intent;

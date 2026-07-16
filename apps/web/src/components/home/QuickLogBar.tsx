@@ -32,7 +32,6 @@ export function QuickLogBar() {
 
   const logRecipe = useMutation(api.recipes.logRecipe);
   const addMeal = useMutation(api.meals.addMeal);
-  const recordActivity = useMutation(api.gamification.recordActivity);
   const recordBehavior = useMutation(api.behavior.recordBehavior);
   const toast = useToast();
 
@@ -45,7 +44,6 @@ export function QuickLogBar() {
         kcal: Math.round(r.perServing.kcal),
         run: async () => {
           await logRecipe({ id: r._id, servings: 1, date: localDateStr() });
-          await recordActivity({ type: "meal" }).catch(() => {});
           toast.success(`Logged ${r.name}`);
         },
       });
@@ -79,7 +77,6 @@ export function QuickLogBar() {
             if (!window.confirm(duplicate.message ?? "Looks like you already logged this — log anyway?")) return;
             await addMeal({ ...payload, allowDuplicate: true });
           }
-          await recordActivity({ type: "meal" }).catch(() => {});
           await recordBehavior({ kind: "suggestion", key: f.name }).catch(() => {});
           toast.success(`Logged ${f.name}`, "100g portion");
         },
@@ -92,7 +89,7 @@ export function QuickLogBar() {
       return i === -1 ? Infinity : i;
     };
     return list.sort((a, b) => rank(a.label) - rank(b.label)).slice(0, 12);
-  }, [recipes, recent, behavior, logRecipe, addMeal, recordActivity, recordBehavior, toast]);
+  }, [recipes, recent, behavior, logRecipe, addMeal, recordBehavior, toast]);
 
   if (items.length === 0) return null;
 
