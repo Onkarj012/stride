@@ -22,12 +22,13 @@ async function requireUserId(ctx: any): Promise<string> {
 }
 
 async function findExistingWorkoutByIdempotencyKey(ctx: any, userId: string, date: string, idempotencyKey: string) {
-  return ctx.db
+  const rows = await ctx.db
     .query("workouts")
     .withIndex("by_user_date_and_idempotency_key", (q: any) =>
       q.eq("userId", userId).eq("date", date).eq("idempotencyKey", idempotencyKey),
     )
-    .first();
+    .collect();
+  return rows.find((row: any) => !row.undoneAt) ?? null;
 }
 
 export async function assertNoNearDuplicateWorkout(
@@ -37,10 +38,10 @@ export async function assertNoNearDuplicateWorkout(
   workout: any,
   timestamp: string,
 ) {
-  const workouts = await ctx.db
+  const workouts = (await ctx.db
     .query("workouts")
     .withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date))
-    .collect();
+    .collect()).filter((workout: any) => !workout.undoneAt);
   const duplicate = workouts.find((existing: any) => {
     const minutes = minutesBetweenTimes(existing.timestamp, timestamp);
     return minutes != null && minutes <= 10 && isSimilarWorkout(workout, existing);
@@ -126,10 +127,11 @@ export const getWorkouts = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
     const userId = await requireUserId(ctx);
-    return ctx.db
+    const workouts = await ctx.db
       .query("workouts")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
       .collect();
+    return workouts.filter((workout) => !workout.undoneAt);
   },
 });
 
@@ -137,10 +139,10 @@ export const getTotalCaloriesBurned = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
     const userId = await requireUserId(ctx);
-    const workouts = await ctx.db
+    const workouts = (await ctx.db
       .query("workouts")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .collect();
+      .collect()).filter((workout) => !workout.undoneAt);
     const total = workouts.reduce((sum, w) => sum + (w.caloriesBurned ?? 0), 0);
     return { total, count: workouts.length };
   },
@@ -331,11 +333,11 @@ export const getRecentWorkoutNames = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
     const startDate = new Date(Date.now() - 30 * 86400000).toISOString().split("T")[0];
-    const workouts = await ctx.db
+    const workouts = (await ctx.db
       .query("workouts")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
       .order("desc")
-      .take(10);
+      .collect()).filter((workout) => !workout.undoneAt).slice(0, 10);
     return workouts.map((w) => w.name);
   },
 });
@@ -344,11 +346,11 @@ export const getRecentWorkoutsDetailed = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
     const startDate = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
-    const workouts = await ctx.db
+    const workouts = (await ctx.db
       .query("workouts")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
       .order("desc")
-      .take(7);
+      .collect()).filter((workout) => !workout.undoneAt).slice(0, 7);
     return workouts.map((w) => ({
       date: w.date,
       name: w.name,
@@ -390,10 +392,9 @@ export const addWorkoutFromAI = internalMutation({
 export const getWorkoutsByDateRange = internalQuery({
   args: { userId: v.string(), startDate: v.string(), endDate: v.string() },
   handler: async (ctx, { userId, startDate, endDate }) => {
-    return ctx.db
+    return (await ctx.db
       .query("workouts")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
-      .filter((q) => q.lte(q.field("date"), endDate))
-      .collect();
+      .collect()).filter((workout) => workout.date <= endDate && !workout.undoneAt);
   },
 });

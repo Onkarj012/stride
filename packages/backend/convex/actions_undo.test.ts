@@ -1,0 +1,129 @@
+import { convexTest } from "convex-test";
+import { describe, expect, test } from "vitest";
+import schema from "./schema";
+import { api, internal } from "./_generated/api";
+
+const modules = (import.meta as ImportMeta & {
+  glob: (pattern: string) => Record<string, () => Promise<any>>;
+}).glob("./**/*.*s");
+
+const undoApi = (api as any).actions_undo;
+const writerApi = (internal as any).actions_writer;
+
+function group(key: string) {
+  return { userId: "undo-user", groupIdempotencyKey: key, sourceSurface: "chat" as const, rawInput: key };
+}
+
+function member(payload: any, key: string) {
+  return {
+    memberIdempotencyKey: key,
+    payload,
+    provenance: "ai_extracted" as const,
+    validation: { status: "valid" as const, messages: [] },
+    reversible: true,
+    resolvedDate: payload.date,
+    resolvedTime: payload.time ?? payload.timestamp,
+  };
+}
+
+async function writeMeal(t: ReturnType<typeof convexTest>, key: string, name = key) {
+  return t.mutation(writerApi.writeMealAction, {
+    group: group(key),
+    member: member({ name, calories: 400, protein: 20, carbs: 40, fat: 15, time: "08:00", date: "2026-07-16", logSource: "test" }, `${key}-member`),
+  });
+}
+
+describe("audited action undo", () => {
+  test("soft-reverses a meal, preserves the audit row, and marks the action undone", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    const mealId = await writeMeal(t, "undo-single");
+    const action = (await t.run((ctx) => ctx.db.query("actions").collect()))[0];
+
+    const result = await asUser.mutation(undoApi.undoAction, { actionId: action._id });
+    const row = await t.run((ctx) => ctx.db.get(mealId));
+    const storedAction = await t.run((ctx) => ctx.db.get(action._id));
+
+    expect(result).toMatchObject({ actionId: action._id, groupId: action.groupId, status: "undone", rowId: mealId });
+    expect(row).toMatchObject({ _id: mealId, name: "undo-single" });
+    expect((row as any)?.undoneAt).toEqual(expect.any(Number));
+    expect(storedAction).toMatchObject({ status: "undone", committedRowRef: { table: "meals", id: mealId } });
+    expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(0);
+  });
+
+  test("repeated undo is an idempotent no-op", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    await writeMeal(t, "undo-repeat");
+    const action = (await t.run((ctx) => ctx.db.query("actions").collect()))[0];
+
+    await asUser.mutation(undoApi.undoAction, { actionId: action._id });
+    const repeated = await asUser.mutation(undoApi.undoAction, { actionId: action._id });
+
+    expect(repeated).toMatchObject({ actionId: action._id, status: "already_undone" });
+  });
+
+  test("group undo reverses committed members and skips failed and undone members", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    const groupKey = "undo-group";
+    await writeMeal(t, groupKey, "first");
+    await t.mutation(writerApi.writeMealAction, {
+      group: group(groupKey),
+      member: member({ name: "second", calories: 401, protein: 20, carbs: 40, fat: 15, time: "09:00", date: "2026-07-16", logSource: "test" }, "undo-group-second"),
+    });
+    await t.mutation(writerApi.writeMealAction, {
+      group: group(groupKey),
+      member: member({ name: "third", calories: 402, protein: 20, carbs: 40, fat: 15, time: "10:00", date: "2026-07-16", logSource: "test" }, "undo-group-third"),
+    });
+    const actions = await t.run((ctx) => ctx.db.query("actions").collect());
+    await asUser.mutation(undoApi.undoAction, { actionId: actions[1]._id });
+    await t.run((ctx) => ctx.db.patch(actions[2]._id, { status: "failed" }));
+
+    const result = await asUser.mutation(undoApi.undoGroup, { groupId: actions[0].groupId });
+    const stored = await t.run((ctx) => ctx.db.query("actions").collect());
+
+    expect(result.results).toHaveLength(3);
+    expect(stored.map((action) => action.status).sort()).toEqual(["failed", "undone", "undone"]);
+    expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(1);
+    expect(result.results.find((item: any) => item.actionId === actions[2]._id)).toMatchObject({ status: "skipped" });
+  });
+
+  test("undo recomputes workout calorie adjustment from active workouts", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    const plan = await asUser.mutation(api.profile.upsertPlanFromOnboarding, {
+      weightKg: 80, heightCm: 178, age: 28, sex: "male",
+      occupationType: "desk", workHoursPerDay: 8, lifestyleActivity: "moderate",
+      weeklyWorkouts: [{ type: "strength", durationMin: 60, sessionsPerWeek: 4 }],
+      goal: "moderate_loss", date: "2026-07-16",
+    });
+    const workoutId = await t.mutation(writerApi.writeWorkoutAction, {
+      group: group("undo-workout"),
+      member: member({ name: "Run", sets: "1", duration: "30", intensity: "MODERATE", date: "2026-07-16", timestamp: "09:00", caloriesBurned: plan.plannedEatPerTrainingDay + 250, logSource: "test" }, "undo-workout-member"),
+    });
+    const action = (await t.run((ctx) => ctx.db.query("actions").collect()))[0];
+    expect((await asUser.query(api.goals.getDailyGoal, { date: "2026-07-16" })).calorieGoal).toBe(plan.calories + 250);
+
+    await asUser.mutation(undoApi.undoAction, { actionId: action._id });
+
+    expect((await asUser.query(api.goals.getDailyGoal, { date: "2026-07-16" })).calorieGoal).toBe(plan.calories);
+    expect(await t.run((ctx) => ctx.db.get(workoutId))).toMatchObject({ undoneAt: expect.any(Number) });
+  });
+
+  test("undone meals and workouts are excluded from list and daily-total queries", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    await writeMeal(t, "undo-query-meal");
+    await t.mutation(writerApi.writeWorkoutAction, {
+      group: group("undo-query-workout"),
+      member: member({ name: "Lift", sets: "3", duration: "20", intensity: "HIGH", date: "2026-07-16", timestamp: "11:00", caloriesBurned: 180, logSource: "test" }, "undo-query-workout-member"),
+    });
+    const actions = await t.run((ctx) => ctx.db.query("actions").collect());
+    for (const action of actions) await asUser.mutation(undoApi.undoAction, { actionId: action._id });
+
+    expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(0);
+    expect(await asUser.query(api.workouts.getWorkouts, { date: "2026-07-16" })).toHaveLength(0);
+    expect(await asUser.query(api.workouts.getTotalCaloriesBurned, { date: "2026-07-16" })).toMatchObject({ total: 0, count: 0 });
+  });
+});

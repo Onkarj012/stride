@@ -24,12 +24,10 @@ export const getProgress = query({
       ctx.db
         .query("meals")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
-        .filter((q) => q.lte(q.field("date"), endDate))
         .collect(),
       ctx.db
         .query("workouts")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
-        .filter((q) => q.lte(q.field("date"), endDate))
         .collect(),
       ctx.db
         .query("daily_goals")
@@ -39,13 +37,13 @@ export const getProgress = query({
     ]);
 
     const mealsByDate = new Map<string, { cals: number; prot: number; carbs: number; fat: number }>();
-    for (const m of allMeals) {
+    for (const m of allMeals.filter((row: any) => row.date <= endDate && !row.undoneAt)) {
       const e = mealsByDate.get(m.date) ?? { cals: 0, prot: 0, carbs: 0, fat: 0 };
       mealsByDate.set(m.date, { cals: e.cals + m.calories, prot: e.prot + m.protein, carbs: e.carbs + m.carbs, fat: e.fat + m.fat });
     }
 
     const workoutsByDate = new Map<string, number>();
-    for (const w of allWorkouts) {
+    for (const w of allWorkouts.filter((row: any) => row.date <= endDate && !row.undoneAt)) {
       workoutsByDate.set(w.date, (workoutsByDate.get(w.date) ?? 0) + 1);
     }
 

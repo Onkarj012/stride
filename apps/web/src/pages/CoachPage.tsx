@@ -48,8 +48,8 @@ function coachToAgent(coachType?: string): Agent {
 }
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string; note?: string } | { count: number } };
-type UndoMessage = { kind: "undo"; id: string; entries: UndoEntry[] };
+type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; actionId?: string; groupId?: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string; note?: string } | { count: number } };
+type UndoMessage = { kind: "undo"; id: string; groupId?: string; entries: UndoEntry[] };
 type MealRetryArgs = Omit<FunctionArgs<typeof api.meals.addMeal>, "allowDuplicate">;
 type WorkoutRetryArgs = Omit<FunctionArgs<typeof api.workouts.addWorkout>, "allowDuplicate">;
 type FailedLogItem =
@@ -81,14 +81,10 @@ export function CoachPage() {
   const sessions = (useQuery(api.chat.getSessions) ?? []) as ChatSessionSummary[];
   const createSession = useMutation(api.chat.createSession);
   const deleteSession = useMutation(api.chat.deleteSession);
-  const deleteMeal = useMutation(api.meals.deleteMeal);
-  const deleteWorkout = useMutation(api.workouts.deleteWorkout);
   const addMeal = useMutation(api.meals.addMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
-  const undoSleepLog = useMutation(api.wellness.undoSleepLog);
-  const deleteWater = useMutation(api.wellness.deleteWater);
-  const deleteMood = useMutation(api.wellness.deleteMood);
-  const undoStepsLog = useMutation(api.wellness.undoStepsLog);
+  const undoAction = useMutation((api as any).actions_undo.undoAction);
+  const undoGroup = useMutation((api as any).actions_undo.undoGroup);
   const sendToAI = useAction(api.ai.chat);
   const resolveClarification = useMutation(api.ai.resolveClarification);
   const toast = useToast();
@@ -197,47 +193,50 @@ export function CoachPage() {
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
 
   const undoAutoLog = useCallback(async (messageId: string, entry: UndoEntry) => {
-    if (entry.undone || pendingUndoIdsRef.current.has(entry.id)) return;
-    pendingUndoIdsRef.current.add(entry.id);
-    setPendingUndoIds((prev) => new Set(prev).add(entry.id));
+    if (!entry.actionId || entry.undone || pendingUndoIdsRef.current.has(entry.actionId)) return;
+    pendingUndoIdsRef.current.add(entry.actionId);
+    setPendingUndoIds((prev) => new Set(prev).add(entry.actionId!));
     try {
-      switch (entry.type) {
-        case "meal":
-          await deleteMeal({ id: entry.id as Id<"meals"> });
-          break;
-        case "workout":
-          await deleteWorkout({ id: entry.id as Id<"workouts"> });
-          break;
-        case "sleep":
-          await undoSleepLog({ id: entry.id as Id<"sleep_logs">, previous: (entry.previous as { hours: number; quality: string; note?: string } | undefined) ?? null, expected: entry.expected as { hours: number; quality: string; note?: string } });
-          break;
-        case "water":
-          await deleteWater({ id: entry.id as Id<"water_logs"> });
-          break;
-        case "mood":
-          await deleteMood({ id: entry.id as Id<"mood_logs"> });
-          break;
-        case "steps":
-          await undoStepsLog({ id: entry.id as Id<"steps_logs">, previous: (entry.previous as { count: number } | undefined) ?? null, expected: entry.expected as { count: number } });
-          break;
-        default:
-          return;
-      }
+      await undoAction({ actionId: entry.actionId as Id<"actions"> });
       setMessages((prev) => prev.map((m) => m.kind === "undo" && m.id === messageId
-        ? { ...m, entries: m.entries.map((e) => e.id === entry.id ? { ...e, undone: true } : e) }
+        ? { ...m, entries: m.entries.map((e) => e.actionId === entry.actionId ? { ...e, undone: true } : e) }
         : m));
-      toast.success("Undone", `${entry.label} removed`);
+      toast.success("Undone", `${entry.label} reversed`);
     } catch (err) {
       toast.error("Couldn't undo", err instanceof Error ? err.message : "Try again");
     } finally {
-      pendingUndoIdsRef.current.delete(entry.id);
+      pendingUndoIdsRef.current.delete(entry.actionId!);
       setPendingUndoIds((prev) => {
         const next = new Set(prev);
-        next.delete(entry.id);
+        next.delete(entry.actionId!);
         return next;
       });
     }
-  }, [deleteMeal, deleteWorkout, undoSleepLog, deleteWater, deleteMood, undoStepsLog, toast]);
+  }, [undoAction, toast]);
+
+  const undoAutoGroup = useCallback(async (messageId: string, groupId: string, entries: UndoEntry[]) => {
+    const pendingId = `group:${groupId}`;
+    if (entries.every((entry) => entry.undone) || pendingUndoIdsRef.current.has(pendingId)) return;
+    pendingUndoIdsRef.current.add(pendingId);
+    setPendingUndoIds((prev) => new Set(prev).add(pendingId));
+    try {
+      const result = await undoGroup({ groupId: groupId as Id<"actionGroups"> }) as { results?: Array<{ actionId: string; status: string }> };
+      const undoneIds = new Set((result.results ?? []).filter((item) => item.status === "undone" || item.status === "already_undone").map((item) => item.actionId));
+      setMessages((prev) => prev.map((m) => m.kind === "undo" && m.id === messageId
+        ? { ...m, entries: m.entries.map((entry) => entry.actionId && undoneIds.has(entry.actionId) ? { ...entry, undone: true } : entry) }
+        : m));
+      toast.success("Undone", "Saved items in this group were reversed");
+    } catch (err) {
+      toast.error("Couldn't undo", err instanceof Error ? err.message : "Try again");
+    } finally {
+      pendingUndoIdsRef.current.delete(pendingId);
+      setPendingUndoIds((prev) => {
+        const next = new Set(prev);
+        next.delete(pendingId);
+        return next;
+      });
+    }
+  }, [undoGroup, toast]);
 
   const retryFailedLog = useCallback(async (messageId: string, itemIndex: number, item: FailedLogItem) => {
     const retryId = `${messageId}:${itemIndex}`;
@@ -245,15 +244,12 @@ export function CoachPage() {
     pendingRetryIdsRef.current.add(retryId);
     setPendingRetryIds((prev) => new Set(prev).add(retryId));
     try {
-      const id = item.kind === "meal"
-        ? await addMeal({ ...item.retryArgs, allowDuplicate: true })
-        : await addWorkout({ ...item.retryArgs, allowDuplicate: true });
-      setMessages((prev) => [
-        ...prev.map((message) => message.kind === "duplicate" && message.id === messageId
-          ? { ...message, items: message.items.map((candidate, index) => index === itemIndex ? { ...candidate, logged: true } : candidate) }
-          : message),
-        { kind: "undo", id: `undo-${Date.now()}`, entries: [{ type: item.kind, id, label: item.description }] },
-      ]);
+      await (item.kind === "meal"
+        ? addMeal({ ...item.retryArgs, allowDuplicate: true })
+        : addWorkout({ ...item.retryArgs, allowDuplicate: true }));
+      setMessages((prev) => prev.map((message) => message.kind === "duplicate" && message.id === messageId
+        ? { ...message, items: message.items.map((candidate, index) => index === itemIndex ? { ...candidate, logged: true } : candidate) }
+        : message));
       toast.success(item.kind === "meal" ? `Logged: ${item.description}` : `Logged workout: ${item.description}`);
       scroll();
     } catch (err) {
@@ -285,7 +281,7 @@ export function CoachPage() {
       if (loggedItem) {
         const undoEntries = undoEntriesFromLoggedItem(loggedItem);
         if (undoEntries.length > 0) {
-          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, entries: undoEntries }]);
+          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, groupId: undoEntries[0].groupId, entries: undoEntries }]);
         }
       }
       toast.success("Saved", date);
@@ -306,19 +302,21 @@ export function CoachPage() {
     if (!Array.isArray(rawItems)) return [];
     return rawItems.flatMap((item: any) => {
       const id = item?.data?._id;
-      if (!id) return [];
+      const actionId = item?.data?.actionId;
+      const groupId = item?.data?.groupId;
+      if (!id || !actionId || !groupId) return [];
       switch (item.type) {
         case "meal":
         case "workout":
-          return [{ type: item.type, id, label: item.data?.name ?? item.type }];
+          return [{ type: item.type, id, actionId, groupId, label: item.data?.name ?? item.type }];
         case "sleep":
-          return [{ type: "sleep" as const, id, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality, note: item.data?.note } }];
+          return [{ type: "sleep" as const, id, actionId, groupId, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality, note: item.data?.note } }];
         case "water":
-          return [{ type: "water" as const, id, label: `Water (${item.data?.ml}ml)` }];
+          return [{ type: "water" as const, id, actionId, groupId, label: `Water (${item.data?.ml}ml)` }];
         case "mood":
-          return [{ type: "mood" as const, id, label: `Mood (${item.data?.rating}/5)` }];
+          return [{ type: "mood" as const, id, actionId, groupId, label: `Mood (${item.data?.rating}/5)` }];
         case "steps":
-          return [{ type: "steps" as const, id, label: `Steps (${item.data?.count})`, previous: item.data?.previous ?? null, expected: { count: item.data?.count } }];
+          return [{ type: "steps" as const, id, actionId, groupId, label: `Steps (${item.data?.count})`, previous: item.data?.previous ?? null, expected: { count: item.data?.count } }];
         default:
           return [];
       }
@@ -425,7 +423,7 @@ export function CoachPage() {
         }
         const undoEntries = undoEntriesFromLoggedItem(loggedItem);
         if (undoEntries.length > 0) {
-          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, entries: undoEntries }]);
+          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, groupId: undoEntries[0].groupId, entries: undoEntries }]);
           scroll();
         }
       }
@@ -556,21 +554,37 @@ export function CoachPage() {
                 if (m.entries.length === 0) return null;
                 return (
                   <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
-                    {m.entries.map((entry) => (
+                    {m.entries.length > 1 && m.groupId && (
                       <button
-                        key={entry.id}
                         type="button"
-                        disabled={entry.undone || pendingUndoIds.has(entry.id)}
-                        onClick={() => undoAutoLog(m.id, entry)}
+                        disabled={m.entries.every((entry) => entry.undone) || pendingUndoIds.has(`group:${m.groupId}`)}
+                        onClick={() => undoAutoGroup(m.id, m.groupId!, m.entries)}
                         className={cn(
                           "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
-                          entry.undone || pendingUndoIds.has(entry.id)
+                          m.entries.every((entry) => entry.undone) || pendingUndoIds.has(`group:${m.groupId}`)
                             ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
                             : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
                         )}
                       >
                         <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
-                        {entry.undone ? `${entry.label} removed` : pendingUndoIds.has(entry.id) ? `Undoing: ${entry.label}` : `Undo: ${entry.label}`}
+                        {pendingUndoIds.has(`group:${m.groupId}`) ? "Undoing all" : "Undo all"}
+                      </button>
+                    )}
+                    {m.entries.map((entry) => (
+                      <button
+                        key={entry.id}
+                        type="button"
+                        disabled={!entry.actionId || entry.undone || pendingUndoIds.has(entry.actionId)}
+                        onClick={() => undoAutoLog(m.id, entry)}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
+                          !entry.actionId || entry.undone || pendingUndoIds.has(entry.actionId)
+                            ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
+                            : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
+                        )}
+                      >
+                        <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
+                        {entry.undone ? `${entry.label} reversed` : pendingUndoIds.has(entry.actionId ?? "") ? `Undoing: ${entry.label}` : `Undo: ${entry.label}`}
                       </button>
                     ))}
                   </div>

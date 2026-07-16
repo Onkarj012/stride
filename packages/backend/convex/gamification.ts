@@ -46,6 +46,72 @@ export const getStateInternal = internalQuery({
   },
 });
 
+/** Rebuild source-derived progress after an action changes the active log set. */
+export async function recomputeGamificationForUser(ctx: any, userId: string) {
+  const state = await ctx.db
+    .query("user_gamification")
+    .withIndex("by_user", (q: any) => q.eq("userId", userId))
+    .unique();
+  if (!state) return null;
+
+  const [meals, workouts] = await Promise.all([
+    ctx.db.query("meals")
+      .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+      .collect().then((rows: any[]) => rows.filter((row) => !row.undoneAt)),
+    ctx.db.query("workouts")
+      .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+      .collect().then((rows: any[]) => rows.filter((row) => !row.undoneAt)),
+  ]);
+
+  const dates = Array.from(new Set([...meals, ...workouts].map((row: any) => row.date))).sort();
+  const dayDistance = (from: string, to: string) =>
+    Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+  let run = 0;
+  let longest = 0;
+  let sourceXp = 0;
+  let previousDate: string | undefined;
+  for (const date of dates) {
+    run = previousDate && dayDistance(previousDate, date) === 1 ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    sourceXp += 10 + Math.min(run * 2, 20);
+    previousDate = date;
+  }
+  sourceXp += meals.length * 10 + workouts.length * 20;
+
+  const sourceMissionIds = [
+    meals.length >= 1 ? "first_meal" : null,
+    workouts.length >= 1 ? "first_workout" : null,
+    meals.length >= 50 ? "meals_50" : null,
+    meals.length >= 100 ? "meals_100" : null,
+    longest >= 3 ? "streak_3" : null,
+    longest >= 7 ? "streak_7" : null,
+    longest >= 14 ? "streak_14" : null,
+    longest >= 30 ? "streak_30" : null,
+  ].filter((id): id is string => id !== null);
+  const sourceMissionNames = new Set([
+    "first_meal", "first_workout", "meals_50", "meals_100",
+    "streak_3", "streak_7", "streak_14", "streak_30",
+  ]);
+  const activeMissionIds = new Set<string>(
+    ((state.missionsCompleted ?? []) as string[]).filter((id) => !sourceMissionNames.has(id)),
+  );
+  for (const id of sourceMissionIds) activeMissionIds.add(id);
+  const missionsCompleted: string[] = Array.from(activeMissionIds);
+  const missionXp = missionsCompleted.reduce((sum, id) => sum + (MISSIONS[id]?.xp ?? 0), 0);
+
+  await ctx.db.patch(state._id, {
+    xp: sourceXp + missionXp,
+    streakDays: run,
+    longestStreak: longest,
+    lastLoggedDate: dates.at(-1),
+    totalDaysLogged: dates.length,
+    totalMealsLogged: meals.length,
+    totalWorkoutsLogged: workouts.length,
+    missionsCompleted,
+  });
+  return { xp: sourceXp + missionXp, streakDays: run, totalMealsLogged: meals.length, totalWorkoutsLogged: workouts.length };
+}
+
 // ─── Public queries ───────────────────────────────────────────────────────────
 
 export const getState = query({
@@ -57,7 +123,7 @@ export const getState = query({
 
     const state = await ctx.db
       .query("user_gamification")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
       .unique();
 
     if (!state) {
@@ -99,7 +165,7 @@ export async function recordActivityForUser(ctx: any, userId: string, args: any)
 
     let state = await ctx.db
       .query("user_gamification")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
       .unique();
 
     const isNew = !state;

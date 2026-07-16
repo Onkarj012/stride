@@ -20,19 +20,20 @@ async function requireUserId(ctx: any): Promise<string> {
 }
 
 async function findExistingMealByIdempotencyKey(ctx: any, userId: string, date: string, idempotencyKey: string) {
-  return ctx.db
+  const rows = await ctx.db
     .query("meals")
     .withIndex("by_user_date_and_idempotency_key", (q: any) =>
       q.eq("userId", userId).eq("date", date).eq("idempotencyKey", idempotencyKey),
     )
-    .first();
+    .collect();
+  return rows.find((row: any) => !row.undoneAt) ?? null;
 }
 
 async function assertNoNearDuplicateMeal(ctx: any, userId: string, date: string, meal: any, time: string) {
-  const meals = await ctx.db
+  const meals = (await ctx.db
     .query("meals")
     .withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date))
-    .collect();
+    .collect()).filter((meal: any) => !meal.undoneAt);
   const duplicate = meals.find((existing: any) => {
     const minutes = minutesBetweenTimes(existing.time, time);
     return minutes != null && minutes <= 10 && isSimilarMeal(meal, existing);
@@ -111,11 +112,12 @@ export const getMeals = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
     const userId = await requireUserId(ctx);
-    return ctx.db
+    const meals = await ctx.db
       .query("meals")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
       .order("asc")
       .collect();
+    return meals.filter((meal) => !meal.undoneAt);
   },
 });
 
@@ -292,20 +294,20 @@ export const relogMeal = mutation({
 export const getMealsForContext = internalQuery({
   args: { userId: v.string(), date: v.string() },
   handler: async (ctx, { userId, date }) =>
-    ctx.db
+    (await ctx.db
       .query("meals")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .collect(),
+      .collect()).filter((meal) => !meal.undoneAt),
 });
 
 export const getRecentCalories = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => {
     const startDate = new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0];
-    const meals = await ctx.db
+    const meals = (await ctx.db
       .query("meals")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
-      .collect();
+      .collect()).filter((meal) => !meal.undoneAt);
     const byDate = new Map<string, number>();
     for (const m of meals) {
       byDate.set(m.date, (byDate.get(m.date) ?? 0) + m.calories);
@@ -347,11 +349,10 @@ export const addMealFromAI = internalMutation({
 export const getMealsByDateRange = internalQuery({
   args: { userId: v.string(), startDate: v.string(), endDate: v.string() },
   handler: async (ctx, { userId, startDate, endDate }) => {
-    const meals = await ctx.db
+    const meals = (await ctx.db
       .query("meals")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
-      .filter((q) => q.lte(q.field("date"), endDate))
-      .collect();
+      .collect()).filter((meal) => meal.date <= endDate && !meal.undoneAt);
     return meals;
   },
 });

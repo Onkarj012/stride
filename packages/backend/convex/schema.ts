@@ -30,6 +30,7 @@ export default defineSchema({
     foodMemoryId: v.optional(v.id("food_memory")),
     logSource: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
+    undoneAt: v.optional(v.number()),
   })
     .index("by_user_date", ["userId", "date"])
     .index("by_user_date_and_idempotency_key", ["userId", "date", "idempotencyKey"]),
@@ -58,6 +59,7 @@ export default defineSchema({
     timestamp: v.optional(v.string()),
     logSource: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
+    undoneAt: v.optional(v.number()),
   })
     .index("by_user_date", ["userId", "date"])
     .index("by_user_date_and_idempotency_key", ["userId", "date", "idempotencyKey"]),
@@ -195,6 +197,7 @@ export default defineSchema({
     date: v.string(),
     ml: v.number(),
     time: v.string(),
+    undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
   sleep_logs: defineTable({
@@ -203,6 +206,7 @@ export default defineSchema({
     hours: v.number(),
     quality: v.string(), // poor | ok | good | great
     note: v.optional(v.string()),
+    undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
   mood_logs: defineTable({
@@ -211,12 +215,14 @@ export default defineSchema({
     rating: v.number(), // 1..5
     note: v.optional(v.string()),
     time: v.string(),
+    undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
   steps_logs: defineTable({
     userId: v.string(),
     date: v.string(),
     count: v.number(),
+    undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
   weight_logs: defineTable({

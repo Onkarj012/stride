@@ -62,6 +62,15 @@ function markerMember(
   };
 }
 
+async function committedActionMetadata(ctx: any, userId: string, table: string, rowId: string) {
+  const action = await ctx.runQuery((internal as any).actions_undo.getCommittedActionForRow, {
+    userId,
+    table,
+    rowId,
+  });
+  return action ? { actionId: action._id, groupId: action.groupId } : {};
+}
+
 function isConfidenceLow(confidence: number | undefined): boolean {
   return confidence !== undefined && confidence < LOW_CONFIDENCE_CONFIRM_THRESHOLD;
 }
@@ -214,7 +223,10 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
         continue;
       }
       const rowId = member.actionType === "recovery" ? (result as { id: string }).id : (result as string);
-      loggedItems.push({ type: member.actionType === "recovery" ? payload.kind : member.actionType, data: { _id: rowId, ...payload } });
+      loggedItems.push({
+        type: member.actionType === "recovery" ? payload.kind : member.actionType,
+        data: { _id: rowId, ...payload, actionId: member._id, groupId: member.groupId },
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push(message);
@@ -878,7 +890,7 @@ Rules:
     // Parse log blocks — support multiple items and new types
     let cleanReply = reply;
     const loggedItems: any[] = [];
-    const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string; errorCode?: string }> = [];
+    const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string; errorCode?: string; actionId?: string; groupId?: string }> = [];
     type MealRetryArgs = {
       name: string;
       calories: number;
@@ -1017,8 +1029,9 @@ Rules:
           group: chatGroup,
           member: markerMember(chatGroupKey, "meal", mealPayload, mealIndex, nutrition.confidence, mealValidation),
         });
-        loggedItems.push({ type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat } });
-        logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: true });
+        const mealAction = await committedActionMetadata(ctx, userId, "meals", String(mealId));
+        loggedItems.push({ type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat, ...mealAction } });
+        logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: true, ...mealAction });
         // Award gamification for today's logs — parity with the homepage confirm path.
       } catch (err) {
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
@@ -1105,8 +1118,9 @@ Rules:
           group: chatGroup,
           member: markerMember(chatGroupKey, "workout", workoutPayload, workoutIndex, workoutConfidence, workoutValidation),
         });
-        loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed } });
-        logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: true });
+        const workoutAction = await committedActionMetadata(ctx, userId, "workouts", String(workoutId));
+        loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed, ...workoutAction } });
+        logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: true, ...workoutAction });
         // Award gamification for today's logs — parity with the homepage confirm path.
       } catch (err) {
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
@@ -1153,8 +1167,9 @@ Rules:
           group: chatGroup,
           member: markerMember(chatGroupKey, "recovery", sleepPayload, sleepIndex, undefined, sleepValidation),
         });
-        loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality, previous } });
-        logOutcomes.push({ type: "sleep", name: "sleep", ok: true });
+        const sleepAction = await committedActionMetadata(ctx, userId, "sleep_logs", String(sleepId));
+        loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality, previous, ...sleepAction } });
+        logOutcomes.push({ type: "sleep", name: "sleep", ok: true, ...sleepAction });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logOutcomes.push({ type: "sleep", name: "sleep", ok: false, error: message });
@@ -1191,8 +1206,9 @@ Rules:
           group: chatGroup,
           member: markerMember(chatGroupKey, "recovery", waterPayload, waterIndex, undefined, waterValidation),
         });
-        loggedItems.push({ type: "water", data: { _id: waterId, ml } });
-        logOutcomes.push({ type: "water", name: "water", ok: true });
+        const waterAction = await committedActionMetadata(ctx, userId, "water_logs", String(waterId));
+        loggedItems.push({ type: "water", data: { _id: waterId, ml, ...waterAction } });
+        logOutcomes.push({ type: "water", name: "water", ok: true, ...waterAction });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logOutcomes.push({ type: "water", name: "water", ok: false, error: message });
@@ -1229,8 +1245,9 @@ Rules:
           group: chatGroup,
           member: markerMember(chatGroupKey, "recovery", moodPayload, moodIndex, undefined, moodValidation),
         });
-        loggedItems.push({ type: "mood", data: { _id: moodId, rating } });
-        logOutcomes.push({ type: "mood", name: "mood", ok: true });
+        const moodAction = await committedActionMetadata(ctx, userId, "mood_logs", String(moodId));
+        loggedItems.push({ type: "mood", data: { _id: moodId, rating, ...moodAction } });
+        logOutcomes.push({ type: "mood", name: "mood", ok: true, ...moodAction });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logOutcomes.push({ type: "mood", name: "mood", ok: false, error: message });
@@ -1266,8 +1283,9 @@ Rules:
           group: chatGroup,
           member: markerMember(chatGroupKey, "recovery", stepsPayload, stepsIndex, undefined, stepsValidation),
         });
-        loggedItems.push({ type: "steps", data: { _id: stepsId, count, previous } });
-        logOutcomes.push({ type: "steps", name: "steps", ok: true });
+        const stepsAction = await committedActionMetadata(ctx, userId, "steps_logs", String(stepsId));
+        loggedItems.push({ type: "steps", data: { _id: stepsId, count, previous, ...stepsAction } });
+        logOutcomes.push({ type: "steps", name: "steps", ok: true, ...stepsAction });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logOutcomes.push({ type: "steps", name: "steps", ok: false, error: message });

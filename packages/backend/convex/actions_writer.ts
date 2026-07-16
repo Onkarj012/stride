@@ -119,10 +119,11 @@ async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs)
   return { group: groupResult.group, member: committedMember, shouldExecute: true, rowId: undefined };
 }
 
-async function commitMember(ctx: any, prepared: any, table: string, id: any) {
+async function commitMember(ctx: any, prepared: any, table: string, id: any, undoMetadata?: Record<string, unknown>) {
   await ctx.db.patch(prepared.member._id, {
     status: "committed",
     committedRowRef: { table, id: String(id) },
+    ...(undoMetadata ? { payload: { ...prepared.member.payload, ...undoMetadata } } : {}),
   });
   await ctx.db.patch(prepared.group._id, { status: "committed", resolvedAt: Date.now() });
   return id;
@@ -157,7 +158,13 @@ export const writeRecoveryAction = internalMutation({
     if (!prepared.shouldExecute) return prepared.rowId ? { id: prepared.rowId } : prepared.rowId;
     const payload = prepared.member.payload as Record<string, any>;
     const result = await writeRecoveryDomain(ctx, { ...payload, userId: prepared.group.userId }, { emitBehavior: true });
-    await commitMember(ctx, prepared, `${payload.kind}_logs`, result.id);
+    await commitMember(
+      ctx,
+      prepared,
+      `${payload.kind}_logs`,
+      result.id,
+      result.previous !== undefined ? { previous: result.previous } : undefined,
+    );
     return result;
   },
 });

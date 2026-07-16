@@ -20,9 +20,10 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
   switch (args.kind) {
     case "water": {
       if (args.ml <= 0) throw new Error("ml must be positive");
-      const existing = args.mode === "upsert"
-        ? await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).first()
-        : null;
+      const waterRows = args.mode === "upsert"
+        ? await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect()
+        : [];
+      const existing = waterRows.find((row: any) => !row.undoneAt) ?? null;
       if (existing) {
         await ctx.db.patch(existing._id, { ml: args.ml, time });
         id = existing._id;
@@ -33,7 +34,8 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
     }
     case "sleep": {
       if (args.hours < 0 || args.hours > 24) throw new Error("hours out of range");
-      const existing = await ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).first();
+      const sleepRows = await ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
+      const existing = sleepRows.find((row: any) => !row.undoneAt) ?? null;
       previous = existing ? { hours: existing.hours, quality: existing.quality, note: existing.note } : null;
       if (existing) {
         await ctx.db.patch(existing._id, { hours: args.hours, quality: args.quality, note: args.note });
@@ -45,9 +47,10 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
     }
     case "mood": {
       if (args.rating < 1 || args.rating > 5) throw new Error("rating must be 1..5");
-      const existing = args.mode === "upsert"
-        ? await ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).first()
-        : null;
+      const moodRows = args.mode === "upsert"
+        ? await ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect()
+        : [];
+      const existing = moodRows.find((row: any) => !row.undoneAt) ?? null;
       if (existing) {
         await ctx.db.patch(existing._id, { rating: args.rating, note: args.note, time });
         id = existing._id;
@@ -58,7 +61,8 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
     }
     case "steps": {
       if (args.count < 0) throw new Error("count must be non-negative");
-      const existing = await ctx.db.query("steps_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).first();
+      const stepRows = await ctx.db.query("steps_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
+      const existing = stepRows.find((row: any) => !row.undoneAt) ?? null;
       previous = existing ? { count: existing.count } : null;
       if (existing) {
         await ctx.db.patch(existing._id, { count: args.count });
@@ -81,10 +85,10 @@ export const getWater = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
     const userId = await requireUserId(ctx);
-    return ctx.db
+    return (await ctx.db
       .query("water_logs")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .collect();
+      .collect()).filter((row) => !row.undoneAt);
   },
 });
 
@@ -116,10 +120,10 @@ export const getSleep = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
     const userId = await requireUserId(ctx);
-    return ctx.db
+    return (await ctx.db
       .query("sleep_logs")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .first();
+      .collect()).find((row) => !row.undoneAt) ?? null;
   },
 });
 
@@ -186,10 +190,10 @@ export const getMood = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
     const userId = await requireUserId(ctx);
-    return ctx.db
+    return (await ctx.db
       .query("mood_logs")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .collect();
+      .collect()).filter((row) => !row.undoneAt);
   },
 });
 
@@ -222,10 +226,10 @@ export const getSteps = query({
   args: { date: v.string() },
   handler: async (ctx, { date }) => {
     const userId = await requireUserId(ctx);
-    return ctx.db
+    return (await ctx.db
       .query("steps_logs")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .first();
+      .collect()).find((row) => !row.undoneAt) ?? null;
   },
 });
 
@@ -277,16 +281,16 @@ export const getTodaySummary = query({
     const [water, sleep, mood, steps] = await Promise.all([
       ctx.db.query("water_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-        .collect(),
+        .collect().then((rows) => rows.filter((row) => !row.undoneAt)),
       ctx.db.query("sleep_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-        .first(),
+        .collect().then((rows) => rows.find((row) => !row.undoneAt) ?? null),
       ctx.db.query("mood_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-        .collect(),
+        .collect().then((rows) => rows.filter((row) => !row.undoneAt)),
       ctx.db.query("steps_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-        .first(),
+        .collect().then((rows) => rows.find((row) => !row.undoneAt) ?? null),
     ]);
 
     return {
@@ -308,10 +312,11 @@ export const getLastSleepForContext = internalQuery({
     const today = new Date().toISOString().split("T")[0];
     // Check today first, then yesterday
     for (const date of [today, yesterday]) {
-      const row = await ctx.db
+      const rows = await ctx.db
         .query("sleep_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-        .first();
+        .collect();
+      const row = rows.find((candidate) => !candidate.undoneAt);
       if (row) return { hours: row.hours, quality: row.quality, date: row.date };
     }
     return null;
