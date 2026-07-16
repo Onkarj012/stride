@@ -7,6 +7,7 @@ import type { FunctionArgs } from "convex/server";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
+import { ConfirmationCard, type ConfirmationDecision, type ConfirmationPayload, type ConfirmationResult } from "@/components/coach/ConfirmationCard";
 import { AgentBadge } from "@/components/ui-kit/AgentBadge";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
@@ -59,7 +60,8 @@ type DuplicateMessage = { kind: "duplicate"; id: string; items: FailedLogItem[] 
 type ClarificationItem = { actionType: string; description: string; reason: string; resolvedDate?: string; confidence?: number };
 type ClarificationPayload = { groupId: string; items: ClarificationItem[]; question: string };
 type ClarificationMessage = { kind: "clarification"; id: string; groupId: string; items: ClarificationItem[]; question: string; resolved?: boolean };
-type Message = TextMessage | UndoMessage | DuplicateMessage | ClarificationMessage;
+type ConfirmationMessage = { kind: "confirmation"; id: string; payload: ConfirmationPayload; result?: ConfirmationResult };
+type Message = TextMessage | UndoMessage | DuplicateMessage | ClarificationMessage | ConfirmationMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
 type ConvexChatMessage = { role: "user" | "ai"; content: string };
 
@@ -86,6 +88,7 @@ export function CoachPage() {
   const undoAction = useMutation((api as any).actions_undo.undoAction);
   const undoGroup = useMutation((api as any).actions_undo.undoGroup);
   const sendToAI = useAction(api.ai.chat);
+  const confirmGroup = useAction((api as any).ai.confirmGroup);
   const resolveClarification = useMutation(api.ai.resolveClarification);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -297,6 +300,39 @@ export function CoachPage() {
     }
   }, [resolveClarification, scroll, toast, pendingConfirmIds]);
 
+  const confirmLargeGroup = useCallback(async (messageId: string, payload: ConfirmationPayload, decisions: ConfirmationDecision[]) => {
+    if (pendingConfirmIds.has(payload.groupId)) return;
+    setPendingConfirmIds((prev) => new Set(prev).add(payload.groupId));
+    try {
+      const result = await confirmGroup({ groupId: payload.groupId as Id<"actionGroups">, decisions }) as ConfirmationResult & { loggedItems?: any[]; unresolvedItems?: any[] };
+      setMessages((prev) => prev.map((message) => message.kind === "confirmation" && message.id === messageId ? { ...message, result } : message));
+      const loggedItem = result.loggedItems?.length === 1
+        ? result.loggedItems[0]
+        : result.loggedItems && result.loggedItems.length > 1
+          ? { type: "multiple", items: result.loggedItems }
+          : null;
+      if (loggedItem) {
+        const undoEntries = undoEntriesFromLoggedItem(loggedItem);
+        if (undoEntries.length > 0) {
+          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, groupId: undoEntries[0].groupId, entries: undoEntries }]);
+        }
+      }
+      if (result.status === "expired") toast.error("Confirmation expired", "This batch can no longer be saved");
+      else if (result.unresolvedItems?.length) toast.error("Some items need attention", "Saved items remain available to undo");
+      else if (result.status === "discarded") toast.success("Discarded", "No items were saved");
+      else toast.success("Saved", "Confirmed items were logged");
+      scroll();
+    } catch (err) {
+      toast.error("Couldn't save", err instanceof Error ? err.message : "Try again");
+    } finally {
+      setPendingConfirmIds((prev) => {
+        const next = new Set(prev);
+        next.delete(payload.groupId);
+        return next;
+      });
+    }
+  }, [confirmGroup, pendingConfirmIds, scroll, toast]);
+
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
     if (!Array.isArray(rawItems)) return [];
@@ -385,6 +421,9 @@ export function CoachPage() {
       const clarification = (r.clarification && typeof r.clarification === "object" && "groupId" in (r.clarification as object))
         ? r.clarification as ClarificationPayload
         : undefined;
+      const confirmation = (r.confirmation && typeof r.confirmation === "object" && "groupId" in (r.confirmation as object) && "items" in (r.confirmation as object))
+        ? r.confirmation as ConfirmationPayload
+        : undefined;
       if (clarification) setActiveClarificationGroupId(clarification.groupId as Id<"actionGroups">);
       else if (loggedItem && activeClarificationGroupId) setActiveClarificationGroupId(null);
 
@@ -398,6 +437,11 @@ export function CoachPage() {
 
       if (clarification) {
         setMessages((prev) => [...prev, { kind: "clarification", id: `clarify-${Date.now()}`, ...clarification }]);
+        scroll();
+      }
+
+      if (confirmation) {
+        setMessages((prev) => [...prev, { kind: "confirmation", id: `confirm-${Date.now()}`, payload: confirmation }]);
         scroll();
       }
 
@@ -616,6 +660,17 @@ export function CoachPage() {
                       );
                     })}
                   </div>
+                );
+              }
+              if (m.kind === "confirmation") {
+                return (
+                  <ConfirmationCard
+                    key={m.id}
+                    payload={m.payload}
+                    result={m.result}
+                    pending={pendingConfirmIds.has(m.payload.groupId)}
+                    onConfirm={(decisions) => void confirmLargeGroup(m.id, m.payload, decisions)}
+                  />
                 );
               }
               if (m.kind === "clarification") {

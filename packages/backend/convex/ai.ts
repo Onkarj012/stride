@@ -3,7 +3,12 @@ import { internal, api } from "./_generated/api";
 import { deriveGroupKey, deriveMemberKey, ensureGroup, ensureMember } from "./actions_idempotency";
 import { ConvexError, v } from "convex/values";
 import { resolveActionDate } from "./time_resolve";
-import { LOW_CONFIDENCE_CONFIRM_THRESHOLD, buildActionMembers } from "./actions_envelope";
+import {
+  AUTO_WRITE_MAX_ACTIONS,
+  CONFIRMATION_TTL_MS,
+  LOW_CONFIDENCE_CONFIRM_THRESHOLD,
+  buildActionMembers,
+} from "./actions_envelope";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { findBestMatch, AUTO_APPLY_MIN_LOGGED } from "./food_memory_match";
 import { calculateWorkoutCalories, parseDurationMinutes } from "./calorie_engine";
@@ -140,6 +145,7 @@ export const stageClarificationGroup = internalMutation({
       reversible: v.boolean(),
       resolvedDate: v.optional(v.string()),
       resolvedTime: v.optional(v.string()),
+      ordinal: v.optional(v.number()),
     })),
   },
   handler: async (ctx, args) => {
@@ -158,10 +164,16 @@ export const stageClarificationGroup = internalMutation({
     const members = buildActionMembers({
       groupId: groupResult.group._id,
       userId: args.userId,
-      candidates: args.members,
+      candidates: args.members.map(({ ordinal, ...member }) => ({
+        ...member,
+        payload: ordinal === undefined ? member.payload : { ...member.payload, _confirmationOrdinal: ordinal },
+      })),
     });
     for (const member of members) {
       await ensureMember(ctx, member);
+    }
+    if (groupResult.group.status !== "pending") {
+      await ctx.db.patch(groupResult.group._id, { status: "pending", resolvedAt: undefined });
     }
     return { groupId: groupResult.group._id };
   },
@@ -173,6 +185,11 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   const group = await ctx.runQuery(internal.ai.getActionGroupForClarification, { groupId: groupId as any });
   if (!group) throw new Error("Clarification group not found");
   if (group.userId !== userId) throw new Error("Not authorized");
+  if (group.status === "pending" && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
+    await ctx.runMutation(internal.ai.expireActionGroup, { groupId: groupId as any });
+    throw new Error("This confirmation has expired");
+  }
+  if (group.status === "expired") throw new Error("This confirmation has expired");
   if (group.status !== "pending") throw new Error("Group is not pending clarification");
 
   const members: any[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
@@ -265,6 +282,255 @@ export const getPendingMembersForClarification = internalQuery({
   args: { groupId: v.id("actionGroups") },
   handler: async (ctx, { groupId }) => {
     return await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
+  },
+});
+
+export const expireActionGroup = internalMutation({
+  args: { groupId: v.id("actionGroups") },
+  handler: async (ctx, { groupId }) => {
+    const group = await ctx.db.get("actionGroups", groupId);
+    if (!group || group.status === "expired") return group;
+    const members = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
+    for (const member of members) {
+      if (member.status === "pending" || member.status === "failed") {
+        await ctx.db.patch(member._id, { status: "expired" });
+      }
+    }
+    await ctx.db.patch(groupId, { status: "expired", resolvedAt: Date.now() });
+    return await ctx.db.get("actionGroups", groupId);
+  },
+});
+
+export const recordConfirmationMemberFailure = internalMutation({
+  args: { actionId: v.id("actions"), error: v.string() },
+  handler: async (ctx, { actionId, error }) => {
+    const member = await ctx.db.get(actionId);
+    if (!member || member.status === "committed") return member;
+    await ctx.db.patch(actionId, {
+      status: "failed",
+      validation: {
+        status: "error",
+        messages: [...member.validation.messages, error],
+      },
+    });
+    return await ctx.db.get(actionId);
+  },
+});
+
+export const finalizeConfirmationGroup = internalMutation({
+  args: {
+    groupId: v.id("actionGroups"),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("committed"),
+      v.literal("partial"),
+      v.literal("failed"),
+      v.literal("discarded"),
+      v.literal("expired"),
+    ),
+  },
+  handler: async (ctx, { groupId, status }) => {
+    await ctx.db.patch(groupId, { status, resolvedAt: status === "pending" ? undefined : Date.now() });
+    return await ctx.db.get("actionGroups", groupId);
+  },
+});
+
+type ConfirmationDecision = {
+  ordinal: number;
+  action: "confirm" | "discard";
+  edits?: any;
+};
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function editedConfirmationMember(member: any, decision: ConfirmationDecision) {
+  const edits = isRecord(decision.edits) ? decision.edits : {};
+  const payloadEdits = isRecord(edits.payload) ? edits.payload : {};
+  const directPayloadEdits = Object.fromEntries(
+    Object.entries(edits).filter(([key]) => key !== "date" && key !== "description" && key !== "payload"),
+  );
+  const payload = { ...member.payload, ...directPayloadEdits, ...payloadEdits };
+  if (typeof edits.date === "string" && edits.date.length > 0) payload.date = edits.date;
+  if (typeof edits.description === "string" && edits.description.length > 0) {
+    payload.description = edits.description;
+    if (member.actionType === "meal" || member.actionType === "workout") payload.name = edits.description;
+  }
+  return {
+    payload,
+    resolvedDate: typeof edits.date === "string" && edits.date.length > 0 ? edits.date : member.resolvedDate,
+    resolvedTime: member.resolvedTime,
+  };
+}
+
+function confirmationDescription(member: any): string {
+  if (member.actionType === "recovery") {
+    const payload = member.payload as Record<string, any>;
+    if (payload.kind === "water") return `Water ${payload.ml}ml`;
+    if (payload.kind === "sleep") return `Sleep ${payload.hours}h (${payload.quality})`;
+    if (payload.kind === "mood") return `Mood ${payload.rating}/5`;
+    if (payload.kind === "steps") return `Steps ${payload.count}`;
+  }
+  return member.payload?.name ?? member.payload?.description ?? member.actionType;
+}
+
+function confirmationOrdinal(member: any): number {
+  return typeof member.payload?._confirmationOrdinal === "number" ? member.payload._confirmationOrdinal : -1;
+}
+
+function confirmationLoggedItem(member: any, rowId: string, payload: any, actionId: string) {
+  const type = member.actionType === "recovery" ? payload.kind : member.actionType;
+  return {
+    type,
+    data: { _id: rowId, ...payload, actionId, groupId: member.groupId },
+  };
+}
+
+/** Confirm, discard, or edit members of a staged large batch independently. */
+export const confirmGroup = action({
+  args: {
+    groupId: v.id("actionGroups"),
+    decisions: v.array(v.object({
+      ordinal: v.number(),
+      action: v.union(v.literal("confirm"), v.literal("discard")),
+      edits: v.optional(v.any()),
+    })),
+  },
+  handler: async (ctx, { groupId, decisions }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+    const aiInternal = (internal as any).ai;
+    const group = await ctx.runQuery(aiInternal.getActionGroupForClarification, { groupId });
+    if (!group || group.userId !== userId) throw new Error("Action group not found");
+
+    if (group.status === "pending" && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
+      await ctx.runMutation(aiInternal.expireActionGroup, { groupId });
+      const expiredMembers: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
+      return {
+        groupId,
+        status: "expired",
+        results: expiredMembers.map((member: any) => ({ ordinal: confirmationOrdinal(member), actionType: member.actionType, status: "expired" })),
+        loggedItems: [],
+        unresolvedItems: [],
+      };
+    }
+    if (group.status === "expired") {
+      const expiredMembers: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
+      return {
+        groupId,
+        status: "expired",
+        results: expiredMembers.map((member: any) => ({ ordinal: confirmationOrdinal(member), actionType: member.actionType, status: "expired" })),
+        loggedItems: [],
+        unresolvedItems: [],
+      };
+    }
+
+    const members: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
+    const decisionsByOrdinal = new Map(decisions.map((decision) => [decision.ordinal, decision]));
+    const results: any[] = [];
+    const loggedItems: any[] = [];
+    const unresolvedItems: any[] = [];
+
+    for (const member of members) {
+      const ordinal = confirmationOrdinal(member);
+      const decision = decisionsByOrdinal.get(ordinal);
+      if (!decision) continue;
+      const description = confirmationDescription(member);
+      if (member.status === "committed") {
+        results.push({ ordinal, actionType: member.actionType, status: "already_committed", actionId: member._id, rowId: member.committedRowRef?.id });
+        continue;
+      }
+      if (member.status === "discarded" || member.status === "expired") {
+        results.push({ ordinal, actionType: member.actionType, status: member.status });
+        continue;
+      }
+      if (decision.action === "discard") {
+        await ctx.runMutation(aiInternal.discardConfirmationMember, { actionId: member._id });
+        results.push({ ordinal, actionType: member.actionType, description, status: "discarded" });
+        continue;
+      }
+
+      const edited = editedConfirmationMember(member, decision);
+      const groupInput = {
+        userId: group.userId,
+        groupIdempotencyKey: group.groupIdempotencyKey,
+        sourceSurface: group.sourceSurface,
+        rawInput: group.rawInput,
+        model: group.model,
+        clientLocalDate: group.clientLocalDate,
+        clientLocalTime: group.clientLocalTime,
+        clientTimeZone: group.clientTimeZone,
+        createdAt: group.createdAt,
+      };
+      const memberInput = {
+        memberIdempotencyKey: member.memberIdempotencyKey,
+        payload: edited.payload,
+        provenance: member.provenance,
+        confidence: member.confidence,
+        validation: member.validation,
+        reversible: member.reversible,
+        resolvedDate: edited.resolvedDate,
+        resolvedTime: edited.resolvedTime,
+      };
+      try {
+        let rowId: string;
+        if (member.actionType === "meal") {
+          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: groupInput, member: memberInput }));
+        } else if (member.actionType === "workout") {
+          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: groupInput, member: memberInput }));
+        } else if (member.actionType === "recovery") {
+          const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: groupInput, member: memberInput });
+          rowId = String(result?.id ?? result);
+        } else {
+          throw new Error(`Unsupported confirmation action type: ${member.actionType}`);
+        }
+        const committed = await ctx.runQuery(aiInternal.getActionMember, { actionId: member._id });
+        const actionId = committed?._id ?? member._id;
+        const committedPayload = committed?.payload ?? edited.payload;
+        loggedItems.push(confirmationLoggedItem(member, rowId, committedPayload, actionId));
+        results.push({ ordinal, actionType: member.actionType, description, status: "committed", actionId, rowId });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        await ctx.runMutation(aiInternal.recordConfirmationMemberFailure, { actionId: member._id, error });
+        const unresolved = { ordinal, actionType: member.actionType, description, status: "failed", error };
+        results.push(unresolved);
+        unresolvedItems.push(unresolved);
+      }
+    }
+
+    const finalMembers: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
+    const committedCount = finalMembers.filter((member) => member.status === "committed").length;
+    const discardedCount = finalMembers.filter((member) => member.status === "discarded").length;
+    const failedCount = finalMembers.filter((member) => member.status === "failed").length;
+    const pendingCount = finalMembers.filter((member) => member.status === "pending").length;
+    const status = committedCount === finalMembers.length && finalMembers.length > 0
+      ? "committed"
+      : discardedCount === finalMembers.length && finalMembers.length > 0
+        ? "discarded"
+        : committedCount > 0 || discardedCount > 0 || failedCount > 0
+          ? "partial"
+          : pendingCount > 0
+            ? "pending"
+            : "failed";
+    await ctx.runMutation(aiInternal.finalizeConfirmationGroup, { groupId, status });
+    return { groupId, status, results, loggedItems, unresolvedItems };
+  },
+});
+
+export const getActionMember = internalQuery({
+  args: { actionId: v.id("actions") },
+  handler: async (ctx, { actionId }) => await ctx.db.get(actionId),
+});
+
+export const discardConfirmationMember = internalMutation({
+  args: { actionId: v.id("actions") },
+  handler: async (ctx, { actionId }) => {
+    const member = await ctx.db.get(actionId);
+    if (!member || member.status === "committed") return member;
+    if (member.status === "pending" || member.status === "failed") await ctx.db.patch(actionId, { status: "discarded" });
+    return await ctx.db.get(actionId);
   },
 });
 
@@ -940,11 +1206,16 @@ Rules:
       payload: any;
       confidence?: number;
       resolvedDate?: string;
+      resolvedTime?: string;
+      provenance: "user_reported" | "ai_extracted" | "ai_estimated" | "database_match";
+      validation: { status: "valid" | "warning" | "error"; messages: string[] };
       reason: string;
       question?: string;
       ordinal: number;
     };
+    type ParsedCandidate = Omit<PendingCandidate, "reason"> & { reason?: string };
     const pendingCandidates: PendingCandidate[] = [];
+    const parsedCandidates: ParsedCandidate[] = [];
 
     // Strip all log blocks from the reply text
     cleanReply = reply
@@ -1011,28 +1282,25 @@ Rules:
         };
         const mealValidation = parseMarkerValidation(logData);
         const reason = clarifyingReason(logData.date, dateResolution, nutrition.confidence, mealValidation.status);
+        const candidate: ParsedCandidate = {
+          actionType: "meal",
+          description: retryDescription,
+          payload: mealPayload,
+          confidence: nutrition.confidence,
+          resolvedDate: targetDate,
+          resolvedTime: parsed.time,
+          provenance: "ai_extracted",
+          validation: mealValidation,
+          reason: reason ?? undefined,
+          question: logData.question,
+          ordinal: parsedCandidates.length,
+        };
+        parsedCandidates.push(candidate);
         if (reason) {
-          pendingCandidates.push({
-            actionType: "meal",
-            description: retryDescription,
-            payload: mealPayload,
-            confidence: nutrition.confidence,
-            resolvedDate: targetDate,
-            reason,
-            question: logData.question,
-            ordinal: mealIndex,
-          });
+          pendingCandidates.push({ ...candidate, reason });
           logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
           continue;
         }
-        const mealId = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
-          group: chatGroup,
-          member: markerMember(chatGroupKey, "meal", mealPayload, mealIndex, nutrition.confidence, mealValidation),
-        });
-        const mealAction = await committedActionMetadata(ctx, userId, "meals", String(mealId));
-        loggedItems.push({ type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat, ...mealAction } });
-        logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: true, ...mealAction });
-        // Award gamification for today's logs — parity with the homepage confirm path.
       } catch (err) {
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const errorCode = getConvexErrorCode(err);
@@ -1100,28 +1368,25 @@ Rules:
         };
         const workoutValidation = parseMarkerValidation(logData);
         const reason = clarifyingReason(logData.date, dateResolution, workoutConfidence, workoutValidation.status);
+        const candidate: ParsedCandidate = {
+          actionType: "workout",
+          description: retryDescription,
+          payload: workoutPayload,
+          confidence: workoutConfidence,
+          resolvedDate: targetDate,
+          resolvedTime: timestamp,
+          provenance: "ai_extracted",
+          validation: workoutValidation,
+          reason: reason ?? undefined,
+          question: logData.question,
+          ordinal: parsedCandidates.length,
+        };
+        parsedCandidates.push(candidate);
         if (reason) {
-          pendingCandidates.push({
-            actionType: "workout",
-            description: retryDescription,
-            payload: workoutPayload,
-            confidence: workoutConfidence,
-            resolvedDate: targetDate,
-            reason,
-            question: logData.question,
-            ordinal: workoutIndex,
-          });
+          pendingCandidates.push({ ...candidate, reason });
           logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
           continue;
         }
-        const workoutId = await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, {
-          group: chatGroup,
-          member: markerMember(chatGroupKey, "workout", workoutPayload, workoutIndex, workoutConfidence, workoutValidation),
-        });
-        const workoutAction = await committedActionMetadata(ctx, userId, "workouts", String(workoutId));
-        loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed, ...workoutAction } });
-        logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: true, ...workoutAction });
-        // Award gamification for today's logs — parity with the homepage confirm path.
       } catch (err) {
         const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
         const errorCode = getConvexErrorCode(err);
@@ -1150,26 +1415,23 @@ Rules:
         const sleepPayload = { kind: "sleep", hours, quality, date: targetDate };
         const sleepValidation = parseMarkerValidation(logData);
         const reason = clarifyingReason(logData.date, dateResolution, undefined, sleepValidation.status);
+        const candidate: ParsedCandidate = {
+          actionType: "recovery",
+          description: `Sleep ${hours}h (${quality})`,
+          payload: sleepPayload,
+          resolvedDate: targetDate,
+          provenance: "ai_extracted",
+          validation: sleepValidation,
+          reason: reason ?? undefined,
+          question: logData.question,
+          ordinal: parsedCandidates.length,
+        };
+        parsedCandidates.push(candidate);
         if (reason) {
-          pendingCandidates.push({
-            actionType: "recovery",
-            description: `Sleep ${hours}h (${quality})`,
-            payload: sleepPayload,
-            resolvedDate: targetDate,
-            reason,
-            question: logData.question,
-            ordinal: sleepIndex,
-          });
+          pendingCandidates.push({ ...candidate, reason });
           logOutcomes.push({ type: "sleep", name: "sleep", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
           continue;
         }
-        const { id: sleepId, previous } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
-          group: chatGroup,
-          member: markerMember(chatGroupKey, "recovery", sleepPayload, sleepIndex, undefined, sleepValidation),
-        });
-        const sleepAction = await committedActionMetadata(ctx, userId, "sleep_logs", String(sleepId));
-        loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality, previous, ...sleepAction } });
-        logOutcomes.push({ type: "sleep", name: "sleep", ok: true, ...sleepAction });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logOutcomes.push({ type: "sleep", name: "sleep", ok: false, error: message });
@@ -1189,26 +1451,24 @@ Rules:
         const waterPayload = { kind: "water", ml, date: targetDate, time };
         const waterValidation = parseMarkerValidation(logData);
         const reason = clarifyingReason(logData.date, dateResolution, undefined, waterValidation.status);
+        const candidate: ParsedCandidate = {
+          actionType: "recovery",
+          description: `Water ${ml}ml`,
+          payload: waterPayload,
+          resolvedDate: targetDate,
+          resolvedTime: time,
+          provenance: "ai_extracted",
+          validation: waterValidation,
+          reason: reason ?? undefined,
+          question: logData.question,
+          ordinal: parsedCandidates.length,
+        };
+        parsedCandidates.push(candidate);
         if (reason) {
-          pendingCandidates.push({
-            actionType: "recovery",
-            description: `Water ${ml}ml`,
-            payload: waterPayload,
-            resolvedDate: targetDate,
-            reason,
-            question: logData.question,
-            ordinal: waterIndex,
-          });
+          pendingCandidates.push({ ...candidate, reason });
           logOutcomes.push({ type: "water", name: "water", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
           continue;
         }
-        const { id: waterId } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
-          group: chatGroup,
-          member: markerMember(chatGroupKey, "recovery", waterPayload, waterIndex, undefined, waterValidation),
-        });
-        const waterAction = await committedActionMetadata(ctx, userId, "water_logs", String(waterId));
-        loggedItems.push({ type: "water", data: { _id: waterId, ml, ...waterAction } });
-        logOutcomes.push({ type: "water", name: "water", ok: true, ...waterAction });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logOutcomes.push({ type: "water", name: "water", ok: false, error: message });
@@ -1228,26 +1488,24 @@ Rules:
         const moodPayload = { kind: "mood", rating, date: targetDate, time, note: logData.note };
         const moodValidation = parseMarkerValidation(logData);
         const reason = clarifyingReason(logData.date, dateResolution, undefined, moodValidation.status);
+        const candidate: ParsedCandidate = {
+          actionType: "recovery",
+          description: `Mood ${rating}/5`,
+          payload: moodPayload,
+          resolvedDate: targetDate,
+          resolvedTime: time,
+          provenance: "ai_extracted",
+          validation: moodValidation,
+          reason: reason ?? undefined,
+          question: logData.question,
+          ordinal: parsedCandidates.length,
+        };
+        parsedCandidates.push(candidate);
         if (reason) {
-          pendingCandidates.push({
-            actionType: "recovery",
-            description: `Mood ${rating}/5`,
-            payload: moodPayload,
-            resolvedDate: targetDate,
-            reason,
-            question: logData.question,
-            ordinal: moodIndex,
-          });
+          pendingCandidates.push({ ...candidate, reason });
           logOutcomes.push({ type: "mood", name: "mood", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
           continue;
         }
-        const { id: moodId } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
-          group: chatGroup,
-          member: markerMember(chatGroupKey, "recovery", moodPayload, moodIndex, undefined, moodValidation),
-        });
-        const moodAction = await committedActionMetadata(ctx, userId, "mood_logs", String(moodId));
-        loggedItems.push({ type: "mood", data: { _id: moodId, rating, ...moodAction } });
-        logOutcomes.push({ type: "mood", name: "mood", ok: true, ...moodAction });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logOutcomes.push({ type: "mood", name: "mood", ok: false, error: message });
@@ -1266,26 +1524,23 @@ Rules:
         const stepsPayload = { kind: "steps", count, date: targetDate };
         const stepsValidation = parseMarkerValidation(logData);
         const reason = clarifyingReason(logData.date, dateResolution, undefined, stepsValidation.status);
+        const candidate: ParsedCandidate = {
+          actionType: "recovery",
+          description: `Steps ${count}`,
+          payload: stepsPayload,
+          resolvedDate: targetDate,
+          provenance: "ai_extracted",
+          validation: stepsValidation,
+          reason: reason ?? undefined,
+          question: logData.question,
+          ordinal: parsedCandidates.length,
+        };
+        parsedCandidates.push(candidate);
         if (reason) {
-          pendingCandidates.push({
-            actionType: "recovery",
-            description: `Steps ${count}`,
-            payload: stepsPayload,
-            resolvedDate: targetDate,
-            reason,
-            question: logData.question,
-            ordinal: stepsIndex,
-          });
+          pendingCandidates.push({ ...candidate, reason });
           logOutcomes.push({ type: "steps", name: "steps", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
           continue;
         }
-        const { id: stepsId, previous } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
-          group: chatGroup,
-          member: markerMember(chatGroupKey, "recovery", stepsPayload, stepsIndex, undefined, stepsValidation),
-        });
-        const stepsAction = await committedActionMetadata(ctx, userId, "steps_logs", String(stepsId));
-        loggedItems.push({ type: "steps", data: { _id: stepsId, count, previous, ...stepsAction } });
-        logOutcomes.push({ type: "steps", name: "steps", ok: true, ...stepsAction });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logOutcomes.push({ type: "steps", name: "steps", ok: false, error: message });
@@ -1293,7 +1548,74 @@ Rules:
       }
     }
 
-    if (logOutcomes.length > 0) {
+    let confirmation: {
+      groupId: string;
+      items: Array<{
+        actionType: string;
+        description: string;
+        resolvedDate?: string;
+        confidence?: number;
+        provenance: string;
+        validation: { status: "valid" | "warning" | "error"; messages: string[] };
+        ordinal: number;
+      }>;
+    } | undefined;
+    let confirmationRequested = false;
+
+    async function writeCandidate(candidate: ParsedCandidate): Promise<void> {
+      const member = markerMember(
+        chatGroupKey,
+        candidate.actionType,
+        candidate.payload,
+        candidate.ordinal,
+        candidate.confidence,
+        candidate.validation,
+        candidate.resolvedDate,
+      );
+      member.resolvedTime = candidate.resolvedTime;
+      let rowId: string;
+      let previous: unknown;
+      if (candidate.actionType === "meal") {
+        rowId = String(await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: chatGroup, member }));
+      } else if (candidate.actionType === "workout") {
+        rowId = String(await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: chatGroup, member }));
+      } else {
+        const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: chatGroup, member });
+        rowId = String(result?.id ?? result);
+        previous = result?.previous;
+      }
+      const table = candidate.actionType === "meal"
+        ? "meals"
+        : candidate.actionType === "workout"
+          ? "workouts"
+          : `${candidate.payload.kind}_logs`;
+      const actionMetadata = await committedActionMetadata(ctx, userId, table, rowId);
+      const type = candidate.actionType === "recovery" ? candidate.payload.kind : candidate.actionType;
+      loggedItems.push({
+        type,
+        data: { _id: rowId, ...candidate.payload, previous, ...actionMetadata },
+      });
+      logOutcomes.push({ type, name: candidate.description, ok: true, ...actionMetadata });
+    }
+
+    const readyCandidates = parsedCandidates.filter((candidate) => !candidate.reason);
+    if (parsedCandidates.length > AUTO_WRITE_MAX_ACTIONS) {
+      confirmationRequested = true;
+      confirmation = { groupId: "", items: [] };
+    } else {
+      for (const candidate of readyCandidates) {
+        try {
+          await writeCandidate(candidate);
+        } catch (err) {
+          const error = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
+          const errorCode = getConvexErrorCode(err);
+          logOutcomes.push({ type: candidate.actionType, name: candidate.description, ok: false, error, errorCode });
+          console.error("Failed to log parsed AI action:", err);
+        }
+      }
+    }
+
+    if (logOutcomes.length > 0 && !confirmationRequested) {
       const saved = logOutcomes.filter((outcome) => outcome.ok);
       const failed = logOutcomes.filter((outcome) => !outcome.ok);
       const statusParts: string[] = [];
@@ -1317,18 +1639,20 @@ Rules:
     }
 
     let clarification: { groupId: string; items: any[]; question: string } | undefined;
-    if (pendingCandidates.length > 0) {
-      const stagedMembers = pendingCandidates.map((candidate) => ({
+    const candidatesToStage = confirmationRequested ? parsedCandidates : pendingCandidates;
+    if (candidatesToStage.length > 0) {
+      const stagedMembers = candidatesToStage.map((candidate) => ({
         ...markerMember(
           chatGroupKey,
           candidate.actionType,
           candidate.payload,
           candidate.ordinal,
           candidate.confidence,
-          { status: "valid", messages: [] },
+          candidate.validation,
           candidate.resolvedDate,
         ),
         actionType: candidate.actionType,
+        ordinal: candidate.ordinal,
       }));
       const staged: { groupId: string } = await ctx.runMutation(internal.ai.stageClarificationGroup, {
         userId,
@@ -1339,18 +1663,34 @@ Rules:
         createdAt: Date.now(),
         members: stagedMembers,
       });
-      const questions = [...new Set(pendingCandidates.map((c) => c.question).filter((q): q is string => typeof q === "string" && q.length > 0))];
-      clarification = {
-        groupId: staged.groupId,
-        items: pendingCandidates.map((candidate) => ({
-          actionType: candidate.actionType,
-          description: candidate.description,
-          reason: candidate.reason,
-          resolvedDate: candidate.resolvedDate,
-          confidence: candidate.confidence,
-        })),
-        question: questions.join(" ") || "Please confirm the details so I can save this.",
-      };
+      if (confirmationRequested) {
+        confirmation = {
+          groupId: staged.groupId,
+          items: parsedCandidates.map((candidate) => ({
+            actionType: candidate.actionType,
+            description: candidate.description,
+            resolvedDate: candidate.resolvedDate,
+            confidence: candidate.confidence,
+            provenance: candidate.provenance,
+            validation: candidate.validation,
+            ordinal: candidate.ordinal,
+          })),
+        };
+        cleanReply = [cleanReply, `I found ${parsedCandidates.length} items. Review them before saving.`].filter(Boolean).join("\n\n");
+      } else {
+        const questions = [...new Set(pendingCandidates.map((c) => c.question).filter((q): q is string => typeof q === "string" && q.length > 0))];
+        clarification = {
+          groupId: staged.groupId,
+          items: pendingCandidates.map((candidate) => ({
+            actionType: candidate.actionType,
+            description: candidate.description,
+            reason: candidate.reason,
+            resolvedDate: candidate.resolvedDate,
+            confidence: candidate.confidence,
+          })),
+          question: questions.join(" ") || "Please confirm the details so I can save this.",
+        };
+      }
     }
 
     const loggedItem = loggedItems.length === 1 ? loggedItems[0] : loggedItems.length > 1 ? { type: "multiple", items: loggedItems } : null;
@@ -1381,7 +1721,7 @@ Rules:
       }
     }
 
-    return { reply: cleanReply, loggedItem, failedItems, coachType: detectedCoach, clarification };
+    return { reply: cleanReply, loggedItem, failedItems, coachType: detectedCoach, clarification, confirmation };
   },
 });
 

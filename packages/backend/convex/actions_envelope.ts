@@ -110,6 +110,12 @@ export type ActionGroupInput = Omit<ActionGroup, "status"> & { status?: ActionGr
 /** Actions at or below this confidence require user confirmation, even in small batches. */
 export const LOW_CONFIDENCE_CONFIRM_THRESHOLD = 0.6;
 
+/** Batches up to this size may be written automatically when otherwise valid. */
+export const AUTO_WRITE_MAX_ACTIONS = 4;
+
+/** Pending confirmation groups are writable for 24 hours. */
+export const CONFIRMATION_TTL_MS = 24 * 60 * 60 * 1000;
+
 function assertConfidence(confidence: number | undefined): void {
   if (confidence !== undefined && (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)) {
     throw new Error("Action confidence must be a finite number between 0 and 1");
