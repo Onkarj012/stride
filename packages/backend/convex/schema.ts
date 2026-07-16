@@ -59,8 +59,14 @@ export default defineSchema({
     calorieEstimateRough: v.optional(v.boolean()),
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
+    // Canonical workout draft calorie provenance.
+    reportedCalories: v.optional(v.number()),
+    estimatedCalories: v.optional(v.number()),
+    calorieSource: v.optional(v.union(v.literal("reported"), v.literal("estimated"))),
+    calorieEstimateProvenance: v.optional(v.string()),
     // Structured exercise data — JSON: ExerciseEntry[]
     structuredSets: v.optional(v.string()),
+    workoutDraft: v.optional(v.string()),
     timestamp: v.optional(v.string()),
     logSource: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),

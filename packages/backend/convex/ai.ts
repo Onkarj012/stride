@@ -11,7 +11,7 @@ import {
 } from "./actions_envelope";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { buildMealDraftFromParsed, mealPayloadFromDraft, type MealDraft } from "./nutrition_draft";
-import { calculateWorkoutCalories, parseDurationMinutes } from "./calorie_engine";
+import { calculateNonPersonalizedWorkoutCalories, calculateWorkoutCalories, parseDurationMinutes } from "./calorie_engine";
 import { matchExercises, getWeightedMET } from "./exercise_db";
 import { mapAIIntensity, inferDensity, countCompoundRatio } from "./workout_scorer";
 import {
@@ -891,7 +891,14 @@ export const logWorkout = action({
         intensity: parsedData.intensity || intensity || "HIGH",
         exercises: parsedData.exercises,
         rationale: parsedData.rationale,
-        caloriesBurned: parsedData.caloriesBurned ?? (parsedData.calorieResult?.total_kcal ?? 0),
+        caloriesBurned: parsedData.caloriesBurned,
+        reportedCalories: parsedData.reportedCalories,
+        estimatedCalories: userPhysique?.weight && parsedData.estimatedCalories != null
+          ? parsedData.estimatedCalories
+          : userPhysique?.weight && parsedData.calorieResult?.total_kcal != null
+            ? parsedData.calorieResult.total_kcal
+            : undefined,
+        calorieSource: parsedData.calorieSource ?? (parsedData.reportedCalories != null ? "reported" : parsedData.calorieResult?.total_kcal != null && userPhysique?.weight ? "estimated" : undefined),
           structuredSets: parsedData.exercises ? JSON.stringify(parsedData.exercises) : undefined,
           logSource: "ai",
           ...calorieFields,
@@ -913,6 +920,9 @@ export const logWorkout = action({
         name: parsed.name, sets: parsed.sets, duration: parsed.duration,
         intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
         caloriesBurned: parsed.caloriesBurned,
+        reportedCalories: extractStatedWorkoutCalories(description ?? "") ?? undefined,
+        estimatedCalories: userPhysique?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined,
+        calorieSource: extractStatedWorkoutCalories(description ?? "") != null ? "reported" : userPhysique?.weight && parsed.calorieResult ? "estimated" : undefined,
         structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
         logSource: "ai",
         ...calorieFields,
@@ -921,11 +931,6 @@ export const logWorkout = action({
     } else {
       throw new Error("description or parsedData required");
     }
-
-    // Increment workout count for calibration
-    try {
-      await ctx.runMutation(internal.calibration.incrementWorkoutCount, { userId });
-    } catch { /* ignore */ }
 
     return data;
   },
@@ -1196,6 +1201,10 @@ Rules:
       exercises?: unknown;
       rationale?: string;
       caloriesBurned?: number;
+      reportedCalories?: number;
+      estimatedCalories?: number;
+      calorieSource?: "reported" | "estimated";
+      calorieEstimateProvenance?: string;
       structuredSets?: string;
       timestamp: string;
       logSource: string;
@@ -1367,6 +1376,9 @@ Rules:
           exercises: parsed.exercises,
           rationale: parsed.rationale,
           caloriesBurned: parsed.caloriesBurned,
+          reportedCalories: extractStatedWorkoutCalories(logData.description || message) ?? undefined,
+          estimatedCalories: profile?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined,
+          calorieSource: extractStatedWorkoutCalories(logData.description || message) != null ? "reported" : profile?.weight && parsed.calorieResult ? "estimated" : undefined,
           structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
           timestamp,
           logSource: "coach",
@@ -1376,6 +1388,9 @@ Rules:
           date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
           intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
           caloriesBurned: parsed.caloriesBurned,
+          reportedCalories: extractStatedWorkoutCalories(logData.description || message) ?? undefined,
+          estimatedCalories: profile?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined,
+          calorieSource: extractStatedWorkoutCalories(logData.description || message) != null ? "reported" : profile?.weight && parsed.calorieResult ? "estimated" : undefined,
           structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
           timestamp, logSource: "coach", ...calorieFields,
         };
@@ -1947,7 +1962,7 @@ Include 3-6 exercises with 3-4 sets each. For cardio, use duration as reps field
       sets: Array.isArray(ex.sets) ? ex.sets.map((s: any) => ({ weight: String(s.weight || ""), reps: String(s.reps || "") })) : [],
     }));
     let calorieResult: any = null;
-    if (profile?.weight && exercises.length > 0) {
+    if (profile?.weight && profile.weight > 0 && exercises.length > 0) {
       try {
         const durationMin = parseDurationMinutes(result.duration || "45 min");
         const engineIntensity = mapAIIntensity(result.intensity || "HIGH");
@@ -1956,23 +1971,25 @@ Include 3-6 exercises with 3-4 sets each. For cardio, use duration as reps field
         const compoundRatio = countCompoundRatio(exerciseMetas);
         const weightedMet = getWeightedMET(exercises);
 
-        const calcResult = calculateWorkoutCalories(
-          {
-            duration_min: durationMin,
-            intensity: engineIntensity,
-            density: engineDensity,
-            compound_ratio: compoundRatio,
-            exercises,
-            weighted_met: weightedMet,
-          },
-          {
-            weight_kg: profile.weight ?? 70,
-            age: profile.age ?? 30,
-            sex: (profile.sex === "female" ? "female" : "male"),
-            fitness_level: (metabolicProfile?.fitnessLevel as "beginner" | "intermediate" | "advanced") || "beginner",
-            metabolic_factor: metabolicProfile?.metabolicFactor ?? 1.0,
-          },
-        );
+        const profileWeight = profile.weight;
+        const profileAge = profile.age;
+        const profileSex = profile.sex;
+        const hasCompleteProfile = typeof profileAge === "number" && profileAge > 0 && (profileSex === "male" || profileSex === "female");
+        const calcResult = hasCompleteProfile
+          ? calculateWorkoutCalories(
+              { duration_min: durationMin, intensity: engineIntensity, density: engineDensity, compound_ratio: compoundRatio, exercises, weighted_met: weightedMet },
+              {
+                weight_kg: profileWeight as number,
+                age: profileAge as number,
+                sex: profileSex as "male" | "female",
+                fitness_level: (metabolicProfile?.fitnessLevel as "beginner" | "intermediate" | "advanced") || "beginner",
+                metabolic_factor: metabolicProfile?.metabolicFactor ?? 1.0,
+              },
+            )
+          : calculateNonPersonalizedWorkoutCalories(
+              { duration_min: durationMin, intensity: engineIntensity, density: engineDensity, compound_ratio: compoundRatio, weighted_met: weightedMet },
+              profileWeight as number,
+            );
         calorieResult = {
           total_kcal: calcResult.total_kcal,
           confidence: calcResult.confidence,

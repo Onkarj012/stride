@@ -2,9 +2,10 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { ConvexError, v } from "convex/values";
 import { applyDayAdjustment } from "./goals";
 import { internal } from "./_generated/api";
-import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { deriveGroupKey } from "./actions_idempotency";
 import { recordBehaviorRow } from "./behavior";
 import { recordActivityForUser } from "./gamification";
+import { buildWorkoutDraft, workoutPayloadFromDraft } from "./workout_draft";
 import {
   buildIdempotencyKey,
   isSimilarWorkout,
@@ -58,11 +59,61 @@ export async function assertNoNearDuplicateWorkout(
 export async function writeWorkoutDomain(
   ctx: any,
   args: any,
-  options: { emitBehavior?: boolean; emitGamification?: boolean } = {},
+  options: { emitBehavior?: boolean; emitGamification?: boolean; emitCalibration?: boolean } = {},
 ) {
-  const validated = validateWorkoutWrite(args);
   const date = args.date ?? new Date().toISOString().split("T")[0];
   const logSource = normalizeLogSource(args.logSource, "manual");
+  const profile = await ctx.db
+    .query("user_profiles")
+    .withIndex("by_user", (q: any) => q.eq("userId", args.userId))
+    .first();
+  const metabolicProfile = await ctx.db
+    .query("user_metabolic_profiles")
+    .withIndex("by_user", (q: any) => q.eq("userId", args.userId))
+    .first();
+  const profileForEstimate = {
+    weightKg: profile?.weight,
+    age: profile?.age,
+    sex: profile?.sex,
+    fitnessLevel: metabolicProfile?.fitnessLevel,
+    metabolicFactor: metabolicProfile?.metabolicFactor,
+  };
+  const aiEstimateSource = ["ai", "coach", "home"].includes(logSource);
+  const reportedCalories = args.reportedCalories ?? (args.calorieSource === "reported"
+    ? args.caloriesBurned
+    : args.calorieSource === "estimated" ? undefined
+      : !aiEstimateSource && args.caloriesBurned != null ? args.caloriesBurned : undefined);
+  const hasWeightForEstimate = typeof profile?.weight === "number" && profile.weight > 0;
+  const externalEstimateAllowed = hasWeightForEstimate || logSource === "relog" || args.calorieEstimateProvenance === "non_personalized_met" || args.calorieEstimateProvenance === "broad_unknown_exercise";
+  const estimatedCalories = externalEstimateAllowed
+    ? args.estimatedCalories ?? (args.calorieSource === "estimated"
+      ? args.caloriesBurned
+      : aiEstimateSource ? args.caloriesBurned : undefined)
+    : undefined;
+  const draft = buildWorkoutDraft({
+    name: args.name,
+    date,
+    time: args.timestamp ?? new Date().toISOString().slice(11, 16),
+    duration: args.duration,
+    durationMin: args.durationMin,
+    intensity: args.intensity,
+    sets: args.sets,
+    exercises: args.exercises ?? args.structuredSets,
+    reportedCalories,
+    estimatedCalories,
+    calorieSource: args.calorieSource === "reported" ? "reported" : estimatedCalories != null ? "estimated" : undefined,
+    calorieEstimateProvenance: args.calorieEstimateProvenance,
+    calorieConfidence: args.calorieConfidence,
+    calorieRangeLow: args.calorieRangeLow,
+    calorieRangeHigh: args.calorieRangeHigh,
+    calorieEstimateRough: args.calorieEstimateRough,
+    calorieBreakdown: args.calorieBreakdown,
+    profile: profileForEstimate,
+    rawInput: args.rawInput,
+    rationale: args.rationale,
+  });
+  const payload = workoutPayloadFromDraft(draft, { userId: args.userId, logSource: args.logSource });
+  const validated = validateWorkoutWrite(payload);
   const contentHash = workoutContentHash(validated);
   const idempotencyKey = buildIdempotencyKey({
     userId: args.userId,
@@ -78,29 +129,34 @@ export async function writeWorkoutDomain(
   });
   const existing = await findExistingWorkoutByIdempotencyKey(ctx, args.userId, date, idempotencyKey);
   if (existing) return existing._id;
-  const timestamp = args.timestamp ?? new Date().toISOString().slice(11, 16);
+  const timestamp = draft.time;
   if (!args.allowDuplicate) {
     await assertNoNearDuplicateWorkout(ctx, args.userId, date, validated, timestamp);
   }
   const id = await ctx.db.insert("workouts", {
     userId: args.userId,
     date,
-    name: validated.name,
-    sets: validated.sets,
+    name: draft.name,
+    sets: draft.setsSummary,
     reps: args.reps,
     weight: args.weight,
-    duration: validated.duration,
-    intensity: validated.intensity || "HIGH",
-    exercises: args.exercises,
-    rationale: args.rationale,
+    duration: draft.duration,
+    intensity: draft.intensity || "HIGH",
+    exercises: draft.exercises,
+    rationale: draft.rationale,
     caloriesBurned: validated.caloriesBurned,
-    calorieConfidence: validated.calorieConfidence,
-    calorieRangeLow: validated.calorieRangeLow,
-    calorieRangeHigh: validated.calorieRangeHigh,
-    calorieEstimateRough: args.calorieEstimateRough,
-    calorieBreakdown: args.calorieBreakdown,
-    calculationVersion: args.calculationVersion,
-    structuredSets: args.structuredSets,
+    calorieConfidence: draft.calorieConfidence,
+    calorieRangeLow: draft.calorieRangeLow,
+    calorieRangeHigh: draft.calorieRangeHigh,
+    calorieEstimateRough: draft.calorieEstimateRough,
+    calorieBreakdown: draft.calorieBreakdown ? JSON.stringify(draft.calorieBreakdown) : undefined,
+    calculationVersion: args.calculationVersion ?? (draft.estimatedCalories != null ? 1 : undefined),
+    reportedCalories: draft.reportedCalories,
+    estimatedCalories: draft.estimatedCalories,
+    calorieSource: draft.calorieSource,
+    calorieEstimateProvenance: draft.calorieEstimateProvenance,
+    structuredSets: JSON.stringify(draft.exercises),
+    workoutDraft: JSON.stringify(draft),
     timestamp,
     logSource,
     idempotencyKey,
@@ -110,16 +166,19 @@ export async function writeWorkoutDomain(
     await recordActivityForUser(ctx, args.userId, { type: "workout", date });
   }
   await applyDayAdjustment(ctx, args.userId, date);
-  const durationMin = args.duration ? parseFloat(args.duration) : undefined;
+  const durationMin = draft.durationMin;
   await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
     userId: args.userId,
-    name: validated.name,
+    name: draft.name,
     date,
-    exercises: Array.isArray(args.exercises) ? JSON.stringify((args.exercises as any[]).map((e: any) => e.name).filter(Boolean)) : undefined,
+    exercises: draft.exercises.length > 0 ? JSON.stringify(draft.exercises.map((exercise) => exercise.normalizedName)) : undefined,
     durationMin: isNaN(durationMin as number) ? undefined : durationMin,
     intensity: validated.intensity || undefined,
     caloriesBurned: validated.caloriesBurned,
   }).catch(() => {});
+  if (options.emitCalibration !== false) {
+    await ctx.runMutation(internal.calibration.incrementWorkoutCount, { userId: args.userId }).catch(() => {});
+  }
   return id;
 }
 
@@ -160,6 +219,10 @@ export const addWorkout = mutation({
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
     caloriesBurned: v.optional(v.number()),
+    reportedCalories: v.optional(v.number()),
+    estimatedCalories: v.optional(v.number()),
+    calorieSource: v.optional(v.union(v.literal("reported"), v.literal("estimated"))),
+    calorieEstimateProvenance: v.optional(v.string()),
     calorieConfidence: v.optional(v.number()),
     calorieRangeLow: v.optional(v.number()),
     calorieRangeHigh: v.optional(v.number()),
@@ -167,6 +230,8 @@ export const addWorkout = mutation({
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
     structuredSets: v.optional(v.string()),
+    durationMin: v.optional(v.number()),
+    rawInput: v.optional(v.string()),
     logSource: v.optional(v.string()),
     timestamp: v.optional(v.string()),
     idempotencyToken: v.optional(v.string()),
@@ -192,6 +257,10 @@ export const updateWorkout = mutation({
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
     caloriesBurned: v.optional(v.number()),
+    reportedCalories: v.optional(v.number()),
+    estimatedCalories: v.optional(v.number()),
+    calorieSource: v.optional(v.union(v.literal("reported"), v.literal("estimated"))),
+    calorieEstimateProvenance: v.optional(v.string()),
     calorieConfidence: v.optional(v.number()),
     calorieRangeLow: v.optional(v.number()),
     calorieRangeHigh: v.optional(v.number()),
@@ -199,31 +268,67 @@ export const updateWorkout = mutation({
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
     structuredSets: v.optional(v.string()),
+    workoutDraft: v.optional(v.string()),
   },
   handler: async (ctx, { id, ...fields }) => {
-    const validated = validateWorkoutWrite(fields);
     const userId = await requireUserId(ctx);
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
+    const profile = await ctx.db.query("user_profiles").withIndex("by_user", (q: any) => q.eq("userId", userId)).first();
+    const metabolicProfile = await ctx.db.query("user_metabolic_profiles").withIndex("by_user", (q: any) => q.eq("userId", userId)).first();
+    const calorieWasEdited = fields.caloriesBurned !== undefined || fields.reportedCalories !== undefined || fields.estimatedCalories !== undefined || fields.calorieSource !== undefined;
+    const draft = buildWorkoutDraft({
+      name: fields.name,
+      date: workout.date,
+      time: workout.timestamp,
+      duration: fields.duration ?? workout.duration,
+      intensity: fields.intensity,
+      sets: fields.sets,
+      exercises: fields.exercises ?? fields.structuredSets ?? workout.exercises ?? workout.structuredSets,
+      reportedCalories: fields.reportedCalories ?? (fields.calorieSource === "reported" ? fields.caloriesBurned : !calorieWasEdited ? workout.reportedCalories : undefined),
+      estimatedCalories: fields.estimatedCalories ?? (!calorieWasEdited ? workout.estimatedCalories : fields.calorieSource === "estimated" ? fields.caloriesBurned : undefined),
+      calorieSource: fields.calorieSource ?? (!calorieWasEdited ? workout.calorieSource : fields.caloriesBurned !== undefined ? "reported" : undefined),
+      calorieEstimateProvenance: (fields.calorieEstimateProvenance ?? workout.calorieEstimateProvenance) as any,
+      calorieConfidence: fields.calorieConfidence ?? workout.calorieConfidence,
+      calorieRangeLow: fields.calorieRangeLow ?? workout.calorieRangeLow,
+      calorieRangeHigh: fields.calorieRangeHigh ?? workout.calorieRangeHigh,
+      calorieEstimateRough: fields.calorieEstimateRough ?? workout.calorieEstimateRough,
+      calorieBreakdown: fields.calorieBreakdown ?? workout.calorieBreakdown,
+      profile: {
+        weightKg: profile?.weight,
+        age: profile?.age,
+        sex: profile?.sex,
+        fitnessLevel: metabolicProfile?.fitnessLevel,
+        metabolicFactor: metabolicProfile?.metabolicFactor,
+      },
+      rationale: fields.rationale ?? workout.rationale,
+    });
+    const validated = validateWorkoutWrite(workoutPayloadFromDraft(draft));
     const patch: any = {
-      name: validated.name,
-      sets: validated.sets,
-      reps: fields.reps,
-      weight: fields.weight,
-      duration: validated.duration,
-      intensity: validated.intensity,
-      exercises: fields.exercises,
-      rationale: fields.rationale,
+      name: draft.name,
+      sets: draft.setsSummary,
+      reps: fields.reps ?? workout.reps,
+      weight: fields.weight ?? workout.weight,
+      duration: draft.duration,
+      intensity: draft.intensity,
+      exercises: draft.exercises,
+      rationale: draft.rationale,
+      structuredSets: JSON.stringify(draft.exercises),
+      workoutDraft: JSON.stringify(draft),
     };
-    if (fields.caloriesBurned !== undefined) patch.caloriesBurned = validated.caloriesBurned;
-    if (fields.calorieConfidence !== undefined) patch.calorieConfidence = validated.calorieConfidence;
-    if (fields.calorieRangeLow !== undefined) patch.calorieRangeLow = validated.calorieRangeLow;
-    if (fields.calorieRangeHigh !== undefined) patch.calorieRangeHigh = validated.calorieRangeHigh;
-    if (fields.calorieEstimateRough !== undefined) patch.calorieEstimateRough = fields.calorieEstimateRough;
-    if (fields.calorieBreakdown !== undefined) patch.calorieBreakdown = fields.calorieBreakdown;
-    if (fields.calculationVersion !== undefined) patch.calculationVersion = fields.calculationVersion;
-    if (fields.structuredSets !== undefined) patch.structuredSets = fields.structuredSets;
+    if (calorieWasEdited || workout.caloriesBurned !== undefined) patch.caloriesBurned = calorieWasEdited ? validated.caloriesBurned : workout.caloriesBurned;
+    if (calorieWasEdited || workout.reportedCalories !== undefined) patch.reportedCalories = draft.reportedCalories;
+    if (calorieWasEdited || workout.estimatedCalories !== undefined) patch.estimatedCalories = draft.estimatedCalories;
+    if (calorieWasEdited || workout.calorieSource !== undefined) patch.calorieSource = draft.calorieSource;
+    if (fields.calorieConfidence !== undefined || workout.calorieConfidence !== undefined) patch.calorieConfidence = draft.calorieConfidence;
+    if (fields.calorieRangeLow !== undefined || workout.calorieRangeLow !== undefined) patch.calorieRangeLow = draft.calorieRangeLow;
+    if (fields.calorieRangeHigh !== undefined || workout.calorieRangeHigh !== undefined) patch.calorieRangeHigh = draft.calorieRangeHigh;
+    if (fields.calorieEstimateRough !== undefined || workout.calorieEstimateRough !== undefined) patch.calorieEstimateRough = draft.calorieEstimateRough;
+    if (fields.calorieEstimateProvenance !== undefined || workout.calorieEstimateProvenance !== undefined) patch.calorieEstimateProvenance = draft.calorieEstimateProvenance;
+    if (fields.calorieBreakdown !== undefined || workout.calorieBreakdown !== undefined) patch.calorieBreakdown = draft.calorieBreakdown ? JSON.stringify(draft.calorieBreakdown) : undefined;
+    if (fields.calculationVersion !== undefined || workout.calculationVersion !== undefined) patch.calculationVersion = fields.calculationVersion ?? workout.calculationVersion;
     await ctx.db.patch(id, patch);
+    await applyDayAdjustment(ctx, userId, workout.date);
   },
 });
 
@@ -234,6 +339,7 @@ export const deleteWorkout = mutation({
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
     await ctx.db.delete(id);
+    await applyDayAdjustment(ctx, userId, workout.date);
   },
 });
 
@@ -249,71 +355,54 @@ export const relogWorkout = mutation({
     timestamp: v.optional(v.string()),
     idempotencyToken: v.optional(v.string()),
   },
-  handler: async (ctx, { id, date, timestamp, idempotencyToken }) => {
+  handler: async (ctx, { id, date, timestamp, idempotencyToken }): Promise<any> => {
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
     const targetDate = date ?? new Date().toISOString().split("T")[0];
-    const validated = validateWorkoutWrite({
-      name: src.name,
-      sets: src.sets,
-      duration: src.duration,
-      intensity: src.intensity,
-      caloriesBurned: src.caloriesBurned,
-      calorieConfidence: src.calorieConfidence,
-      calorieRangeLow: src.calorieRangeLow,
-      calorieRangeHigh: src.calorieRangeHigh,
+    const rawInput = `relog:${String(src._id)}:${targetDate}`;
+    const groupIdempotencyKey = deriveGroupKey({
+      userId,
+      sourceSurface: "direct_ui",
+      rawInput,
+      clientSubmissionId: idempotencyToken,
     });
-    const logSource = normalizeLogSource("relog", "relog");
-    const contentHash = workoutContentHash(validated);
-    const idempotencyKey = idempotencyToken?.trim()
-      ? deriveMemberKey({
-          groupKey: deriveGroupKey({
-            userId,
-            sourceSurface: "direct_ui",
-            rawInput: `${targetDate}|${contentHash}`,
-            clientSubmissionId: idempotencyToken,
-          }),
-          actionType: "workout",
-          payloadFingerprint: contentHash,
-          ordinal: 0,
-        })
-      : buildIdempotencyKey({
+    return ctx.runMutation(internal.actions_writer.writeWorkoutAction, {
+      group: { userId, groupIdempotencyKey, sourceSurface: "direct_ui", rawInput },
+      member: {
+        payload: {
           userId,
           date: targetDate,
-          source: logSource,
-          contentHash,
-          timeWindow: workoutTimeWindowKey({
-            date: targetDate,
-            contentHash,
-            timestamp,
-            idempotencyToken,
-          }),
-        });
-    const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, targetDate, idempotencyKey);
-    if (existing) return existing._id;
-    return ctx.db.insert("workouts", {
-      userId,
-      date: targetDate,
-      name: validated.name,
-      sets: validated.sets,
-      reps: src.reps,
-      weight: src.weight,
-      duration: validated.duration,
-      intensity: validated.intensity,
-      exercises: src.exercises,
-      rationale: src.rationale,
-      caloriesBurned: validated.caloriesBurned,
-      calorieConfidence: validated.calorieConfidence,
-      calorieRangeLow: validated.calorieRangeLow,
-      calorieRangeHigh: validated.calorieRangeHigh,
-      calorieEstimateRough: src.calorieEstimateRough,
-      calorieBreakdown: src.calorieBreakdown,
-      calculationVersion: src.calculationVersion,
-      structuredSets: src.structuredSets,
-      timestamp: timestamp ?? new Date().toISOString().slice(11, 16),
-      logSource,
-      idempotencyKey,
+          name: src.name,
+          sets: src.sets,
+          reps: src.reps,
+          weight: src.weight,
+          duration: src.duration,
+          intensity: src.intensity,
+          exercises: src.exercises ?? src.structuredSets,
+          rationale: src.rationale,
+          caloriesBurned: src.caloriesBurned,
+          reportedCalories: src.reportedCalories,
+          estimatedCalories: src.estimatedCalories,
+          calorieSource: src.calorieSource,
+          calorieEstimateProvenance: src.calorieEstimateProvenance,
+          calorieConfidence: src.calorieConfidence,
+          calorieRangeLow: src.calorieRangeLow,
+          calorieRangeHigh: src.calorieRangeHigh,
+          calorieEstimateRough: src.calorieEstimateRough,
+          calorieBreakdown: src.calorieBreakdown,
+          calculationVersion: src.calculationVersion,
+          timestamp: timestamp ?? new Date().toISOString().slice(11, 16),
+          logSource: "relog",
+          idempotencyToken,
+          allowDuplicate: true,
+        },
+        provenance: "user_reported",
+        validation: { status: "valid", messages: [] },
+        reversible: true,
+        resolvedDate: targetDate,
+        resolvedTime: timestamp,
+      },
     });
   },
 });
@@ -372,6 +461,10 @@ export const addWorkoutFromAI = internalMutation({
     exercises: v.optional(v.any()),
     rationale: v.optional(v.string()),
     caloriesBurned: v.optional(v.number()),
+    reportedCalories: v.optional(v.number()),
+    estimatedCalories: v.optional(v.number()),
+    calorieSource: v.optional(v.union(v.literal("reported"), v.literal("estimated"))),
+    calorieEstimateProvenance: v.optional(v.string()),
     calorieConfidence: v.optional(v.number()),
     calorieRangeLow: v.optional(v.number()),
     calorieRangeHigh: v.optional(v.number()),
@@ -379,6 +472,8 @@ export const addWorkoutFromAI = internalMutation({
     calorieBreakdown: v.optional(v.string()),
     calculationVersion: v.optional(v.number()),
     structuredSets: v.optional(v.string()),
+    durationMin: v.optional(v.number()),
+    rawInput: v.optional(v.string()),
     logSource: v.optional(v.string()),
     timestamp: v.optional(v.string()),
     idempotencyToken: v.optional(v.string()),

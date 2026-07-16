@@ -23,6 +23,9 @@ type StoredWorkoutSet = {
 
 type StoredExercise = {
   name: string;
+  rawName?: string;
+  normalizedName?: string;
+  normalizationState?: "canonical" | "unknown-explicit";
   weight_unit?: string;
   sets?: StoredWorkoutSet[];
 };
@@ -39,6 +42,10 @@ type WorkoutRow = {
   calorieRangeLow?: number | null;
   calorieRangeHigh?: number | null;
   calorieEstimateRough?: boolean | null;
+  reportedCalories?: number | null;
+  estimatedCalories?: number | null;
+  calorieSource?: "reported" | "estimated" | null;
+  calorieEstimateProvenance?: string | null;
   structuredSets?: string | null;
 };
 
@@ -164,10 +171,16 @@ export function WorkoutsPage() {
                     title: w.name,
                     date: `Logged via chat · ${w.intensity} intensity`,
                     durationMin: durationNum,
-                    burnKcal: w.caloriesBurned ?? 0,
+                    burnKcal: w.caloriesBurned ?? null,
+                    reportedCalories: w.reportedCalories,
+                    estimatedCalories: w.estimatedCalories,
+                    calorieSource: w.calorieSource,
+                    calorieEstimateProvenance: w.calorieEstimateProvenance,
                     exercises: exerciseList.length > 0
                       ? exerciseList.map((ex) => ({
-                        name: ex.name,
+                        name: ex.normalizedName ?? ex.name,
+                        rawName: ex.rawName,
+                        normalizationState: ex.normalizationState,
                         sets: (ex.sets && ex.sets.length > 0 ? ex.sets : [{}]).map((set) => formatWorkoutSet(set, ex.weight_unit)),
                       }))
                       : [{ name: w.name, sets: [{ weight: durationNum > 0 ? `${durationNum} min` : w.intensity, reps: "" }] }],
@@ -265,9 +278,15 @@ export function WorkoutsPage() {
                       title: w.name,
                       date: `Logged via chat · ${w.intensity} intensity`,
                       durationMin: durationNum,
-                      burnKcal: w.caloriesBurned ?? 0,
+                      burnKcal: w.caloriesBurned ?? null,
+                      reportedCalories: w.reportedCalories,
+                      estimatedCalories: w.estimatedCalories,
+                      calorieSource: w.calorieSource,
+                      calorieEstimateProvenance: w.calorieEstimateProvenance,
                       exercises: exerciseList.map((ex) => ({
-                        name: ex.name,
+                        name: ex.normalizedName ?? ex.name,
+                        rawName: ex.rawName,
+                        normalizationState: ex.normalizationState,
                         sets: (ex.sets && ex.sets.length > 0 ? ex.sets : [{}]).map((set) =>
                           formatWorkoutSet(set, ex.weight_unit),
                         ),

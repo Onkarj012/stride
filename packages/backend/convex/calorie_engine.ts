@@ -150,6 +150,47 @@ export function calculateWorkoutCalories(
 }
 
 /**
+ * Estimate from the exercise signal and known weight only. This deliberately
+ * does not invent age, sex, fitness, or metabolic values when the profile is
+ * incomplete; callers must label the result as non-personalized.
+ */
+export function calculateNonPersonalizedWorkoutCalories(
+  input: Omit<WorkoutInput, "exercises"> & { exercises?: ParsedExercise[] },
+  weightKg: number,
+): CalorieResult {
+  const durationHours = Math.max(0, input.duration_min) / 60;
+  const met = input.weighted_met > 0 ? input.weighted_met : 5;
+  const intensityMult = INTENSITY_MULTIPLIERS[input.intensity];
+  const densityMult = DENSITY_MULTIPLIERS[input.density];
+  const compoundMult = compoundMultiplier(input.compound_ratio);
+  const baseKcal = Math.max(0, (met - 1) * Math.max(0, weightKg) * durationHours);
+  const duringWorkoutKcal = Math.round(baseKcal * intensityMult * densityMult * compoundMult);
+  const epocPct = EPOC_PERCENTAGES[input.intensity];
+  const epocKcal = Math.round(duringWorkoutKcal * epocPct);
+  const totalKcal = Math.round(duringWorkoutKcal + epocKcal);
+  const confidence = 0.35;
+  const rangeWidth = Math.max(25, Math.round(totalKcal * 0.4));
+  return {
+    during_workout_kcal: duringWorkoutKcal,
+    epoc_kcal: epocKcal,
+    total_kcal: totalKcal,
+    confidence,
+    range_low: Math.max(0, totalKcal - rangeWidth),
+    range_high: totalKcal + rangeWidth,
+    breakdown: {
+      base_kcal: Math.round(baseKcal),
+      met_used: met,
+      intensity_mult: intensityMult,
+      density_mult: densityMult,
+      compound_mult: compoundMult,
+      metabolic_factor: 1,
+      epoc_pct: epocPct,
+      epoc_kcal: epocKcal,
+    },
+  };
+}
+
+/**
  * Score density from exercise count and duration.
  * More exercises in less time = higher density.
  */

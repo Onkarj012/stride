@@ -49,6 +49,7 @@ import type * as user_ingredients from "../user_ingredients.js";
 import type * as users from "../users.js";
 import type * as validation from "../validation.js";
 import type * as wellness from "../wellness.js";
+import type * as workout_draft from "../workout_draft.js";
 import type * as workout_memory from "../workout_memory.js";
 import type * as workout_scorer from "../workout_scorer.js";
 import type * as workouts from "../workouts.js";
@@ -101,6 +102,7 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   validation: typeof validation;
   wellness: typeof wellness;
+  workout_draft: typeof workout_draft;
   workout_memory: typeof workout_memory;
   workout_scorer: typeof workout_scorer;
   workouts: typeof workouts;

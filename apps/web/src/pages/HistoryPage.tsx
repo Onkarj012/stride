@@ -123,6 +123,9 @@ function WorkoutRow({ w, onEdit, onRelog, onDelete, relogging }: {
   // Parse structuredSets JSON if available
   const exercises: Array<{
     name: string;
+    rawName?: string;
+    normalizedName?: string;
+    normalizationState?: "canonical" | "unknown-explicit";
     muscle_group?: string;
     weight_unit?: string;
     sets: Array<{ weight?: string; reps?: string; distance_km?: string; duration_min?: string; incline?: string; pace?: string; calories_per_hr?: string }>;
@@ -177,7 +180,11 @@ function WorkoutRow({ w, onEdit, onRelog, onDelete, relogging }: {
           {exercises.map((ex, ei) => (
             <div key={ei}>
               <div className="flex items-baseline gap-2 mb-1.5">
-                <span className="text-[12.5px] font-bold text-text">{ex.name}</span>
+                <div className="min-w-0">
+                  <span className="text-[12.5px] font-bold text-text">{ex.normalizedName ?? ex.name}</span>
+                  {ex.rawName && ex.rawName !== (ex.normalizedName ?? ex.name) && <span className="block text-[10.5px] text-text-muted">heard: {ex.rawName}</span>}
+                  {ex.normalizationState === "unknown-explicit" && <span className="mt-1 inline-flex rounded-full bg-peach/30 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-text">Unknown exercise</span>}
+                </div>
                 {ex.muscle_group && (
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-lavender bg-lavender/10 px-1.5 py-0.5 rounded-full">
                     {ex.muscle_group}

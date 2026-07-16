@@ -1,4 +1,5 @@
 import { internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import {
@@ -146,8 +147,10 @@ export const writeWorkoutAction = internalMutation({
     const prepared = await prepareMember(ctx, "workout", args as WriterArgs);
     if (!prepared.shouldExecute) return prepared.rowId;
     const payload = prepared.member.payload as Record<string, any>;
-    const id = await writeWorkoutDomain(ctx, { ...payload, userId: prepared.group.userId }, { emitBehavior: true, emitGamification: true });
-    return commitMember(ctx, prepared, "workouts", id);
+    const id = await writeWorkoutDomain(ctx, { ...payload, userId: prepared.group.userId }, { emitBehavior: true, emitGamification: true, emitCalibration: false });
+    const committedId = await commitMember(ctx, prepared, "workouts", id);
+    await ctx.runMutation(internal.calibration.incrementWorkoutCount, { userId: prepared.group.userId });
+    return committedId;
   },
 });
 
