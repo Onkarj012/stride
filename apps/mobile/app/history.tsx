@@ -71,7 +71,11 @@ export default function HistoryScreen() {
 
   function shiftMonth(delta: number) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    setMonth(current => new Date(current.getFullYear(), current.getMonth() + delta, 1))
+    const nextMonth = new Date(month.getFullYear(), month.getMonth() + delta, 1)
+    const selectedDay = new Date(`${selected}T12:00:00`).getDate()
+    const lastDay = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate()
+    setMonth(nextMonth)
+    setSelected(localDateStr(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(selectedDay, lastDay))))
   }
 
   const selectedDate = new Date(`${selected}T12:00:00`)
@@ -133,10 +137,10 @@ export default function HistoryScreen() {
               {meals.length === 0 ? <View style={[{ backgroundColor: t.card, borderRadius: 16, padding: 20 }, t.cardShadow]}><AppText variant="body" color={t.textMuted}>No meals logged.</AppText></View> : meals.map(meal => <MealLogCard key={meal._id} meal={meal.name} time={meal.time ?? meal.mealType ?? 'Meal'} macros={{ kcal: Math.round(meal.calories), protein: Math.round(meal.protein), carbs: Math.round(meal.carbs), fat: Math.round(meal.fat) }} confirmed />)}
             </View>
 
-            {recovery && <View style={{ marginTop: 20, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: t.border, backgroundColor: t.card }}>
-              <AppText variant="label">Recovery record</AppText>
-              <AppText variant="caption" color={t.textMuted} style={{ marginTop: 4 }}>state: {recovery.state ?? 'unknown'} · {recovery.confidence ?? 'confidence unavailable'}</AppText>
-              {recovery.missingInputs?.length ? <AppText variant="caption" color={t.textMuted}>unresolved: {recovery.missingInputs.join(', ')}</AppText> : null}
+            {(recovery || sleep) && <View style={{ marginTop: 20, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: t.border, backgroundColor: t.card }}>
+              <AppText variant="label">{recovery ? 'Recovery record' : 'Sleep record'}</AppText>
+              {recovery && <AppText variant="caption" color={t.textMuted} style={{ marginTop: 4 }}>state: {recovery.state ?? 'unknown'} · {recovery.confidence ?? 'confidence unavailable'}</AppText>}
+              {recovery && recovery.missingInputs?.length ? <AppText variant="caption" color={t.textMuted}>unresolved: {recovery.missingInputs.join(', ')}</AppText> : null}
               {sleep?.hours != null ? <AppText variant="caption" color={t.textMuted}>sleep: {sleep.hours}h</AppText> : sleep?.band ? <AppText variant="caption" color={t.textMuted}>sleep band: {sleep.band.replaceAll('_', ' ')}</AppText> : null}
             </View>}
           </>}

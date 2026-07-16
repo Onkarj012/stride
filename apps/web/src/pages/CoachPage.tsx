@@ -143,6 +143,12 @@ export function CoachPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  function resetClarificationState() {
+    setActiveClarificationGroupId(null);
+    setPendingConfirmIds(new Set());
+    setClarifyDates({});
+  }
+
   const onTranscript = useCallback((t: string) => {
     setInput((prev) => (prev ? `${prev} ${t}` : t).trim());
   }, []);
@@ -195,12 +201,14 @@ export function CoachPage() {
     }));
     setMessages(hydrated.length > 0 ? hydrated : [{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
     pendingHydrateRef.current = null;
+    resetClarificationState();
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "auto" }), 50);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, convexMessages]);
 
   const loadSession = useCallback((id: Id<"chat_sessions">) => {
     if (id === activeSessionId) return;
+    resetClarificationState();
     pendingHydrateRef.current = id;
     setActiveSessionId(id);
     setMessages([{ kind: "text", id: "loading", role: "assistant", text: "Loading…", streamed: false }]);
@@ -400,6 +408,7 @@ export function CoachPage() {
 
   const newChat = useCallback(() => {
     pendingHydrateRef.current = null;
+    resetClarificationState();
     setActiveSessionId(null);
     setMessages([{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
   }, [style]);

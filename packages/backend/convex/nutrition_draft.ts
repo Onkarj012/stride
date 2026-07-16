@@ -218,7 +218,7 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
     const hasContribution = raw.nutrition != null || raw.nutritionPer100g != null;
     const selected = raw.unresolved ? null : selectFoodCandidate(candidates);
     const selectedHasNutrition = !selected || selected.caloriesPer100g != null || hasContribution;
-    const unresolved = raw.unresolved === true || (candidates.length > 0 && !selected) || (!hasContribution && !selected) || !selectedHasNutrition;
+    const unresolved = raw.unresolved === true || (!hasContribution && (!selected || !selectedHasNutrition));
     const source = selected?.source === "memory" ? "memory" : normalizeSource(raw.source ?? selected?.source);
     const macros = unresolved
       ? { kcal: 0, protein: 0, carbs: 0, fat: 0 }
@@ -258,7 +258,9 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
   // Unresolved ingredients therefore contribute zero by construction.
   const estimatedCalories = Math.round(resolvedTotals.kcal);
   const reportedCalories = input.reportedCalories == null ? undefined : Math.round(nonNegative(input.reportedCalories));
-  const calorieSource: CalorieSource = input.calorieSource ?? (reportedCalories != null ? "reported" : "estimated");
+  const calorieSource: CalorieSource = input.calorieSource === "reported" && reportedCalories == null
+    ? "estimated"
+    : input.calorieSource ?? (reportedCalories != null ? "reported" : "estimated");
   const unresolved = ingredients.filter((item) => item.unresolved).map((item) => item.foodText);
   const draft: MealDraft = {
     kind: "meal",
@@ -433,10 +435,6 @@ export async function buildMealDraftFromParsed(
       ? await ctx.runAction(internal.foods.searchFoodsLive, { query: foodText, limit: 8 }).catch(() => []) as Array<NormalizedFood & { _id?: string }>
       : [];
     const candidates = rankFoodCandidates(foodText, [...cached, ...live]);
-    const memoryForIngredient = findBestMatch(foodText, memories);
-    if (memoryForIngredient) {
-      candidates.push({ name: memoryForIngredient.entry.displayName, score: memoryForIngredient.score, source: "memory" });
-    }
     ingredients.push({
       foodText,
       quantity: amount,

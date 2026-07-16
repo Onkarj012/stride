@@ -323,12 +323,17 @@ function estimateCalories(
     : completeProfile ? "personalized_met" : "non_personalized_met";
   const confidence = round(Math.max(0.1, result.confidence - (rough ? 0.2 : 0)), 2);
   const width = Math.round(result.total_kcal * (1 - confidence) * 0.25);
+  const rangeLow = result.range_low ?? Math.max(0, result.total_kcal - width);
+  const rangeHigh = result.range_high ?? result.total_kcal + width;
+  const roughWidth = rough
+    ? Math.max(1, Math.round(Math.max(result.total_kcal - rangeLow, rangeHigh - result.total_kcal) * 0.25))
+    : 0;
   return {
     estimatedCalories: result.total_kcal,
     calorieEstimateProvenance: provenance,
     calorieConfidence: confidence,
-    calorieRangeLow: Math.max(0, result.total_kcal - width),
-    calorieRangeHigh: result.total_kcal + width,
+    calorieRangeLow: rough ? rangeLow - roughWidth : rangeLow,
+    calorieRangeHigh: rangeHigh + roughWidth,
     calorieEstimateRough: rough || !completeProfile,
     calorieBreakdown: result.breakdown as unknown as Record<string, unknown>,
   };
@@ -373,6 +378,8 @@ export function buildWorkoutDraft(input: WorkoutDraftInput): WorkoutDraft {
   const reportedCalories = nonNegative(input.reportedCalories);
   const suppliedEstimatedCalories = nonNegative(input.estimatedCalories);
   const estimatedCalories = estimate.estimatedCalories ?? suppliedEstimatedCalories;
+  const hasInternalEstimate = estimate.estimatedCalories != null;
+  const hasCalorieValue = estimatedCalories != null || reportedCalories != null;
   const calorieSource = input.calorieSource ?? (reportedCalories != null ? "reported" : estimatedCalories != null ? "estimated" : undefined);
   const calories = calorieSource === "reported" ? reportedCalories : calorieSource === "estimated" ? estimatedCalories : undefined;
   const unresolved = exercises.filter((exercise) => exercise.normalizationState === "unknown-explicit").map((exercise) => exercise.rawName);
@@ -395,11 +402,13 @@ export function buildWorkoutDraft(input: WorkoutDraftInput): WorkoutDraft {
     estimatedCalories,
     calories,
     calorieSource,
-    calorieEstimateProvenance: estimate.calorieEstimateProvenance ?? input.calorieEstimateProvenance ?? (estimatedCalories != null ? "provided_estimate" : "unavailable_missing_profile"),
-    calorieConfidence: estimate.calorieConfidence ?? input.calorieConfidence,
-    calorieRangeLow: estimate.calorieRangeLow ?? input.calorieRangeLow,
-    calorieRangeHigh: estimate.calorieRangeHigh ?? input.calorieRangeHigh,
-    calorieEstimateRough: estimate.calorieEstimateRough ?? input.calorieEstimateRough,
+    calorieEstimateProvenance: hasInternalEstimate
+      ? estimate.calorieEstimateProvenance ?? input.calorieEstimateProvenance ?? (hasCalorieValue ? "provided_estimate" : "unavailable_missing_profile")
+      : input.calorieEstimateProvenance ?? (hasCalorieValue ? "provided_estimate" : "unavailable_missing_profile"),
+    calorieConfidence: hasInternalEstimate ? estimate.calorieConfidence ?? input.calorieConfidence : input.calorieConfidence,
+    calorieRangeLow: hasInternalEstimate ? estimate.calorieRangeLow ?? input.calorieRangeLow : input.calorieRangeLow,
+    calorieRangeHigh: hasInternalEstimate ? estimate.calorieRangeHigh ?? input.calorieRangeHigh : input.calorieRangeHigh,
+    calorieEstimateRough: hasInternalEstimate ? estimate.calorieEstimateRough ?? input.calorieEstimateRough : input.calorieEstimateRough,
     calorieBreakdown: estimate.calorieBreakdown ?? suppliedBreakdown,
     unresolved,
     confidence,

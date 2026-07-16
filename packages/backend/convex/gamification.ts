@@ -63,20 +63,32 @@ export async function recomputeGamificationForUser(ctx: any, userId: string) {
       .collect().then((rows: any[]) => rows.filter((row) => !row.undoneAt)),
   ]);
 
+  const today = new Date().toISOString().split("T")[0];
+  const sourceMeals = meals.filter((row: any) => row.date === today);
+  const sourceWorkouts = workouts.filter((row: any) => row.date === today);
+  const sourceDates = Array.from(new Set([...sourceMeals, ...sourceWorkouts].map((row: any) => row.date))).sort();
   const dates = Array.from(new Set([...meals, ...workouts].map((row: any) => row.date))).sort();
   const dayDistance = (from: string, to: string) =>
     Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
   let run = 0;
   let longest = 0;
+  let sourceRun = 0;
+  let sourceLongest = 0;
   let sourceXp = 0;
   let previousDate: string | undefined;
   for (const date of dates) {
     run = previousDate && dayDistance(previousDate, date) === 1 ? run + 1 : 1;
     longest = Math.max(longest, run);
-    sourceXp += 10 + Math.min(run * 2, 20);
     previousDate = date;
   }
-  sourceXp += meals.length * 10 + workouts.length * 20;
+  previousDate = undefined;
+  for (const date of sourceDates) {
+    sourceRun = previousDate && dayDistance(previousDate, date) === 1 ? sourceRun + 1 : 1;
+    sourceLongest = Math.max(sourceLongest, sourceRun);
+    sourceXp += 10 + Math.min(sourceRun * 2, 20);
+    previousDate = date;
+  }
+  sourceXp += sourceMeals.length * 10 + sourceWorkouts.length * 20;
 
   const sourceMissionIds = [
     meals.length >= 1 ? "first_meal" : null,

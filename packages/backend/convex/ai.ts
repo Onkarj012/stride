@@ -133,8 +133,9 @@ function nutritionFromDraft(draft: MealDraft) {
 
 function resolveChatActionDate(
   input: Omit<import("./time_resolve").ResolveActionDateInput, "now" | "userTimeZone">,
+  timezoneOffsetMinutes = 0,
 ): import("./time_resolve").ActionDateResolution {
-  return resolveActionDate({ ...input, now: Date.now(), userTimeZone: "UTC" });
+  return resolveActionDate({ ...input, now: Date.now() - timezoneOffsetMinutes * 60_000, userTimeZone: "UTC" });
 }
 
 function clarifyingReason(
@@ -256,6 +257,10 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   }
   if (group.status === "expired") throw new Error("This confirmation has expired");
   if (group.status !== "pending") throw new Error("Group is not pending clarification");
+  const dateCheck = resolveActionDate({ explicitDate: date, actionKind: "actual", now: Date.now(), userTimeZone: group.clientTimeZone ?? "UTC" });
+  if (dateCheck.status !== "resolved") {
+    throw new Error(dateCheck.reason ?? "This date cannot be used");
+  }
 
   const members: any[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
   const loggedItems: any[] = [];
@@ -531,7 +536,7 @@ export const confirmGroup = action({
     const group = await ctx.runQuery(aiInternal.getActionGroupForClarification, { groupId });
     if (!group || group.userId !== userId) throw new Error("Action group not found");
 
-    if (group.status === "pending" && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
+    if ((group.status === "pending" || group.status === "partial" || group.status === "failed") && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
       await ctx.runMutation(aiInternal.expireActionGroup, { groupId });
       const expiredMembers: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
       return {
@@ -651,11 +656,13 @@ export const confirmGroup = action({
       ? "committed"
       : discardedCount === finalMembers.length && finalMembers.length > 0
         ? "discarded"
-        : committedCount > 0 || discardedCount > 0 || failedCount > 0
-          ? "partial"
-          : pendingCount > 0
-            ? "pending"
-            : "failed";
+        : failedCount === finalMembers.length && finalMembers.length > 0
+          ? "failed"
+          : committedCount > 0 || discardedCount > 0 || failedCount > 0
+            ? "partial"
+            : pendingCount > 0
+              ? "pending"
+              : "failed";
     await ctx.runMutation(aiInternal.finalizeConfirmationGroup, { groupId, status });
     return { groupId, status, results, loggedItems, unresolvedItems, memoryApprovals };
   },
@@ -1025,6 +1032,14 @@ export const logWorkout = action({
           calculationVersion: 1,
         };
       }
+      const reportedCaloriesValue = parsedData.reportedCalories;
+      const estimatedCaloriesValue = userPhysique?.weight && parsedData.estimatedCalories != null
+        ? parsedData.estimatedCalories
+        : userPhysique?.weight && parsedData.calorieResult?.total_kcal != null
+          ? parsedData.calorieResult.total_kcal
+          : undefined;
+      const calorieSourceValue = parsedData.calorieSource ?? (reportedCaloriesValue != null ? "reported" : estimatedCaloriesValue != null ? "estimated" : undefined);
+      const caloriesBurnedValue = reportedCaloriesValue ?? estimatedCaloriesValue ?? parsedData.caloriesBurned;
       const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
         userId, date: today,
         name: parsedData.name || "Workout",
@@ -1033,14 +1048,10 @@ export const logWorkout = action({
         intensity: parsedData.intensity || intensity || "HIGH",
         exercises: parsedData.exercises,
         rationale: parsedData.rationale,
-        caloriesBurned: parsedData.caloriesBurned,
-        reportedCalories: parsedData.reportedCalories,
-        estimatedCalories: userPhysique?.weight && parsedData.estimatedCalories != null
-          ? parsedData.estimatedCalories
-          : userPhysique?.weight && parsedData.calorieResult?.total_kcal != null
-            ? parsedData.calorieResult.total_kcal
-            : undefined,
-        calorieSource: parsedData.calorieSource ?? (parsedData.reportedCalories != null ? "reported" : parsedData.calorieResult?.total_kcal != null && userPhysique?.weight ? "estimated" : undefined),
+        caloriesBurned: caloriesBurnedValue,
+        reportedCalories: reportedCaloriesValue,
+        estimatedCalories: estimatedCaloriesValue,
+        calorieSource: calorieSourceValue,
           structuredSets: parsedData.exercises ? JSON.stringify(parsedData.exercises) : undefined,
           logSource: "ai",
           ...calorieFields,
@@ -1057,14 +1068,18 @@ export const logWorkout = action({
         calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown),
         calculationVersion: 1,
       } : {};
+      const reportedCaloriesValue = extractStatedWorkoutCalories(description ?? "") ?? undefined;
+      const estimatedCaloriesValue = userPhysique?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined;
+      const calorieSourceValue = reportedCaloriesValue != null ? "reported" : estimatedCaloriesValue != null ? "estimated" : undefined;
+      const caloriesBurnedValue = reportedCaloriesValue ?? estimatedCaloriesValue ?? parsed.caloriesBurned;
       const id = await ctx.runMutation(internal.workouts.addWorkoutFromAI, {
         userId, date: today,
         name: parsed.name, sets: parsed.sets, duration: parsed.duration,
         intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
-        caloriesBurned: parsed.caloriesBurned,
-        reportedCalories: extractStatedWorkoutCalories(description ?? "") ?? undefined,
-        estimatedCalories: userPhysique?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined,
-        calorieSource: extractStatedWorkoutCalories(description ?? "") != null ? "reported" : userPhysique?.weight && parsed.calorieResult ? "estimated" : undefined,
+        caloriesBurned: caloriesBurnedValue,
+        reportedCalories: reportedCaloriesValue,
+        estimatedCalories: estimatedCaloriesValue,
+        calorieSource: calorieSourceValue,
         structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
         logSource: "ai",
         ...calorieFields,
@@ -1203,7 +1218,7 @@ Rules:
       if (/^\d{4}-\d{2}-\d{2}$/.test(message.trim())) {
         answerDate = message.trim();
       } else {
-        const resolved = resolveChatActionDate({ relativePhrase: message.trim(), actionKind: "actual" });
+        const resolved = resolveChatActionDate({ relativePhrase: message.trim(), actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
         if (resolved.status === "resolved") answerDate = resolved.date;
       }
       if (answerDate) {
@@ -1401,9 +1416,9 @@ Rules:
         return { date: today, resolution: { status: "needs_clarification", reason: "The date is too vague; provide an exact date" } };
       }
       if (typeof dateValue === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
-        return { date: dateValue, resolution: resolveChatActionDate({ explicitDate: dateValue, actionKind: "actual" }) };
+        return { date: dateValue, resolution: resolveChatActionDate({ explicitDate: dateValue, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0) };
       }
-      const resolution = resolveChatActionDate({ actionKind: "actual" });
+      const resolution = resolveChatActionDate({ actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
       return { date: today, resolution };
     }
 
@@ -1422,6 +1437,7 @@ Rules:
           continue;
         }
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
+        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
         const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsed, date: targetDate }, { userId, useMemory: true }));
         const draft = nutrition.ingredientBreakdown as MealDraft;
         const finalStructuredItems = JSON.stringify(draft.ingredients);
@@ -1456,7 +1472,7 @@ Rules:
           description: retryDescription,
           payload: mealPayload,
           confidence: nutrition.confidence,
-          resolvedDate: targetDate,
+          resolvedDate: exposedResolvedDate,
           resolvedTime: parsed.time,
           provenance: "ai_extracted",
           validation: mealValidation,
@@ -1513,7 +1529,12 @@ Rules:
           calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
         } : {};
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
+        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
         const workoutConfidence = parsed.calorieResult?.confidence;
+        const reportedCaloriesValue = extractStatedWorkoutCalories(logData.description || message) ?? undefined;
+        const estimatedCaloriesValue = profile?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined;
+        const calorieSourceValue = reportedCaloriesValue != null ? "reported" : estimatedCaloriesValue != null ? "estimated" : undefined;
+        const caloriesBurnedValue = reportedCaloriesValue ?? estimatedCaloriesValue ?? parsed.caloriesBurned;
         retryArgs = {
           name: parsed.name,
           sets: parsed.sets,
@@ -1522,10 +1543,10 @@ Rules:
           date: targetDate,
           exercises: parsed.exercises,
           rationale: parsed.rationale,
-          caloriesBurned: parsed.caloriesBurned,
-          reportedCalories: extractStatedWorkoutCalories(logData.description || message) ?? undefined,
-          estimatedCalories: profile?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined,
-          calorieSource: extractStatedWorkoutCalories(logData.description || message) != null ? "reported" : profile?.weight && parsed.calorieResult ? "estimated" : undefined,
+          caloriesBurned: caloriesBurnedValue,
+          reportedCalories: reportedCaloriesValue,
+          estimatedCalories: estimatedCaloriesValue,
+          calorieSource: calorieSourceValue,
           structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
           timestamp,
           logSource: "coach",
@@ -1534,10 +1555,10 @@ Rules:
         const workoutPayload = {
           date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
           intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
-          caloriesBurned: parsed.caloriesBurned,
-          reportedCalories: extractStatedWorkoutCalories(logData.description || message) ?? undefined,
-          estimatedCalories: profile?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined,
-          calorieSource: extractStatedWorkoutCalories(logData.description || message) != null ? "reported" : profile?.weight && parsed.calorieResult ? "estimated" : undefined,
+          caloriesBurned: caloriesBurnedValue,
+          reportedCalories: reportedCaloriesValue,
+          estimatedCalories: estimatedCaloriesValue,
+          calorieSource: calorieSourceValue,
           structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
           timestamp, logSource: "coach", ...calorieFields,
         };
@@ -1548,7 +1569,7 @@ Rules:
           description: retryDescription,
           payload: workoutPayload,
           confidence: workoutConfidence,
-          resolvedDate: targetDate,
+          resolvedDate: exposedResolvedDate,
           resolvedTime: timestamp,
           provenance: "ai_extracted",
           validation: workoutValidation,
@@ -1585,6 +1606,7 @@ Rules:
         const logData = JSON.parse(sleepMatch[1].trim());
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
+        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
         const parsedHours = typeof logData.hours === "number" && Number.isFinite(logData.hours) ? logData.hours : undefined;
         const parsedBand = ["under_6", "six_to_eight", "eight_plus"].includes(logData.band) ? logData.band : undefined;
         const parsedQuality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : undefined;
@@ -1597,7 +1619,7 @@ Rules:
           actionType: "recovery",
           description: `Sleep ${parsedHours != null ? `${parsedHours}h` : parsedBand ?? "value needed"}${parsedQuality ? ` (${parsedQuality})` : ""}`,
           payload: sleepPayload,
-          resolvedDate: targetDate,
+          resolvedDate: exposedResolvedDate,
           provenance: "ai_extracted",
           validation: sleepValidation,
           reason: reason ?? undefined,
@@ -1624,6 +1646,7 @@ Rules:
         const logData = JSON.parse(waterMatch[1].trim());
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
+        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
         const ml = typeof logData.ml === "number" && Number.isFinite(logData.ml) ? logData.ml : undefined;
         const time = new Date().toTimeString().slice(0, 5);
         const waterDraft = buildRecoveryDraft({ kind: "water", ml, date: targetDate, time, source: "ai_extracted" });
@@ -1635,7 +1658,7 @@ Rules:
           actionType: "recovery",
           description: `Water ${ml != null ? `${ml}ml` : "value needed"}`,
           payload: waterPayload,
-          resolvedDate: targetDate,
+          resolvedDate: exposedResolvedDate,
           resolvedTime: time,
           provenance: "ai_extracted",
           validation: waterValidation,
@@ -1663,6 +1686,7 @@ Rules:
         const logData = JSON.parse(moodMatch[1].trim());
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
+        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
         const rating = typeof logData.rating === "number" && Number.isFinite(logData.rating) ? logData.rating : undefined;
         const time = new Date().toTimeString().slice(0, 5);
         const moodDraft = buildRecoveryDraft({ kind: "mood", rating, date: targetDate, time, note: logData.note, source: "ai_extracted" });
@@ -1674,7 +1698,7 @@ Rules:
           actionType: "recovery",
           description: `Mood ${rating != null ? `${rating}/5` : "value needed"}`,
           payload: moodPayload,
-          resolvedDate: targetDate,
+          resolvedDate: exposedResolvedDate,
           resolvedTime: time,
           provenance: "ai_extracted",
           validation: moodValidation,
@@ -1702,6 +1726,7 @@ Rules:
         const logData = JSON.parse(stepsMatch[1].trim());
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
+        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
         const count = typeof logData.count === "number" && Number.isFinite(logData.count) ? logData.count : undefined;
         const stepsDraft = buildRecoveryDraft({ kind: "steps", count, date: targetDate, source: "ai_extracted" });
         const stepsPayload = recoveryPayloadFromDraft(stepsDraft);
@@ -1712,7 +1737,7 @@ Rules:
           actionType: "recovery",
           description: `Steps ${count != null ? count : "value needed"}`,
           payload: stepsPayload,
-          resolvedDate: targetDate,
+          resolvedDate: exposedResolvedDate,
           provenance: "ai_extracted",
           validation: stepsValidation,
           reason: reason ?? undefined,

@@ -493,7 +493,7 @@ export default defineSchema({
     resolvedAt: v.optional(v.number()),
   })
     .index("by_user_created_at", ["userId", "createdAt"])
-    .index("by_group_idempotency_key", ["groupIdempotencyKey"]),
+    .index("by_group_idempotency_key", ["userId", "groupIdempotencyKey"]),
 
   actions: defineTable({
     groupId: v.id("actionGroups"),
@@ -536,7 +536,7 @@ export default defineSchema({
   })
     .index("by_group", ["groupId"])
     .index("by_user_status", ["userId", "status"])
-    .index("by_member_idempotency_key", ["memberIdempotencyKey"]),
+    .index("by_member_idempotency_key", ["userId", "memberIdempotencyKey"]),
 
   action_telemetry: defineTable({
     actionId: v.string(),

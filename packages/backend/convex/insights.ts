@@ -85,6 +85,7 @@ export const saveInsights = internalMutation({
       ctx.db.query("meals").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
       ctx.db.query("workouts").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
       ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
+      // Keep this unfiltered: recovery/rest state rows consumed as stateRows are stored in sleep_logs.
       ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
       ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
       ctx.db.query("steps_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),

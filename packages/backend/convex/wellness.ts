@@ -35,9 +35,7 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
   switch (draft.entryKind) {
     case "water": {
       if (draft.waterMl == null) throw new Error("water ml is required");
-      const waterRows = args.mode === "upsert"
-        ? await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect()
-        : [];
+      const waterRows = await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
       const existing = waterRows.find((row: any) => !row.undoneAt) ?? null;
       if (existing) {
         await ctx.db.patch(existing._id, { ml: draft.waterMl, time, ...metadata });
@@ -48,7 +46,7 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
       break;
     }
     case "sleep": {
-      if (draft.sleep?.hours == null && draft.sleep?.band == null && draft.sleep?.quality == null) throw new Error("sleep hours, band, or quality is required");
+      if (draft.sleep?.hours == null && draft.sleep?.band == null && draft.sleep?.quality == null && draft.sleep?.intervalStart == null) throw new Error("sleep hours, band, or quality is required");
       const sleepRows = await ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
       const existing = sleepRows.find((row: any) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null;
       previous = existing ? {
@@ -81,9 +79,7 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
     }
     case "mood": {
       if (draft.mood == null) throw new Error("mood rating is required");
-      const moodRows = args.mode === "upsert"
-        ? await ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect()
-        : [];
+      const moodRows = await ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
       const existing = moodRows.find((row: any) => !row.undoneAt) ?? null;
       if (existing) {
         await ctx.db.patch(existing._id, { rating: draft.mood, note: draft.note, time, ...metadata });
@@ -235,14 +231,14 @@ export const deleteSleep = mutation({
 export const undoSleepLog = mutation({
   args: {
     id: v.id("sleep_logs"),
-    previous: v.union(v.null(), v.object({ hours: v.number(), quality: v.string(), note: v.optional(v.string()) })),
-    expected: v.object({ hours: v.number(), quality: v.string(), note: v.optional(v.string()) }),
+    previous: v.union(v.null(), v.object({ hours: v.optional(v.number()), band: v.optional(v.union(v.literal("under_6"), v.literal("six_to_eight"), v.literal("eight_plus"))), quality: v.optional(v.string()), note: v.optional(v.string()), intervalStart: v.optional(v.string()), intervalEnd: v.optional(v.string()), intervalDay: v.optional(v.string()) })),
+    expected: v.object({ hours: v.optional(v.number()), band: v.optional(v.union(v.literal("under_6"), v.literal("six_to_eight"), v.literal("eight_plus"))), quality: v.optional(v.string()), note: v.optional(v.string()), intervalStart: v.optional(v.string()), intervalEnd: v.optional(v.string()), intervalDay: v.optional(v.string()) }),
   },
   handler: async (ctx, { id, previous, expected }) => {
     const userId = await requireUserId(ctx);
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
-    if (row.hours !== expected.hours || row.quality !== expected.quality || row.note !== expected.note) {
+    if (row.hours !== expected.hours || row.band !== expected.band || row.quality !== expected.quality || row.note !== expected.note || row.intervalStart !== expected.intervalStart || row.intervalEnd !== expected.intervalEnd || row.intervalDay !== expected.intervalDay) {
       throw new Error("This log has changed since — can't undo");
     }
     if (previous) {

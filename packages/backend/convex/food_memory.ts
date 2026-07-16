@@ -30,7 +30,6 @@ export const getTopMemoriesPublic = query({
       .collect();
     return rows
       .filter((r) => !r.undoneAt && !r.deletedAt && r.approvalStatus !== "pending" && r.approvalStatus !== "rejected" && r.timesLogged >= AUTO_APPLY_MIN_LOGGED)
-      .filter((r) => !r.undoneAt && !r.deletedAt && r.approvalStatus !== "pending" && r.approvalStatus !== "rejected")
       .sort((a, b) => b.timesLogged - a.timesLogged || b.lastUsedDate.localeCompare(a.lastUsedDate))
       .slice(0, 6)
       .map((r) => ({ name: r.displayName, kcal: Math.round(r.kcal), timesLogged: r.timesLogged }));
@@ -125,6 +124,8 @@ export async function recordFoodMemoryRow(ctx: any, args: {
     const aliases = existing.aliases.includes(name) || existing.displayName === name
       ? existing.aliases
       : [...existing.aliases, name].slice(-5); // keep last 5 aliases
+    const newTimesLogged = existing.timesLogged + 1;
+    const autoPromote = existing.approvalStatus === "pending" && source !== "corrected" && newTimesLogged >= AUTO_APPLY_MIN_LOGGED;
 
     await ctx.db.patch(existing._id, {
       kcal: smooth(existing.kcal, kcal),
@@ -132,12 +133,16 @@ export async function recordFoodMemoryRow(ctx: any, args: {
       carbs: smooth(existing.carbs, carbs),
       fat: smooth(existing.fat, fat),
       components: components ?? existing.components,
-      timesLogged: existing.timesLogged + 1,
+      timesLogged: newTimesLogged,
       source: source === "corrected" ? "corrected" : existing.source,
       lastUsedDate: date,
       aliases,
       memoryType: existing.memoryType ?? "inferred",
-      approvalStatus: existing.approvalStatus ?? (source === "corrected" ? "approved" : "pending"),
+      approvalStatus: source === "corrected"
+        ? "approved"
+        : autoPromote
+          ? "approved"
+          : (existing.approvalStatus ?? "pending"),
       provenance: source,
       sourceActionIds: sourceActionId && !(existing.sourceActionIds ?? []).includes(sourceActionId)
         ? [...(existing.sourceActionIds ?? []), sourceActionId]
@@ -261,6 +266,17 @@ export const createExplicitFact = mutation({
     const displayName = fact.trim();
     const normalized = normalizeName(displayName);
     if (!normalized) throw new Error("Fact is required");
+    const existing = await ctx.db
+      .query("food_memory")
+      .withIndex("by_user_name", (q) => q.eq("userId", identity.subject).eq("normalizedName", normalized))
+      .first();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        memoryType: "explicit", approvalStatus: "approved", provenance: "user_stated",
+        fact: displayName, lastUsedDate: date ?? existing.lastUsedDate,
+      });
+      return existing._id;
+    }
     return ctx.db.insert("food_memory", {
       userId: identity.subject, normalizedName: normalized, displayName, aliases: [],
       kcal: 0, protein: 0, carbs: 0, fat: 0, timesLogged: 1,

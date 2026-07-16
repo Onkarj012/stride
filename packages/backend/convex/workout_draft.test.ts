@@ -54,11 +54,11 @@ test("direct, parsed, relog-shaped inputs converge on one draft shape", () => {
 test("exercise threshold accepts the boundary and rejects below it", () => {
   expect(selectExerciseCandidate([{ canonicalName: "A", score: QUALITY_THRESHOLD }])?.canonicalName).toBe("A");
   expect(selectExerciseCandidate([
-    { canonicalName: "A", score: 0.9 },
-    { canonicalName: "B", score: 0.9 - RUNNER_UP_MARGIN },
+    { canonicalName: "A", score: 0.75 },
+    { canonicalName: "B", score: 0.75 - RUNNER_UP_MARGIN },
   ])?.canonicalName).toBe("A");
   expect(selectExerciseCandidate([
-    { canonicalName: "A", score: QUALITY_THRESHOLD - 0.01 },
+    { canonicalName: "A", score: QUALITY_THRESHOLD * 0.99 },
   ])).toBeNull();
 });
 

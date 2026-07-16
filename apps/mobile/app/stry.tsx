@@ -12,7 +12,7 @@ import { useTheme } from '../components/theme'
 
 const SCREEN_WIDTH = Dimensions.get('window').width
 
-function ChatHistoryDrawer({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+function ChatHistoryDrawer({ visible, onClose, onSelectSession, onNewChat }: { visible: boolean; onClose: () => void; onSelectSession: (id: string) => void; onNewChat: () => void }) {
   const translateX = useRef(new RNAnimated.Value(-SCREEN_WIDTH)).current
   const overlayOpacity = useRef(new RNAnimated.Value(0)).current
   const insets = useSafeAreaInsets()
@@ -88,7 +88,7 @@ function ChatHistoryDrawer({ visible, onClose }: { visible: boolean; onClose: ()
         <View style={{ flex: 1, paddingHorizontal: 12, paddingTop: 16, paddingBottom: 24 }}>
           {/* New chat */}
           <Pressable
-            onPress={close}
+            onPress={() => { onNewChat(); close() }}
             style={({ pressed }) => ({
               flexDirection: 'row',
               alignItems: 'center',
@@ -113,7 +113,7 @@ function ChatHistoryDrawer({ visible, onClose }: { visible: boolean; onClose: ()
             Recent sessions
           </Text>
           {!sessions ? <Text style={{ paddingHorizontal: 12, color: t.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 13 }}>Loading chats…</Text> : sessions.length === 0 ? <Text style={{ paddingHorizontal: 12, color: t.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 13 }}>No saved chats yet.</Text> : sessions.map(session => (
-            <Pressable key={session.id} onPress={close} style={({ pressed }) => ({ borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, marginBottom: 2, backgroundColor: pressed ? t.dimBg : 'transparent' })}>
+            <Pressable key={session.id} onPress={() => { onSelectSession(session.id); close() }} style={({ pressed }) => ({ borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12, marginBottom: 2, backgroundColor: pressed ? t.dimBg : 'transparent' })}>
               <Text numberOfLines={1} style={{ fontFamily: 'Manrope_700Bold', fontSize: 13, color: t.textMuted }}>{session.title}</Text>
             </Pressable>
           ))}
@@ -133,6 +133,7 @@ function ChatHistoryDrawer({ visible, onClose }: { visible: boolean; onClose: ()
 export default function StryScreen() {
   const router = useRouter()
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const t = useTheme()
 
   return (
@@ -187,11 +188,13 @@ export default function StryScreen() {
         </Pressable>
       </View>
 
-      <ChatPanel />
+      <ChatPanel key={selectedSessionId ?? 'new'} initialSessionId={selectedSessionId ?? undefined} />
 
       <ChatHistoryDrawer
         visible={historyOpen}
         onClose={() => setHistoryOpen(false)}
+        onSelectSession={(id: string) => setSelectedSessionId(id)}
+        onNewChat={() => setSelectedSessionId(null)}
       />
     </SafeAreaView>
   )

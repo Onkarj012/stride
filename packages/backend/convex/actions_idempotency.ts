@@ -71,10 +71,15 @@ async function membersForGroup(ctx: MutationCtx, groupId: Doc<"actionGroups">["_
 export async function ensureGroup(ctx: MutationCtx, groupFields: ActionGroupInput): Promise<EnsureGroupResult> {
   const existing = await ctx.db
     .query("actionGroups")
-    .withIndex("by_group_idempotency_key", (q) => q.eq("groupIdempotencyKey", groupFields.groupIdempotencyKey))
+    .withIndex("by_group_idempotency_key", (q) =>
+      q.eq("userId", groupFields.userId).eq("groupIdempotencyKey", groupFields.groupIdempotencyKey),
+    )
     .first();
 
   if (existing) {
+    if (existing.userId !== groupFields.userId || existing.groupIdempotencyKey !== groupFields.groupIdempotencyKey) {
+      throw new Error("Idempotency key collision: existing action group does not match expected user/group key");
+    }
     return { state: "existing", group: existing, members: await membersForGroup(ctx, existing._id) };
   }
 
@@ -87,10 +92,20 @@ export async function ensureGroup(ctx: MutationCtx, groupFields: ActionGroupInpu
 export async function ensureMember(ctx: MutationCtx, memberFields: ActionMemberInput): Promise<EnsureMemberResult> {
   const existing = await ctx.db
     .query("actions")
-    .withIndex("by_member_idempotency_key", (q) => q.eq("memberIdempotencyKey", memberFields.memberIdempotencyKey))
+    .withIndex("by_member_idempotency_key", (q) =>
+      q.eq("userId", memberFields.userId).eq("memberIdempotencyKey", memberFields.memberIdempotencyKey),
+    )
     .first();
 
   if (existing) {
+    if (
+      existing.userId !== memberFields.userId ||
+      existing.memberIdempotencyKey !== memberFields.memberIdempotencyKey ||
+      existing.groupId !== memberFields.groupId ||
+      existing.actionType !== memberFields.actionType
+    ) {
+      throw new Error("Idempotency key collision: existing action member does not match expected identity");
+    }
     if (existing.status === "committed") {
       return { state: "already_committed", shouldExecute: false, member: existing };
     }

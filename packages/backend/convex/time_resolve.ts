@@ -64,7 +64,12 @@ function relativeDate(phrase: string, today: string): string | "vague" | null {
   }
 
   const daysAgo = phrase.match(/^(\d+)\s+days?\s+ago$/);
-  if (daysAgo) return dateOffset(today, -Number(daysAgo[1]));
+  if (daysAgo) {
+    const days = Number(daysAgo[1]);
+    if (!Number.isSafeInteger(days)) return null;
+    const resolved = dateOffset(today, -days);
+    return isValidDate(resolved) ? resolved : null;
+  }
 
   if (
     phrase === "a while ago" ||
@@ -99,14 +104,11 @@ export function resolveActionDate(input: ResolveActionDateInput): ActionDateReso
   const clientLocalDate = input.clientLocalDate?.trim();
   const phrase = input.relativePhrase?.trim().toLowerCase().replace(/\s+/g, " ");
 
-  if (explicitDate && !isValidDate(explicitDate)) {
+  if (input.explicitDate !== undefined && (!explicitDate || !isValidDate(explicitDate))) {
     return { status: "rejected", reason: "Explicit date must be a valid YYYY-MM-DD date" };
   }
-  if (explicitTime && !isValidTime(explicitTime)) {
+  if (input.explicitTime !== undefined && (!explicitTime || !isValidTime(explicitTime))) {
     return { status: "rejected", reason: "Explicit time must be a valid HH:MM time" };
-  }
-  if (clientLocalDate && !isValidDate(clientLocalDate)) {
-    return { status: "rejected", reason: "Client local date must be a valid YYYY-MM-DD date" };
   }
 
   let date = explicitDate;
@@ -116,7 +118,12 @@ export function resolveActionDate(input: ResolveActionDateInput): ActionDateReso
     if (!relative) return clarification("The relative date is not precise enough; provide an exact date");
     date = relative;
   }
-  if (!date) date = clientLocalDate;
+  if (!date) {
+    if (input.clientLocalDate !== undefined && (!clientLocalDate || !isValidDate(clientLocalDate))) {
+      return { status: "rejected", reason: "Client local date must be a valid YYYY-MM-DD date" };
+    }
+    date = clientLocalDate;
+  }
   if (!date) return clarification("An exact action date is required");
 
   if (

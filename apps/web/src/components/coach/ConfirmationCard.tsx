@@ -88,7 +88,8 @@ export function ConfirmationCard({ payload, pending = false, result, onConfirm }
               <div className="flex items-start gap-2">
                 <button
                   type="button"
-                  aria-label={item.selected ? `Keep ${item.description}` : `Remove ${item.description}`}
+                  aria-label={`Include ${item.description}`}
+                  aria-pressed={item.selected}
                   disabled={disabled || committed || discarded}
                   onClick={() => setDrafts((current) => current.map((draft) => draft.ordinal === item.ordinal ? { ...draft, selected: !draft.selected } : draft))}
                   className={cn("mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border", item.selected ? "border-lavender bg-lavender text-ink" : "border-ink/20 text-transparent dark:border-white/20")}

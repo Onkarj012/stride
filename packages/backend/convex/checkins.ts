@@ -5,6 +5,7 @@ import { ConvexError, v } from "convex/values";
 import { callAI, parseJSON } from "./ai/llm";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
+import { assertValidDate } from "./validation";
 
 type CheckInWindow = "morning" | "day" | "evening" | "night";
 type CheckInSource = "registry" | "llm" | "template";
@@ -365,7 +366,7 @@ async function validateSubmittedAnswer(ctx: MutationCtx, userId: string, args: {
   let definition: CheckInCandidate | null = null;
   if (args.templateId) {
     const template = templateById(args.templateId);
-    if (template) definition = templateCandidate(template, args.window, "metric");
+    if (template) definition = templateCandidate(template, args.window, await getUserUnits(ctx, userId));
   }
   if (!definition) definition = REGISTRY_QUESTIONS.find((question) => question.id === args.questionId) ?? null;
   if (!definition && args.source === "llm") {
@@ -395,8 +396,19 @@ async function validateSubmittedAnswer(ctx: MutationCtx, userId: string, args: {
     if (definition.min != null && args.numericValue < definition.min) throw new ConvexError("Check-in answer is below the allowed range");
     if (definition.max != null && args.numericValue > definition.max) throw new ConvexError("Check-in answer is above the allowed range");
   }
+  if (definition.answerType === "scale" && args.numericValue != null) {
+    const selectedOption = options.find((option) => option.value === args.value);
+    const canonicalNumericValue = selectedOption == null ? Number.NaN : Number(selectedOption.value);
+    if (Number.isFinite(canonicalNumericValue) && args.numericValue !== canonicalNumericValue) {
+      throw new ConvexError("Check-in answer values do not match");
+    }
+  }
   if (definition.answerType === "yes_no" && args.booleanValue == null && args.value !== "yes" && args.value !== "no") {
     throw new ConvexError("Boolean check-in answer is required");
+  }
+  if (definition.answerType === "yes_no" && args.booleanValue != null && (args.value === "yes" || args.value === "no")) {
+    const expectedBooleanValue = args.value === "yes";
+    if (args.booleanValue !== expectedBooleanValue) throw new ConvexError("Check-in answer values do not match");
   }
   return definition;
 }
@@ -860,7 +872,7 @@ export const submitAnswer = mutation({
     time: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    assertDate(args.date);
+    assertValidDate(args.date);
     const userId = await requireUserId(ctx);
     const skipped = args.skipped ?? args.value === "skip";
     const definition = await validateSubmittedAnswer(ctx, userId, args);

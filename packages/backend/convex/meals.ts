@@ -181,7 +181,7 @@ export const addMeal = mutation({
     const memories = usableFoodMemories(await ctx.db.query("food_memory").withIndex("by_user", (q: any) => q.eq("userId", userId)).collect());
     const draft = buildDirectMealDraft({ ...args, date, time: args.time, memoryMatch: findBestMatch(args.name, memories as any[]) ?? undefined });
     const payload = mealPayloadFromDraft(draft, { ...args, userId, date });
-    const rawInput = JSON.stringify({ source: args.logSource ?? "manual", date, time: args.time, draft });
+    const rawInput = JSON.stringify({ source: args.logSource ?? "manual", date, time: args.time, args });
     const groupKey = deriveGroupKey({ userId, sourceSurface: "direct_ui", rawInput });
     const provenance = draft.nutritionSource === "database" ? "database_match" : draft.nutritionSource === "ai_estimate" ? "ai_estimated" : "user_reported";
     return ctx.runMutation((internal as any).actions_writer.writeMealAction, {
@@ -458,8 +458,8 @@ export const getMealsByDateRange = internalQuery({
   handler: async (ctx, { userId, startDate, endDate }) => {
     const meals = (await ctx.db
       .query("meals")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
-      .collect()).filter((meal) => meal.date <= endDate && !meal.undoneAt);
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate).lte("date", endDate))
+      .collect()).filter((meal) => !meal.undoneAt);
     return meals;
   },
 });

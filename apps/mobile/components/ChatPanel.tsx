@@ -145,12 +145,12 @@ function AssistantMessage({ message }: { message: Extract<Message, { role: 'assi
   return <View style={{ maxWidth: '94%', gap: 8 }}><AgentBadge type={message.agent} />{message.typing ? <View style={{ backgroundColor: t.card, borderRadius: 18, paddingHorizontal: 12, alignSelf: 'flex-start' }}><TypingDots /></View> : message.blocks.map((block, index) => <Animated.View key={index} entering={FadeInDown.delay(index * 70)}><BlockView block={block} /></Animated.View>)}</View>
 }
 
-export function ChatPanel() {
+export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
   const [messages, setMessages] = useState<Message[]>([GREETING])
   const [input, setInput] = useState('')
   const [running, setRunning] = useState(false)
   const [pending, setPending] = useState<Set<string>>(new Set())
-  const [activeSessionId, setActiveSessionId] = useState<any>(null)
+  const [activeSessionId, setActiveSessionId] = useState<any>(initialSessionId ?? null)
   const [activeClarificationGroupId, setActiveClarificationGroupId] = useState<string | null>(null)
   const scrollRef = useRef<ScrollView>(null)
   const insets = useSafeAreaInsets()
@@ -192,26 +192,26 @@ export function ChatPanel() {
   async function undoOne(messageId: string, entry: UndoEntry) {
     if (entry.undone || pending.has(entry.actionId)) return
     setPending(current => new Set(current).add(entry.actionId))
-    try { await undoAction({ actionId: entry.actionId as never }); setMessages(current => current.map(message => message.id === messageId && message.role === 'undo' ? { ...message, entries: message.entries.map(item => item.actionId === entry.actionId ? { ...item, undone: true } : item) } : message)) } finally { setPending(current => { const next = new Set(current); next.delete(entry.actionId); return next }) }
+    try { await undoAction({ actionId: entry.actionId as never }); setMessages(current => current.map(message => message.id === messageId && message.role === 'undo' ? { ...message, entries: message.entries.map(item => item.actionId === entry.actionId ? { ...item, undone: true } : item) } : message)) } catch (error) { console.error(error); setMessages(current => [...current, { id: `error-${Date.now()}`, role: 'assistant', agent: 'overall', typing: false, blocks: [{ kind: 'text', text: error instanceof Error ? error.message : 'That action failed — please try again.' }] }]) } finally { setPending(current => { const next = new Set(current); next.delete(entry.actionId); return next }) }
   }
 
   async function undoAll(messageId: string, groupId: string) {
     const key = `group:${groupId}`
     if (pending.has(key)) return
     setPending(current => new Set(current).add(key))
-    try { const result = await undoGroup({ groupId: groupId as never }) as { results?: Array<{ actionId: string; status: string }> }; const undone = new Set((result.results ?? []).filter(item => item.status === 'undone' || item.status === 'already_undone').map(item => item.actionId)); setMessages(current => current.map(message => message.id === messageId && message.role === 'undo' ? { ...message, entries: message.entries.map(entry => undone.has(entry.actionId) ? { ...entry, undone: true } : entry) } : message)) } finally { setPending(current => { const next = new Set(current); next.delete(key); return next }) }
+    try { const result = await undoGroup({ groupId: groupId as never }) as { results?: Array<{ actionId: string; status: string }> }; const undone = new Set((result.results ?? []).filter(item => item.status === 'undone' || item.status === 'already_undone').map(item => item.actionId)); setMessages(current => current.map(message => message.id === messageId && message.role === 'undo' ? { ...message, entries: message.entries.map(entry => undone.has(entry.actionId) ? { ...entry, undone: true } : entry) } : message)) } catch (error) { console.error(error); setMessages(current => [...current, { id: `error-${Date.now()}`, role: 'assistant', agent: 'overall', typing: false, blocks: [{ kind: 'text', text: error instanceof Error ? error.message : 'That action failed — please try again.' }] }]) } finally { setPending(current => { const next = new Set(current); next.delete(key); return next }) }
   }
 
   async function resolve(messageId: string, groupId: string, date: string) {
     const key = `clarify:${groupId}`
     setPending(current => new Set(current).add(key))
-    try { const result = await resolveClarification({ groupId: groupId as never, date }) as any; setActiveClarificationGroupId(null); setMessages(current => current.map(message => message.id === messageId && message.role === 'clarification' ? { ...message, resolved: true } : message)); const items = loggedItemsFrom(result.loggedItems?.length === 1 ? result.loggedItems[0] : { type: 'multiple', data: { items: result.loggedItems ?? [] } }); const entries = undoEntriesFrom(items); if (entries.length) setMessages(current => [...current, { id: `undo-${Date.now()}`, role: 'undo', groupId: entries[0].groupId, entries }]) } finally { setPending(current => { const next = new Set(current); next.delete(key); return next }) }
+    try { const result = await resolveClarification({ groupId: groupId as never, date }) as any; setActiveClarificationGroupId(null); setMessages(current => current.map(message => message.id === messageId && message.role === 'clarification' ? { ...message, resolved: true } : message)); const items = loggedItemsFrom(result.loggedItems?.length === 1 ? result.loggedItems[0] : { type: 'multiple', data: { items: result.loggedItems ?? [] } }); const entries = undoEntriesFrom(items); if (entries.length) setMessages(current => [...current, { id: `undo-${Date.now()}`, role: 'undo', groupId: entries[0].groupId, entries }]) } catch (error) { console.error(error); setMessages(current => [...current, { id: `error-${Date.now()}`, role: 'assistant', agent: 'overall', typing: false, blocks: [{ kind: 'text', text: error instanceof Error ? error.message : 'That action failed — please try again.' }] }]) } finally { setPending(current => { const next = new Set(current); next.delete(key); return next }) }
   }
 
   async function confirm(messageId: string, groupId: string, decisions: Array<{ ordinal: number; action: 'confirm' | 'discard'; edits?: { date?: string; description?: string } }>) {
     const key = `confirm:${groupId}`
     setPending(current => new Set(current).add(key))
-    try { const result = await confirmGroup({ groupId: groupId as never, decisions }) as ConfirmationResult & { loggedItems?: LoggedItem[] }; setMessages(current => current.map(message => message.id === messageId && message.role === 'confirmation' ? { ...message, result } : message)); const items = loggedItemsFrom(result.loggedItems?.length === 1 ? result.loggedItems[0] : { type: 'multiple', data: { items: result.loggedItems ?? [] } }); const entries = undoEntriesFrom(items); if (entries.length) setMessages(current => [...current, { id: `undo-${Date.now()}`, role: 'undo', groupId: entries[0].groupId, entries }]) } finally { setPending(current => { const next = new Set(current); next.delete(key); return next }) }
+    try { const result = await confirmGroup({ groupId: groupId as never, decisions }) as ConfirmationResult & { loggedItems?: LoggedItem[] }; setMessages(current => current.map(message => message.id === messageId && message.role === 'confirmation' ? { ...message, result } : message)); const items = loggedItemsFrom(result.loggedItems?.length === 1 ? result.loggedItems[0] : { type: 'multiple', data: { items: result.loggedItems ?? [] } }); const entries = undoEntriesFrom(items); if (entries.length) setMessages(current => [...current, { id: `undo-${Date.now()}`, role: 'undo', groupId: entries[0].groupId, entries }]) } catch (error) { console.error(error); setMessages(current => [...current, { id: `error-${Date.now()}`, role: 'assistant', agent: 'overall', typing: false, blocks: [{ kind: 'text', text: error instanceof Error ? error.message : 'That action failed — please try again.' }] }]) } finally { setPending(current => { const next = new Set(current); next.delete(key); return next }) }
   }
 
   const composerBottom = Math.max(insets.bottom, 12)

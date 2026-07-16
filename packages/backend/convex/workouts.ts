@@ -145,9 +145,9 @@ export async function writeWorkoutDomain(
     exercises: draft.exercises,
     rationale: draft.rationale,
     caloriesBurned: validated.caloriesBurned,
-    calorieConfidence: draft.calorieConfidence,
-    calorieRangeLow: draft.calorieRangeLow,
-    calorieRangeHigh: draft.calorieRangeHigh,
+    calorieConfidence: validated.calorieConfidence,
+    calorieRangeLow: validated.calorieRangeLow,
+    calorieRangeHigh: validated.calorieRangeHigh,
     calorieEstimateRough: draft.calorieEstimateRough,
     calorieBreakdown: draft.calorieBreakdown ? JSON.stringify(draft.calorieBreakdown) : undefined,
     calculationVersion: args.calculationVersion ?? (draft.estimatedCalories != null ? 1 : undefined),
@@ -285,7 +285,7 @@ export const updateWorkout = mutation({
       intensity: fields.intensity,
       sets: fields.sets,
       exercises: fields.exercises ?? fields.structuredSets ?? workout.exercises ?? workout.structuredSets,
-      reportedCalories: fields.reportedCalories ?? (fields.calorieSource === "reported" ? fields.caloriesBurned : !calorieWasEdited ? workout.reportedCalories : undefined),
+      reportedCalories: fields.reportedCalories ?? (fields.calorieSource === "reported" ? fields.caloriesBurned : fields.calorieSource !== "estimated" && fields.caloriesBurned !== undefined ? fields.caloriesBurned : !calorieWasEdited ? workout.reportedCalories : undefined),
       estimatedCalories: fields.estimatedCalories ?? (!calorieWasEdited ? workout.estimatedCalories : fields.calorieSource === "estimated" ? fields.caloriesBurned : undefined),
       calorieSource: fields.calorieSource ?? (!calorieWasEdited ? workout.calorieSource : fields.caloriesBurned !== undefined ? "reported" : undefined),
       calorieEstimateProvenance: (fields.calorieEstimateProvenance ?? workout.calorieEstimateProvenance) as any,
@@ -320,9 +320,9 @@ export const updateWorkout = mutation({
     if (calorieWasEdited || workout.reportedCalories !== undefined) patch.reportedCalories = draft.reportedCalories;
     if (calorieWasEdited || workout.estimatedCalories !== undefined) patch.estimatedCalories = draft.estimatedCalories;
     if (calorieWasEdited || workout.calorieSource !== undefined) patch.calorieSource = draft.calorieSource;
-    if (fields.calorieConfidence !== undefined || workout.calorieConfidence !== undefined) patch.calorieConfidence = draft.calorieConfidence;
-    if (fields.calorieRangeLow !== undefined || workout.calorieRangeLow !== undefined) patch.calorieRangeLow = draft.calorieRangeLow;
-    if (fields.calorieRangeHigh !== undefined || workout.calorieRangeHigh !== undefined) patch.calorieRangeHigh = draft.calorieRangeHigh;
+    if (fields.calorieConfidence !== undefined || workout.calorieConfidence !== undefined) patch.calorieConfidence = validated.calorieConfidence;
+    if (fields.calorieRangeLow !== undefined || workout.calorieRangeLow !== undefined) patch.calorieRangeLow = validated.calorieRangeLow;
+    if (fields.calorieRangeHigh !== undefined || workout.calorieRangeHigh !== undefined) patch.calorieRangeHigh = validated.calorieRangeHigh;
     if (fields.calorieEstimateRough !== undefined || workout.calorieEstimateRough !== undefined) patch.calorieEstimateRough = draft.calorieEstimateRough;
     if (fields.calorieEstimateProvenance !== undefined || workout.calorieEstimateProvenance !== undefined) patch.calorieEstimateProvenance = draft.calorieEstimateProvenance;
     if (fields.calorieBreakdown !== undefined || workout.calorieBreakdown !== undefined) patch.calorieBreakdown = draft.calorieBreakdown ? JSON.stringify(draft.calorieBreakdown) : undefined;
@@ -370,6 +370,7 @@ export const relogWorkout = mutation({
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
     const targetDate = date ?? new Date().toISOString().split("T")[0];
+    const targetTime = timestamp ?? new Date().toISOString().slice(11, 16);
     const rawInput = `relog:${String(src._id)}:${targetDate}`;
     const groupIdempotencyKey = deriveGroupKey({
       userId,
@@ -402,7 +403,7 @@ export const relogWorkout = mutation({
           calorieEstimateRough: src.calorieEstimateRough,
           calorieBreakdown: src.calorieBreakdown,
           calculationVersion: src.calculationVersion,
-          timestamp: timestamp ?? new Date().toISOString().slice(11, 16),
+          timestamp: targetTime,
           logSource: "relog",
           idempotencyToken,
           allowDuplicate: true,
@@ -411,7 +412,7 @@ export const relogWorkout = mutation({
         validation: { status: "valid", messages: [] },
         reversible: true,
         resolvedDate: targetDate,
-        resolvedTime: timestamp,
+        resolvedTime: targetTime,
       },
     });
   },

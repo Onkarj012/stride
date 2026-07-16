@@ -29,14 +29,14 @@ export async function recordWorkoutMemoryRow(ctx: any, args: {
       .first();
 
     if (!existing) {
-      await ctx.db.insert("workout_memory", {
+      const id = await ctx.db.insert("workout_memory", {
         userId, normalizedName: normalized, displayName: name,
         aliases: [], exercises, durationMin, intensity,
         caloriesBurned, timesLogged: 1, lastUsedDate: date,
         memoryType: "inferred", approvalStatus: "pending", provenance: "learned",
         sourceActionIds: sourceActionId ? [sourceActionId] : [],
       });
-      return;
+      return id;
     }
 
     const aliases = existing.displayName === name || existing.aliases.includes(name)
@@ -62,6 +62,7 @@ export async function recordWorkoutMemoryRow(ctx: any, args: {
         ? [...(existing.sourceActionIds ?? []), sourceActionId]
         : existing.sourceActionIds,
     });
+    return existing._id;
 }
 
 export const recordFromWorkout = internalMutation({
@@ -160,7 +161,16 @@ export const updateFromCorrection = internalMutation({
     const previousNormalized = args.previousName ? normalizeName(args.previousName) : normalized;
     const rows = await ctx.db.query("workout_memory").withIndex("by_user", (q) => q.eq("userId", args.userId)).collect();
     const existing = rows.find((row) => row.normalizedName === previousNormalized || row.normalizedName === normalized);
-    if (!existing) return recordWorkoutMemoryRow(ctx, { ...args, sourceActionId: undefined });
+    if (!existing) {
+      const id = await ctx.db.insert("workout_memory", {
+        userId: args.userId, normalizedName: normalized, displayName: args.name,
+        aliases: [], exercises: args.exercises, durationMin: args.durationMin, intensity: args.intensity,
+        caloriesBurned: args.caloriesBurned, timesLogged: 1, lastUsedDate: args.date,
+        memoryType: "inferred", approvalStatus: "approved", provenance: "user_corrected",
+        sourceActionIds: [],
+      });
+      return id;
+    }
     const aliases = existing.aliases.includes(args.name) || existing.displayName === args.name
       ? existing.aliases
       : [...existing.aliases, args.name].slice(-5);

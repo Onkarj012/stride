@@ -12,14 +12,14 @@ function configuredValue(value: string | undefined, placeholder: string): string
 }
 
 export const CONVEX_URL = configuredValue(
-  process.env.EXPO_PUBLIC_CONVEX_URL ?? extra.convexUrl,
+  process.env.EXPO_PUBLIC_CONVEX_URL,
   '__EXPO_PUBLIC_CONVEX_URL__',
-)
+) ?? configuredValue(extra.convexUrl, '__EXPO_PUBLIC_CONVEX_URL__')
 
 export const CLERK_PUBLISHABLE_KEY = configuredValue(
-  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? extra.clerkPublishableKey,
+  process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY,
   '__EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY__',
-)
+) ?? configuredValue(extra.clerkPublishableKey, '__EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY__')
 
 /**
  * Set these public values in the Expo environment before running the app.
