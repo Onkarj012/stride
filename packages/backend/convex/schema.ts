@@ -383,4 +383,76 @@ export default defineSchema({
     steps: v.optional(v.array(v.string())),
     source: v.optional(v.string()),
   }).index("by_user", ["userId"]),
+
+  actionGroups: defineTable({
+    userId: v.string(),
+    groupIdempotencyKey: v.string(),
+    sourceSurface: v.union(
+      v.literal("chat"),
+      v.literal("quick_log"),
+      v.literal("barcode"),
+      v.literal("recipe"),
+      v.literal("checkin"),
+      v.literal("direct_ui"),
+      v.literal("mobile"),
+    ),
+    rawInput: v.string(),
+    model: v.optional(v.string()),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("committed"),
+      v.literal("partial"),
+      v.literal("failed"),
+      v.literal("discarded"),
+      v.literal("expired"),
+    ),
+    clientLocalDate: v.optional(v.string()),
+    clientLocalTime: v.optional(v.string()),
+    clientTimeZone: v.optional(v.string()),
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+  })
+    .index("by_user_created_at", ["userId", "createdAt"])
+    .index("by_group_idempotency_key", ["groupIdempotencyKey"]),
+
+  actions: defineTable({
+    groupId: v.id("actionGroups"),
+    userId: v.string(),
+    actionType: v.union(
+      v.literal("meal"),
+      v.literal("workout"),
+      v.literal("recovery"),
+      v.literal("rest"),
+      v.literal("memory"),
+    ),
+    memberIdempotencyKey: v.string(),
+    payload: v.any(),
+    provenance: v.union(
+      v.literal("user_reported"),
+      v.literal("ai_extracted"),
+      v.literal("ai_estimated"),
+      v.literal("database_match"),
+    ),
+    confidence: v.optional(v.number()),
+    validation: v.object({
+      status: v.union(v.literal("valid"), v.literal("warning"), v.literal("error")),
+      messages: v.array(v.string()),
+    }),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("committed"),
+      v.literal("failed"),
+      v.literal("undone"),
+      v.literal("discarded"),
+      v.literal("expired"),
+    ),
+    reversible: v.boolean(),
+    resolvedDate: v.optional(v.string()),
+    resolvedTime: v.optional(v.string()),
+    committedRowRef: v.optional(v.object({ table: v.string(), id: v.string() })),
+    undoneAt: v.optional(v.number()),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_user_status", ["userId", "status"])
+    .index("by_member_idempotency_key", ["memberIdempotencyKey"]),
 });
