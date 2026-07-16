@@ -2,6 +2,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { ConvexError, v } from "convex/values";
 import { applyDayAdjustment } from "./goals";
 import { internal } from "./_generated/api";
+import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 import {
   buildIdempotencyKey,
   isSimilarWorkout,
@@ -240,18 +241,30 @@ export const relogWorkout = mutation({
     });
     const logSource = normalizeLogSource("relog", "relog");
     const contentHash = workoutContentHash(validated);
-    const idempotencyKey = buildIdempotencyKey({
-      userId,
-      date: targetDate,
-      source: logSource,
-      contentHash,
-      timeWindow: workoutTimeWindowKey({
-        date: targetDate,
-        contentHash,
-        timestamp,
-        idempotencyToken,
-      }),
-    });
+    const idempotencyKey = idempotencyToken?.trim()
+      ? deriveMemberKey({
+          groupKey: deriveGroupKey({
+            userId,
+            sourceSurface: "direct_ui",
+            rawInput: `${targetDate}|${contentHash}`,
+            clientSubmissionId: idempotencyToken,
+          }),
+          actionType: "workout",
+          payloadFingerprint: contentHash,
+          ordinal: 0,
+        })
+      : buildIdempotencyKey({
+          userId,
+          date: targetDate,
+          source: logSource,
+          contentHash,
+          timeWindow: workoutTimeWindowKey({
+            date: targetDate,
+            contentHash,
+            timestamp,
+            idempotencyToken,
+          }),
+        });
     const existing = await findExistingWorkoutByIdempotencyKey(ctx, userId, targetDate, idempotencyKey);
     if (existing) return existing._id;
     return ctx.db.insert("workouts", {

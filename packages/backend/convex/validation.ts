@@ -256,6 +256,10 @@ export function workoutContentHash(
   ].join("|"));
 }
 
+/**
+ * Legacy domain-row dedupe remains content-hash plus time-window based. Canonical member keys are authoritative;
+ * callers should use this content hash as the member payloadFingerprint rather than as a competing retry scheme.
+ */
 export function buildIdempotencyKey(parts: {
   userId: string;
   date: string;
