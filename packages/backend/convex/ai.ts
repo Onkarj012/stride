@@ -259,7 +259,7 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   if (group.status !== "pending") throw new Error("Group is not pending clarification");
   const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
   const dateCheck = resolveChatActionDate({ explicitDate: date, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
-  if (dateCheck.status !== "resolved") {
+  if (dateCheck.status !== "resolved" && !(group.clientLocalDate !== undefined && group.clientLocalDate === date)) {
     throw new Error(dateCheck.reason ?? "This date cannot be used");
   }
 
@@ -600,28 +600,36 @@ export const confirmGroup = action({
       }
 
       const edited = editedConfirmationMember(member, decision);
-      const groupInput = {
-        userId: group.userId,
-        groupIdempotencyKey: group.groupIdempotencyKey,
-        sourceSurface: group.sourceSurface,
-        rawInput: group.rawInput,
-        model: group.model,
-        clientLocalDate: group.clientLocalDate,
-        clientLocalTime: group.clientLocalTime,
-        clientTimeZone: group.clientTimeZone,
-        createdAt: group.createdAt,
-      };
-      const memberInput = {
-        memberIdempotencyKey: member.memberIdempotencyKey,
-        payload: edited.payload,
-        provenance: member.provenance,
-        confidence: member.confidence,
-        validation: member.validation,
-        reversible: member.reversible,
-        resolvedDate: edited.resolvedDate,
-        resolvedTime: edited.resolvedTime,
-      };
       try {
+        if (edited.resolvedDate !== member.resolvedDate) {
+          const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId: group.userId })) as any;
+          const dateCheck = resolveChatActionDate({ explicitDate: edited.resolvedDate, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
+          if (dateCheck.status !== "resolved") {
+            throw new Error(dateCheck.reason ?? "This date cannot be used");
+          }
+        }
+
+        const groupInput = {
+          userId: group.userId,
+          groupIdempotencyKey: group.groupIdempotencyKey,
+          sourceSurface: group.sourceSurface,
+          rawInput: group.rawInput,
+          model: group.model,
+          clientLocalDate: group.clientLocalDate,
+          clientLocalTime: group.clientLocalTime,
+          clientTimeZone: group.clientTimeZone,
+          createdAt: group.createdAt,
+        };
+        const memberInput = {
+          memberIdempotencyKey: member.memberIdempotencyKey,
+          payload: edited.payload,
+          provenance: member.provenance,
+          confidence: member.confidence,
+          validation: member.validation,
+          reversible: member.reversible,
+          resolvedDate: edited.resolvedDate,
+          resolvedTime: edited.resolvedTime,
+        };
         let rowId: string;
         if (member.actionType === "meal") {
           rowId = String(await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: groupInput, member: memberInput }));
