@@ -257,7 +257,8 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   }
   if (group.status === "expired") throw new Error("This confirmation has expired");
   if (group.status !== "pending") throw new Error("Group is not pending clarification");
-  const dateCheck = resolveActionDate({ explicitDate: date, actionKind: "actual", now: Date.now(), userTimeZone: group.clientTimeZone ?? "UTC" });
+  const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
+  const dateCheck = resolveChatActionDate({ explicitDate: date, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
   if (dateCheck.status !== "resolved") {
     throw new Error(dateCheck.reason ?? "This date cannot be used");
   }
