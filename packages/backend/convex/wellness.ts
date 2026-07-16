@@ -1,6 +1,7 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { recordBehaviorRow } from "./behavior";
+import { buildRecoveryDraft } from "./recovery_draft";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -13,69 +14,127 @@ function todayDate(): string {
 }
 
 export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBehavior?: boolean } = {}) {
-  const date = args.date ?? todayDate();
-  const time = args.time ?? new Date().toTimeString().slice(0, 5);
+  const draft = buildRecoveryDraft({
+    ...args,
+    date: args.date ?? todayDate(),
+    source: args.source ?? "direct_ui",
+    entryKind: args.entryKind ?? (args.kind === "rest" ? "state" : args.kind),
+  });
+  const date = draft.date;
+  const time = draft.time ?? new Date().toTimeString().slice(0, 5);
+  const metadata = {
+    source: draft.source,
+    confidence: draft.confidence,
+    unresolved: draft.unresolved,
+    correctionState: draft.correctionState,
+    state: draft.state,
+  };
   let id: any;
   let previous: any = undefined;
-  switch (args.kind) {
+  switch (draft.entryKind) {
     case "water": {
-      if (args.ml <= 0) throw new Error("ml must be positive");
+      if (draft.waterMl == null) throw new Error("water ml is required");
       const waterRows = args.mode === "upsert"
         ? await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect()
         : [];
       const existing = waterRows.find((row: any) => !row.undoneAt) ?? null;
       if (existing) {
-        await ctx.db.patch(existing._id, { ml: args.ml, time });
+        await ctx.db.patch(existing._id, { ml: draft.waterMl, time, ...metadata });
         id = existing._id;
       } else {
-        id = await ctx.db.insert("water_logs", { userId: args.userId, date, ml: args.ml, time });
+        id = await ctx.db.insert("water_logs", { userId: args.userId, date, ml: draft.waterMl, time, ...metadata });
       }
       break;
     }
     case "sleep": {
-      if (args.hours < 0 || args.hours > 24) throw new Error("hours out of range");
+      if (draft.sleep?.hours == null && draft.sleep?.band == null && draft.sleep?.quality == null) throw new Error("sleep hours, band, or quality is required");
       const sleepRows = await ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
-      const existing = sleepRows.find((row: any) => !row.undoneAt) ?? null;
-      previous = existing ? { hours: existing.hours, quality: existing.quality, note: existing.note } : null;
+      const existing = sleepRows.find((row: any) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null;
+      previous = existing ? {
+        hours: existing.hours,
+        band: existing.band,
+        quality: existing.quality,
+        note: existing.note,
+        intervalStart: existing.intervalStart,
+        intervalEnd: existing.intervalEnd,
+        intervalDay: existing.intervalDay,
+      } : null;
+      const sleepFields = {
+        hours: draft.sleep?.hours,
+        band: draft.sleep?.band,
+        quality: draft.sleep?.quality,
+        note: draft.note,
+        kind: "sleep",
+        intervalStart: draft.sleep?.intervalStart,
+        intervalEnd: draft.sleep?.intervalEnd,
+        intervalDay: draft.sleep?.intervalDay,
+        ...metadata,
+      };
       if (existing) {
-        await ctx.db.patch(existing._id, { hours: args.hours, quality: args.quality, note: args.note });
+        await ctx.db.patch(existing._id, sleepFields);
         id = existing._id;
       } else {
-        id = await ctx.db.insert("sleep_logs", { userId: args.userId, date, hours: args.hours, quality: args.quality, note: args.note });
+        id = await ctx.db.insert("sleep_logs", { userId: args.userId, date, ...sleepFields });
       }
       break;
     }
     case "mood": {
-      if (args.rating < 1 || args.rating > 5) throw new Error("rating must be 1..5");
+      if (draft.mood == null) throw new Error("mood rating is required");
       const moodRows = args.mode === "upsert"
         ? await ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect()
         : [];
       const existing = moodRows.find((row: any) => !row.undoneAt) ?? null;
       if (existing) {
-        await ctx.db.patch(existing._id, { rating: args.rating, note: args.note, time });
+        await ctx.db.patch(existing._id, { rating: draft.mood, note: draft.note, time, ...metadata });
         id = existing._id;
       } else {
-        id = await ctx.db.insert("mood_logs", { userId: args.userId, date, rating: args.rating, note: args.note, time });
+        id = await ctx.db.insert("mood_logs", { userId: args.userId, date, rating: draft.mood, note: draft.note, time, ...metadata });
       }
       break;
     }
     case "steps": {
-      if (args.count < 0) throw new Error("count must be non-negative");
+      if (draft.steps == null) throw new Error("steps count is required");
       const stepRows = await ctx.db.query("steps_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
       const existing = stepRows.find((row: any) => !row.undoneAt) ?? null;
       previous = existing ? { count: existing.count } : null;
       if (existing) {
-        await ctx.db.patch(existing._id, { count: args.count });
+        await ctx.db.patch(existing._id, { count: draft.steps, ...metadata });
         id = existing._id;
       } else {
-        id = await ctx.db.insert("steps_logs", { userId: args.userId, date, count: args.count });
+        id = await ctx.db.insert("steps_logs", { userId: args.userId, date, count: draft.steps, ...metadata });
       }
+      break;
+    }
+    case "state":
+    case "wellness": {
+      const stateFields = {
+        kind: draft.entryKind,
+        hours: draft.sleep?.hours,
+        band: draft.sleep?.band,
+        quality: draft.sleep?.quality,
+        note: draft.note,
+        intervalStart: draft.sleep?.intervalStart,
+        intervalEnd: draft.sleep?.intervalEnd,
+        intervalDay: draft.sleep?.intervalDay,
+        waterMl: draft.waterMl,
+        mood: draft.mood,
+        stress: draft.stress,
+        energy: draft.energy,
+        soreness: draft.soreness,
+        injury: draft.injury,
+        steps: draft.steps,
+        illness: draft.illness,
+        plannedRest: draft.plannedRest,
+        travel: draft.travel,
+        ...metadata,
+      };
+      id = await ctx.db.insert("sleep_logs", { userId: args.userId, date, ...stateFields });
       break;
     }
     default:
       throw new Error("Unsupported recovery action");
   }
-  if (options.emitBehavior) await recordBehaviorRow(ctx, args.userId, "log", args.kind, undefined, date);
+  if (options.emitBehavior) await recordBehaviorRow(ctx, args.userId, "log", draft.entryKind, undefined, date);
   return { id, previous };
 }
 
@@ -123,7 +182,7 @@ export const getSleep = query({
     return (await ctx.db
       .query("sleep_logs")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .collect()).find((row) => !row.undoneAt) ?? null;
+      .collect()).find((row) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null;
   },
 });
 
@@ -284,7 +343,7 @@ export const getTodaySummary = query({
         .collect().then((rows) => rows.filter((row) => !row.undoneAt)),
       ctx.db.query("sleep_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
-        .collect().then((rows) => rows.find((row) => !row.undoneAt) ?? null),
+        .collect().then((rows) => rows.find((row) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null),
       ctx.db.query("mood_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", d))
         .collect().then((rows) => rows.filter((row) => !row.undoneAt)),
@@ -296,10 +355,69 @@ export const getTodaySummary = query({
     return {
       waterMl: water.reduce((s, w) => s + w.ml, 0),
       waterCount: water.length,
-      sleep: sleep ? { hours: sleep.hours, quality: sleep.quality } : null,
+      sleep: sleep ? { hours: sleep.hours, band: sleep.band, quality: sleep.quality } : null,
       lastMood: mood.length > 0 ? mood[mood.length - 1].rating : null,
-      steps: steps?.count ?? 0,
+      steps: steps?.count,
     };
+  },
+});
+
+export type RecoveryStateResult = {
+  date: string;
+  state: string;
+  requiredInputs: string[];
+  missingInputs: string[];
+  insufficient_data: boolean;
+  confidence: "insufficient_data" | "reported";
+};
+
+export function deriveRecoveryState(input: {
+  date: string;
+  sleep: { hours?: number; band?: string; quality?: string } | null;
+  water: Array<{ ml: number }>;
+  mood: Array<{ rating: number }>;
+  steps: { count?: number } | null;
+  stateRows?: Array<{ state?: string; undoneAt?: number; stress?: number }>;
+}): RecoveryStateResult {
+  const requiredInputs = ["sleep", "water", "mood", "stress", "steps"];
+  const hasSleep = !!input.sleep && (input.sleep.hours != null || input.sleep.band != null || input.sleep.quality != null);
+  const hasWater = input.water.length > 0;
+  const hasMood = input.mood.length > 0;
+  const hasSteps = input.steps?.count != null;
+  const hasStress = (input.stateRows ?? []).some((row) => !row.undoneAt && row.stress != null);
+  const missingInputs = requiredInputs.filter((name) => (
+    name === "sleep" ? !hasSleep :
+      name === "water" ? !hasWater :
+        name === "mood" ? !hasMood :
+          name === "steps" ? !hasSteps : !hasStress
+  ));
+  const latestState = [...(input.stateRows ?? [])].filter((row) => !row.undoneAt).at(-1)?.state ?? "unknown";
+  return {
+    date: input.date,
+    state: latestState,
+    requiredInputs,
+    missingInputs,
+    insufficient_data: missingInputs.length > 0,
+    confidence: missingInputs.length > 0 ? "insufficient_data" : "reported",
+  };
+}
+
+export const getRecoveryState = query({
+  args: { date: v.string() },
+  handler: async (ctx, { date }) => {
+    const userId = await requireUserId(ctx);
+    const [sleep, water, mood, steps, stateRows] = await Promise.all([
+      ctx.db.query("sleep_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect()
+        .then((rows) => rows.find((row) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null),
+      ctx.db.query("water_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect()
+        .then((rows) => rows.filter((row) => !row.undoneAt)),
+      ctx.db.query("mood_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect()
+        .then((rows) => rows.filter((row) => !row.undoneAt)),
+      ctx.db.query("steps_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect()
+        .then((rows) => rows.find((row) => !row.undoneAt) ?? null),
+      ctx.db.query("sleep_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
+    ]);
+    return deriveRecoveryState({ date, sleep, water, mood, steps, stateRows });
   },
 });
 
@@ -317,7 +435,7 @@ export const getLastSleepForContext = internalQuery({
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
         .collect();
       const row = rows.find((candidate) => !candidate.undoneAt);
-      if (row) return { hours: row.hours, quality: row.quality, date: row.date };
+      if (row && (!row.kind || row.kind === "sleep")) return { hours: row.hours, band: row.band, quality: row.quality, date: row.date };
     }
     return null;
   },

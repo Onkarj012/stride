@@ -110,6 +110,25 @@ function CalendarGrid({ calendarData, selected, onSelect }: {
 
 type Tab = "meals" | "workouts";
 
+function RecoveryMeta({ state, sleep }: { state: any; sleep: any }) {
+  if (!state) return null;
+  const source = sleep?.source ?? "unknown source";
+  const confidence = sleep?.confidence != null ? `confidence ${Math.round(sleep.confidence * 100)}%` : state.confidence;
+  return (
+    <div className="rounded-[14px] border border-border/60 bg-card px-4 py-3 text-[11px] text-text-muted">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-semibold text-text">Recovery record</span>
+        <span>source: {source}</span>
+        <span>{confidence}</span>
+        <span>state: {state.state}</span>
+      </div>
+      {state.missingInputs?.length > 0 && (
+        <div className="mt-1">unresolved: {state.missingInputs.join(", ")}</div>
+      )}
+    </div>
+  );
+}
+
 /* ── Expandable workout row ── */
 function WorkoutRow({ w, onEdit, onRelog, onDelete, relogging }: {
   w: any;
@@ -399,6 +418,7 @@ export function HistoryPage() {
   const data = useQuery(api.history.getDayHistory, { date: dateStr }) as { meals?: any[]; workouts?: any[] } | undefined;
   const waterLogs = (useQuery(api.wellness.getWater, { date: dateStr }) ?? []) as any[];
   const sleepLog = useQuery(api.wellness.getSleep, { date: dateStr });
+  const recoveryState = useQuery(api.wellness.getRecoveryState, { date: dateStr });
   const meals = data?.meals ?? [];
   const workouts = data?.workouts ?? [];
 
@@ -412,7 +432,7 @@ export function HistoryPage() {
   const statCards = [
     { label: "Calories", value: Math.round(macros.kcal), unit: "", sub: `${Math.round(macros.protein)}p · ${Math.round(macros.carbs)}c · ${Math.round(macros.fat)}f`, tone: "bg-peach" },
     { label: "Workout", value: workoutMin, unit: "min", sub: `${workouts.length} session${workouts.length !== 1 ? "s" : ""}`, tone: "bg-lavender" },
-    { label: "Sleep", value: sleepLog ? sleepLog.hours.toFixed(1) : "—", unit: sleepLog ? "h" : "", sub: sleepLog ? sleepLog.quality : "not logged", tone: "bg-sky" },
+    { label: "Sleep", value: sleepLog?.hours != null ? sleepLog.hours.toFixed(1) : sleepLog?.band ? sleepLog.band.replaceAll("_", " ") : "—", unit: sleepLog?.hours != null ? "h" : "", sub: sleepLog ? (sleepLog.quality ?? "band reported") : "not logged", tone: "bg-sky" },
     { label: "Water", value: waterLogs.length > 0 ? (waterLogs.reduce((s, w) => s + w.ml, 0) / 1000).toFixed(1) : "—", unit: waterLogs.length > 0 ? "L" : "", sub: `${waterLogs.length} glass${waterLogs.length !== 1 ? "es" : ""}`, tone: "bg-mint" },
   ];
 
@@ -434,6 +454,7 @@ export function HistoryPage() {
           </div>
         ))}
       </div>
+      <div className="mb-5"><RecoveryMeta state={recoveryState} sleep={sleepLog} /></div>
       <DayDetail
         date={selected}
         onDeleteMeal={(id) => deleteMeal({ id })}
@@ -445,7 +466,7 @@ export function HistoryPage() {
       <PageHeader center="History" right={<NavTrigger className="lg:hidden" />} />
 
       {/* Mobile: stacked. Desktop: 2 columns */}
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">
 
         {/* LEFT COLUMN: 2×2 stat grid + calendar */}
         <div className="space-y-3">
@@ -467,6 +488,8 @@ export function HistoryPage() {
             <CalendarGrid calendarData={calendarData} selected={selected} onSelect={setSelected} />
           </Card>
         </div>
+
+        <RecoveryMeta state={recoveryState} sleep={sleepLog} />
 
         {/* RIGHT COLUMN: tab nav + detail list */}
         <DayDetail

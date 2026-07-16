@@ -41,6 +41,7 @@ import type * as plan_resolve from "../plan_resolve.js";
 import type * as profile from "../profile.js";
 import type * as progress from "../progress.js";
 import type * as recipes from "../recipes.js";
+import type * as recovery_draft from "../recovery_draft.js";
 import type * as seed from "../seed.js";
 import type * as tdee_engine from "../tdee_engine.js";
 import type * as time_resolve from "../time_resolve.js";
@@ -94,6 +95,7 @@ declare const fullApi: ApiFromModules<{
   profile: typeof profile;
   progress: typeof progress;
   recipes: typeof recipes;
+  recovery_draft: typeof recovery_draft;
   seed: typeof seed;
   tdee_engine: typeof tdee_engine;
   time_resolve: typeof time_resolve;

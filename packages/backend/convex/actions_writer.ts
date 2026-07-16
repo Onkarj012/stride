@@ -20,6 +20,7 @@ import { stableHash } from "./validation";
 import { writeMealDomain } from "./meals";
 import { writeWorkoutDomain } from "./workouts";
 import { writeRecoveryDomain } from "./wellness";
+import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 
 const groupValidator = v.object({
   userId: v.string(),
@@ -160,11 +161,22 @@ export const writeRecoveryAction = internalMutation({
     const prepared = await prepareMember(ctx, "recovery", args as WriterArgs);
     if (!prepared.shouldExecute) return prepared.rowId ? { id: prepared.rowId } : prepared.rowId;
     const payload = prepared.member.payload as Record<string, any>;
-    const result = await writeRecoveryDomain(ctx, { ...payload, userId: prepared.group.userId }, { emitBehavior: true });
+    const draft = buildRecoveryDraft({
+      ...payload,
+      date: payload.date ?? prepared.member.resolvedDate,
+      source: payload.source ?? prepared.member.provenance,
+      entryKind: payload.entryKind ?? payload.kind,
+    });
+    const canonicalPayload = {
+      ...recoveryPayloadFromDraft(draft),
+      ...(payload.mode ? { mode: payload.mode } : {}),
+    };
+    const result = await writeRecoveryDomain(ctx, { ...canonicalPayload, userId: prepared.group.userId }, { emitBehavior: true });
+    const table = draft.entryKind === "state" || draft.entryKind === "wellness" ? "sleep_logs" : `${draft.entryKind}_logs`;
     await commitMember(
       ctx,
       prepared,
-      `${payload.kind}_logs`,
+      table,
       result.id,
       result.previous !== undefined ? { previous: result.previous } : undefined,
     );

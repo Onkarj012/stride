@@ -208,15 +208,41 @@ export default defineSchema({
     date: v.string(),
     ml: v.number(),
     time: v.string(),
+    source: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    unresolved: v.optional(v.array(v.string())),
+    correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
+    state: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
   sleep_logs: defineTable({
     userId: v.string(),
     date: v.string(),
-    hours: v.number(),
-    quality: v.string(), // poor | ok | good | great
+    // Hours are optional because a user-reported sleep band is not a point estimate.
+    hours: v.optional(v.number()),
+    band: v.optional(v.union(v.literal("under_6"), v.literal("six_to_eight"), v.literal("eight_plus"))),
+    quality: v.optional(v.string()), // poor | ok | good | great
     note: v.optional(v.string()),
+    kind: v.optional(v.string()), // sleep | state | wellness
+    state: v.optional(v.string()),
+    source: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    unresolved: v.optional(v.array(v.string())),
+    correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
+    intervalStart: v.optional(v.string()),
+    intervalEnd: v.optional(v.string()),
+    intervalDay: v.optional(v.string()),
+    waterMl: v.optional(v.number()),
+    mood: v.optional(v.number()),
+    stress: v.optional(v.number()),
+    energy: v.optional(v.number()),
+    soreness: v.optional(v.number()),
+    injury: v.optional(v.string()),
+    steps: v.optional(v.number()),
+    illness: v.optional(v.string()),
+    plannedRest: v.optional(v.boolean()),
+    travel: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
@@ -226,6 +252,11 @@ export default defineSchema({
     rating: v.number(), // 1..5
     note: v.optional(v.string()),
     time: v.string(),
+    source: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    unresolved: v.optional(v.array(v.string())),
+    correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
+    state: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
@@ -233,6 +264,11 @@ export default defineSchema({
     userId: v.string(),
     date: v.string(),
     count: v.number(),
+    source: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    unresolved: v.optional(v.array(v.string())),
+    correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
+    state: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 

@@ -12,7 +12,7 @@ const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "
 interface PatternInput {
   meals: { date: string; protein: number }[];
   workouts: { date: string }[];
-  sleep: { date: string; hours: number }[];
+  sleep: { date: string; hours?: number }[];
   water: { date: string; ml: number }[];
   proteinTarget: number;
   waterTarget: number;
@@ -62,6 +62,7 @@ export function derivePatterns(input: PatternInput): string[] {
     const workoutDates = new Set(input.workouts.map((w) => w.date));
     let poorNights = 0, poorThenActive = 0, goodNights = 0, goodThenActive = 0;
     for (const s of input.sleep) {
+      if (s.hours == null) continue;
       const active = workoutDates.has(nextDate(s.date));
       if (s.hours < 6.5) { poorNights++; if (active) poorThenActive++; }
       else { goodNights++; if (active) goodThenActive++; }
@@ -137,7 +138,7 @@ export const getPatterns = query({
     return derivePatterns({
       meals: meals.map((m: any) => ({ date: m.date, protein: m.protein })),
       workouts: workouts.map((w: any) => ({ date: w.date })),
-      sleep: sleep.map((s: any) => ({ date: s.date, hours: s.hours })),
+      sleep: sleep.filter((s: any) => !s.undoneAt && (!s.kind || s.kind === "sleep")).map((s: any) => ({ date: s.date, hours: s.hours })),
       water: water.map((w: any) => ({ date: w.date, ml: w.ml })),
       proteinTarget: profile?.proteinTarget ?? 90,
       waterTarget: profile?.waterTarget ?? 2000,
@@ -164,7 +165,7 @@ export const getPatternsForContext = internalQuery({
     return derivePatterns({
       meals: meals.map((m: any) => ({ date: m.date, protein: m.protein })),
       workouts: workouts.map((w: any) => ({ date: w.date })),
-      sleep: sleep.map((s: any) => ({ date: s.date, hours: s.hours })),
+      sleep: sleep.filter((s: any) => !s.undoneAt && (!s.kind || s.kind === "sleep")).map((s: any) => ({ date: s.date, hours: s.hours })),
       water: water.map((w: any) => ({ date: w.date, ml: w.ml })),
       proteinTarget: profile?.proteinTarget ?? 90,
       waterTarget: profile?.waterTarget ?? 2000,

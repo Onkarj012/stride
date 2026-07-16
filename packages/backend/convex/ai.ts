@@ -14,6 +14,7 @@ import { buildMealDraftFromParsed, mealPayloadFromDraft, type MealDraft } from "
 import { calculateNonPersonalizedWorkoutCalories, calculateWorkoutCalories, parseDurationMinutes } from "./calorie_engine";
 import { matchExercises, getWeightedMET } from "./exercise_db";
 import { mapAIIntensity, inferDensity, countCompoundRatio } from "./workout_scorer";
+import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 import {
   callAI, parseJSON, type AIMessage,
   DEFAULT_MODEL, CHAT_MODEL, VISION_MODELS, OPENROUTER_URL,
@@ -79,6 +80,23 @@ async function committedActionMetadata(ctx: any, userId: string, table: string, 
 function isConfidenceLow(confidence: number | undefined): boolean {
   return confidence !== undefined && confidence < LOW_CONFIDENCE_CONFIRM_THRESHOLD;
 }
+
+const RESTRICTED_RECOVERY_PATTERNS = [
+  /severe\s+(?:pain|painful)/i,
+  /(?:chest|head|abdominal|stomach|back|joint) pain/i,
+  /(?:suicid|kill myself|self[- ]harm|end my life|crisis)/i,
+  /(?:eating disorder|anorexi|bulimi|purge|binge and purge)/i,
+  /(?:dangerously|severely|extremely) dehydrated/i,
+  /(?:can't keep fluids|cannot keep fluids|fainting).*(?:water|drink|dehydrat)/i,
+  /(?:dangerous|extreme|severe) fatigue/i,
+  /(?:too tired|exhausted).*(?:drive|driving|stay awake)/i,
+];
+
+export function hasRestrictedRecoverySignal(message: string): boolean {
+  return RESTRICTED_RECOVERY_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+const RESTRICTED_GUIDANCE = `SAFETY RESTRICTION: The user's message contains a potentially urgent pain, crisis, eating-disorder, dehydration, or dangerous-fatigue signal. Do not diagnose, prescribe treatment, recommend compensating exercise, dieting, fluid-loading, or other precise self-management. Respond with empathy, advise contacting local emergency services or a qualified clinician/crisis service as appropriate, and ask whether they are in immediate danger. Escalate, do not advise.`;
 
 function isVagueDate(date: unknown): boolean {
   return date === "UNKNOWN_VAGUE";
@@ -951,6 +969,7 @@ export const chat = action({
     const userId = identity.subject;
     const userName = identity.name ?? "Athlete";
     const today = todayArg ?? new Date().toISOString().split("T")[0];
+    const restrictedGuidance = hasRestrictedRecoverySignal(message);
 
     // Gather context
     const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory, userIngredients, checkInAnswers] = await Promise.all([
@@ -1077,7 +1096,7 @@ Rules:
           : resolved.loggedItems.length > 1
             ? { type: "multiple", items: resolved.loggedItems }
             : null;
-        return { reply: resolvedReply, loggedItem, failedItems: [], coachType: (coachType as CoachType) ?? "overall" };
+        return { reply: resolvedReply, loggedItem, failedItems: [], coachType: (coachType as CoachType) ?? "overall", restricted: restrictedGuidance };
       }
     }
 
@@ -1131,7 +1150,10 @@ Rules:
     // Last night's sleep (Phase 3: cross-domain)
     if (lastSleep) {
       const sleepLabel = (lastSleep as any).date === today ? "Today" : "Last night";
-      contextBlock += `\nSLEEP: ${sleepLabel} — ${(lastSleep as any).hours}h, quality: ${(lastSleep as any).quality}\n`;
+      const sleepValue = (lastSleep as any).hours != null
+        ? `${(lastSleep as any).hours}h`
+        : (lastSleep as any).band ?? "unknown duration";
+      contextBlock += `\nSLEEP: ${sleepLabel} — ${sleepValue}, quality: ${(lastSleep as any).quality ?? "unknown"}\n`;
     }
 
     // Behavioral patterns (Phase 1b)
@@ -1143,14 +1165,14 @@ Rules:
     // Behavioral memory + tone layer (Phase 3+4: sleep + acceptance rate)
     const behaviorLine = behaviorSummary({ ...(behavior ?? {}), acceptRate: (behavior as any)?.acceptRate ?? null });
     const toneLine = toneInstruction(settings?.coachingStyle, {
-      sleepHours: lastSleep ? (lastSleep as any).hours : undefined,
+      sleepHours: lastSleep && (lastSleep as any).hours != null ? (lastSleep as any).hours : undefined,
       sleepQuality: lastSleep ? (lastSleep as any).quality : undefined,
       acceptRate: (behavior as any)?.acceptRate ?? undefined,
     });
     const personaSuffix = [behaviorLine, toneLine].filter(Boolean).join("\n");
 
     const messages: AIMessage[] = [
-      { role: "system", content: `${coach.systemPrompt}${personaSuffix ? `\n\n${personaSuffix}` : ""}\n\n${contextBlock}${loggingPrompt}` },
+      { role: "system", content: `${coach.systemPrompt}${personaSuffix ? `\n\n${personaSuffix}` : ""}\n\n${contextBlock}${loggingPrompt}${restrictedGuidance ? `\n\n${RESTRICTED_GUIDANCE}` : ""}` },
       ...history.map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content })),
       image
         ? {
@@ -1438,14 +1460,17 @@ Rules:
         const logData = JSON.parse(sleepMatch[1].trim());
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const hours = Math.max(0.5, Math.min(24, Number(logData.hours) || 7));
-        const quality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : "ok";
-        const sleepPayload = { kind: "sleep", hours, quality, date: targetDate };
+        const parsedHours = typeof logData.hours === "number" && Number.isFinite(logData.hours) ? logData.hours : undefined;
+        const parsedBand = ["under_6", "six_to_eight", "eight_plus"].includes(logData.band) ? logData.band : undefined;
+        const parsedQuality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : undefined;
+        const sleepDraft = buildRecoveryDraft({ kind: "sleep", date: targetDate, hours: parsedHours, band: parsedBand, quality: parsedQuality, source: "ai_extracted" });
+        const sleepPayload = recoveryPayloadFromDraft(sleepDraft);
         const sleepValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, undefined, sleepValidation.status);
+        const reason = clarifyingReason(logData.date, dateResolution, undefined, sleepValidation.status)
+          ?? (sleepDraft.unresolved.length > 0 ? "Sleep hours or band is required" : null);
         const candidate: ParsedCandidate = {
           actionType: "recovery",
-          description: `Sleep ${hours}h (${quality})`,
+          description: `Sleep ${parsedHours != null ? `${parsedHours}h` : parsedBand ?? "value needed"}${parsedQuality ? ` (${parsedQuality})` : ""}`,
           payload: sleepPayload,
           resolvedDate: targetDate,
           provenance: "ai_extracted",
@@ -1474,14 +1499,16 @@ Rules:
         const logData = JSON.parse(waterMatch[1].trim());
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const ml = Math.max(50, Math.min(5000, Number(logData.ml) || 250));
+        const ml = typeof logData.ml === "number" && Number.isFinite(logData.ml) ? logData.ml : undefined;
         const time = new Date().toTimeString().slice(0, 5);
-        const waterPayload = { kind: "water", ml, date: targetDate, time };
+        const waterDraft = buildRecoveryDraft({ kind: "water", ml, date: targetDate, time, source: "ai_extracted" });
+        const waterPayload = recoveryPayloadFromDraft(waterDraft);
         const waterValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, undefined, waterValidation.status);
+        const reason = clarifyingReason(logData.date, dateResolution, undefined, waterValidation.status)
+          ?? (waterDraft.unresolved.length > 0 ? "Water amount is required" : null);
         const candidate: ParsedCandidate = {
           actionType: "recovery",
-          description: `Water ${ml}ml`,
+          description: `Water ${ml != null ? `${ml}ml` : "value needed"}`,
           payload: waterPayload,
           resolvedDate: targetDate,
           resolvedTime: time,
@@ -1511,14 +1538,16 @@ Rules:
         const logData = JSON.parse(moodMatch[1].trim());
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const rating = Math.max(1, Math.min(5, Number(logData.rating) || 3)) as 1|2|3|4|5;
+        const rating = typeof logData.rating === "number" && Number.isFinite(logData.rating) ? logData.rating : undefined;
         const time = new Date().toTimeString().slice(0, 5);
-        const moodPayload = { kind: "mood", rating, date: targetDate, time, note: logData.note };
+        const moodDraft = buildRecoveryDraft({ kind: "mood", rating, date: targetDate, time, note: logData.note, source: "ai_extracted" });
+        const moodPayload = recoveryPayloadFromDraft(moodDraft);
         const moodValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, undefined, moodValidation.status);
+        const reason = clarifyingReason(logData.date, dateResolution, undefined, moodValidation.status)
+          ?? (moodDraft.unresolved.length > 0 ? "Mood rating is required" : null);
         const candidate: ParsedCandidate = {
           actionType: "recovery",
-          description: `Mood ${rating}/5`,
+          description: `Mood ${rating != null ? `${rating}/5` : "value needed"}`,
           payload: moodPayload,
           resolvedDate: targetDate,
           resolvedTime: time,
@@ -1548,13 +1577,15 @@ Rules:
         const logData = JSON.parse(stepsMatch[1].trim());
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const count = Math.max(0, Number(logData.count) || 0);
-        const stepsPayload = { kind: "steps", count, date: targetDate };
+        const count = typeof logData.count === "number" && Number.isFinite(logData.count) ? logData.count : undefined;
+        const stepsDraft = buildRecoveryDraft({ kind: "steps", count, date: targetDate, source: "ai_extracted" });
+        const stepsPayload = recoveryPayloadFromDraft(stepsDraft);
         const stepsValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, undefined, stepsValidation.status);
+        const reason = clarifyingReason(logData.date, dateResolution, undefined, stepsValidation.status)
+          ?? (stepsDraft.unresolved.length > 0 ? "Step count is required" : null);
         const candidate: ParsedCandidate = {
           actionType: "recovery",
-          description: `Steps ${count}`,
+          description: `Steps ${count != null ? count : "value needed"}`,
           payload: stepsPayload,
           resolvedDate: targetDate,
           provenance: "ai_extracted",
@@ -1749,7 +1780,7 @@ Rules:
       }
     }
 
-    return { reply: cleanReply, loggedItem, failedItems, coachType: detectedCoach, clarification, confirmation };
+    return { reply: cleanReply, loggedItem, failedItems, coachType: detectedCoach, clarification, confirmation, restricted: restrictedGuidance };
   },
 });
 
@@ -2306,11 +2337,13 @@ export const homepageInput = action({
     reply?: string;
     coachType?: CoachType;
     sessionId?: any;
+    restricted?: boolean;
   }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
     const today = todayArg ?? new Date().toISOString().split("T")[0];
+    const restrictedGuidance = hasRestrictedRecoverySignal(message);
 
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     const settingsModel = settings?.openRouterModel ?? undefined;
@@ -2506,7 +2539,8 @@ Return ONLY:
         }).join(", ")}\n`;
       }
       if (lastSleepQ) {
-        context += `Last sleep: ${(lastSleepQ as any).hours}h, ${(lastSleepQ as any).quality}\n`;
+        const sleepValue = (lastSleepQ as any).hours != null ? `${(lastSleepQ as any).hours}h` : (lastSleepQ as any).band ?? "unknown duration";
+        context += `Last sleep: ${sleepValue}, ${(lastSleepQ as any).quality ?? "unknown"}\n`;
       }
       if (checkInAnswersQ) {
         context += `Today's check-in answers: ${checkInAnswersQ}\n`;
@@ -2516,7 +2550,7 @@ Return ONLY:
       }
 
       const toneOpts = {
-        sleepHours: lastSleepQ ? (lastSleepQ as any).hours : undefined,
+        sleepHours: lastSleepQ && (lastSleepQ as any).hours != null ? (lastSleepQ as any).hours : undefined,
         sleepQuality: lastSleepQ ? (lastSleepQ as any).quality : undefined,
         acceptRate: (behaviorQ as any)?.acceptRate ?? undefined,
       };
@@ -2528,7 +2562,7 @@ Return ONLY:
         .slice(-12) // keep only last ~12 turns to stay within context
         .map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content }));
 
-      const systemContent = `${coach.systemPrompt}${tone ? `\n\n${tone}` : ""}\n\n${context}\n\nKeep your reply concise — under 60 words unless the user asks for detail.`;
+      const systemContent = `${coach.systemPrompt}${tone ? `\n\n${tone}` : ""}\n\n${context}\n\nKeep your reply concise — under 60 words unless the user asks for detail.${restrictedGuidance ? `\n\n${RESTRICTED_GUIDANCE}` : ""}`;
       const replyMessages: AIMessage[] = [
         { role: "system", content: systemContent },
         ...trimmedHistory,
@@ -2548,7 +2582,7 @@ Return ONLY:
         content: reply,
       });
 
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId };
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId, restricted: restrictedGuidance };
     }
 
     // Step 2: Parse each item in parallel
@@ -2678,11 +2712,13 @@ Examples: "slept 6.5 hours" → {"hours":6.5,"quality":"ok"}, "slept 8h, felt gr
 If hours can't be determined from a time range, calculate: e.g. "12:30am to 7am" = 6.5 hours.
 Return ONLY JSON.`;
           const sleepRaw = await callAI([{ role: "user", content: sleepParsePrompt }], 80, settingsModel, apiKey);
-          const sleepData = parseJSON<{ hours: number; quality: string }>(sleepRaw, { hours: 7, quality: "ok" });
-          const hours = Math.max(0.5, Math.min(24, sleepData.hours || 7));
-          const quality = ["poor", "ok", "good", "great"].includes(sleepData.quality) ? sleepData.quality : "ok";
-          drafts.push({ kind: "sleep", date: item.date, description: item.description, hours, quality });
-          summaryParts.push(`Sleep: ${hours.toFixed(1)}h (${quality})`);
+          const sleepData = parseJSON<{ hours?: number; band?: string; quality?: string }>(sleepRaw, {});
+          const hours = typeof sleepData.hours === "number" && Number.isFinite(sleepData.hours) ? sleepData.hours : undefined;
+          const band = ["under_6", "six_to_eight", "eight_plus"].includes(sleepData.band ?? "") ? sleepData.band : undefined;
+          const quality = ["poor", "ok", "good", "great"].includes(sleepData.quality ?? "") ? sleepData.quality : undefined;
+          const sleepDraft = buildRecoveryDraft({ kind: "sleep", date: item.date ?? today, hours, band, quality, source: "ai_extracted" });
+          drafts.push({ ...recoveryPayloadFromDraft(sleepDraft), description: item.description });
+          summaryParts.push(hours != null ? `Sleep: ${hours.toFixed(1)}h${quality ? ` (${quality})` : ""}` : band ? `Sleep: ${band}` : "Sleep: value needed");
 
         } else if (item.type === "water") {
           // Parse water: extract ml from description
@@ -2690,24 +2726,30 @@ Return ONLY JSON.`;
 Common conversions: 1 glass = 250ml, 1L = 1000ml, 1 bottle = 500ml.
 Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml" → 500`;
           const mlRaw = await callAI([{ role: "user", content: waterParsePrompt }], 20, settingsModel, apiKey);
-          const ml = Math.max(50, Math.min(5000, parseInt(mlRaw.replace(/[^0-9]/g, ""), 10) || 250));
-          drafts.push({ kind: "water", date: item.date, description: item.description, ml });
-          summaryParts.push(`Water: ${ml >= 1000 ? (ml / 1000).toFixed(1) + "L" : ml + "ml"}`);
+          const parsedMl = parseInt(mlRaw.replace(/[^0-9]/g, ""), 10);
+          const ml = Number.isFinite(parsedMl) ? parsedMl : undefined;
+          const waterDraft = buildRecoveryDraft({ kind: "water", date: item.date ?? today, ml, source: "ai_extracted" });
+          drafts.push({ ...recoveryPayloadFromDraft(waterDraft), description: item.description });
+          summaryParts.push(ml != null ? `Water: ${ml >= 1000 ? (ml / 1000).toFixed(1) + "L" : ml + "ml"}` : "Water: value needed");
 
         } else if (item.type === "mood") {
           const moodParsePrompt = `Extract mood rating 1-5 from: "${item.description}"
 1=very bad, 2=bad, 3=ok, 4=good, 5=great. Return ONLY a number 1-5.`;
           const ratingRaw = await callAI([{ role: "user", content: moodParsePrompt }], 10, settingsModel, apiKey);
-          const rating = Math.max(1, Math.min(5, parseInt(ratingRaw.replace(/[^1-5]/g, ""), 10) || 3)) as 1|2|3|4|5;
-          drafts.push({ kind: "mood", date: item.date, description: item.description, rating });
-          summaryParts.push(`Mood: ${rating}/5`);
+          const parsedRating = parseInt(ratingRaw.replace(/[^0-9]/g, ""), 10);
+          const rating = Number.isFinite(parsedRating) ? parsedRating : undefined;
+          const moodDraft = buildRecoveryDraft({ kind: "mood", date: item.date ?? today, rating, source: "ai_extracted" });
+          drafts.push({ ...recoveryPayloadFromDraft(moodDraft), description: item.description });
+          summaryParts.push(rating != null ? `Mood: ${rating}/5` : "Mood: value needed");
 
         } else if (item.type === "steps") {
           const stepsParsePrompt = `Extract step count from: "${item.description}". Return ONLY a number.`;
           const stepsRaw = await callAI([{ role: "user", content: stepsParsePrompt }], 15, settingsModel, apiKey);
-          const count = Math.max(0, parseInt(stepsRaw.replace(/[^0-9]/g, ""), 10) || 0);
-          drafts.push({ kind: "steps", date: item.date, description: item.description, count });
-          summaryParts.push(`Steps: ${count.toLocaleString()}`);
+          const parsedCount = parseInt(stepsRaw.replace(/[^0-9]/g, ""), 10);
+          const count = Number.isFinite(parsedCount) ? parsedCount : undefined;
+          const stepsDraft = buildRecoveryDraft({ kind: "steps", date: item.date ?? today, count, source: "ai_extracted" });
+          drafts.push({ ...recoveryPayloadFromDraft(stepsDraft), description: item.description });
+          summaryParts.push(count != null ? `Steps: ${count.toLocaleString()}` : "Steps: value needed");
         }
       } catch { /* skip failed items */ }
     }
@@ -2718,7 +2760,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       await ctx.runMutation(internal.chat.addMessage, {
         userId, sessionId: activeSessionId, role: "ai", content: reply,
       });
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId };
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId, restricted: restrictedGuidance };
     }
 
     // If any draft has a date != today, mention it in the summary
@@ -2780,6 +2822,6 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       }
     }
 
-    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId };
+    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId, restricted: restrictedGuidance };
   },
 });

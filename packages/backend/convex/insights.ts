@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
 import { getNextCheckInForContext, getTodayCheckInAnswerContext } from "./checkins";
 import { resolvePlanForDayAdjustment } from "./plan_resolve";
+import { deriveRecoveryState } from "./wellness";
 
 const windowValidator = v.union(
   v.literal("morning"),
@@ -125,7 +126,7 @@ export const getTodayBrief = query({
     const today = todayArg ?? localNow.toISOString().split("T")[0];
     const yesterday = dateBefore(today);
 
-    const [profile, todayMeals, todayWorkouts, yMeals, yWorkouts, water, sleep, steps, moods] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, yMeals, yWorkouts, water, sleep, steps, moods, recoveryStateRows] = await Promise.all([
       ctx.db.query("user_profiles")
         .withIndex("by_user", (q) => q.eq("userId", userId))
         .first(),
@@ -143,16 +144,19 @@ export const getTodayBrief = query({
         .collect(),
       ctx.db.query("water_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .collect(),
+        .collect().then((rows) => rows.filter((row) => !row.undoneAt)),
       ctx.db.query("sleep_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .first(),
+        .collect().then((rows) => rows.find((row) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null),
       ctx.db.query("steps_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .first(),
+        .collect().then((rows) => rows.find((row) => !row.undoneAt) ?? null),
       ctx.db.query("mood_logs")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .take(10),
+        .take(10).then((rows) => rows.filter((row) => !row.undoneAt)),
+      ctx.db.query("sleep_logs")
+        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
+        .collect(),
     ]);
 
     const calorieTarget = profile?.calorieTarget ?? 2000;
@@ -167,6 +171,7 @@ export const getTodayBrief = query({
     const yProtein = yMeals.reduce((s, m) => s + m.protein, 0);
     const waterMl = water.reduce((s, w) => s + w.ml, 0);
     const waterTarget = profile?.waterTarget ?? 2000;
+    const recoveryState = deriveRecoveryState({ date: today, sleep, water, mood: moods, steps, stateRows: recoveryStateRows });
 
     // Suppress check-in questions if the user has already chatted on the homepage today
     const homepageSession = await ctx.db
@@ -211,7 +216,10 @@ export const getTodayBrief = query({
     let nudgeReason = "";
 
     if (window === "morning") {
-      if (sleep && sleep.hours < 6.5) {
+      if (recoveryState.insufficient_data) {
+        headline = "Recovery data is incomplete";
+        priority = `Recovery guidance is limited until you log ${recoveryState.missingInputs.join(", ")}.`;
+      } else if (sleep?.hours != null && sleep.hours < 6.5) {
         headline = "Yesterday's sleep was short";
         priority = `You slept ${sleep.hours.toFixed(1)}h. Today, keep activity moderate and aim for an earlier wind-down.`;
       } else if (yProtein > 0 && yProtein < proteinTarget * 0.7) {
@@ -248,7 +256,7 @@ export const getTodayBrief = query({
       nudgeReason = "90 seconds, then I'm out of your way";
     } else {
       headline = "Wind-down time";
-      priority = sleep ? `Sleep target set. Aim for a steady ${sleep.hours}h.` : "Set tonight's sleep target so I can flag tomorrow.";
+      priority = sleep?.hours != null ? `Sleep target set. Aim for a steady ${sleep.hours}h.` : sleep?.band ? `Sleep band recorded as ${sleep.band}. Add hours only if you know them.` : "Set tonight's sleep target so I can flag tomorrow.";
       nudgeAction = "Heading to bed?";
       nudgeReason = "I'll mark sleep started now";
     }
@@ -263,8 +271,9 @@ export const getTodayBrief = query({
 
     const proteinBehind = todayProtein < proteinTarget * Math.min(1, Math.max(0.15, (hour - 7) / 12));
     const noLogsYesterday = yMeals.length === 0 && yWorkouts.length === 0;
-    const shortSleep = !!sleep && sleep.hours < 6.5;
-    const waterBehind = waterMl < waterTarget * Math.min(1, Math.max(0.2, (hour - 7) / 12));
+    const shortSleepHours = sleep?.hours;
+    const shortSleep = !recoveryState.insufficient_data && shortSleepHours != null && shortSleepHours < 6.5;
+    const waterBehind = !recoveryState.insufficient_data && waterMl < waterTarget * Math.min(1, Math.max(0.2, (hour - 7) / 12));
     const mealsMissingLate = todayMeals.length === 0 && hour >= 13;
 
     if (shortSleep) {
@@ -272,7 +281,7 @@ export const getTodayBrief = query({
       doToday = {
         title: "Keep today recovery-first",
         action: "Choose a lighter workout or a 20-minute walk.",
-        reason: `Sleep came in at ${sleep.hours.toFixed(1)}h, so consistency beats intensity today.`,
+        reason: `Sleep came in at ${shortSleepHours!.toFixed(1)}h, so consistency beats intensity today.`,
         category: "recovery",
       };
       recoverFrom = {
@@ -408,6 +417,7 @@ export const getTodayBrief = query({
         mealsLogged: todayMeals.length,
         workoutsLogged: todayWorkouts.length,
       },
+      recoveryState,
     };
   },
 });
