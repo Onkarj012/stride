@@ -10,7 +10,7 @@ import {
   buildActionMembers,
 } from "./actions_envelope";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
-import { findBestMatch, AUTO_APPLY_MIN_LOGGED } from "./food_memory_match";
+import { buildMealDraftFromParsed, mealPayloadFromDraft, type MealDraft } from "./nutrition_draft";
 import { calculateWorkoutCalories, parseDurationMinutes } from "./calorie_engine";
 import { matchExercises, getWeightedMET } from "./exercise_db";
 import { mapAIIntensity, inferDensity, countCompoundRatio } from "./workout_scorer";
@@ -23,7 +23,7 @@ import {
   classifyHomepageIntent, isNegatedLogItem,
 } from "./ai/intent";
 import {
-  parseMealDescription, parseWorkoutDescription, runNutritionEngine,
+  parseMealDescription, parseWorkoutDescription,
   extractStatedWorkoutCalories, NUTRITION_ACCURACY_RULES,
   type UserPhysique, type ParsedWorkoutResult,
 } from "./ai/parse";
@@ -84,6 +84,21 @@ function isVagueDate(date: unknown): boolean {
   return date === "UNKNOWN_VAGUE";
 }
 
+function nutritionFromDraft(draft: MealDraft) {
+  return {
+    calories: draft.calories,
+    protein: draft.protein,
+    carbs: draft.carbs,
+    fat: draft.fat,
+    confidence: draft.confidence,
+    nutritionSource: draft.nutritionSource,
+    ingredientBreakdown: draft,
+    reportedCalories: draft.reportedCalories,
+    estimatedCalories: draft.estimatedCalories,
+    calorieSource: draft.calorieSource,
+  };
+}
+
 function resolveChatActionDate(
   input: Omit<import("./time_resolve").ResolveActionDateInput, "now" | "userTimeZone">,
 ): import("./time_resolve").ActionDateResolution {
@@ -95,11 +110,13 @@ function clarifyingReason(
   resolved: { status: "resolved" | "needs_clarification" | "rejected"; reason?: string },
   confidence?: number,
   validationStatus?: "valid" | "warning" | "error",
+  hasUnresolvedFood = false,
 ): string | null {
   if (isVagueDate(date)) return "The date is too vague; provide an exact date";
   if (resolved.status === "needs_clarification") return resolved.reason ?? "The date needs clarification";
   if (resolved.status === "rejected") return resolved.reason ?? "The date cannot be used";
   if (validationStatus === "warning") return "The action needs confirmation before saving";
+  if (hasUnresolvedFood) return "ambiguous_food";
   if (isConfidenceLow(confidence)) return `Confidence (${confidence!.toFixed(2)}) is below the auto-write threshold`;
   return null;
 }
@@ -696,7 +713,7 @@ export const parseMeal = action({
     const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
 
     // Run deterministic nutrition calculation
-    const nutrition = await runNutritionEngine(ctx, parsedMeal);
+    const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsedMeal, date: new Date().toISOString().split("T")[0] }, { userId, useMemory: true }));
 
     return {
       ...parsedMeal,
@@ -784,27 +801,20 @@ export const logMeal = action({
     }
     if (parsedMeal.parseError) throw new Error("Meal could not be parsed. Edit it before saving.");
 
-    // Run deterministic nutrition calculation from structured ingredients
-    const nutrition = await runNutritionEngine(ctx, parsedMeal);
-    const structuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
-    const ingredientBreakdownStr = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
+    const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsedMeal, date: today }, { userId, useMemory: true }));
 
-    const id = await ctx.runMutation(internal.meals.addMealFromAI, {
-      userId, date: today,
-      name: parsedMeal.name || "Meal",
-      calories: nutrition.calories,
-      protein: nutrition.protein,
-      carbs: nutrition.carbs,
-      fat: nutrition.fat,
-      time: parsedMeal.time,
-      aiSuggestion: parsedMeal.aiSuggestion,
-      mealType: parsedMeal.mealType || mealType || "unspecified",
-      components: parsedMeal.components,
-      confidence: nutrition.confidence,
-      nutritionSource: nutrition.nutritionSource,
-      structuredItems,
-      ingredientBreakdown: ingredientBreakdownStr,
-      logSource: "ai",
+    const draft = nutrition.ingredientBreakdown as MealDraft;
+    const id = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
+      group: { userId, sourceSurface: "chat", rawInput: description ?? JSON.stringify(parsedData ?? {}), clientLocalDate: today },
+      member: {
+        payload: mealPayloadFromDraft(draft, { aiSuggestion: parsedMeal.aiSuggestion, components: parsedMeal.components, logSource: "ai" }),
+        provenance: draft.nutritionSource === "database" ? "database_match" : draft.nutritionSource === "memory" ? "database_match" : "ai_estimated",
+        confidence: draft.confidence,
+        validation: { status: draft.unresolved.length > 0 ? "warning" : "valid", messages: draft.unresolved.map((name) => `Ambiguous food: ${name}`) },
+        reversible: true,
+        resolvedDate: today,
+        resolvedTime: parsedMeal.time,
+      },
     });
     data = {
       _id: id,
@@ -820,6 +830,9 @@ export const logMeal = action({
       confidence: nutrition.confidence,
       nutritionSource: nutrition.nutritionSource,
       ingredientBreakdown: nutrition.ingredientBreakdown,
+      reportedCalories: nutrition.reportedCalories,
+      estimatedCalories: nutrition.estimatedCalories,
+      calorieSource: nutrition.calorieSource,
     };
     return data;
   },
@@ -1252,10 +1265,11 @@ Rules:
           logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
           continue;
         }
-        const nutrition = await runNutritionEngine(ctx, parsed);
-        const finalStructuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
-        const finalIngredientBreakdown = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
         const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
+        const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsed, date: targetDate }, { userId, useMemory: true }));
+        const draft = nutrition.ingredientBreakdown as MealDraft;
+        const finalStructuredItems = JSON.stringify(draft.ingredients);
+        const finalIngredientBreakdown = JSON.stringify(draft);
         retryArgs = {
           name: parsed.name,
           calories: nutrition.calories,
@@ -1273,15 +1287,14 @@ Rules:
           ingredientBreakdown: finalIngredientBreakdown,
           logSource: "coach",
         };
-        const mealPayload = {
-          date: targetDate, name: parsed.name, calories: nutrition.calories, protein: nutrition.protein,
-          carbs: nutrition.carbs, fat: nutrition.fat, time: parsed.time,
-          aiSuggestion: parsed.aiSuggestion, mealType: parsed.mealType, components: parsed.components,
-          confidence: nutrition.confidence, nutritionSource: nutrition.nutritionSource,
-          structuredItems: finalStructuredItems, ingredientBreakdown: finalIngredientBreakdown, logSource: "coach",
-        };
+        const mealPayload = mealPayloadFromDraft(draft, {
+          aiSuggestion: parsed.aiSuggestion,
+          mealType: parsed.mealType,
+          components: parsed.components,
+          logSource: "coach",
+        });
         const mealValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, nutrition.confidence, mealValidation.status);
+        const reason = clarifyingReason(logData.date, dateResolution, nutrition.confidence, mealValidation.status, draft.ingredients.length > 0 && draft.unresolved.length > 0);
         const candidate: ParsedCandidate = {
           actionType: "meal",
           description: retryDescription,
@@ -2545,39 +2558,44 @@ Return ONLY:
             desc = d;
           }
 
-          // ── Diet memory: try to match before calling LLM ──────────────────
-          const memories = await ctx.runQuery(internal.food_memory.getForUser, { userId });
-          const memMatch = findBestMatch(desc, memories as any[]);
-          if (memMatch && memMatch.entry.timesLogged >= AUTO_APPLY_MIN_LOGGED) {
-            const mem = memMatch.entry;
-            const time = new Date().toTimeString().slice(0, 5);
+          // Food memory is resolved through the same canonical draft path as every other meal source.
+          const memoryDraft = await buildMealDraftFromParsed(ctx, {
+            name: desc,
+            description: desc,
+            date: item.date,
+            time: new Date().toTimeString().slice(0, 5),
+            mealType: "unspecified",
+          }, { userId, useMemory: true });
+          if (memoryDraft.foodMemoryId) {
             const draft = {
               kind: "meal",
-              date: item.date,
-              description: mem.displayName,
-              name: mem.displayName,
-              kcal: Math.round(mem.kcal),
-              protein: Math.round(mem.protein),
-              carbs: Math.round(mem.carbs),
-              fat: Math.round(mem.fat),
-              items: mem.components ? mem.components.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
-              components: mem.components,
-              mealType: "unspecified",
-              time,
-              confidence: Math.min(0.95, 0.7 + memMatch.score * 0.25),
-              nutritionSource: "memory",
-              autoApplied: false,  // always confirm — never silent log
-              memoryNote: `Using your usual ${mem.displayName}`,
-              foodMemoryId: mem._id,
+              date: memoryDraft.date,
+              description: memoryDraft.name,
+              name: memoryDraft.name,
+              kcal: memoryDraft.calories,
+              protein: Math.round(memoryDraft.protein),
+              carbs: Math.round(memoryDraft.carbs),
+              fat: Math.round(memoryDraft.fat),
+              items: memoryDraft.ingredients.map((ingredient) => ingredient.foodText),
+              components: memoryDraft.ingredients.map((ingredient) => ingredient.foodText).join(", "),
+              mealType: memoryDraft.mealType,
+              time: memoryDraft.time,
+              confidence: memoryDraft.confidence,
+              nutritionSource: memoryDraft.nutritionSource,
+              autoApplied: false,
+              memoryNote: `Using your usual ${memoryDraft.name}`,
+              foodMemoryId: memoryDraft.foodMemoryId,
+              ingredientBreakdown: memoryDraft,
             };
             drafts.push(draft);
-            summaryParts.push(`${mem.displayName} (~${draft.kcal} kcal, from memory)`);
+            summaryParts.push(`${memoryDraft.name} (~${draft.kcal} kcal, from memory)`);
             continue;
           }
           // ── End memory match — fall through to LLM parse ──────────────────
 
           const parsed = await parseMealDescription(desc, "unspecified", "", settingsModel, apiKey, userIngredients as any[]);
-          const nutrition = await runNutritionEngine(ctx, parsed);
+          const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsed, date: item.date, description: desc }, { userId, useMemory: true }));
+          const canonicalDraft = nutrition.ingredientBreakdown as MealDraft;
           const baseDraft = {
             kind: "meal",
             date: item.date,
@@ -2587,14 +2605,17 @@ Return ONLY:
             protein: Math.round(nutrition.protein),
             carbs: Math.round(nutrition.carbs),
             fat: Math.round(nutrition.fat),
-            items: parsed.components ? parsed.components.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+            items: canonicalDraft.ingredients.map((ingredient) => ingredient.foodText),
             components: parsed.components,
             mealType: parsed.mealType ?? "unspecified",
             time: parsed.time,
             aiSuggestion: parsed.aiSuggestion,
             confidence: nutrition.confidence,
             nutritionSource: nutrition.nutritionSource,
-            ingredientBreakdown: nutrition.ingredientBreakdown,
+            ingredientBreakdown: canonicalDraft,
+            reportedCalories: nutrition.reportedCalories,
+            estimatedCalories: nutrition.estimatedCalories,
+            calorieSource: nutrition.calorieSource,
             parseError: parsed.parseError,
           };
           const macroDecision = hasUserMacros ? applyUserMacros(baseDraft, userMacros) : { draft: baseDraft, conflict: false, reason: "" };

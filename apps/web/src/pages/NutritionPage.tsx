@@ -37,6 +37,16 @@ function groupByTime(meals: Array<{ time?: string; mealType?: string } & Record<
   return groups;
 }
 
+function mealDetail(meal: { ingredientBreakdown?: string }) {
+  if (!meal.ingredientBreakdown) return undefined;
+  try {
+    const parsed = JSON.parse(meal.ingredientBreakdown);
+    return parsed && typeof parsed === "object" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const SECTION_LOG_KEY: Record<Section, string> = {
   Breakfast: "breakfast",
   Lunch: "lunch",
@@ -158,6 +168,7 @@ export function NutritionPage() {
                 time={m.time || m.mealType || "Meal"}
                 macros={{ kcal: Math.round(m.calories), protein: Math.round(m.protein), carbs: Math.round(m.carbs ?? 0), fat: Math.round(m.fat ?? 0) }}
                 confirmed={false}
+                detail={mealDetail(m)}
               />
             ))}
             <MealLogCardEmpty />
@@ -275,6 +286,7 @@ export function NutritionPage() {
                         fat: Math.round(m.fat ?? 0),
                       }}
                       confirmed={false}
+                      detail={mealDetail(m)}
                     />
                     <div className="absolute top-3.5 right-3.5 flex items-center gap-1">
                       <button

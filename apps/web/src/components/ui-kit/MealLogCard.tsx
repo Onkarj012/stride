@@ -1,15 +1,28 @@
 import { motion, AnimatePresence } from 'motion/react'
 import type { MacroData } from './MacroCard'
 import { SPRING_CARD } from '@/lib/motion'
+import { NutritionSourceBadge } from './NutritionSourceBadge'
+
+type MealIngredientDetail = {
+  foodText?: string
+  food_text?: string
+  source?: string
+  confidence?: number
+  unresolved?: boolean
+  quantity?: number
+  unit?: string
+}
 
 export interface MealLogCardProps {
   meal: string
   time: string
   macros: MacroData
   confirmed: boolean
+  detail?: { ingredients?: MealIngredientDetail[]; items?: MealIngredientDetail[] }
 }
 
-export function MealLogCard({ meal, time, macros, confirmed }: MealLogCardProps) {
+export function MealLogCard({ meal, time, macros, confirmed, detail }: MealLogCardProps) {
+  const ingredients = detail?.ingredients ?? detail?.items ?? []
   return (
     <motion.div
       className="bg-white dark:bg-[#1a1e2e] rounded-[20px] p-5 shadow-[0_10px_30px_rgba(13,16,27,0.07)]"
@@ -59,6 +72,27 @@ export function MealLogCard({ meal, time, macros, confirmed }: MealLogCardProps)
           {macros.fat}g fat
         </span>
       </motion.div>
+
+      {ingredients.length > 0 && (
+        <div className="mt-4 border-t border-ink/08 dark:border-white/08 pt-3 space-y-2">
+          {ingredients.map((ingredient, index) => (
+            <div key={`${ingredient.foodText ?? ingredient.food_text ?? "ingredient"}-${index}`} className="flex items-center gap-2 text-[11px]">
+              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${ingredient.unresolved ? "bg-bubblegum" : "bg-mint"}`} />
+              <span className={`font-semibold truncate ${ingredient.unresolved ? "text-bubblegum" : "text-ink/65 dark:text-white/65"}`}>
+                {ingredient.foodText ?? ingredient.food_text ?? "Ingredient"}
+                {ingredient.quantity != null && ingredient.unit ? ` · ${ingredient.quantity}${ingredient.unit}` : ""}
+              </span>
+              <span className="ml-auto shrink-0">
+                {ingredient.unresolved ? (
+                  <span className="font-bold text-bubblegum">Needs selection</span>
+                ) : (
+                  <NutritionSourceBadge source={ingredient.source} confidence={ingredient.confidence} />
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </motion.div>
   )
 }

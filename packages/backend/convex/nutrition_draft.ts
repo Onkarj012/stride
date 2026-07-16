@@ -1,0 +1,459 @@
+/**
+ * Canonical nutrition contract.
+ *
+ * Every meal entry point normalizes into this shape before it reaches the
+ * canonical meal writer.  Totals are deliberately calculated from ingredient
+ * contributions only.  An unresolved ingredient contributes zero.
+ */
+
+import { internal } from "./_generated/api";
+import { findBestMatch, type FoodMemoryEntry, type MatchResult } from "./food_memory_match";
+import { computeNutrition, type NormalizedFood } from "./nutrition_engine";
+import { toGrams } from "./unit_converter";
+
+export const FOOD_QUALITY_THRESHOLD = 0.7;
+export const FOOD_RUNNER_UP_MARGIN = 0.15;
+
+// Short aliases make the policy easy to reference from tests and callers.
+export const QUALITY_THRESHOLD = FOOD_QUALITY_THRESHOLD;
+export const RUNNER_UP_MARGIN = FOOD_RUNNER_UP_MARGIN;
+
+export type IngredientSource = "user_reported" | "database" | "ai_estimate" | "memory";
+export type CalorieSource = "reported" | "estimated";
+
+export type MacroValues = {
+  kcal: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+};
+
+export type MealCandidate = {
+  name: string;
+  score: number;
+  source: "database" | "memory";
+  caloriesPer100g?: number;
+  proteinPer100g?: number;
+  carbsPer100g?: number;
+  fatPer100g?: number;
+  verified?: boolean;
+};
+
+export type MealDraftIngredient = {
+  foodText: string;
+  matchedFoodName?: string;
+  quantity: number;
+  unit: string;
+  grams: number;
+  kcal: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  source: IngredientSource;
+  confidence: number;
+  unresolved: boolean;
+  candidates: MealCandidate[];
+};
+
+export type MealDraft = {
+  kind: "meal";
+  name: string;
+  date: string;
+  time: string;
+  mealType: string;
+  ingredients: MealDraftIngredient[];
+  /** Compatibility alias for existing nutrition detail consumers. */
+  items: MealDraftIngredient[];
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  calories_kcal: number;
+  protein_g: number;
+  carbs_g: number;
+  fat_g: number;
+  estimatedCalories: number;
+  reportedCalories?: number;
+  calorieSource: CalorieSource;
+  unresolved: string[];
+  confidence: number;
+  nutritionSource: string;
+  foodMemoryId?: string;
+  detailInvalidated?: boolean;
+};
+
+export type MealDraftIngredientInput = {
+  name?: string;
+  foodText?: string;
+  quantity?: number;
+  amount?: number;
+  unit?: string;
+  grams?: number;
+  source?: IngredientSource | string;
+  confidence?: number;
+  nutrition?: MacroValues;
+  nutritionPer100g?: MacroValues;
+  candidates?: MealCandidate[];
+  unresolved?: boolean;
+  matchedFoodName?: string;
+};
+
+export type MealDraftInput = {
+  name: string;
+  date: string;
+  time: string;
+  mealType?: string;
+  ingredients?: MealDraftIngredientInput[];
+  reportedCalories?: number;
+  estimatedCalories?: number;
+  calorieSource?: CalorieSource;
+  foodMemoryId?: string;
+  detailInvalidated?: boolean;
+  memoryMatch?: MatchResult;
+  nutritionSource?: string;
+};
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+function nonNegative(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, number) : 0;
+}
+
+function normalizeSource(source: string | undefined): IngredientSource {
+  const value = (source ?? "user_reported").toLowerCase();
+  if (value === "memory") return "memory";
+  if (value === "ai" || value === "ai_estimated" || value === "estimate") return "ai_estimate";
+  if (value === "database" || value === "recipe" || value === "barcode" || value.includes("usda") || value.includes("off")) {
+    return "database";
+  }
+  return "user_reported";
+}
+
+function normalizeName(name: string): string {
+  return name.toLowerCase().trim().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ");
+}
+
+function candidateScore(query: string, name: string): number {
+  const q = normalizeName(query);
+  const n = normalizeName(name);
+  if (!q || !n) return 0;
+  if (q === n) return 1;
+  if (n.startsWith(q) || q.startsWith(n)) return 0.88;
+  if (n.includes(q) || q.includes(n)) return 0.78;
+  const qWords = new Set(q.split(" "));
+  const nWords = new Set(n.split(" "));
+  const common = [...qWords].filter((word) => nWords.has(word)).length;
+  return common === 0 ? 0 : common / (qWords.size + nWords.size - common);
+}
+
+export function rankFoodCandidates(query: string, foods: Array<NormalizedFood & { _id?: string }>): MealCandidate[] {
+  return foods
+    .map((food) => ({
+      name: food.name,
+      score: Math.round(candidateScore(query, food.name) * 100) / 100,
+      source: "database" as const,
+      caloriesPer100g: food.caloriesPer100g,
+      proteinPer100g: food.proteinPer100g,
+      carbsPer100g: food.carbsPer100g,
+      fatPer100g: food.fatPer100g,
+      verified: food.verified,
+    }))
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+}
+
+export function selectFoodCandidate(candidates: MealCandidate[]): MealCandidate | null {
+  const [best, runnerUp] = [...candidates].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  if (!best || best.score < FOOD_QUALITY_THRESHOLD) return null;
+  if (runnerUp && best.score - runnerUp.score < FOOD_RUNNER_UP_MARGIN) return null;
+  return best;
+}
+
+function ingredientMacros(input: MealDraftIngredientInput, grams: number): MacroValues {
+  if (input.nutrition) {
+    return {
+      kcal: nonNegative(input.nutrition.kcal),
+      protein: nonNegative(input.nutrition.protein),
+      carbs: nonNegative(input.nutrition.carbs),
+      fat: nonNegative(input.nutrition.fat),
+    };
+  }
+  if (input.nutritionPer100g) {
+    const result = computeNutrition({
+      caloriesPer100g: nonNegative(input.nutritionPer100g.kcal),
+      proteinPer100g: nonNegative(input.nutritionPer100g.protein),
+      carbsPer100g: nonNegative(input.nutritionPer100g.carbs),
+      fatPer100g: nonNegative(input.nutritionPer100g.fat),
+    }, grams);
+    return { kcal: result.calories_kcal, protein: result.protein_g, carbs: result.carbs_g, fat: result.fat_g };
+  }
+  return { kcal: 0, protein: 0, carbs: 0, fat: 0 };
+}
+
+function sourceForDraft(ingredients: MealDraftIngredient[]): IngredientSource | "mixed" {
+  const sources = [...new Set(ingredients.filter((item) => !item.unresolved).map((item) => item.source))];
+  return sources.length === 1 ? sources[0]! : "mixed";
+}
+
+function averageConfidence(ingredients: MealDraftIngredient[]): number {
+  if (ingredients.length === 0) return 0.1;
+  const total = ingredients.reduce((sum, item) => sum + (item.unresolved ? 0 : item.confidence), 0);
+  return Math.max(0.1, round1(total / ingredients.length));
+}
+
+/** Build the one canonical meal draft used by all meal sources. */
+export function buildMealDraft(input: MealDraftInput): MealDraft {
+  const sourceMemory = input.memoryMatch && input.memoryMatch.entry.timesLogged >= 2 ? input.memoryMatch : undefined;
+  const rawIngredients = input.ingredients ?? [];
+  const ingredients = rawIngredients.map((raw): MealDraftIngredient => {
+    const foodText = (raw.foodText ?? raw.name ?? "Ingredient").trim() || "Ingredient";
+    const quantity = nonNegative(raw.quantity ?? raw.amount ?? (raw.grams != null ? raw.grams : 1));
+    const unit = (raw.unit ?? (raw.grams != null ? "g" : "serving")).trim() || "serving";
+    const conversion = raw.grams != null
+      ? { grams: nonNegative(raw.grams), confidence: 1 }
+      : toGrams(quantity, unit, foodText);
+    const candidates = [...(raw.candidates ?? [])].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+    const hasContribution = raw.nutrition != null || raw.nutritionPer100g != null;
+    const selected = raw.unresolved ? null : selectFoodCandidate(candidates);
+    const selectedHasNutrition = !selected || selected.caloriesPer100g != null || hasContribution;
+    const unresolved = raw.unresolved === true || (candidates.length > 0 && !selected) || (!hasContribution && !selected) || !selectedHasNutrition;
+    const source = selected?.source === "memory" ? "memory" : normalizeSource(raw.source ?? selected?.source);
+    const macros = unresolved
+      ? { kcal: 0, protein: 0, carbs: 0, fat: 0 }
+      : selected && selected.caloriesPer100g != null
+        ? ingredientMacros({ nutritionPer100g: {
+          kcal: selected.caloriesPer100g,
+          protein: selected.proteinPer100g ?? 0,
+          carbs: selected.carbsPer100g ?? 0,
+          fat: selected.fatPer100g ?? 0,
+        } }, conversion.grams)
+        : ingredientMacros(raw, conversion.grams);
+    const confidence = Math.max(0, Math.min(1, raw.confidence ?? Math.min(conversion.confidence, selected?.score ?? 1)));
+    return {
+      foodText,
+      matchedFoodName: selected?.name ?? raw.matchedFoodName,
+      quantity,
+      unit,
+      grams: Math.round(conversion.grams * 100) / 100,
+      kcal: Math.round(macros.kcal),
+      protein: round1(macros.protein),
+      carbs: round1(macros.carbs),
+      fat: round1(macros.fat),
+      source,
+      confidence,
+      unresolved,
+      candidates,
+    };
+  });
+
+  const resolvedTotals = ingredients.reduce((total, item) => ({
+    kcal: total.kcal + item.kcal,
+    protein: total.protein + item.protein,
+    carbs: total.carbs + item.carbs,
+    fat: total.fat + item.fat,
+  }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+  // Never accept a whole-meal estimate as a substitute for ingredient math.
+  // Unresolved ingredients therefore contribute zero by construction.
+  const estimatedCalories = Math.round(resolvedTotals.kcal);
+  const reportedCalories = input.reportedCalories == null ? undefined : Math.round(nonNegative(input.reportedCalories));
+  const calorieSource: CalorieSource = input.calorieSource ?? (reportedCalories != null ? "reported" : "estimated");
+  const unresolved = ingredients.filter((item) => item.unresolved).map((item) => item.foodText);
+  const draft: MealDraft = {
+    kind: "meal",
+    name: input.name,
+    date: input.date,
+    time: input.time,
+    mealType: input.mealType ?? "unspecified",
+    ingredients,
+    items: ingredients,
+    calories: calorieSource === "reported" && reportedCalories != null ? reportedCalories : estimatedCalories,
+    protein: round1(resolvedTotals.protein),
+    carbs: round1(resolvedTotals.carbs),
+    fat: round1(resolvedTotals.fat),
+    calories_kcal: calorieSource === "reported" && reportedCalories != null ? reportedCalories : estimatedCalories,
+    protein_g: round1(resolvedTotals.protein),
+    carbs_g: round1(resolvedTotals.carbs),
+    fat_g: round1(resolvedTotals.fat),
+    estimatedCalories,
+    reportedCalories,
+    calorieSource,
+    unresolved,
+    confidence: averageConfidence(ingredients),
+    nutritionSource: input.nutritionSource ?? sourceForDraft(ingredients),
+    foodMemoryId: input.foodMemoryId ?? sourceMemory?.entry._id,
+    detailInvalidated: input.detailInvalidated,
+  };
+  return draft;
+}
+
+export function mealPayloadFromDraft(draft: MealDraft, extras: Record<string, unknown> = {}) {
+  return {
+    ...extras,
+    name: draft.name,
+    date: draft.date,
+    calories: draft.calories,
+    protein: draft.protein,
+    carbs: draft.carbs,
+    fat: draft.fat,
+    time: draft.time,
+    mealType: draft.mealType,
+    confidence: draft.confidence,
+    nutritionSource: draft.nutritionSource,
+    reportedCalories: draft.reportedCalories,
+    estimatedCalories: draft.estimatedCalories,
+    calorieSource: draft.calorieSource,
+    foodMemoryId: draft.foodMemoryId,
+    structuredItems: JSON.stringify(draft.ingredients),
+    ingredientBreakdown: JSON.stringify(draft),
+    ingredientBreakdownInvalidated: draft.detailInvalidated,
+    draft,
+  };
+}
+
+export function buildDirectMealDraft(args: {
+  name: string;
+  date: string;
+  time: string;
+  mealType?: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  nutritionSource?: string;
+  reportedCalories?: number;
+  estimatedCalories?: number;
+  calorieSource?: CalorieSource;
+  ingredientBreakdown?: string;
+  foodMemoryId?: string;
+  memoryMatch?: MatchResult;
+}): MealDraft {
+  let fromDetail: MealDraftIngredientInput[] | undefined;
+  if (args.ingredientBreakdown) {
+    try {
+      const detail = JSON.parse(args.ingredientBreakdown) as { ingredients?: MealDraftIngredient[]; items?: MealDraftIngredient[] };
+      const items = detail.ingredients ?? detail.items;
+      if (Array.isArray(items) && items.length > 0) {
+        fromDetail = items.map((item) => ({
+          foodText: item.foodText ?? (item as any).food_text ?? "Ingredient",
+          quantity: item.quantity ?? item.grams,
+          unit: item.unit ?? "g",
+          grams: item.grams,
+          nutrition: { kcal: item.kcal ?? (item as any).calories_kcal ?? 0, protein: item.protein ?? (item as any).protein_g ?? 0, carbs: item.carbs ?? (item as any).carbs_g ?? 0, fat: item.fat ?? (item as any).fat_g ?? 0 },
+          source: item.source,
+          confidence: item.confidence,
+          candidates: item.candidates,
+          unresolved: item.unresolved,
+          matchedFoodName: item.matchedFoodName ?? (item as any).matched_food_name,
+        }));
+      }
+    } catch {
+      // Fall through to the single direct-entry ingredient.
+    }
+  }
+  const databaseSource = args.nutritionSource && args.nutritionSource !== "manual" && args.nutritionSource !== "user_reported";
+  return buildMealDraft({
+    name: args.name,
+    date: args.date,
+    time: args.time,
+    mealType: args.mealType,
+    ingredients: fromDetail ?? [{
+      foodText: args.name,
+      quantity: 1,
+      unit: "serving",
+      nutrition: { kcal: args.calories, protein: args.protein, carbs: args.carbs, fat: args.fat },
+      source: databaseSource ? "database" : "user_reported",
+      confidence: args.nutritionSource ? undefined : 1,
+    }],
+    reportedCalories: args.reportedCalories ?? (!databaseSource ? args.calories : undefined),
+    estimatedCalories: args.estimatedCalories,
+    calorieSource: args.calorieSource,
+    foodMemoryId: args.foodMemoryId,
+    memoryMatch: args.memoryMatch,
+  });
+}
+
+type ParsedMeal = {
+  name?: string;
+  description?: string;
+  date?: string;
+  time?: string;
+  mealType?: string;
+  ingredients?: Array<{ food_text?: string; amount?: number; unit?: string; confidence?: number; is_oil_or_fat?: boolean }>;
+  reportedCalories?: number;
+  foodMemoryId?: string;
+  parseError?: string;
+};
+
+/** Resolve database candidates, apply food memory, then use the pure builder. */
+export async function buildMealDraftFromParsed(
+  ctx: any,
+  parsedMeal: ParsedMeal,
+  options: { userId?: string; source?: string; useMemory?: boolean } = {},
+): Promise<MealDraft> {
+  const userId = options.userId ?? (await ctx.auth.getUserIdentity())?.subject;
+  const memories = userId
+    ? await ctx.runQuery(internal.food_memory.getForUser, { userId }) as FoodMemoryEntry[]
+    : [];
+  const description = parsedMeal.description ?? parsedMeal.name ?? "meal";
+  const memoryMatch = options.useMemory === false ? undefined : findBestMatch(description, memories);
+  const memory = memoryMatch && memoryMatch.entry.timesLogged >= 2 ? memoryMatch : undefined;
+  const date = parsedMeal.date ?? new Date().toISOString().split("T")[0];
+  const time = parsedMeal.time ?? new Date().toTimeString().slice(0, 5);
+
+  if (memory) {
+    const entry = memory.entry;
+    return buildMealDraft({
+      name: entry.displayName,
+      date,
+      time,
+      mealType: parsedMeal.mealType,
+      ingredients: [{
+        foodText: entry.displayName,
+        quantity: 1,
+        unit: "serving",
+        nutrition: { kcal: entry.kcal, protein: entry.protein, carbs: entry.carbs, fat: entry.fat },
+        source: "memory",
+        confidence: Math.min(0.95, 0.7 + memory.score * 0.25),
+        matchedFoodName: entry.displayName,
+      }],
+      foodMemoryId: entry._id,
+      memoryMatch: memory,
+    });
+  }
+
+  const ingredients: MealDraftIngredientInput[] = [];
+  for (const ingredient of parsedMeal.ingredients ?? []) {
+    const foodText = ingredient.food_text?.trim() ?? "";
+    const amount = nonNegative(ingredient.amount ?? 0);
+    if (!foodText || amount <= 0) continue;
+    const cached = await ctx.runQuery(internal.foods.searchFoodsInCache, { query: foodText }) as Array<NormalizedFood & { _id?: string }>;
+    const live = cached.length === 0 && typeof ctx.runAction === "function"
+      ? await ctx.runAction(internal.foods.searchFoodsLive, { query: foodText, limit: 8 }).catch(() => []) as Array<NormalizedFood & { _id?: string }>
+      : [];
+    const candidates = rankFoodCandidates(foodText, [...cached, ...live]);
+    const memoryForIngredient = findBestMatch(foodText, memories);
+    if (memoryForIngredient) {
+      candidates.push({ name: memoryForIngredient.entry.displayName, score: memoryForIngredient.score, source: "memory" });
+    }
+    ingredients.push({
+      foodText,
+      quantity: amount,
+      unit: ingredient.unit ?? "g",
+      candidates,
+      source: options.source ?? "ai_estimate",
+      confidence: ingredient.confidence,
+    });
+  }
+
+  return buildMealDraft({
+    name: parsedMeal.name ?? description.slice(0, 50),
+    date,
+    time,
+    mealType: parsedMeal.mealType,
+    ingredients,
+    reportedCalories: parsedMeal.reportedCalories,
+    foodMemoryId: parsedMeal.foodMemoryId,
+  });
+}

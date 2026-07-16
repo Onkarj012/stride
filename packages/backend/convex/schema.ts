@@ -26,6 +26,11 @@ export default defineSchema({
     nutritionVerified: v.optional(v.boolean()),
     structuredItems: v.optional(v.string()),
     ingredientBreakdown: v.optional(v.string()),
+    // Canonical nutrition draft calorie provenance.
+    reportedCalories: v.optional(v.number()),
+    estimatedCalories: v.optional(v.number()),
+    calorieSource: v.optional(v.union(v.literal("reported"), v.literal("estimated"))),
+    ingredientBreakdownInvalidated: v.optional(v.boolean()),
     // Diet memory: set when auto-applied from food_memory
     foodMemoryId: v.optional(v.id("food_memory")),
     logSource: v.optional(v.string()),

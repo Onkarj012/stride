@@ -34,6 +34,7 @@ import type * as history from "../history.js";
 import type * as insights from "../insights.js";
 import type * as meals from "../meals.js";
 import type * as nudges from "../nudges.js";
+import type * as nutrition_draft from "../nutrition_draft.js";
 import type * as nutrition_engine from "../nutrition_engine.js";
 import type * as patterns from "../patterns.js";
 import type * as plan_resolve from "../plan_resolve.js";
@@ -85,6 +86,7 @@ declare const fullApi: ApiFromModules<{
   insights: typeof insights;
   meals: typeof meals;
   nudges: typeof nudges;
+  nutrition_draft: typeof nutrition_draft;
   nutrition_engine: typeof nutrition_engine;
   patterns: typeof patterns;
   plan_resolve: typeof plan_resolve;
