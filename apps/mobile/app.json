@@ -26,6 +26,8 @@
       "typedRoutes": true
     },
     "extra": {
+      "convexUrl": "__EXPO_PUBLIC_CONVEX_URL__",
+      "clerkPublishableKey": "__EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY__",
       "eas": {
         "projectId": "d196dbbf-4b00-4bf6-b681-b2b7be4b9b29"
       }

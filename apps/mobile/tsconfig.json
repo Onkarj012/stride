@@ -6,6 +6,9 @@
       "@/*": [
         "./*"
       ],
+      "@convex/_generated/api": [
+        "./lib/convex-api-shim.ts"
+      ],
       "@convex/*": [
         "../../packages/backend/convex/*"
       ]

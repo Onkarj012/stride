@@ -5,15 +5,29 @@ import { AppText, ProgressBar } from './ui'
 
 interface WaterTrackerProps {
   initial?: number
+  current?: number
   target?: number
   unit?: 'ml' | 'oz'
+  onAdd?: (amount: number) => void
+  onRemove?: () => void
 }
 
-export function WaterTracker({ initial = 1200, target = 2500, unit = 'ml' }: WaterTrackerProps) {
-  const [current, setCurrent] = useState(initial)
+export function WaterTracker({ initial = 1200, current: controlledCurrent, target = 2500, unit = 'ml', onAdd, onRemove }: WaterTrackerProps) {
+  const [localCurrent, setLocalCurrent] = useState(initial)
+  const current = controlledCurrent ?? localCurrent
   const t = useTheme()
   const step = unit === 'ml' ? 250 : 8
   const pct = Math.min(current / target, 1)
+
+  function add() {
+    if (onAdd) onAdd(step)
+    else setLocalCurrent(c => Math.min(target, c + step))
+  }
+
+  function remove() {
+    if (onRemove) onRemove()
+    else setLocalCurrent(c => Math.max(0, c - step))
+  }
 
   return (
     <View style={[{ backgroundColor: t.card, borderRadius: 20, padding: 20 }, t.cardShadow]}>
@@ -31,7 +45,7 @@ export function WaterTracker({ initial = 1200, target = 2500, unit = 'ml' }: Wat
         </View>
         <View style={{ flexDirection: 'row', gap: 8, marginLeft: 'auto' }}>
           <Pressable
-            onPress={() => setCurrent(c => Math.max(0, c - step))}
+            onPress={remove}
             style={({ pressed }) => ({
               width: 40, height: 40, borderRadius: 20,
               backgroundColor: t.dimBgMid,
@@ -42,7 +56,7 @@ export function WaterTracker({ initial = 1200, target = 2500, unit = 'ml' }: Wat
             <AppText variant="h2" color={t.text} style={{ lineHeight: 28 }}>−</AppText>
           </Pressable>
           <Pressable
-            onPress={() => setCurrent(c => Math.min(target, c + step))}
+            onPress={add}
             style={({ pressed }) => ({
               width: 40, height: 40, borderRadius: 20,
               backgroundColor: SKY,
