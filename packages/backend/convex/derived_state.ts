@@ -30,6 +30,11 @@ export async function recomputeForAction(ctx: any, args: RecomputeForActionArgs)
   await recomputeGamificationForUser(ctx, args.userId);
   if (args.actionType === "workout") await recomputeWorkoutCountForUser(ctx, args.userId);
 
+  // Versions are monotonic per user/date. A source mutation increments the
+  // version after all dependent state has been rebuilt/invalidated; telemetry
+  // records the primary action date's version for freshness debugging.
+  const derivedStateVersion = await bumpDerivedStateVersion(ctx, args.userId, args.date);
+
   let invalidated = 0;
   for (const date of dates) {
     const insight = await ctx.db
@@ -50,5 +55,20 @@ export async function recomputeForAction(ctx: any, args: RecomputeForActionArgs)
     calibrationRecomputed: args.actionType === "workout",
     insightsInvalidated: invalidated,
     patternsAndReadiness: "source-derived",
+    derivedStateVersion,
   } as const;
+}
+
+async function bumpDerivedStateVersion(ctx: any, userId: string, date: string): Promise<number> {
+  const current = await ctx.db
+    .query("derived_state_versions")
+    .withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date))
+    .first();
+  const version = (current?.version ?? 0) + 1;
+  if (current) {
+    await ctx.db.patch(current._id, { version, updatedAt: Date.now() });
+  } else {
+    await ctx.db.insert("derived_state_versions", { userId, date, version, updatedAt: Date.now() });
+  }
+  return version;
 }

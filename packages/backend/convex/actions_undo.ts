@@ -2,6 +2,7 @@ import { internalQuery, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { recordBehaviorRow } from "./behavior";
 import { recomputeForAction, type DerivedActionType } from "./derived_state";
+import { insertActionTelemetry } from "./telemetry";
 
 type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs";
 
@@ -32,7 +33,28 @@ type UndoResult = {
   status: "undone" | "already_undone" | "skipped";
   undoneAt?: number;
   reason?: string;
+  date?: string;
+  actionType?: DerivedActionType;
 };
+
+async function recordUndoTelemetry(ctx: any, group: any, action: any, result: UndoResult, derivedStateVersion?: number) {
+  await insertActionTelemetry(ctx, {
+    actionId: String(action._id),
+    groupId: String(action.groupId),
+    userId: action.userId,
+    actionType: action.actionType,
+    event: result.status === "undone" ? "undone" : result.status === "already_undone" ? "already_undone" : "failed",
+    sourceSurface: group.sourceSurface,
+    model: group.model,
+    retryCount: action.retryCount ?? 0,
+    validationStatus: action.validation?.status,
+    confidence: action.confidence,
+    provenance: action.provenance,
+    mutationResult: { ok: result.status !== "skipped", ...(result.reason ? { error: result.reason } : {}) },
+    undoResult: { status: result.status, ...(result.reason ? { error: result.reason } : {}) },
+    derivedStateVersion,
+  });
+}
 
 async function reverseCommittedAction(ctx: any, action: any): Promise<UndoResult & { date?: string; actionType?: DerivedActionType }> {
   if (action.status === "undone") {
@@ -87,13 +109,17 @@ export const undoAction = mutation({
     if (!action || action.userId !== userId) throw new Error("Action not found");
 
     const result = await reverseCommittedAction(ctx, action);
+    let derivedStateVersion: number | undefined;
     if (result.status === "undone") {
-      await recomputeForAction(ctx, {
+      const derived = await recomputeForAction(ctx, {
         userId,
         actionType: result.actionType ?? action.actionType,
         date: result.date ?? action.resolvedDate ?? new Date().toISOString().slice(0, 10),
       });
+      derivedStateVersion = derived.derivedStateVersion;
     }
+    const group = await ctx.db.get(action.groupId);
+    if (group) await recordUndoTelemetry(ctx, group, action, result, derivedStateVersion);
     return result;
   },
 });
@@ -107,7 +133,8 @@ export const undoGroup = mutation({
 
     const actions = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
     const results: UndoResult[] = [];
-    const affected = new Map<string, { actionType: DerivedActionType; date: string }>();
+    const affected = new Map<string, { actionType: DerivedActionType; date: string; version?: number }>();
+    const actionById = new Map(actions.map((action) => [String(action._id), action]));
     for (const action of actions) {
       if (action.status === "undone") {
         results.push(await reverseCommittedAction(ctx, action));
@@ -127,7 +154,18 @@ export const undoGroup = mutation({
     }
 
     if (results.some((result) => result.status === "undone")) {
-      for (const derived of affected.values()) await recomputeForAction(ctx, { userId, ...derived });
+      for (const derived of affected.values()) {
+        const recomputed = await recomputeForAction(ctx, { userId, actionType: derived.actionType, date: derived.date });
+        derived.version = recomputed.derivedStateVersion;
+      }
+    }
+    for (const result of results) {
+      const action = actionById.get(result.actionId);
+      if (!action) continue;
+      const derived = result.date && result.actionType
+        ? affected.get(`${result.actionType}:${result.date}`)
+        : undefined;
+      await recordUndoTelemetry(ctx, group, action, result, derived?.version);
     }
     return { groupId, results };
   },

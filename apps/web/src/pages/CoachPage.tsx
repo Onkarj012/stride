@@ -37,19 +37,22 @@ const SUGGESTION_DOT: Record<string, string> = {
 };
 
 function coachToAgent(coachType?: string): Agent {
-  switch (coachType) {
-    case "diet": return "diet";
-    case "workout": return "workout";
-    case "recovery": return "sleep";
-    case "water": return "water";
-    case "habit": return "habit";
-    case "mindset": return "wellness";
-    default: return "main";
-  }
+  // Mirrored from the backend persona compatibility module. Keep this local
+  // and tiny so the web build does not depend on Convex server modules.
+  const personaToAgent: Record<string, Agent> = {
+    overall: "main", general: "main",
+    diet: "diet", nutrition: "diet",
+    workout: "workout",
+    recovery: "sleep",
+    water: "water", hydration: "water",
+    habit: "habit",
+    mindset: "wellness", wellness: "wellness",
+  };
+  return personaToAgent[coachType ?? "general"] ?? "main";
 }
 
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; actionId?: string; groupId?: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string; note?: string } | { count: number } };
+type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; actionId?: string; groupId?: string; label: string; provenance?: string; confidence?: number; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string; note?: string } | { count: number } };
 type UndoMessage = { kind: "undo"; id: string; groupId?: string; entries: UndoEntry[] };
 type MemoryApprovalEntry = { memoryId: string; kind: "food" | "workout"; label: string; status?: "pending" | "approved" | "rejected" };
 type MemoryApprovalMessage = { kind: "memory-approval"; id: string; entries: MemoryApprovalEntry[] };
@@ -66,6 +69,18 @@ type ConfirmationMessage = { kind: "confirmation"; id: string; payload: Confirma
 type Message = TextMessage | UndoMessage | MemoryApprovalMessage | DuplicateMessage | ClarificationMessage | ConfirmationMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
 type ConvexChatMessage = { role: "user" | "ai"; content: string };
+
+function confidenceBand(confidence?: number): string | undefined {
+  if (confidence == null) return undefined;
+  return confidence >= 0.8 ? "high confidence" : confidence >= 0.6 ? "medium confidence" : "low confidence";
+}
+
+function provenanceLabel(provenance?: string, confidence?: number): string | undefined {
+  if (!provenance && confidence == null) return undefined;
+  const source = (provenance ?? "unknown").replaceAll("_", " ");
+  const band = confidenceBand(confidence);
+  return band ? `${source} · ${band}` : source;
+}
 
 const RAIL_SPRING = { type: "spring", stiffness: 260, damping: 30 } as const;
 const CHAT_RAIL_STORAGE_KEY = "stride_chat_rail_expanded";
@@ -368,15 +383,15 @@ export function CoachPage() {
       switch (item.type) {
         case "meal":
         case "workout":
-          return [{ type: item.type, id, actionId, groupId, label: item.data?.name ?? item.type }];
+          return [{ type: item.type, id, actionId, groupId, label: item.data?.name ?? item.type, provenance: item.data?.provenance, confidence: item.data?.confidence }];
         case "sleep":
-          return [{ type: "sleep" as const, id, actionId, groupId, label: `Sleep (${item.data?.hours}h)`, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality, note: item.data?.note } }];
+          return [{ type: "sleep" as const, id, actionId, groupId, label: `Sleep (${item.data?.hours}h)`, provenance: item.data?.provenance, confidence: item.data?.confidence, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality, note: item.data?.note } }];
         case "water":
-          return [{ type: "water" as const, id, actionId, groupId, label: `Water (${item.data?.ml}ml)` }];
+          return [{ type: "water" as const, id, actionId, groupId, label: `Water (${item.data?.ml}ml)`, provenance: item.data?.provenance, confidence: item.data?.confidence }];
         case "mood":
-          return [{ type: "mood" as const, id, actionId, groupId, label: `Mood (${item.data?.rating}/5)` }];
+          return [{ type: "mood" as const, id, actionId, groupId, label: `Mood (${item.data?.rating}/5)`, provenance: item.data?.provenance, confidence: item.data?.confidence }];
         case "steps":
-          return [{ type: "steps" as const, id, actionId, groupId, label: `Steps (${item.data?.count})`, previous: item.data?.previous ?? null, expected: { count: item.data?.count } }];
+          return [{ type: "steps" as const, id, actionId, groupId, label: `Steps (${item.data?.count})`, provenance: item.data?.provenance, confidence: item.data?.confidence, previous: item.data?.previous ?? null, expected: { count: item.data?.count } }];
         default:
           return [];
       }
@@ -678,7 +693,10 @@ export function CoachPage() {
                         )}
                       >
                         <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
-                        {entry.undone ? `${entry.label} reversed` : pendingUndoIds.has(entry.actionId ?? "") ? `Undoing: ${entry.label}` : `Undo: ${entry.label}`}
+                        <span className="flex flex-col items-start leading-tight">
+                          <span>{entry.undone ? `${entry.label} reversed` : pendingUndoIds.has(entry.actionId ?? "") ? `Undoing: ${entry.label}` : `Undo: ${entry.label}`}</span>
+                          {provenanceLabel(entry.provenance, entry.confidence) && <span className="text-[9px] font-semibold opacity-65">{provenanceLabel(entry.provenance, entry.confidence)}</span>}
+                        </span>
                       </button>
                     ))}
                   </div>

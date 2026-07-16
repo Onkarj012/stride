@@ -17,6 +17,9 @@ export interface WorkoutSession {
   estimatedCalories?: number | null
   calorieSource?: "reported" | "estimated" | null
   calorieEstimateProvenance?: string | null
+  calorieConfidence?: number | null
+  calorieRangeLow?: number | null
+  calorieRangeHigh?: number | null
   exercises: Exercise[]
 }
 
@@ -46,6 +49,8 @@ export function WorkoutSessionCard({ session, index = 0 }: { session: WorkoutSes
           {session.reportedCalories != null && <span className="rounded-full bg-sky/40 px-2 py-1">Reported {session.reportedCalories} kcal</span>}
           {session.estimatedCalories != null && <span className="rounded-full bg-lavender/20 px-2 py-1">Estimated {session.estimatedCalories} kcal</span>}
           {session.calorieEstimateProvenance && <span className="rounded-full bg-surface dark:bg-ink/40 px-2 py-1">{session.calorieEstimateProvenance.replaceAll("_", " ")}</span>}
+          {session.calorieConfidence != null && <span className="rounded-full bg-lavender/20 px-2 py-1">{Math.round(session.calorieConfidence * 100)}% confidence</span>}
+          {session.calorieRangeLow != null && session.calorieRangeHigh != null && <span className="rounded-full bg-peach/20 px-2 py-1">Range {session.calorieRangeLow}–{session.calorieRangeHigh} kcal</span>}
         </div>
       )}
 

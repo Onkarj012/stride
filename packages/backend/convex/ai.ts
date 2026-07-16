@@ -10,6 +10,12 @@ import {
   buildActionMembers,
 } from "./actions_envelope";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
+import { toLegacyPersona } from "./personas";
+import { insertActionTelemetry } from "./telemetry";
+
+async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
+  await ctx.runMutation((internal as any).telemetry.record, { input });
+}
 import { buildMealDraftFromParsed, mealPayloadFromDraft, type MealDraft } from "./nutrition_draft";
 import { calculateNonPersonalizedWorkoutCalories, calculateWorkoutCalories, parseDurationMinutes } from "./calorie_engine";
 import { matchExercises, getWeightedMET } from "./exercise_db";
@@ -213,7 +219,23 @@ export const stageClarificationGroup = internalMutation({
       })),
     });
     for (const member of members) {
-      await ensureMember(ctx, member);
+      const ensured = await ensureMember(ctx, member);
+      if (ensured.state === "created") {
+        await insertActionTelemetry(ctx, {
+          actionId: String(ensured.member._id),
+          groupId: String(groupResult.group._id),
+          userId: args.userId,
+          actionType: ensured.member.actionType,
+          event: "staged",
+          sourceSurface: args.sourceSurface,
+          model: args.model,
+          retryCount: 0,
+          validationStatus: ensured.member.validation.status,
+          confidence: ensured.member.confidence,
+          provenance: ensured.member.provenance,
+          mutationResult: { ok: true },
+        });
+      }
     }
     if (groupResult.group.status !== "pending") {
       await ctx.db.patch(groupResult.group._id, { status: "pending", resolvedAt: undefined });
@@ -285,7 +307,29 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
       const rowId = member.actionType === "recovery" ? (result as { id: string }).id : (result as string);
       loggedItems.push({
         type: member.actionType === "recovery" ? payload.kind : member.actionType,
-        data: { _id: rowId, ...payload, actionId: member._id, groupId: member.groupId },
+        data: {
+          _id: rowId,
+          ...payload,
+          actionId: member._id,
+          groupId: member.groupId,
+          provenance: member.provenance,
+          confidence: member.confidence,
+          validation: member.validation,
+        },
+      });
+      await recordActionTelemetry(ctx, {
+        actionId: String(member._id),
+        groupId: String(member.groupId),
+        userId,
+        actionType: member.actionType,
+        event: "clarification_resolved",
+        sourceSurface: group.sourceSurface,
+        model: group.model,
+        retryCount: member.retryCount ?? 0,
+        validationStatus: member.validation.status,
+        confidence: member.confidence,
+        provenance: member.provenance,
+        mutationResult: { ok: true },
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -340,6 +384,20 @@ export const expireActionGroup = internalMutation({
     for (const member of members) {
       if (member.status === "pending" || member.status === "failed") {
         await ctx.db.patch(member._id, { status: "expired" });
+        await insertActionTelemetry(ctx, {
+          actionId: String(member._id),
+          groupId: String(groupId),
+          userId: group.userId,
+          actionType: member.actionType,
+          event: "expired",
+          sourceSurface: group.sourceSurface,
+          model: group.model,
+          retryCount: (member as any).retryCount ?? 0,
+          validationStatus: member.validation.status,
+          confidence: member.confidence,
+          provenance: member.provenance,
+          mutationResult: { ok: false, error: "Confirmation expired", code: "CONFIRMATION_EXPIRED" },
+        });
       }
     }
     await ctx.db.patch(groupId, { status: "expired", resolvedAt: Date.now() });
@@ -358,6 +416,20 @@ export const recordConfirmationMemberFailure = internalMutation({
         status: "error",
         messages: [...member.validation.messages, error],
       },
+    });
+    await insertActionTelemetry(ctx, {
+      actionId: String(actionId),
+      groupId: String(member.groupId),
+      userId: member.userId,
+      actionType: member.actionType,
+      event: "failed",
+      sourceSurface: (await ctx.db.get(member.groupId))?.sourceSurface ?? "chat",
+      model: (await ctx.db.get(member.groupId))?.model,
+      retryCount: (member as any).retryCount ?? 0,
+      validationStatus: "error",
+      confidence: member.confidence,
+      provenance: member.provenance,
+      mutationResult: { ok: false, error, code: "CANONICAL_MUTATION_FAILED" },
     });
     return await ctx.db.get(actionId);
   },
@@ -429,7 +501,15 @@ function confirmationLoggedItem(member: any, rowId: string, payload: any, action
   const type = member.actionType === "recovery" ? payload.kind : member.actionType;
   return {
     type,
-    data: { _id: rowId, ...payload, actionId, groupId: member.groupId },
+    data: {
+      _id: rowId,
+      ...payload,
+      actionId,
+      groupId: member.groupId,
+      provenance: member.provenance,
+      confidence: member.confidence,
+      validation: member.validation,
+    },
   };
 }
 
@@ -486,6 +566,20 @@ export const confirmGroup = action({
       if (!decision) continue;
       const description = confirmationDescription(member);
       if (member.status === "committed") {
+        await recordActionTelemetry(ctx, {
+          actionId: String(member._id),
+          groupId: String(groupId),
+          userId,
+          actionType: member.actionType,
+          event: "already_committed",
+          sourceSurface: group.sourceSurface,
+          model: group.model,
+          retryCount: (member as any).retryCount ?? 0,
+          validationStatus: member.validation.status,
+          confidence: member.confidence,
+          provenance: member.provenance,
+          mutationResult: { ok: true },
+        });
         results.push({ ordinal, actionType: member.actionType, status: "already_committed", actionId: member._id, rowId: member.committedRowRef?.id });
         continue;
       }
@@ -577,7 +671,24 @@ export const discardConfirmationMember = internalMutation({
   handler: async (ctx, { actionId }) => {
     const member = await ctx.db.get(actionId);
     if (!member || member.status === "committed") return member;
-    if (member.status === "pending" || member.status === "failed") await ctx.db.patch(actionId, { status: "discarded" });
+    if (member.status === "pending" || member.status === "failed") {
+      await ctx.db.patch(actionId, { status: "discarded" });
+      const group = await ctx.db.get(member.groupId);
+      await insertActionTelemetry(ctx, {
+        actionId: String(actionId),
+        groupId: String(member.groupId),
+        userId: member.userId,
+        actionType: member.actionType,
+        event: "discarded",
+        sourceSurface: group?.sourceSurface ?? "chat",
+        model: group?.model,
+        retryCount: (member as any).retryCount ?? 0,
+        validationStatus: member.validation.status,
+        confidence: member.confidence,
+        provenance: member.provenance,
+        mutationResult: { ok: true },
+      });
+    }
     return await ctx.db.get(actionId);
   },
 });
@@ -1109,12 +1220,12 @@ Rules:
           : resolved.loggedItems.length > 1
             ? { type: "multiple", items: resolved.loggedItems }
             : null;
-        return { reply: resolvedReply, loggedItem, memoryApprovals: resolved.memoryApprovals ?? [], failedItems: [], coachType: (coachType as CoachType) ?? "overall", restricted: restrictedGuidance };
+        return { reply: resolvedReply, loggedItem, memoryApprovals: resolved.memoryApprovals ?? [], failedItems: [], coachType: toLegacyPersona(coachType), restricted: restrictedGuidance };
       }
     }
 
     // Detect coach (keyword routing, biased toward the user's preferred coach)
-    let detectedCoach: CoachType = (coachType as CoachType) ?? "overall";
+    let detectedCoach: CoachType = toLegacyPersona(coachType) as CoachType;
     if (!coachType || coachType === "auto") detectedCoach = classifyCoachType(message, behavior?.preferredCoach);
     const coach = getCoach(detectedCoach);
 
@@ -1666,7 +1777,15 @@ Rules:
       const type = candidate.actionType === "recovery" ? candidate.payload.kind : candidate.actionType;
       loggedItems.push({
         type,
-        data: { _id: rowId, ...candidate.payload, previous, ...actionMetadata },
+        data: {
+          _id: rowId,
+          ...candidate.payload,
+          previous,
+          provenance: candidate.provenance,
+          confidence: candidate.confidence,
+          validation: candidate.validation,
+          ...actionMetadata,
+        },
       });
       if (actionMetadata.actionId) {
         memoryApprovals.push(...await pendingMemoryApprovalsForAction(ctx, userId, actionMetadata.actionId));

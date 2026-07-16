@@ -21,6 +21,7 @@ import { writeWorkoutDomain } from "./workouts";
 import { writeRecoveryDomain } from "./wellness";
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 import { recomputeForAction } from "./derived_state";
+import { insertActionTelemetry } from "./telemetry";
 
 const groupValidator = v.object({
   userId: v.string(),
@@ -113,11 +114,17 @@ async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs)
   assertValidActionEnvelope(member);
   const ensured = await ensureMember(ctx, member);
   if (!ensured.shouldExecute) {
-    return { group: groupResult.group, member: ensured.member, shouldExecute: false, rowId: ensured.member.committedRowRef?.id };
+    if (ensured.state === "already_committed" || ensured.state === "already_terminal") {
+      await ctx.db.patch(ensured.member._id, { retryCount: ((ensured.member as any).retryCount ?? 0) + 1 });
+      const retried = await ctx.db.get(ensured.member._id);
+      return { group: groupResult.group, member: retried ?? ensured.member, shouldExecute: false, state: ensured.state, rowId: ensured.member.committedRowRef?.id };
+    }
+    return { group: groupResult.group, member: ensured.member, shouldExecute: false, state: ensured.state, rowId: ensured.member.committedRowRef?.id };
   }
   if (ensured.state === "reexecute") {
     await ctx.db.patch(ensured.member._id, {
       ...member,
+      retryCount: ((ensured.member as any).retryCount ?? 0) + 1,
       // Confirmation edits change the executable payload, but never the
       // original extraction that is needed for audit and correction review.
       originalPayload: (ensured.member as any).originalPayload ?? ensured.member.payload,
@@ -125,7 +132,25 @@ async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs)
   }
   const committedMember = await ctx.db.get(ensured.member._id);
   if (!committedMember) throw new Error("Action member was not found after ensure");
-  return { group: groupResult.group, member: committedMember, shouldExecute: true, rowId: undefined };
+  return { group: groupResult.group, member: committedMember, shouldExecute: true, state: ensured.state, rowId: undefined };
+}
+
+async function recordWriterTelemetry(ctx: any, prepared: any, event: "committed" | "already_committed" | "failed", mutationResult: { ok: boolean; error?: string; code?: string }, derivedStateVersion?: number) {
+  await insertActionTelemetry(ctx, {
+    actionId: String(prepared.member._id),
+    groupId: String(prepared.group._id),
+    userId: prepared.group.userId,
+    actionType: prepared.member.actionType,
+    event,
+    sourceSurface: prepared.group.sourceSurface,
+    model: prepared.group.model,
+    retryCount: prepared.member.retryCount ?? 0,
+    validationStatus: prepared.member.validation?.status,
+    confidence: prepared.member.confidence,
+    provenance: prepared.member.provenance,
+    mutationResult,
+    derivedStateVersion,
+  });
 }
 
 async function commitMember(ctx: any, prepared: any, table: string, id: any, undoMetadata?: Record<string, unknown>) {
@@ -143,7 +168,10 @@ export const writeMealAction = internalMutation({
   args: { group: groupValidator, member: memberValidator },
   handler: async (ctx, args) => {
     const prepared = await prepareMember(ctx, "meal", args as WriterArgs);
-    if (!prepared.shouldExecute) return prepared.rowId;
+    if (!prepared.shouldExecute) {
+      if (prepared.state === "already_committed") await recordWriterTelemetry(ctx, prepared, "already_committed", { ok: true });
+      return prepared.rowId;
+    }
     const payload = prepared.member.payload as Record<string, any>;
     const id = await writeMealDomain(ctx, { ...payload, userId: prepared.group.userId }, {
       emitBehavior: true,
@@ -152,7 +180,8 @@ export const writeMealAction = internalMutation({
       sourceActionId: String(prepared.member._id),
     });
     const committedId = await commitMember(ctx, prepared, "meals", id);
-    await recomputeForAction(ctx, { userId: prepared.group.userId, actionType: "meal", date: payload.date ?? prepared.member.resolvedDate });
+    const derived = await recomputeForAction(ctx, { userId: prepared.group.userId, actionType: "meal", date: payload.date ?? prepared.member.resolvedDate });
+    await recordWriterTelemetry(ctx, prepared, "committed", { ok: true }, derived.derivedStateVersion);
     return committedId;
   },
 });
@@ -161,7 +190,10 @@ export const writeWorkoutAction = internalMutation({
   args: { group: groupValidator, member: memberValidator },
   handler: async (ctx, args) => {
     const prepared = await prepareMember(ctx, "workout", args as WriterArgs);
-    if (!prepared.shouldExecute) return prepared.rowId;
+    if (!prepared.shouldExecute) {
+      if (prepared.state === "already_committed") await recordWriterTelemetry(ctx, prepared, "already_committed", { ok: true });
+      return prepared.rowId;
+    }
     const payload = prepared.member.payload as Record<string, any>;
     const id = await writeWorkoutDomain(ctx, { ...payload, userId: prepared.group.userId }, {
       emitBehavior: true,
@@ -170,7 +202,8 @@ export const writeWorkoutAction = internalMutation({
       sourceActionId: String(prepared.member._id),
     });
     const committedId = await commitMember(ctx, prepared, "workouts", id);
-    await recomputeForAction(ctx, { userId: prepared.group.userId, actionType: "workout", date: payload.date ?? prepared.member.resolvedDate });
+    const derived = await recomputeForAction(ctx, { userId: prepared.group.userId, actionType: "workout", date: payload.date ?? prepared.member.resolvedDate });
+    await recordWriterTelemetry(ctx, prepared, "committed", { ok: true }, derived.derivedStateVersion);
     return committedId;
   },
 });
@@ -179,7 +212,10 @@ export const writeRecoveryAction = internalMutation({
   args: { group: groupValidator, member: memberValidator },
   handler: async (ctx, args) => {
     const prepared = await prepareMember(ctx, "recovery", args as WriterArgs);
-    if (!prepared.shouldExecute) return prepared.rowId ? { id: prepared.rowId } : prepared.rowId;
+    if (!prepared.shouldExecute) {
+      if (prepared.state === "already_committed") await recordWriterTelemetry(ctx, prepared, "already_committed", { ok: true });
+      return prepared.rowId ? { id: prepared.rowId } : prepared.rowId;
+    }
     const payload = prepared.member.payload as Record<string, any>;
     const draft = buildRecoveryDraft({
       ...payload,
@@ -203,11 +239,12 @@ export const writeRecoveryAction = internalMutation({
       result.id,
       result.previous !== undefined ? { previous: result.previous } : undefined,
     );
-    await recomputeForAction(ctx, {
+    const derived = await recomputeForAction(ctx, {
       userId: prepared.group.userId,
       actionType: draft.entryKind === "state" ? "rest" : "recovery",
       date: draft.date,
     });
+    await recordWriterTelemetry(ctx, prepared, "committed", { ok: true }, derived.derivedStateVersion);
     return result;
   },
 });

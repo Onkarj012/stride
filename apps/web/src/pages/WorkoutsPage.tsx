@@ -46,6 +46,7 @@ type WorkoutRow = {
   estimatedCalories?: number | null;
   calorieSource?: "reported" | "estimated" | null;
   calorieEstimateProvenance?: string | null;
+  calorieConfidence?: number | null;
   structuredSets?: string | null;
 };
 
@@ -176,6 +177,9 @@ export function WorkoutsPage() {
                     estimatedCalories: w.estimatedCalories,
                     calorieSource: w.calorieSource,
                     calorieEstimateProvenance: w.calorieEstimateProvenance,
+                    calorieConfidence: w.calorieConfidence,
+                    calorieRangeLow: w.calorieRangeLow,
+                    calorieRangeHigh: w.calorieRangeHigh,
                     exercises: exerciseList.length > 0
                       ? exerciseList.map((ex) => ({
                         name: ex.normalizedName ?? ex.name,
@@ -283,6 +287,9 @@ export function WorkoutsPage() {
                       estimatedCalories: w.estimatedCalories,
                       calorieSource: w.calorieSource,
                       calorieEstimateProvenance: w.calorieEstimateProvenance,
+                      calorieConfidence: w.calorieConfidence,
+                      calorieRangeLow: w.calorieRangeLow,
+                      calorieRangeHigh: w.calorieRangeHigh,
                       exercises: exerciseList.map((ex) => ({
                         name: ex.normalizedName ?? ex.name,
                         rawName: ex.rawName,

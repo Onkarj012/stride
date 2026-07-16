@@ -8,6 +8,8 @@ type MealIngredientDetail = {
   food_text?: string
   source?: string
   confidence?: number
+  matchedFoodName?: string
+  grams?: number
   unresolved?: boolean
   quantity?: number
   unit?: string
@@ -76,19 +78,24 @@ export function MealLogCard({ meal, time, macros, confirmed, detail }: MealLogCa
       {ingredients.length > 0 && (
         <div className="mt-4 border-t border-ink/08 dark:border-white/08 pt-3 space-y-2">
           {ingredients.map((ingredient, index) => (
-            <div key={`${ingredient.foodText ?? ingredient.food_text ?? "ingredient"}-${index}`} className="flex items-center gap-2 text-[11px]">
-              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${ingredient.unresolved ? "bg-bubblegum" : "bg-mint"}`} />
-              <span className={`font-semibold truncate ${ingredient.unresolved ? "text-bubblegum" : "text-ink/65 dark:text-white/65"}`}>
-                {ingredient.foodText ?? ingredient.food_text ?? "Ingredient"}
-                {ingredient.quantity != null && ingredient.unit ? ` · ${ingredient.quantity}${ingredient.unit}` : ""}
-              </span>
-              <span className="ml-auto shrink-0">
-                {ingredient.unresolved ? (
-                  <span className="font-bold text-bubblegum">Needs selection</span>
-                ) : (
-                  <NutritionSourceBadge source={ingredient.source} confidence={ingredient.confidence} />
-                )}
-              </span>
+            <div key={`${ingredient.foodText ?? ingredient.food_text ?? "ingredient"}-${index}`} className="space-y-0.5">
+              <div className="flex items-center gap-2 text-[11px]">
+                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${ingredient.unresolved ? "bg-bubblegum" : "bg-mint"}`} />
+                <span className={`font-semibold truncate ${ingredient.unresolved ? "text-bubblegum" : "text-ink/65 dark:text-white/65"}`}>
+                  {ingredient.foodText ?? ingredient.food_text ?? "Ingredient"}
+                  {ingredient.quantity != null && ingredient.unit ? ` · ${ingredient.quantity}${ingredient.unit}` : ""}
+                </span>
+                <span className="ml-auto shrink-0">
+                  {ingredient.unresolved ? (
+                    <span className="font-bold text-bubblegum">Needs selection</span>
+                  ) : (
+                    <NutritionSourceBadge source={ingredient.source} confidence={ingredient.confidence} />
+                  )}
+                </span>
+              </div>
+              {ingredient.matchedFoodName && ingredient.matchedFoodName !== (ingredient.foodText ?? ingredient.food_text) && (
+                <p className="ml-3.5 text-[10px] text-ink/40 dark:text-white/40">normalized: {ingredient.matchedFoodName} · {Math.round(ingredient.grams ?? 0)}g</p>
+              )}
             </div>
           ))}
         </div>

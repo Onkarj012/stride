@@ -96,6 +96,14 @@ export default defineSchema({
     stale: v.optional(v.boolean()),
   }).index("by_user_date", ["userId", "date"]),
 
+  // Monotonic per-user/date version used to audit derived-state freshness.
+  derived_state_versions: defineTable({
+    userId: v.string(),
+    date: v.string(),
+    version: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user_date", ["userId", "date"]),
+
   weekly_summaries: defineTable({
     userId: v.string(),
     weekStart: v.string(),
@@ -507,6 +515,7 @@ export default defineSchema({
       v.literal("database_match"),
     ),
     confidence: v.optional(v.number()),
+    retryCount: v.optional(v.number()),
     validation: v.object({
       status: v.union(v.literal("valid"), v.literal("warning"), v.literal("error")),
       messages: v.array(v.string()),
@@ -528,4 +537,43 @@ export default defineSchema({
     .index("by_group", ["groupId"])
     .index("by_user_status", ["userId", "status"])
     .index("by_member_idempotency_key", ["memberIdempotencyKey"]),
+
+  action_telemetry: defineTable({
+    actionId: v.string(),
+    groupId: v.string(),
+    userId: v.string(),
+    actionType: v.string(),
+    event: v.union(
+      v.literal("staged"),
+      v.literal("committed"),
+      v.literal("failed"),
+      v.literal("discarded"),
+      v.literal("expired"),
+      v.literal("undone"),
+      v.literal("already_undone"),
+      v.literal("already_committed"),
+      v.literal("clarification_resolved"),
+    ),
+    sourceSurface: v.string(),
+    model: v.optional(v.string()),
+    retryCount: v.number(),
+    validationStatus: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    provenance: v.optional(v.string()),
+    mutationResult: v.object({
+      ok: v.boolean(),
+      error: v.optional(v.string()),
+      code: v.optional(v.string()),
+    }),
+    undoResult: v.optional(v.object({
+      status: v.string(),
+      error: v.optional(v.string()),
+      code: v.optional(v.string()),
+    })),
+    derivedStateVersion: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_group", ["groupId"])
+    .index("by_action", ["actionId"])
+    .index("by_user_created_at", ["userId", "createdAt"]),
 });

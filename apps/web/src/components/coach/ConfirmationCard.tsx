@@ -98,8 +98,7 @@ export function ConfirmationCard({ payload, pending = false, result, onConfirm }
                 <div className="min-w-0 flex-1 space-y-2">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="text-[10px] font-extrabold uppercase tracking-wide text-ink/45 dark:text-white/45">{item.actionType}</span>
-                    <span className="rounded-full bg-ink/5 px-1.5 py-0.5 text-[10px] font-bold text-ink/55 dark:bg-white/8 dark:text-white/55">{item.provenance.replace("_", " ")}</span>
-                    {item.confidence != null && <span className="text-[10px] font-semibold text-ink/45 dark:text-white/45">{Math.round(item.confidence * 100)}% confidence</span>}
+                    <span className="rounded-full bg-ink/5 px-1.5 py-0.5 text-[10px] font-bold text-ink/55 dark:bg-white/8 dark:text-white/55">{item.provenance.replaceAll("_", " ")}{item.confidence != null ? ` · ${item.confidence >= 0.8 ? "high" : item.confidence >= 0.6 ? "medium" : "low"} confidence` : ""}</span>
                   </div>
                   <input
                     aria-label="Action description"
