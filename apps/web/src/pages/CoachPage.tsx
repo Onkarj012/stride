@@ -56,7 +56,10 @@ type FailedLogItem =
   | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs; logged?: boolean }
   | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs; logged?: boolean };
 type DuplicateMessage = { kind: "duplicate"; id: string; items: FailedLogItem[] };
-type Message = TextMessage | UndoMessage | DuplicateMessage;
+type ClarificationItem = { actionType: string; description: string; reason: string; resolvedDate?: string; confidence?: number };
+type ClarificationPayload = { groupId: string; items: ClarificationItem[]; question: string };
+type ClarificationMessage = { kind: "clarification"; id: string; groupId: string; items: ClarificationItem[]; question: string; resolved?: boolean };
+type Message = TextMessage | UndoMessage | DuplicateMessage | ClarificationMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
 type ConvexChatMessage = { role: "user" | "ai"; content: string };
 
@@ -87,6 +90,7 @@ export function CoachPage() {
   const deleteMood = useMutation(api.wellness.deleteMood);
   const undoStepsLog = useMutation(api.wellness.undoStepsLog);
   const sendToAI = useAction(api.ai.chat);
+  const resolveClarification = useMutation(api.ai.resolveClarification);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -108,6 +112,9 @@ export function CoachPage() {
   const [kbPad, setKbPad] = useState(0);
   const [pendingUndoIds, setPendingUndoIds] = useState<Set<string>>(() => new Set());
   const [pendingRetryIds, setPendingRetryIds] = useState<Set<string>>(() => new Set());
+  const [activeClarificationGroupId, setActiveClarificationGroupId] = useState<Id<"actionGroups"> | null>(null);
+  const [pendingConfirmIds, setPendingConfirmIds] = useState<Set<string>>(() => new Set());
+  const [clarifyDates, setClarifyDates] = useState<Record<string, string>>({});
   const pendingUndoIdsRef = useRef<Set<string>>(new Set());
   const pendingRetryIdsRef = useRef<Set<string>>(new Set());
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
@@ -261,6 +268,39 @@ export function CoachPage() {
     }
   }, [addMeal, addWorkout, scroll, toast]);
 
+  const resolveClarificationCard = useCallback(async (messageId: string, groupId: string, date: string) => {
+    if (pendingConfirmIds.has(groupId)) return;
+    setPendingConfirmIds((prev) => new Set(prev).add(groupId));
+    try {
+      const result = await resolveClarification({ groupId: groupId as Id<"actionGroups">, date });
+      setActiveClarificationGroupId(null);
+      setMessages((prev) => prev.map((message) => message.kind === "clarification" && message.id === messageId
+        ? { ...message, resolved: true }
+        : message));
+      const loggedItem = result.loggedItems.length === 1
+        ? result.loggedItems[0]
+        : result.loggedItems.length > 1
+          ? { type: "multiple", items: result.loggedItems }
+          : null;
+      if (loggedItem) {
+        const undoEntries = undoEntriesFromLoggedItem(loggedItem);
+        if (undoEntries.length > 0) {
+          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, entries: undoEntries }]);
+        }
+      }
+      toast.success("Saved", date);
+      scroll();
+    } catch (err) {
+      toast.error("Couldn't save", err instanceof Error ? err.message : "Try again");
+    } finally {
+      setPendingConfirmIds((prev) => {
+        const next = new Set(prev);
+        next.delete(groupId);
+        return next;
+      });
+    }
+  }, [resolveClarification, scroll, toast, pendingConfirmIds]);
+
   function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
     const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
     if (!Array.isArray(rawItems)) return [];
@@ -319,7 +359,14 @@ export function CoachPage() {
         sessionId = result.id;
         setActiveSessionId(sessionId);
       }
-      const result = await sendToAI({ message: v, image, sessionId, coachType: "auto", today: localDateStr() });
+      const result = await sendToAI({
+        message: v,
+        image,
+        sessionId,
+        coachType: "auto",
+        today: localDateStr(),
+        clarificationGroupId: activeClarificationGroupId ?? undefined,
+      });
       const r = result as Record<string, unknown>;
       const reply = typeof r.reply === "string" ? r.reply : String(result);
       const coachType = typeof r.coachType === "string" ? r.coachType : undefined;
@@ -337,12 +384,22 @@ export function CoachPage() {
               && typeof candidate.retryArgs === "object";
           })
         : [];
+      const clarification = (r.clarification && typeof r.clarification === "object" && "groupId" in (r.clarification as object))
+        ? r.clarification as ClarificationPayload
+        : undefined;
+      if (clarification) setActiveClarificationGroupId(clarification.groupId as Id<"actionGroups">);
+      else if (loggedItem && activeClarificationGroupId) setActiveClarificationGroupId(null);
 
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: reply, agent, streamed: true }]);
       scroll();
 
       if (failedItems.length > 0) {
         setMessages((prev) => [...prev, { kind: "duplicate", id: `duplicate-${Date.now()}`, items: failedItems }]);
+        scroll();
+      }
+
+      if (clarification) {
+        setMessages((prev) => [...prev, { kind: "clarification", id: `clarify-${Date.now()}`, ...clarification }]);
         scroll();
       }
 
@@ -387,7 +444,7 @@ export function CoachPage() {
       sendingRef.current = false;
       setThinking(false);
     }
-  }, [activeMode, activeSessionId, createSession, sendToAI, scroll, toast]);
+  }, [activeMode, activeSessionId, activeClarificationGroupId, createSession, sendToAI, scroll, toast]);
 
   const attachItems: AttachItem[] = [
     { key: "photo", label: "Photo of meal", mode: "photo", icon: <ImagePlus className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => fileRef.current?.click() },
@@ -544,6 +601,52 @@ export function CoachPage() {
                         </button>
                       );
                     })}
+                  </div>
+                );
+              }
+              if (m.kind === "clarification") {
+                if (m.resolved || m.items.length === 0) return null;
+                const pending = pendingConfirmIds.has(m.groupId);
+                const defaultDate = m.items[0]?.resolvedDate ?? localDateStr();
+                const dateValue = clarifyDates[m.id] ?? defaultDate;
+                return (
+                  <div key={m.id} className="max-w-[92%] rounded-[16px] border border-ink/8 dark:border-white/10 bg-white dark:bg-[#1a1e2e] shadow-[0_8px_24px_rgba(13,16,27,0.06)] p-3.5 space-y-3" style={{ zoom: 0.72 } as React.CSSProperties}>
+                    <div className="space-y-2">
+                      {m.items.map((item, index) => (
+                        <div key={index} className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] font-extrabold uppercase tracking-wide text-ink/45 dark:text-white/45">{item.actionType}</span>
+                            <span className="text-[12px] font-medium text-ink dark:text-surface">{item.description}</span>
+                          </div>
+                          <p className="text-[12px] text-ink/60 dark:text-white/55 leading-snug">{item.reason}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[13px] font-medium text-ink dark:text-surface">{m.question}</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={dateValue}
+                        disabled={pending}
+                        onChange={(e) => setClarifyDates((prev) => ({ ...prev, [m.id]: e.target.value }))}
+                        className="h-9 rounded-[10px] border border-ink/12 dark:border-white/12 bg-surface dark:bg-[#0b0d15] px-3 text-[13px] font-medium text-ink dark:text-surface focus:outline-none focus:ring-2 focus:ring-lavender/40"
+                      />
+                      <button
+                        type="button"
+                        disabled={pending || !dateValue}
+                        onClick={() => void resolveClarificationCard(m.id, m.groupId, dateValue)}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
+                          pending || !dateValue
+                            ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
+                            : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
+                        )}
+                      >
+                        <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
+                        {pending ? "Saving…" : "Confirm"}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-ink/40 dark:text-white/40">Or just tell me the date in chat.</p>
                   </div>
                 );
               }

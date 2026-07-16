@@ -1,7 +1,9 @@
-import { action, query, internalAction } from "./_generated/server";
+import { action, query, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal, api } from "./_generated/api";
-import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { deriveGroupKey, deriveMemberKey, ensureGroup, ensureMember } from "./actions_idempotency";
 import { ConvexError, v } from "convex/values";
+import { resolveActionDate } from "./time_resolve";
+import { LOW_CONFIDENCE_CONFIRM_THRESHOLD, buildActionMembers } from "./actions_envelope";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { findBestMatch, AUTO_APPLY_MIN_LOGGED } from "./food_memory_match";
 import { calculateWorkoutCalories, parseDurationMinutes } from "./calorie_engine";
@@ -39,18 +41,220 @@ function getConvexErrorMessage(err: unknown): string | undefined {
   return (data as { message?: string }).message;
 }
 
-function markerMember(groupKey: string, actionType: "meal" | "workout" | "recovery", payload: any, ordinal: number, confidence?: number) {
+function markerMember(
+  groupKey: string,
+  actionType: "meal" | "workout" | "recovery",
+  payload: any,
+  ordinal: number,
+  confidence?: number,
+  validation: { status: "valid" | "warning" | "error"; messages: string[] } = { status: "valid", messages: [] },
+  resolvedDate?: string,
+) {
   return {
     memberIdempotencyKey: deriveMemberKey({ groupKey, actionType, payloadFingerprint: JSON.stringify(payload), ordinal }),
     payload,
     provenance: "ai_extracted" as const,
     confidence,
-    validation: { status: "valid" as const, messages: [] },
+    validation,
     reversible: true,
-    resolvedDate: payload.date,
+    resolvedDate: resolvedDate ?? payload.date,
     resolvedTime: payload.time ?? payload.timestamp,
   };
 }
+
+function isConfidenceLow(confidence: number | undefined): boolean {
+  return confidence !== undefined && confidence < LOW_CONFIDENCE_CONFIRM_THRESHOLD;
+}
+
+function isVagueDate(date: unknown): boolean {
+  return date === "UNKNOWN_VAGUE";
+}
+
+function resolveChatActionDate(
+  input: Omit<import("./time_resolve").ResolveActionDateInput, "now" | "userTimeZone">,
+): import("./time_resolve").ActionDateResolution {
+  return resolveActionDate({ ...input, now: Date.now(), userTimeZone: "UTC" });
+}
+
+function clarifyingReason(
+  date: unknown,
+  resolved: { status: "resolved" | "needs_clarification" | "rejected"; reason?: string },
+  confidence?: number,
+  validationStatus?: "valid" | "warning" | "error",
+): string | null {
+  if (isVagueDate(date)) return "The date is too vague; provide an exact date";
+  if (resolved.status === "needs_clarification") return resolved.reason ?? "The date needs clarification";
+  if (resolved.status === "rejected") return resolved.reason ?? "The date cannot be used";
+  if (validationStatus === "warning") return "The action needs confirmation before saving";
+  if (isConfidenceLow(confidence)) return `Confidence (${confidence!.toFixed(2)}) is below the auto-write threshold`;
+  return null;
+}
+
+function parseMarkerValidation(logData: any): { status: "valid" | "warning" | "error"; messages: string[] } {
+  const status = logData?.validation?.status;
+  if (status === "warning" || status === "error") {
+    return {
+      status,
+      messages: Array.isArray(logData.validation.messages) ? logData.validation.messages : [],
+    };
+  }
+  return { status: "valid", messages: [] };
+}
+
+/** Persist a pending action group + members without writing domain rows. */
+export const stageClarificationGroup = internalMutation({
+  args: {
+    userId: v.string(),
+    groupIdempotencyKey: v.string(),
+    sourceSurface: v.union(
+      v.literal("chat"),
+      v.literal("quick_log"),
+      v.literal("barcode"),
+      v.literal("recipe"),
+      v.literal("checkin"),
+      v.literal("direct_ui"),
+      v.literal("mobile"),
+    ),
+    rawInput: v.string(),
+    model: v.optional(v.string()),
+    clientLocalDate: v.optional(v.string()),
+    clientLocalTime: v.optional(v.string()),
+    clientTimeZone: v.optional(v.string()),
+    createdAt: v.number(),
+    members: v.array(v.object({
+      actionType: v.union(v.literal("meal"), v.literal("workout"), v.literal("recovery")),
+      memberIdempotencyKey: v.string(),
+      payload: v.any(),
+      provenance: v.union(v.literal("user_reported"), v.literal("ai_extracted"), v.literal("ai_estimated"), v.literal("database_match")),
+      confidence: v.optional(v.number()),
+      validation: v.object({ status: v.union(v.literal("valid"), v.literal("warning"), v.literal("error")), messages: v.array(v.string()) }),
+      reversible: v.boolean(),
+      resolvedDate: v.optional(v.string()),
+      resolvedTime: v.optional(v.string()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const groupResult = await ensureGroup(ctx, {
+      userId: args.userId,
+      groupIdempotencyKey: args.groupIdempotencyKey,
+      sourceSurface: args.sourceSurface,
+      rawInput: args.rawInput,
+      model: args.model,
+      clientLocalDate: args.clientLocalDate,
+      clientLocalTime: args.clientLocalTime,
+      clientTimeZone: args.clientTimeZone,
+      createdAt: args.createdAt,
+      status: "pending",
+    });
+    const members = buildActionMembers({
+      groupId: groupResult.group._id,
+      userId: args.userId,
+      candidates: args.members,
+    });
+    for (const member of members) {
+      await ensureMember(ctx, member);
+    }
+    return { groupId: groupResult.group._id };
+  },
+});
+
+type ResolveClarificationResult = { groupId: string; loggedItems: any[]; errors?: string[] };
+
+async function executeClarificationResolution(ctx: any, userId: string, groupId: string, date: string): Promise<ResolveClarificationResult> {
+  const group = await ctx.runQuery(internal.ai.getActionGroupForClarification, { groupId: groupId as any });
+  if (!group) throw new Error("Clarification group not found");
+  if (group.userId !== userId) throw new Error("Not authorized");
+  if (group.status !== "pending") throw new Error("Group is not pending clarification");
+
+  const members: any[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
+  const loggedItems: any[] = [];
+  const errors: string[] = [];
+
+  for (const member of members) {
+    try {
+      const payload = { ...member.payload, date };
+      const groupInput = {
+        userId: group.userId,
+        groupIdempotencyKey: group.groupIdempotencyKey,
+        sourceSurface: group.sourceSurface,
+        rawInput: group.rawInput,
+        model: group.model,
+        clientLocalDate: group.clientLocalDate,
+        clientLocalTime: group.clientLocalTime,
+        clientTimeZone: group.clientTimeZone,
+        createdAt: group.createdAt,
+      };
+      const memberInput = {
+        memberIdempotencyKey: member.memberIdempotencyKey,
+        payload,
+        provenance: member.provenance,
+        confidence: member.confidence,
+        validation: member.validation,
+        reversible: member.reversible,
+        resolvedDate: date,
+        resolvedTime: member.resolvedTime,
+      };
+      let result: any;
+      if (member.actionType === "meal") {
+        result = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
+          group: groupInput,
+          member: memberInput,
+        });
+      } else if (member.actionType === "workout") {
+        result = await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, {
+          group: groupInput,
+          member: memberInput,
+        });
+      } else if (member.actionType === "recovery") {
+        result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+          group: groupInput,
+          member: memberInput,
+        });
+      } else {
+        continue;
+      }
+      const rowId = member.actionType === "recovery" ? (result as { id: string }).id : (result as string);
+      loggedItems.push({ type: member.actionType === "recovery" ? payload.kind : member.actionType, data: { _id: rowId, ...payload } });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(message);
+      console.error("Failed to resolve clarification member:", err);
+    }
+  }
+
+  if (errors.length > 0 && loggedItems.length === 0) {
+    throw new Error(`Could not resolve clarification: ${errors.join("; ")}`);
+  }
+
+  return { groupId, loggedItems, errors: errors.length > 0 ? errors : undefined };
+}
+
+/** Resolve a pending clarification group with an exact date and write through canonical writers. */
+export const resolveClarification = action({
+  args: {
+    groupId: v.id("actionGroups"),
+    date: v.string(),
+  },
+  handler: async (ctx, { groupId, date }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    return executeClarificationResolution(ctx, identity.subject, groupId as unknown as string, date);
+  },
+});
+
+export const getActionGroupForClarification = internalQuery({
+  args: { groupId: v.id("actionGroups") },
+  handler: async (ctx, { groupId }) => {
+    return await ctx.db.get("actionGroups", groupId);
+  },
+});
+
+export const getPendingMembersForClarification = internalQuery({
+  args: { groupId: v.id("actionGroups") },
+  handler: async (ctx, { groupId }) => {
+    return await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
+  },
+});
 
 
 // ─── Public actions ───────────────────────────────────────────────────────────
@@ -443,8 +647,9 @@ export const chat = action({
     coachType: v.optional(v.string()),
     today: v.optional(v.string()),
     image: v.optional(v.string()),
+    clarificationGroupId: v.optional(v.id("actionGroups")),
   },
-  handler: async (ctx, { message, sessionId, coachType, today: todayArg, image }) => {
+  handler: async (ctx, { message, sessionId, coachType, today: todayArg, image, clarificationGroupId }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
@@ -519,12 +724,12 @@ You can log multiple items directly when the user describes them. Append log blo
 
 Today's date is ${today}. Each log block can include an optional "date" field (YYYY-MM-DD). If the user says "yesterday", "2 days ago", or names a specific past day, set the date accordingly. Default is today.
 
-For meals: ⟦LOG_MEAL⟧{"description":"full meal description","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string","date":"YYYY-MM-DD (optional)"}⟦/LOG_MEAL⟧
-For workouts: ⟦LOG_WORKOUT⟧{"description":"full workout description with exercises, sets, reps, weights","date":"YYYY-MM-DD (optional)"}⟦/LOG_WORKOUT⟧
-For sleep: ⟦LOG_SLEEP⟧{"hours":6.5,"quality":"poor|ok|good|great","date":"YYYY-MM-DD (optional)"}⟦/LOG_SLEEP⟧
-For water: ⟦LOG_WATER⟧{"ml":500,"date":"YYYY-MM-DD (optional)"}⟦/LOG_WATER⟧
-For mood: ⟦LOG_MOOD⟧{"rating":3,"note":"optional note","date":"YYYY-MM-DD (optional)"}⟦/LOG_MOOD⟧
-For steps: ⟦LOG_STEPS⟧{"count":8000,"date":"YYYY-MM-DD (optional)"}⟦/LOG_STEPS⟧
+For meals: ⟦LOG_MEAL⟧{"description":"full meal description","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string","date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_MEAL⟧
+For workouts: ⟦LOG_WORKOUT⟧{"description":"full workout description with exercises, sets, reps, weights","date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_WORKOUT⟧
+For sleep: ⟦LOG_SLEEP⟧{"hours":6.5,"quality":"poor|ok|good|great","date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_SLEEP⟧
+For water: ⟦LOG_WATER⟧{"ml":500,"date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_WATER⟧
+For mood: ⟦LOG_MOOD⟧{"rating":3,"note":"optional note","date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_MOOD⟧
+For steps: ⟦LOG_STEPS⟧{"count":8000,"date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_STEPS⟧
 
 Rules:
 - Append ALL relevant log blocks when the user reports multiple activities (e.g. meal + water → append both blocks)
@@ -532,7 +737,10 @@ Rules:
 - If user says "yesterday I had X" → use yesterday's date in the log block
 - Sleep descriptions ("slept X hours", "went to bed at X", "woke up at Y") → LOG_SLEEP, NOT LOG_WORKOUT
 - Your message text (before the blocks) should confirm what you logged AND mention the date if it's not today
-- YOU MUST include the markers exactly as shown.`;
+- YOU MUST include the markers exactly as shown.
+- Vague historical time references such as "a while ago", "last week sometime", "recently", "the other day", or "a few days ago" must NOT be resolved to a guessed date. Set the "date" field to "UNKNOWN_VAGUE" and include a brief "question" asking for the exact date (e.g. "Which date did you have this?").
+- Vague workout descriptions with no identifiable exercise must NOT invent a synthetic exercise. Set the "date" field to "UNKNOWN_VAGUE" and include a "question" asking what exercise the user did.
+- If you are uncertain about an entry, set "validation.status" to "warning" and the app will ask for confirmation before saving.`;
 
     // Load session history
     let history: { role: string; content: string }[] = [];
@@ -548,6 +756,34 @@ Rules:
 
     // Save user message
     await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "user", content: message });
+
+    // Free-text clarification answer: if the user provided a groupId and a resolvable date,
+    // write the pending group immediately without another AI round-trip.
+    if (clarificationGroupId) {
+      let answerDate: string | undefined;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(message.trim())) {
+        answerDate = message.trim();
+      } else {
+        const resolved = resolveChatActionDate({ relativePhrase: message.trim(), actionKind: "actual" });
+        if (resolved.status === "resolved") answerDate = resolved.date;
+      }
+      if (answerDate) {
+        const resolved = await executeClarificationResolution(ctx, userId, clarificationGroupId as unknown as string, answerDate);
+        const resolvedReply = resolved.loggedItems.length > 0
+          ? `Saved ${resolved.loggedItems.map((item: any) => item.data?.name ?? item.type).join(", ")} for ${answerDate}.`
+          : `I couldn't save that. Please try again.`;
+        await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "ai", content: resolvedReply });
+        if (sessionId) {
+          await ctx.runMutation(internal.chat.touchSession, { sessionId });
+        }
+        const loggedItem = resolved.loggedItems.length === 1
+          ? resolved.loggedItems[0]
+          : resolved.loggedItems.length > 1
+            ? { type: "multiple", items: resolved.loggedItems }
+            : null;
+        return { reply: resolvedReply, loggedItem, failedItems: [], coachType: (coachType as CoachType) ?? "overall" };
+      }
+    }
 
     // Detect coach (keyword routing, biased toward the user's preferred coach)
     let detectedCoach: CoachType = (coachType as CoachType) ?? "overall";
@@ -685,6 +921,19 @@ Rules:
     const chatGroupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput: message });
     const chatGroup = { userId, groupIdempotencyKey: chatGroupKey, sourceSurface: "chat" as const, rawInput: message };
 
+    // Candidates held for clarification instead of being written immediately.
+    type PendingCandidate = {
+      actionType: "meal" | "workout" | "recovery";
+      description: string;
+      payload: any;
+      confidence?: number;
+      resolvedDate?: string;
+      reason: string;
+      question?: string;
+      ordinal: number;
+    };
+    const pendingCandidates: PendingCandidate[] = [];
+
     // Strip all log blocks from the reply text
     cleanReply = reply
       .replace(/⟦LOG_MEAL⟧[\s\S]*?⟦\/LOG_MEAL⟧/g, "")
@@ -695,6 +944,17 @@ Rules:
       .replace(/⟦LOG_STEPS⟧[\s\S]*?⟦\/LOG_STEPS⟧/g, "")
       .trim();
 
+    function resolveMarkerDate(dateValue: unknown): { date: string; resolution: import("./time_resolve").ActionDateResolution } {
+      if (dateValue === "UNKNOWN_VAGUE") {
+        return { date: today, resolution: { status: "needs_clarification", reason: "The date is too vague; provide an exact date" } };
+      }
+      if (typeof dateValue === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+        return { date: dateValue, resolution: resolveChatActionDate({ explicitDate: dateValue, actionKind: "actual" }) };
+      }
+      const resolution = resolveChatActionDate({ actionKind: "actual" });
+      return { date: today, resolution };
+    }
+
     // Meal
     const mealMatches = [...reply.matchAll(/⟦LOG_MEAL⟧([\s\S]*?)⟦\/LOG_MEAL⟧/g)];
     for (const [mealIndex, mealMatch] of mealMatches.entries()) {
@@ -703,7 +963,7 @@ Rules:
       try {
         const logData = JSON.parse(mealMatch[1].trim());
         retryDescription = logData.description || message;
-        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
+        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", parseModel, apiKey);
         if (parsed.parseError) {
           logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
@@ -712,6 +972,7 @@ Rules:
         const nutrition = await runNutritionEngine(ctx, parsed);
         const finalStructuredItems = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown.items) : undefined;
         const finalIngredientBreakdown = nutrition.ingredientBreakdown ? JSON.stringify(nutrition.ingredientBreakdown) : undefined;
+        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
         retryArgs = {
           name: parsed.name,
           calories: nutrition.calories,
@@ -736,9 +997,25 @@ Rules:
           confidence: nutrition.confidence, nutritionSource: nutrition.nutritionSource,
           structuredItems: finalStructuredItems, ingredientBreakdown: finalIngredientBreakdown, logSource: "coach",
         };
+        const mealValidation = parseMarkerValidation(logData);
+        const reason = clarifyingReason(logData.date, dateResolution, nutrition.confidence, mealValidation.status);
+        if (reason) {
+          pendingCandidates.push({
+            actionType: "meal",
+            description: retryDescription,
+            payload: mealPayload,
+            confidence: nutrition.confidence,
+            resolvedDate: targetDate,
+            reason,
+            question: logData.question,
+            ordinal: mealIndex,
+          });
+          logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
+          continue;
+        }
         const mealId = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
           group: chatGroup,
-          member: markerMember(chatGroupKey, "meal", mealPayload, mealIndex, nutrition.confidence),
+          member: markerMember(chatGroupKey, "meal", mealPayload, mealIndex, nutrition.confidence, mealValidation),
         });
         loggedItems.push({ type: "meal", data: { _id: mealId, ...parsed, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat } });
         logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: true });
@@ -767,7 +1044,7 @@ Rules:
       try {
         const logData = JSON.parse(workoutMatch[1].trim());
         retryDescription = logData.description || message;
-        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
+        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
         const timestamp = new Date().toISOString().slice(11, 16);
         const metabolicProfile: any = await ctx.runQuery(api.calibration.getMetabolicProfileForContext, {});
         const userPhysique: UserPhysique | undefined = profile ? {
@@ -785,6 +1062,8 @@ Rules:
           calorieRangeHigh: parsed.calorieResult.range_high, calorieEstimateRough: parsed.calorieResult.rough,
           calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
         } : {};
+        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
+        const workoutConfidence = parsed.calorieResult?.confidence;
         retryArgs = {
           name: parsed.name,
           sets: parsed.sets,
@@ -806,9 +1085,25 @@ Rules:
           structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
           timestamp, logSource: "coach", ...calorieFields,
         };
+        const workoutValidation = parseMarkerValidation(logData);
+        const reason = clarifyingReason(logData.date, dateResolution, workoutConfidence, workoutValidation.status);
+        if (reason) {
+          pendingCandidates.push({
+            actionType: "workout",
+            description: retryDescription,
+            payload: workoutPayload,
+            confidence: workoutConfidence,
+            resolvedDate: targetDate,
+            reason,
+            question: logData.question,
+            ordinal: workoutIndex,
+          });
+          logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
+          continue;
+        }
         const workoutId = await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, {
           group: chatGroup,
-          member: markerMember(chatGroupKey, "workout", workoutPayload, workoutIndex),
+          member: markerMember(chatGroupKey, "workout", workoutPayload, workoutIndex, workoutConfidence, workoutValidation),
         });
         loggedItems.push({ type: "workout", data: { _id: workoutId, ...parsed } });
         logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: true });
@@ -834,13 +1129,29 @@ Rules:
     for (const [sleepIndex, sleepMatch] of sleepMatches.entries()) {
       try {
         const logData = JSON.parse(sleepMatch[1].trim());
-        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
+        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
+        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
         const hours = Math.max(0.5, Math.min(24, Number(logData.hours) || 7));
         const quality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : "ok";
         const sleepPayload = { kind: "sleep", hours, quality, date: targetDate };
+        const sleepValidation = parseMarkerValidation(logData);
+        const reason = clarifyingReason(logData.date, dateResolution, undefined, sleepValidation.status);
+        if (reason) {
+          pendingCandidates.push({
+            actionType: "recovery",
+            description: `Sleep ${hours}h (${quality})`,
+            payload: sleepPayload,
+            resolvedDate: targetDate,
+            reason,
+            question: logData.question,
+            ordinal: sleepIndex,
+          });
+          logOutcomes.push({ type: "sleep", name: "sleep", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
+          continue;
+        }
         const { id: sleepId, previous } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
           group: chatGroup,
-          member: markerMember(chatGroupKey, "recovery", sleepPayload, sleepIndex),
+          member: markerMember(chatGroupKey, "recovery", sleepPayload, sleepIndex, undefined, sleepValidation),
         });
         loggedItems.push({ type: "sleep", data: { _id: sleepId, hours, quality, previous } });
         logOutcomes.push({ type: "sleep", name: "sleep", ok: true });
@@ -856,13 +1167,29 @@ Rules:
     for (const [waterIndex, waterMatch] of waterMatches.entries()) {
       try {
         const logData = JSON.parse(waterMatch[1].trim());
-        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
+        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
+        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
         const ml = Math.max(50, Math.min(5000, Number(logData.ml) || 250));
         const time = new Date().toTimeString().slice(0, 5);
         const waterPayload = { kind: "water", ml, date: targetDate, time };
+        const waterValidation = parseMarkerValidation(logData);
+        const reason = clarifyingReason(logData.date, dateResolution, undefined, waterValidation.status);
+        if (reason) {
+          pendingCandidates.push({
+            actionType: "recovery",
+            description: `Water ${ml}ml`,
+            payload: waterPayload,
+            resolvedDate: targetDate,
+            reason,
+            question: logData.question,
+            ordinal: waterIndex,
+          });
+          logOutcomes.push({ type: "water", name: "water", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
+          continue;
+        }
         const { id: waterId } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
           group: chatGroup,
-          member: markerMember(chatGroupKey, "recovery", waterPayload, waterIndex),
+          member: markerMember(chatGroupKey, "recovery", waterPayload, waterIndex, undefined, waterValidation),
         });
         loggedItems.push({ type: "water", data: { _id: waterId, ml } });
         logOutcomes.push({ type: "water", name: "water", ok: true });
@@ -878,13 +1205,29 @@ Rules:
     for (const [moodIndex, moodMatch] of moodMatches.entries()) {
       try {
         const logData = JSON.parse(moodMatch[1].trim());
-        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
+        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
+        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
         const rating = Math.max(1, Math.min(5, Number(logData.rating) || 3)) as 1|2|3|4|5;
         const time = new Date().toTimeString().slice(0, 5);
         const moodPayload = { kind: "mood", rating, date: targetDate, time, note: logData.note };
+        const moodValidation = parseMarkerValidation(logData);
+        const reason = clarifyingReason(logData.date, dateResolution, undefined, moodValidation.status);
+        if (reason) {
+          pendingCandidates.push({
+            actionType: "recovery",
+            description: `Mood ${rating}/5`,
+            payload: moodPayload,
+            resolvedDate: targetDate,
+            reason,
+            question: logData.question,
+            ordinal: moodIndex,
+          });
+          logOutcomes.push({ type: "mood", name: "mood", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
+          continue;
+        }
         const { id: moodId } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
           group: chatGroup,
-          member: markerMember(chatGroupKey, "recovery", moodPayload, moodIndex),
+          member: markerMember(chatGroupKey, "recovery", moodPayload, moodIndex, undefined, moodValidation),
         });
         loggedItems.push({ type: "mood", data: { _id: moodId, rating } });
         logOutcomes.push({ type: "mood", name: "mood", ok: true });
@@ -900,12 +1243,28 @@ Rules:
     for (const [stepsIndex, stepsMatch] of stepsMatches.entries()) {
       try {
         const logData = JSON.parse(stepsMatch[1].trim());
-        const targetDate = typeof logData.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(logData.date) ? logData.date : today;
+        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
+        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
         const count = Math.max(0, Number(logData.count) || 0);
         const stepsPayload = { kind: "steps", count, date: targetDate };
+        const stepsValidation = parseMarkerValidation(logData);
+        const reason = clarifyingReason(logData.date, dateResolution, undefined, stepsValidation.status);
+        if (reason) {
+          pendingCandidates.push({
+            actionType: "recovery",
+            description: `Steps ${count}`,
+            payload: stepsPayload,
+            resolvedDate: targetDate,
+            reason,
+            question: logData.question,
+            ordinal: stepsIndex,
+          });
+          logOutcomes.push({ type: "steps", name: "steps", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
+          continue;
+        }
         const { id: stepsId, previous } = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
           group: chatGroup,
-          member: markerMember(chatGroupKey, "recovery", stepsPayload, stepsIndex),
+          member: markerMember(chatGroupKey, "recovery", stepsPayload, stepsIndex, undefined, stepsValidation),
         });
         loggedItems.push({ type: "steps", data: { _id: stepsId, count, previous } });
         logOutcomes.push({ type: "steps", name: "steps", ok: true });
@@ -939,6 +1298,43 @@ Rules:
       cleanReply = [cleanReply, statusParts.join(" ")].filter(Boolean).join("\n\n");
     }
 
+    let clarification: { groupId: string; items: any[]; question: string } | undefined;
+    if (pendingCandidates.length > 0) {
+      const stagedMembers = pendingCandidates.map((candidate) => ({
+        ...markerMember(
+          chatGroupKey,
+          candidate.actionType,
+          candidate.payload,
+          candidate.ordinal,
+          candidate.confidence,
+          { status: "valid", messages: [] },
+          candidate.resolvedDate,
+        ),
+        actionType: candidate.actionType,
+      }));
+      const staged: { groupId: string } = await ctx.runMutation(internal.ai.stageClarificationGroup, {
+        userId,
+        groupIdempotencyKey: chatGroupKey,
+        sourceSurface: "chat",
+        rawInput: message,
+        model: parseModel,
+        createdAt: Date.now(),
+        members: stagedMembers,
+      });
+      const questions = [...new Set(pendingCandidates.map((c) => c.question).filter((q): q is string => typeof q === "string" && q.length > 0))];
+      clarification = {
+        groupId: staged.groupId,
+        items: pendingCandidates.map((candidate) => ({
+          actionType: candidate.actionType,
+          description: candidate.description,
+          reason: candidate.reason,
+          resolvedDate: candidate.resolvedDate,
+          confidence: candidate.confidence,
+        })),
+        question: questions.join(" ") || "Please confirm the details so I can save this.",
+      };
+    }
+
     const loggedItem = loggedItems.length === 1 ? loggedItems[0] : loggedItems.length > 1 ? { type: "multiple", items: loggedItems } : null;
 
     // Save AI reply
@@ -967,7 +1363,7 @@ Rules:
       }
     }
 
-    return { reply: cleanReply, loggedItem, failedItems, coachType: detectedCoach };
+    return { reply: cleanReply, loggedItem, failedItems, coachType: detectedCoach, clarification };
   },
 });
 

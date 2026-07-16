@@ -107,6 +107,9 @@ export type ExtractedActionCandidate = {
 
 export type ActionGroupInput = Omit<ActionGroup, "status"> & { status?: ActionGroupStatus };
 
+/** Actions at or below this confidence require user confirmation, even in small batches. */
+export const LOW_CONFIDENCE_CONFIRM_THRESHOLD = 0.6;
+
 function assertConfidence(confidence: number | undefined): void {
   if (confidence !== undefined && (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)) {
     throw new Error("Action confidence must be a finite number between 0 and 1");

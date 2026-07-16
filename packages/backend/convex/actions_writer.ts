@@ -114,7 +114,9 @@ async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs)
     return { group: groupResult.group, member: ensured.member, shouldExecute: false, rowId: ensured.member.committedRowRef?.id };
   }
   if (ensured.state === "reexecute") await ctx.db.patch(ensured.member._id, member);
-  return { group: groupResult.group, member: ensured.member, shouldExecute: true, rowId: undefined };
+  const committedMember = await ctx.db.get(ensured.member._id);
+  if (!committedMember) throw new Error("Action member was not found after ensure");
+  return { group: groupResult.group, member: committedMember, shouldExecute: true, rowId: undefined };
 }
 
 async function commitMember(ctx: any, prepared: any, table: string, id: any) {
