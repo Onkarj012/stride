@@ -77,6 +77,14 @@ async function committedActionMetadata(ctx: any, userId: string, table: string, 
   return action ? { actionId: action._id, groupId: action.groupId } : {};
 }
 
+async function pendingMemoryApprovalsForAction(ctx: any, userId: string, actionId: string) {
+  const [food, workout] = await Promise.all([
+    ctx.runQuery((internal as any).food_memory.getPendingForAction, { userId, sourceActionId: actionId }),
+    ctx.runQuery((internal as any).workout_memory.getPendingForAction, { userId, sourceActionId: actionId }),
+  ]);
+  return [...food, ...workout];
+}
+
 function isConfidenceLow(confidence: number | undefined): boolean {
   return confidence !== undefined && confidence < LOW_CONFIDENCE_CONFIRM_THRESHOLD;
 }
@@ -214,7 +222,7 @@ export const stageClarificationGroup = internalMutation({
   },
 });
 
-type ResolveClarificationResult = { groupId: string; loggedItems: any[]; errors?: string[] };
+type ResolveClarificationResult = { groupId: string; loggedItems: any[]; memoryApprovals?: any[]; errors?: string[] };
 
 async function executeClarificationResolution(ctx: any, userId: string, groupId: string, date: string): Promise<ResolveClarificationResult> {
   const group = await ctx.runQuery(internal.ai.getActionGroupForClarification, { groupId: groupId as any });
@@ -290,7 +298,10 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     throw new Error(`Could not resolve clarification: ${errors.join("; ")}`);
   }
 
-  return { groupId, loggedItems, errors: errors.length > 0 ? errors : undefined };
+  const memoryApprovals = (await Promise.all(loggedItems.map((item) =>
+    item.data?.actionId ? pendingMemoryApprovalsForAction(ctx, userId, item.data.actionId) : [],
+  ))).flat();
+  return { groupId, loggedItems, memoryApprovals, errors: errors.length > 0 ? errors : undefined };
 }
 
 /** Resolve a pending clarification group with an exact date and write through canonical writers. */
@@ -467,6 +478,7 @@ export const confirmGroup = action({
     const results: any[] = [];
     const loggedItems: any[] = [];
     const unresolvedItems: any[] = [];
+    const memoryApprovals: any[] = [];
 
     for (const member of members) {
       const ordinal = confirmationOrdinal(member);
@@ -525,6 +537,7 @@ export const confirmGroup = action({
         const actionId = committed?._id ?? member._id;
         const committedPayload = committed?.payload ?? edited.payload;
         loggedItems.push(confirmationLoggedItem(member, rowId, committedPayload, actionId));
+        memoryApprovals.push(...await pendingMemoryApprovalsForAction(ctx, userId, actionId));
         results.push({ ordinal, actionType: member.actionType, description, status: "committed", actionId, rowId });
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
@@ -550,7 +563,7 @@ export const confirmGroup = action({
             ? "pending"
             : "failed";
     await ctx.runMutation(aiInternal.finalizeConfirmationGroup, { groupId, status });
-    return { groupId, status, results, loggedItems, unresolvedItems };
+    return { groupId, status, results, loggedItems, unresolvedItems, memoryApprovals };
   },
 });
 
@@ -1096,7 +1109,7 @@ Rules:
           : resolved.loggedItems.length > 1
             ? { type: "multiple", items: resolved.loggedItems }
             : null;
-        return { reply: resolvedReply, loggedItem, failedItems: [], coachType: (coachType as CoachType) ?? "overall", restricted: restrictedGuidance };
+        return { reply: resolvedReply, loggedItem, memoryApprovals: resolved.memoryApprovals ?? [], failedItems: [], coachType: (coachType as CoachType) ?? "overall", restricted: restrictedGuidance };
       }
     }
 
@@ -1196,6 +1209,7 @@ Rules:
     // Parse log blocks — support multiple items and new types
     let cleanReply = reply;
     const loggedItems: any[] = [];
+    const memoryApprovals: any[] = [];
     const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string; errorCode?: string; actionId?: string; groupId?: string }> = [];
     type MealRetryArgs = {
       name: string;
@@ -1654,6 +1668,9 @@ Rules:
         type,
         data: { _id: rowId, ...candidate.payload, previous, ...actionMetadata },
       });
+      if (actionMetadata.actionId) {
+        memoryApprovals.push(...await pendingMemoryApprovalsForAction(ctx, userId, actionMetadata.actionId));
+      }
       logOutcomes.push({ type, name: candidate.description, ok: true, ...actionMetadata });
     }
 
@@ -1780,7 +1797,7 @@ Rules:
       }
     }
 
-    return { reply: cleanReply, loggedItem, failedItems, coachType: detectedCoach, clarification, confirmation, restricted: restrictedGuidance };
+    return { reply: cleanReply, loggedItem, memoryApprovals, failedItems, coachType: detectedCoach, clarification, confirmation, restricted: restrictedGuidance };
   },
 });
 

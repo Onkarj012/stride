@@ -1,4 +1,4 @@
-import { internalMutation, internalQuery, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { normalizeName, AUTO_APPLY_MIN_LOGGED } from "./food_memory_match";
 
@@ -13,7 +13,7 @@ export const getKnownCount = query({
       .query("food_memory")
       .withIndex("by_user", (q) => q.eq("userId", identity.subject))
       .collect();
-    return rows.filter((r) => r.timesLogged >= AUTO_APPLY_MIN_LOGGED).length;
+    return rows.filter((r) => !r.undoneAt && !r.deletedAt && r.approvalStatus !== "pending" && r.approvalStatus !== "rejected" && r.timesLogged >= AUTO_APPLY_MIN_LOGGED).length;
   },
 });
 
@@ -29,7 +29,8 @@ export const getTopMemoriesPublic = query({
       .withIndex("by_user", (q) => q.eq("userId", identity.subject))
       .collect();
     return rows
-      .filter((r) => r.timesLogged >= AUTO_APPLY_MIN_LOGGED)
+      .filter((r) => !r.undoneAt && !r.deletedAt && r.approvalStatus !== "pending" && r.approvalStatus !== "rejected" && r.timesLogged >= AUTO_APPLY_MIN_LOGGED)
+      .filter((r) => !r.undoneAt && !r.deletedAt && r.approvalStatus !== "pending" && r.approvalStatus !== "rejected")
       .sort((a, b) => b.timesLogged - a.timesLogged || b.lastUsedDate.localeCompare(a.lastUsedDate))
       .slice(0, 6)
       .map((r) => ({ name: r.displayName, kcal: Math.round(r.kcal), timesLogged: r.timesLogged }));
@@ -57,6 +58,7 @@ export const getTopForContext = internalQuery({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .collect();
     return rows
+      .filter((r) => !r.undoneAt && !r.deletedAt && r.approvalStatus !== "pending" && r.approvalStatus !== "rejected")
       .sort((a, b) => b.timesLogged - a.timesLogged || b.lastUsedDate.localeCompare(a.lastUsedDate))
       .slice(0, limit)
       .map((r) => ({
@@ -73,25 +75,25 @@ export const getTopForContext = internalQuery({
 
 // ─── Internal mutation: learn or update from a logged meal ──────────────────
 
-export const recordFromMeal = internalMutation({
-  args: {
-    userId: v.string(),
-    name: v.string(),
-    kcal: v.number(),
-    protein: v.number(),
-    carbs: v.number(),
-    fat: v.number(),
-    components: v.optional(v.string()),
-    date: v.string(),
-    source: v.optional(v.string()), // "learned" | "corrected"
-  },
-  handler: async (ctx, { userId, name, kcal, protein, carbs, fat, components, date, source = "learned" }) => {
+export async function recordFoodMemoryRow(ctx: any, args: {
+  userId: string;
+  name: string;
+  kcal: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  components?: string;
+  date: string;
+  source?: string;
+  sourceActionId?: string;
+}) {
+  const { userId, name, kcal, protein, carbs, fat, components, date, source = "learned", sourceActionId } = args;
     const normalized = normalizeName(name);
     if (!normalized) return null;
 
     const existing = await ctx.db
       .query("food_memory")
-      .withIndex("by_user_name", (q) => q.eq("userId", userId).eq("normalizedName", normalized))
+      .withIndex("by_user_name", (q: any) => q.eq("userId", userId).eq("normalizedName", normalized))
       .first();
 
     if (!existing) {
@@ -108,6 +110,10 @@ export const recordFromMeal = internalMutation({
         timesLogged: 1,
         source,
         lastUsedDate: date,
+        memoryType: "inferred",
+        approvalStatus: source === "corrected" ? "approved" : "pending",
+        provenance: source,
+        sourceActionIds: sourceActionId ? [sourceActionId] : [],
       });
     }
 
@@ -130,9 +136,22 @@ export const recordFromMeal = internalMutation({
       source: source === "corrected" ? "corrected" : existing.source,
       lastUsedDate: date,
       aliases,
+      memoryType: existing.memoryType ?? "inferred",
+      approvalStatus: existing.approvalStatus ?? (source === "corrected" ? "approved" : "pending"),
+      provenance: source,
+      sourceActionIds: sourceActionId && !(existing.sourceActionIds ?? []).includes(sourceActionId)
+        ? [...(existing.sourceActionIds ?? []), sourceActionId]
+        : existing.sourceActionIds,
     });
     return existing._id;
+}
+
+export const recordFromMeal = internalMutation({
+  args: {
+    userId: v.string(), name: v.string(), kcal: v.number(), protein: v.number(), carbs: v.number(), fat: v.number(),
+    components: v.optional(v.string()), date: v.string(), source: v.optional(v.string()), sourceActionId: v.optional(v.string()),
   },
+  handler: async (ctx, args) => recordFoodMemoryRow(ctx, args),
 });
 
 // ─── Internal mutation: update from a user correction ───────────────────────
@@ -144,9 +163,10 @@ export const updateFromCorrection = internalMutation({
     protein: v.number(),
     carbs: v.number(),
     fat: v.number(),
+    name: v.optional(v.string()),
     date: v.string(),
   },
-  handler: async (ctx, { foodMemoryId, kcal, protein, carbs, fat, date }) => {
+  handler: async (ctx, { foodMemoryId, kcal, protein, carbs, fat, name, date }) => {
     const existing = await ctx.db.get(foodMemoryId);
     if (!existing) return;
     const w = 0.5;
@@ -158,6 +178,95 @@ export const updateFromCorrection = internalMutation({
       fat: smooth(existing.fat, fat),
       source: "corrected",
       lastUsedDate: date,
+      aliases: name && !existing.aliases.includes(name) && existing.displayName !== name
+        ? [...existing.aliases, name].slice(-5)
+        : existing.aliases,
+      approvalStatus: "approved",
+      memoryType: existing.memoryType ?? "inferred",
+      provenance: "user_corrected",
+    });
+  },
+});
+
+export const getPendingForAction = internalQuery({
+  args: { userId: v.string(), sourceActionId: v.string() },
+  handler: async (ctx, { userId, sourceActionId }) => (await ctx.db.query("food_memory").withIndex("by_user", (q) => q.eq("userId", userId)).collect())
+    .filter((row) => row.approvalStatus === "pending" && (row.sourceActionIds ?? []).includes(sourceActionId))
+    .map((row) => ({ memoryId: row._id, kind: "food" as const, label: row.displayName })),
+});
+
+export const getPendingApprovals = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    return (await ctx.db.query("food_memory").withIndex("by_user", (q) => q.eq("userId", identity.subject)).collect())
+      .filter((row) => row.approvalStatus === "pending" && !row.undoneAt && !row.deletedAt);
+  },
+});
+
+export const approveMemory = mutation({
+  args: { id: v.id("food_memory") },
+  handler: async (ctx, { id }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const row = await ctx.db.get(id);
+    if (!row || row.userId !== identity.subject) throw new Error("Not found");
+    await ctx.db.patch(id, { approvalStatus: "approved" });
+    return id;
+  },
+});
+
+export const rejectMemory = mutation({
+  args: { id: v.id("food_memory") },
+  handler: async (ctx, { id }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const row = await ctx.db.get(id);
+    if (!row || row.userId !== identity.subject) throw new Error("Not found");
+    await ctx.db.patch(id, { approvalStatus: "rejected" });
+    return id;
+  },
+});
+
+export const undoMemory = mutation({
+  args: { id: v.id("food_memory") },
+  handler: async (ctx, { id }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const row = await ctx.db.get(id);
+    if (!row || row.userId !== identity.subject) throw new Error("Not found");
+    await ctx.db.patch(id, { undoneAt: Date.now() });
+    return id;
+  },
+});
+
+export const deleteMemory = mutation({
+  args: { id: v.id("food_memory") },
+  handler: async (ctx, { id }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const row = await ctx.db.get(id);
+    if (!row || row.userId !== identity.subject) throw new Error("Not found");
+    await ctx.db.patch(id, { deletedAt: Date.now() });
+    return id;
+  },
+});
+
+export const createExplicitFact = mutation({
+  args: { fact: v.string(), date: v.optional(v.string()), sourceActionId: v.optional(v.string()) },
+  handler: async (ctx, { fact, date, sourceActionId }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const displayName = fact.trim();
+    const normalized = normalizeName(displayName);
+    if (!normalized) throw new Error("Fact is required");
+    return ctx.db.insert("food_memory", {
+      userId: identity.subject, normalizedName: normalized, displayName, aliases: [],
+      kcal: 0, protein: 0, carbs: 0, fat: 0, timesLogged: 1,
+      source: "user_stated", lastUsedDate: date ?? new Date().toISOString().slice(0, 10),
+      memoryType: "explicit", approvalStatus: "approved", provenance: "user_stated",
+      sourceActionIds: sourceActionId ? [sourceActionId] : [], fact: displayName,
     });
   },
 });

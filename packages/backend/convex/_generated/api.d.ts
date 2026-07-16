@@ -24,6 +24,7 @@ import type * as chat from "../chat.js";
 import type * as checkins from "../checkins.js";
 import type * as coaches from "../coaches.js";
 import type * as crons from "../crons.js";
+import type * as derived_state from "../derived_state.js";
 import type * as exercise_db from "../exercise_db.js";
 import type * as food_memory from "../food_memory.js";
 import type * as food_memory_match from "../food_memory_match.js";
@@ -78,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   checkins: typeof checkins;
   coaches: typeof coaches;
   crons: typeof crons;
+  derived_state: typeof derived_state;
   exercise_db: typeof exercise_db;
   food_memory: typeof food_memory;
   food_memory_match: typeof food_memory_match;

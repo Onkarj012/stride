@@ -51,6 +51,8 @@ function coachToAgent(coachType?: string): Agent {
 type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
 type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; actionId?: string; groupId?: string; label: string; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string; note?: string } | { count: number } };
 type UndoMessage = { kind: "undo"; id: string; groupId?: string; entries: UndoEntry[] };
+type MemoryApprovalEntry = { memoryId: string; kind: "food" | "workout"; label: string; status?: "pending" | "approved" | "rejected" };
+type MemoryApprovalMessage = { kind: "memory-approval"; id: string; entries: MemoryApprovalEntry[] };
 type MealRetryArgs = Omit<FunctionArgs<typeof api.meals.addMeal>, "allowDuplicate">;
 type WorkoutRetryArgs = Omit<FunctionArgs<typeof api.workouts.addWorkout>, "allowDuplicate">;
 type FailedLogItem =
@@ -61,7 +63,7 @@ type ClarificationItem = { actionType: string; description: string; reason: stri
 type ClarificationPayload = { groupId: string; items: ClarificationItem[]; question: string };
 type ClarificationMessage = { kind: "clarification"; id: string; groupId: string; items: ClarificationItem[]; question: string; resolved?: boolean };
 type ConfirmationMessage = { kind: "confirmation"; id: string; payload: ConfirmationPayload; result?: ConfirmationResult };
-type Message = TextMessage | UndoMessage | DuplicateMessage | ClarificationMessage | ConfirmationMessage;
+type Message = TextMessage | UndoMessage | MemoryApprovalMessage | DuplicateMessage | ClarificationMessage | ConfirmationMessage;
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
 type ConvexChatMessage = { role: "user" | "ai"; content: string };
 
@@ -87,6 +89,10 @@ export function CoachPage() {
   const addWorkout = useMutation(api.workouts.addWorkout);
   const undoAction = useMutation((api as any).actions_undo.undoAction);
   const undoGroup = useMutation((api as any).actions_undo.undoGroup);
+  const approveFoodMemory = useMutation((api as any).food_memory.approveMemory);
+  const rejectFoodMemory = useMutation((api as any).food_memory.rejectMemory);
+  const approveWorkoutMemory = useMutation((api as any).workout_memory.approveMemory);
+  const rejectWorkoutMemory = useMutation((api as any).workout_memory.rejectMemory);
   const sendToAI = useAction(api.ai.chat);
   const confirmGroup = useAction((api as any).ai.confirmGroup);
   const resolveClarification = useMutation(api.ai.resolveClarification);
@@ -194,6 +200,21 @@ export function CoachPage() {
   }, [searchParams, sessions, loadSession, setSearchParams]);
 
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
+
+  const resolveMemoryApproval = useCallback(async (messageId: string, entry: MemoryApprovalEntry, approved: boolean) => {
+    try {
+      if (entry.kind === "food") {
+        await (approved ? approveFoodMemory : rejectFoodMemory)({ id: entry.memoryId });
+      } else {
+        await (approved ? approveWorkoutMemory : rejectWorkoutMemory)({ id: entry.memoryId });
+      }
+      setMessages((prev) => prev.map((message) => message.kind === "memory-approval" && message.id === messageId
+        ? { ...message, entries: message.entries.map((candidate) => candidate.memoryId === entry.memoryId ? { ...candidate, status: approved ? ("approved" as const) : ("rejected" as const) } : candidate) }
+        : message));
+    } catch (err) {
+      toast.error("Couldn't update memory", err instanceof Error ? err.message : "Try again");
+    }
+  }, [approveFoodMemory, rejectFoodMemory, approveWorkoutMemory, rejectWorkoutMemory, toast]);
 
   const undoAutoLog = useCallback(async (messageId: string, entry: UndoEntry) => {
     if (!entry.actionId || entry.undone || pendingUndoIdsRef.current.has(entry.actionId)) return;
@@ -304,7 +325,7 @@ export function CoachPage() {
     if (pendingConfirmIds.has(payload.groupId)) return;
     setPendingConfirmIds((prev) => new Set(prev).add(payload.groupId));
     try {
-      const result = await confirmGroup({ groupId: payload.groupId as Id<"actionGroups">, decisions }) as ConfirmationResult & { loggedItems?: any[]; unresolvedItems?: any[] };
+      const result = await confirmGroup({ groupId: payload.groupId as Id<"actionGroups">, decisions }) as ConfirmationResult & { loggedItems?: any[]; unresolvedItems?: any[]; memoryApprovals?: MemoryApprovalEntry[] };
       setMessages((prev) => prev.map((message) => message.kind === "confirmation" && message.id === messageId ? { ...message, result } : message));
       const loggedItem = result.loggedItems?.length === 1
         ? result.loggedItems[0]
@@ -316,6 +337,9 @@ export function CoachPage() {
         if (undoEntries.length > 0) {
           setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, groupId: undoEntries[0].groupId, entries: undoEntries }]);
         }
+      }
+      if (result.memoryApprovals?.length) {
+        setMessages((prev) => [...prev, { kind: "memory-approval", id: `memory-${Date.now()}`, entries: result.memoryApprovals! }]);
       }
       if (result.status === "expired") toast.error("Confirmation expired", "This batch can no longer be saved");
       else if (result.unresolvedItems?.length) toast.error("Some items need attention", "Saved items remain available to undo");
@@ -424,6 +448,7 @@ export function CoachPage() {
       const confirmation = (r.confirmation && typeof r.confirmation === "object" && "groupId" in (r.confirmation as object) && "items" in (r.confirmation as object))
         ? r.confirmation as ConfirmationPayload
         : undefined;
+      const memoryApprovals = Array.isArray(r.memoryApprovals) ? r.memoryApprovals as MemoryApprovalEntry[] : [];
       if (clarification) setActiveClarificationGroupId(clarification.groupId as Id<"actionGroups">);
       else if (loggedItem && activeClarificationGroupId) setActiveClarificationGroupId(null);
 
@@ -442,6 +467,11 @@ export function CoachPage() {
 
       if (confirmation) {
         setMessages((prev) => [...prev, { kind: "confirmation", id: `confirm-${Date.now()}`, payload: confirmation }]);
+        scroll();
+      }
+
+      if (memoryApprovals.length > 0) {
+        setMessages((prev) => [...prev, { kind: "memory-approval", id: `memory-${Date.now()}`, entries: memoryApprovals }]);
         scroll();
       }
 
@@ -594,6 +624,26 @@ export function CoachPage() {
             )}
 
             {messages.map((m, i) => {
+              if (m.kind === "memory-approval") {
+                return (
+                  <div key={m.id} className="max-w-[92%] rounded-[16px] border border-lavender/30 bg-lavender/10 p-3.5 space-y-2" style={{ zoom: 0.72 } as React.CSSProperties}>
+                    <p className="text-[13px] font-bold text-ink dark:text-surface">Save this as a preference?</p>
+                    {m.entries.map((entry) => (
+                      <div key={entry.memoryId} className="flex items-center justify-between gap-2">
+                        <span className="text-[12px] text-ink/70 dark:text-white/65">{entry.label}</span>
+                        {entry.status && entry.status !== "pending" ? (
+                          <span className="text-[11px] font-bold text-ink/45 dark:text-white/45">{entry.status}</span>
+                        ) : (
+                          <div className="flex gap-1.5">
+                            <button type="button" onClick={() => void resolveMemoryApproval(m.id, entry, true)} className="rounded-full border border-mint/40 px-2.5 py-1 text-[11px] font-bold text-ink dark:text-surface">Approve</button>
+                            <button type="button" onClick={() => void resolveMemoryApproval(m.id, entry, false)} className="rounded-full border border-ink/15 px-2.5 py-1 text-[11px] font-bold text-ink/60 dark:text-white/60">Reject</button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                );
+              }
               if (m.kind === "undo") {
                 if (m.entries.length === 0) return null;
                 return (

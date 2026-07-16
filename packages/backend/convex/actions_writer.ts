@@ -1,5 +1,4 @@
 import { internalMutation } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import {
@@ -21,6 +20,7 @@ import { writeMealDomain } from "./meals";
 import { writeWorkoutDomain } from "./workouts";
 import { writeRecoveryDomain } from "./wellness";
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
+import { recomputeForAction } from "./derived_state";
 
 const groupValidator = v.object({
   userId: v.string(),
@@ -115,7 +115,14 @@ async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs)
   if (!ensured.shouldExecute) {
     return { group: groupResult.group, member: ensured.member, shouldExecute: false, rowId: ensured.member.committedRowRef?.id };
   }
-  if (ensured.state === "reexecute") await ctx.db.patch(ensured.member._id, member);
+  if (ensured.state === "reexecute") {
+    await ctx.db.patch(ensured.member._id, {
+      ...member,
+      // Confirmation edits change the executable payload, but never the
+      // original extraction that is needed for audit and correction review.
+      originalPayload: (ensured.member as any).originalPayload ?? ensured.member.payload,
+    });
+  }
   const committedMember = await ctx.db.get(ensured.member._id);
   if (!committedMember) throw new Error("Action member was not found after ensure");
   return { group: groupResult.group, member: committedMember, shouldExecute: true, rowId: undefined };
@@ -125,6 +132,7 @@ async function commitMember(ctx: any, prepared: any, table: string, id: any, und
   await ctx.db.patch(prepared.member._id, {
     status: "committed",
     committedRowRef: { table, id: String(id) },
+    originalPayload: prepared.member.originalPayload ?? prepared.member.payload,
     ...(undoMetadata ? { payload: { ...prepared.member.payload, ...undoMetadata } } : {}),
   });
   await ctx.db.patch(prepared.group._id, { status: "committed", resolvedAt: Date.now() });
@@ -137,8 +145,15 @@ export const writeMealAction = internalMutation({
     const prepared = await prepareMember(ctx, "meal", args as WriterArgs);
     if (!prepared.shouldExecute) return prepared.rowId;
     const payload = prepared.member.payload as Record<string, any>;
-    const id = await writeMealDomain(ctx, { ...payload, userId: prepared.group.userId }, { emitBehavior: true, emitGamification: true });
-    return commitMember(ctx, prepared, "meals", id);
+    const id = await writeMealDomain(ctx, { ...payload, userId: prepared.group.userId }, {
+      emitBehavior: true,
+      emitGamification: true,
+      recomputeDerived: false,
+      sourceActionId: String(prepared.member._id),
+    });
+    const committedId = await commitMember(ctx, prepared, "meals", id);
+    await recomputeForAction(ctx, { userId: prepared.group.userId, actionType: "meal", date: payload.date ?? prepared.member.resolvedDate });
+    return committedId;
   },
 });
 
@@ -148,9 +163,14 @@ export const writeWorkoutAction = internalMutation({
     const prepared = await prepareMember(ctx, "workout", args as WriterArgs);
     if (!prepared.shouldExecute) return prepared.rowId;
     const payload = prepared.member.payload as Record<string, any>;
-    const id = await writeWorkoutDomain(ctx, { ...payload, userId: prepared.group.userId }, { emitBehavior: true, emitGamification: true, emitCalibration: false });
+    const id = await writeWorkoutDomain(ctx, { ...payload, userId: prepared.group.userId }, {
+      emitBehavior: true,
+      emitGamification: true,
+      recomputeDerived: false,
+      sourceActionId: String(prepared.member._id),
+    });
     const committedId = await commitMember(ctx, prepared, "workouts", id);
-    await ctx.runMutation(internal.calibration.incrementWorkoutCount, { userId: prepared.group.userId });
+    await recomputeForAction(ctx, { userId: prepared.group.userId, actionType: "workout", date: payload.date ?? prepared.member.resolvedDate });
     return committedId;
   },
 });
@@ -171,7 +191,10 @@ export const writeRecoveryAction = internalMutation({
       ...recoveryPayloadFromDraft(draft),
       ...(payload.mode ? { mode: payload.mode } : {}),
     };
-    const result = await writeRecoveryDomain(ctx, { ...canonicalPayload, userId: prepared.group.userId }, { emitBehavior: true });
+    const result = await writeRecoveryDomain(ctx, { ...canonicalPayload, userId: prepared.group.userId }, {
+      emitBehavior: true,
+      recomputeDerived: false,
+    });
     const table = draft.entryKind === "state" || draft.entryKind === "wellness" ? "sleep_logs" : `${draft.entryKind}_logs`;
     await commitMember(
       ctx,
@@ -180,6 +203,11 @@ export const writeRecoveryAction = internalMutation({
       result.id,
       result.previous !== undefined ? { previous: result.previous } : undefined,
     );
+    await recomputeForAction(ctx, {
+      userId: prepared.group.userId,
+      actionType: draft.entryKind === "state" ? "rest" : "recovery",
+      date: draft.date,
+    });
     return result;
   },
 });

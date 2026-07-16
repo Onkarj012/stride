@@ -206,4 +206,29 @@ export const incrementWorkoutCount = internalMutation({
   },
 });
 
+/** Rebuild the calibration sample count from active workout source rows. */
+export async function recomputeWorkoutCountForUser(ctx: any, userId: string) {
+  const workouts = (await ctx.db
+    .query("workouts")
+    .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+    .collect()).filter((workout: any) => !workout.undoneAt);
+  const count = workouts.length;
+  const profile = await ctx.db
+    .query("user_metabolic_profiles")
+    .withIndex("by_user", (q: any) => q.eq("userId", userId))
+    .first();
+
+  if (profile) {
+    await ctx.db.patch(profile._id, { totalWorkoutsTracked: count });
+  } else if (count > 0) {
+    await ctx.db.insert("user_metabolic_profiles", {
+      userId,
+      metabolicFactor: 1.0,
+      fitnessLevel: "beginner",
+      totalWorkoutsTracked: count,
+    });
+  }
+  return count;
+}
+
 export { CALCULATION_VERSION };

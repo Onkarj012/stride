@@ -1,8 +1,7 @@
 import { internalQuery, mutation } from "./_generated/server";
 import { v } from "convex/values";
-import { applyDayAdjustment } from "./goals";
-import { recomputeGamificationForUser } from "./gamification";
 import { recordBehaviorRow } from "./behavior";
+import { recomputeForAction, type DerivedActionType } from "./derived_state";
 
 type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs";
 
@@ -35,7 +34,7 @@ type UndoResult = {
   reason?: string;
 };
 
-async function reverseCommittedAction(ctx: any, action: any): Promise<UndoResult & { date?: string; recomputeAdjustment?: boolean }> {
+async function reverseCommittedAction(ctx: any, action: any): Promise<UndoResult & { date?: string; actionType?: DerivedActionType }> {
   if (action.status === "undone") {
     return {
       actionId: action._id,
@@ -74,15 +73,10 @@ async function reverseCommittedAction(ctx: any, action: any): Promise<UndoResult
     status: "undone",
     undoneAt,
     date: row.date,
-    recomputeAdjustment: table === "workouts",
+    actionType: action.actionType === "recovery" && table === "sleep_logs" && action.payload?.kind === "state"
+      ? "rest"
+      : action.actionType,
   };
-}
-
-async function recomputeDerivedState(ctx: any, userId: string, workoutDates: Set<string>) {
-  for (const date of workoutDates) await applyDayAdjustment(ctx, userId, date);
-  // Gamification has no durable event table, so source rows are the authoritative
-  // input for counts, streaks, and activity XP after a compensating undo.
-  await recomputeGamificationForUser(ctx, userId);
 }
 
 export const undoAction = mutation({
@@ -94,7 +88,11 @@ export const undoAction = mutation({
 
     const result = await reverseCommittedAction(ctx, action);
     if (result.status === "undone") {
-      await recomputeDerivedState(ctx, userId, result.recomputeAdjustment && result.date ? new Set([result.date]) : new Set());
+      await recomputeForAction(ctx, {
+        userId,
+        actionType: result.actionType ?? action.actionType,
+        date: result.date ?? action.resolvedDate ?? new Date().toISOString().slice(0, 10),
+      });
     }
     return result;
   },
@@ -109,7 +107,7 @@ export const undoGroup = mutation({
 
     const actions = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
     const results: UndoResult[] = [];
-    const workoutDates = new Set<string>();
+    const affected = new Map<string, { actionType: DerivedActionType; date: string }>();
     for (const action of actions) {
       if (action.status === "undone") {
         results.push(await reverseCommittedAction(ctx, action));
@@ -124,12 +122,12 @@ export const undoGroup = mutation({
         continue;
       }
       const result = await reverseCommittedAction(ctx, action);
-      if (result.recomputeAdjustment && result.date) workoutDates.add(result.date);
+      if (result.actionType && result.date) affected.set(`${result.actionType}:${result.date}`, { actionType: result.actionType, date: result.date });
       results.push(result);
     }
 
     if (results.some((result) => result.status === "undone")) {
-      await recomputeDerivedState(ctx, userId, workoutDates);
+      for (const derived of affected.values()) await recomputeForAction(ctx, { userId, ...derived });
     }
     return { groupId, results };
   },

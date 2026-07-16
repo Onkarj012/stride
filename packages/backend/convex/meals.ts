@@ -3,6 +3,8 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { recordBehaviorRow } from "./behavior";
 import { recordActivityForUser } from "./gamification";
+import { recomputeForAction } from "./derived_state";
+import { recordFoodMemoryRow } from "./food_memory";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 import { findBestMatch } from "./food_memory_match";
 import {
@@ -25,6 +27,10 @@ async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
   return identity.subject;
+}
+
+function usableFoodMemories(rows: any[]) {
+  return rows.filter((row) => !row.undoneAt && !row.deletedAt && row.approvalStatus !== "pending" && row.approvalStatus !== "rejected");
 }
 
 async function findExistingMealByIdempotencyKey(ctx: any, userId: string, date: string, idempotencyKey: string) {
@@ -58,7 +64,7 @@ async function assertNoNearDuplicateMeal(ctx: any, userId: string, date: string,
 export async function writeMealDomain(
   ctx: any,
   args: any,
-  options: { emitBehavior?: boolean; emitGamification?: boolean } = {},
+  options: { emitBehavior?: boolean; emitGamification?: boolean; recomputeDerived?: boolean; sourceActionId?: string } = {},
 ) {
   const canonical = args.draft?.kind === "meal"
     ? mealPayloadFromDraft({
@@ -112,7 +118,7 @@ export async function writeMealDomain(
     await recordActivityForUser(ctx, canonical.userId, { type: "meal", date });
   }
   if (!canonical.foodMemoryId) {
-    ctx.scheduler.runAfter(0, internal.food_memory.recordFromMeal, {
+    await recordFoodMemoryRow(ctx, {
       userId: canonical.userId,
       name: validated.name,
       kcal: validated.calories,
@@ -122,7 +128,11 @@ export async function writeMealDomain(
       components: canonical.components,
       date,
       source: "learned",
+      sourceActionId: options.sourceActionId,
     }).catch(() => {});
+  }
+  if (options.recomputeDerived !== false) {
+    await recomputeForAction(ctx, { userId: canonical.userId, actionType: "meal", date });
   }
   return id;
 }
@@ -168,7 +178,7 @@ export const addMeal = mutation({
   handler: async (ctx, args): Promise<any> => {
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
-    const memories = await ctx.db.query("food_memory").withIndex("by_user", (q: any) => q.eq("userId", userId)).collect();
+    const memories = usableFoodMemories(await ctx.db.query("food_memory").withIndex("by_user", (q: any) => q.eq("userId", userId)).collect());
     const draft = buildDirectMealDraft({ ...args, date, time: args.time, memoryMatch: findBestMatch(args.name, memories as any[]) ?? undefined });
     const payload = mealPayloadFromDraft(draft, { ...args, userId, date });
     const rawInput = JSON.stringify({ source: args.logSource ?? "manual", date, time: args.time, draft });
@@ -256,6 +266,7 @@ export const updateMeal = mutation({
     if (meal.foodMemoryId) {
       ctx.scheduler.runAfter(0, internal.food_memory.updateFromCorrection, {
         foodMemoryId: meal.foodMemoryId,
+        name: validated.name,
         kcal: fields.calories,
         protein: fields.protein,
         carbs: fields.carbs,
@@ -276,6 +287,7 @@ export const updateMeal = mutation({
         source: "corrected",
       }).catch(() => {});
     }
+    await recomputeForAction(ctx, { userId, actionType: "meal", date: meal.date });
   },
 });
 
@@ -291,6 +303,7 @@ export const setMealCalorieSource = mutation({
     const value = source === "reported" ? meal.reportedCalories : meal.estimatedCalories;
     if (value == null) throw new Error(`Meal has no ${source} calorie value`);
     await ctx.db.patch(id, { calories: value, calorieSource: source });
+    await recomputeForAction(ctx, { userId, actionType: "meal", date: meal.date });
     return { id, calories: value, calorieSource: source };
   },
 });
@@ -302,6 +315,7 @@ export const deleteMeal = mutation({
     const meal = await ctx.db.get(id);
     if (!meal || meal.userId !== userId) throw new Error("Not found");
     await ctx.db.delete(id);
+    await recomputeForAction(ctx, { userId, actionType: "meal", date: meal.date });
   },
 });
 
@@ -324,7 +338,7 @@ export const relogMeal = mutation({
     if (!src || src.userId !== userId) throw new Error("Not found");
     const targetDate = date ?? new Date().toISOString().split("T")[0];
     const targetTime = time ?? new Date().toISOString().slice(11, 16);
-    const memories = await ctx.db.query("food_memory").withIndex("by_user", (q: any) => q.eq("userId", userId)).collect();
+    const memories = usableFoodMemories(await ctx.db.query("food_memory").withIndex("by_user", (q: any) => q.eq("userId", userId)).collect());
     const draft = buildDirectMealDraft({
       name: src.name,
       calories: src.calories,

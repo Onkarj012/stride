@@ -1,10 +1,10 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { ConvexError, v } from "convex/values";
-import { applyDayAdjustment } from "./goals";
 import { internal } from "./_generated/api";
 import { deriveGroupKey } from "./actions_idempotency";
 import { recordBehaviorRow } from "./behavior";
 import { recordActivityForUser } from "./gamification";
+import { recomputeForAction } from "./derived_state";
 import { buildWorkoutDraft, workoutPayloadFromDraft } from "./workout_draft";
 import {
   buildIdempotencyKey,
@@ -59,7 +59,7 @@ export async function assertNoNearDuplicateWorkout(
 export async function writeWorkoutDomain(
   ctx: any,
   args: any,
-  options: { emitBehavior?: boolean; emitGamification?: boolean; emitCalibration?: boolean } = {},
+  options: { emitBehavior?: boolean; emitGamification?: boolean; recomputeDerived?: boolean; sourceActionId?: string } = {},
 ) {
   const date = args.date ?? new Date().toISOString().split("T")[0];
   const logSource = normalizeLogSource(args.logSource, "manual");
@@ -165,7 +165,6 @@ export async function writeWorkoutDomain(
   if (options.emitGamification && date === new Date().toISOString().split("T")[0]) {
     await recordActivityForUser(ctx, args.userId, { type: "workout", date });
   }
-  await applyDayAdjustment(ctx, args.userId, date);
   const durationMin = draft.durationMin;
   await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
     userId: args.userId,
@@ -175,9 +174,10 @@ export async function writeWorkoutDomain(
     durationMin: isNaN(durationMin as number) ? undefined : durationMin,
     intensity: validated.intensity || undefined,
     caloriesBurned: validated.caloriesBurned,
+    sourceActionId: options.sourceActionId,
   }).catch(() => {});
-  if (options.emitCalibration !== false) {
-    await ctx.runMutation(internal.calibration.incrementWorkoutCount, { userId: args.userId }).catch(() => {});
+  if (options.recomputeDerived !== false) {
+    await recomputeForAction(ctx, { userId: args.userId, actionType: "workout", date });
   }
   return id;
 }
@@ -328,7 +328,17 @@ export const updateWorkout = mutation({
     if (fields.calorieBreakdown !== undefined || workout.calorieBreakdown !== undefined) patch.calorieBreakdown = draft.calorieBreakdown ? JSON.stringify(draft.calorieBreakdown) : undefined;
     if (fields.calculationVersion !== undefined || workout.calculationVersion !== undefined) patch.calculationVersion = fields.calculationVersion ?? workout.calculationVersion;
     await ctx.db.patch(id, patch);
-    await applyDayAdjustment(ctx, userId, workout.date);
+    ctx.scheduler.runAfter(0, internal.workout_memory.updateFromCorrection, {
+      userId,
+      previousName: workout.name,
+      name: draft.name,
+      exercises: draft.exercises.length > 0 ? JSON.stringify(draft.exercises.map((exercise) => exercise.normalizedName)) : undefined,
+      durationMin: draft.durationMin,
+      intensity: draft.intensity,
+      caloriesBurned: validated.caloriesBurned,
+      date: workout.date,
+    }).catch(() => {});
+    await recomputeForAction(ctx, { userId, actionType: "workout", date: workout.date });
   },
 });
 
@@ -339,7 +349,7 @@ export const deleteWorkout = mutation({
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
     await ctx.db.delete(id);
-    await applyDayAdjustment(ctx, userId, workout.date);
+    await recomputeForAction(ctx, { userId, actionType: "workout", date: workout.date });
   },
 });
 

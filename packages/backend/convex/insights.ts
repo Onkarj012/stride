@@ -45,15 +45,16 @@ export const getDailyInsights = query({
       .query("insights")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
       .first();
-    if (!row) return { insights: [] };
+    if (!row) return { insights: [], stale: false };
+    if (row.stale) return { insights: [], stale: true, generatedAt: row.generatedAt ?? null };
     try {
       const parsed = JSON.parse(row.content);
       if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
-        return { insights: parsed };
+        return { insights: parsed, stale: false, generatedAt: row.generatedAt ?? null };
       }
-      return { insights: [row.content] };
+      return { insights: [row.content], stale: false, generatedAt: row.generatedAt ?? null };
     } catch {
-      return { insights: [row.content] };
+      return { insights: [row.content], stale: false, generatedAt: row.generatedAt ?? null };
     }
   },
 });
@@ -80,14 +81,24 @@ export const saveInsights = internalMutation({
   },
   handler: async (ctx, { userId, date, insights }) => {
     const content = JSON.stringify(insights);
+    const sourceRows = await Promise.all([
+      ctx.db.query("meals").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
+      ctx.db.query("workouts").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
+      ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
+      ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
+      ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
+      ctx.db.query("steps_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
+    ]);
+    const sourceRowIds = sourceRows.flat().map((source: any) => String(source._id));
+    const generatedAt = Date.now();
     const existing = await ctx.db
       .query("insights")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
       .first();
     if (existing) {
-      await ctx.db.patch(existing._id, { content });
+      await ctx.db.patch(existing._id, { content, sourceRowIds, inputsVersion: generatedAt, generatedAt, stale: false });
     } else {
-      await ctx.db.insert("insights", { userId, date, content });
+      await ctx.db.insert("insights", { userId, date, content, sourceRowIds, inputsVersion: generatedAt, generatedAt, stale: false });
     }
   },
 });

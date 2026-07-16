@@ -88,6 +88,12 @@ export default defineSchema({
     userId: v.string(),
     date: v.string(),
     content: v.string(),
+    // Source metadata lets readers distinguish generated output from a source
+    // set that has changed since generation.
+    sourceRowIds: v.optional(v.array(v.string())),
+    inputsVersion: v.optional(v.number()),
+    generatedAt: v.optional(v.number()),
+    stale: v.optional(v.boolean()),
   }).index("by_user_date", ["userId", "date"]),
 
   weekly_summaries: defineTable({
@@ -384,6 +390,13 @@ export default defineSchema({
     timesLogged: v.number(),
     source: v.string(),               // "learned" | "corrected"
     lastUsedDate: v.string(),         // YYYY-MM-DD
+    memoryType: v.optional(v.union(v.literal("explicit"), v.literal("inferred"))),
+    approvalStatus: v.optional(v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected"))),
+    provenance: v.optional(v.string()),
+    sourceActionIds: v.optional(v.array(v.string())),
+    fact: v.optional(v.string()),
+    undoneAt: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_name", ["userId", "normalizedName"]),
@@ -420,6 +433,12 @@ export default defineSchema({
     caloriesBurned: v.optional(v.number()), // smoothed average kcal
     timesLogged: v.number(),
     lastUsedDate: v.string(),
+    memoryType: v.optional(v.union(v.literal("explicit"), v.literal("inferred"))),
+    approvalStatus: v.optional(v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected"))),
+    provenance: v.optional(v.string()),
+    sourceActionIds: v.optional(v.array(v.string())),
+    undoneAt: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
   })
     .index("by_user", ["userId"])
     .index("by_user_name", ["userId", "normalizedName"]),
@@ -480,6 +499,7 @@ export default defineSchema({
     ),
     memberIdempotencyKey: v.string(),
     payload: v.any(),
+    originalPayload: v.optional(v.any()),
     provenance: v.union(
       v.literal("user_reported"),
       v.literal("ai_extracted"),

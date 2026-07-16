@@ -2,6 +2,7 @@ import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { recordBehaviorRow } from "./behavior";
 import { buildRecoveryDraft } from "./recovery_draft";
+import { recomputeForAction } from "./derived_state";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -13,7 +14,7 @@ function todayDate(): string {
   return new Date().toISOString().split("T")[0];
 }
 
-export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBehavior?: boolean } = {}) {
+export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBehavior?: boolean; recomputeDerived?: boolean } = {}) {
   const draft = buildRecoveryDraft({
     ...args,
     date: args.date ?? todayDate(),
@@ -135,6 +136,13 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
       throw new Error("Unsupported recovery action");
   }
   if (options.emitBehavior) await recordBehaviorRow(ctx, args.userId, "log", draft.entryKind, undefined, date);
+  if (options.recomputeDerived !== false) {
+    await recomputeForAction(ctx, {
+      userId: args.userId,
+      actionType: draft.entryKind === "state" ? "rest" : "recovery",
+      date,
+    });
+  }
   return { id, previous };
 }
 
@@ -170,6 +178,7 @@ export const deleteWater = mutation({
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
     await ctx.db.delete(id);
+    await recomputeForAction(ctx, { userId, actionType: "recovery", date: row.date });
   },
 });
 
@@ -219,6 +228,7 @@ export const deleteSleep = mutation({
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
     await ctx.db.delete(id);
+    await recomputeForAction(ctx, { userId, actionType: "recovery", date: row.date });
   },
 });
 
@@ -240,6 +250,7 @@ export const undoSleepLog = mutation({
     } else {
       await ctx.db.delete(id);
     }
+    await recomputeForAction(ctx, { userId, actionType: "recovery", date: row.date });
   },
 });
 
@@ -276,6 +287,7 @@ export const deleteMood = mutation({
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
     await ctx.db.delete(id);
+    await recomputeForAction(ctx, { userId, actionType: "recovery", date: row.date });
   },
 });
 
@@ -326,6 +338,7 @@ export const undoStepsLog = mutation({
     } else {
       await ctx.db.delete(id);
     }
+    await recomputeForAction(ctx, { userId, actionType: "recovery", date: row.date });
   },
 });
 
