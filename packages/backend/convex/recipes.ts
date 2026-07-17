@@ -209,12 +209,13 @@ export const logRecipe = mutation({
     const rawBreakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
     const targetDate = date ?? new Date().toISOString().split("T")[0];
     const targetTime = time ?? new Date().toISOString().slice(11, 16);
+    // Pass raw scaled values so validateMealWrite performs the single clamp+round step.
     const validated = validateMealWrite({
       name: recipe.name,
-      calories: Math.round(rawTotal.kcal * scale),
-      protein: r1(rawTotal.p * scale),
-      carbs: r1(rawTotal.c * scale),
-      fat: r1(rawTotal.f * scale),
+      calories: rawTotal.kcal * scale,
+      protein: rawTotal.p * scale,
+      carbs: rawTotal.c * scale,
+      fat: rawTotal.f * scale,
       time: targetTime,
       confidence: rawBreakdown.confidence,
       nutritionSource: "recipe",

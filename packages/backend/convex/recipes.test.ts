@@ -62,6 +62,47 @@ test("logRecipe with fractional portions rounds once from raw totals", async () 
   // Double rounding (per-serving round 198 × 1.5 = 297) would drift by 1.
   expect(meals[0].calories).toBe(Math.round((395.2 * 1.5) / 2));
   expect(meals[0].calories).toBe(296);
+  // Macros are also scaled from raw totals and rounded once.
+  // Oats (80g): P 13.6, C 52.8, F 5.6; Milk (200g): P 6.8, C 10, F 2.
+  expect(meals[0].protein).toBeCloseTo((20.4 * 1.5) / 2, 1);
+  expect(meals[0].carbs).toBeCloseTo((62.8 * 1.5) / 2, 1);
+  expect(meals[0].fat).toBeCloseTo((7.6 * 1.5) / 2, 1);
+});
+
+test("logRecipe passes raw scaled values into validateMealWrite for clamp/flag boundaries", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const clampCal = [
+    { name: "Oil", grams: 50, caloriesPer100g: 7000.8, proteinPer100g: 0, carbsPer100g: 0, fatPer100g: 100 },
+  ];
+  const id = await asUser.mutation(api.recipes.createRecipe, { name: "Rich", servings: 1, ingredients: clampCal });
+  await asUser.mutation(api.recipes.logRecipe, { id, servings: 1, date: "2026-06-01" });
+  const meals = await asUser.query(api.meals.getMeals, { date: "2026-06-01" });
+  expect(meals).toHaveLength(1);
+  // Raw 3500.4 kcal would have been rounded to 3500 before validation, hiding the clamp.
+  expect(meals[0].calories).toBe(3500);
+
+  const rejectCal = [
+    { name: "Oil", grams: 50, caloriesPer100g: 10000.2, proteinPer100g: 0, carbsPer100g: 0, fatPer100g: 100 },
+  ];
+  const rejectId = await asUser.mutation(api.recipes.createRecipe, { name: "TooRich", servings: 1, ingredients: rejectCal });
+  await expect(asUser.mutation(api.recipes.logRecipe, { id: rejectId, servings: 1, date: "2026-06-02" })).rejects.toThrow(/unrealistically high/);
+});
+
+test("logRecipe with date+time preserves local midnight boundaries", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const id = await asUser.mutation(api.recipes.createRecipe, { name: "Oats", servings: 2, ingredients: INGREDIENTS });
+  // UTC-positive boundary: late local evening should stay on the same local date.
+  await asUser.mutation(api.recipes.logRecipe, { id, servings: 1, date: "2026-07-16", time: "23:45" });
+  const meals = await asUser.query(api.meals.getMeals, { date: "2026-07-16" });
+  expect(meals).toHaveLength(1);
+  expect(meals[0].time).toBe("23:45");
+  // UTC-negative boundary: early local morning should stay on the same local date.
+  await asUser.mutation(api.recipes.logRecipe, { id, servings: 1, date: "2026-07-17", time: "00:15" });
+  const morning = await asUser.query(api.meals.getMeals, { date: "2026-07-17" });
+  expect(morning).toHaveLength(1);
+  expect(morning[0].time).toBe("00:15");
 });
 
 test("logRecipe appends user note to components, not aiSuggestion", async () => {

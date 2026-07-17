@@ -8,7 +8,7 @@ import { NavTrigger } from "@/components/layout/NavTrigger";
 import { Card } from "@/components/primitives/Card";
 import { type PickedFood } from "@/components/food/FoodSearch";
 import { useToast } from "@/context/ToastContext";
-import { localDateStr } from "@/lib/utils";
+import { localDateStr, localTimeStr } from "@/lib/utils";
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
@@ -415,8 +415,18 @@ function RecipeDetailView({ recipe: initialRecipe, onBack }: { recipe: any; onBa
   }, [liveRecipe, onBack]);
 
   const ingsForLog = adjust ? editIngs : baseIngs;
-  const ps = useMemo(() => totals(ingsForLog, recipe.servings).perServing, [ingsForLog, recipe.servings]);
-  const logKcal = Math.round(ps.kcal * portions);
+  // Match backend: scale raw totals once, then round (don't round per-serving first).
+  const rawTotal = useMemo(() => {
+    return ingsForLog.reduce(
+      (acc, i) => {
+        const ratio = Math.max(0, i.grams) / 100;
+        acc.kcal += Math.max(0, i.caloriesPer100g) * ratio;
+        return acc;
+      },
+      { kcal: 0, p: 0, c: 0, f: 0 },
+    );
+  }, [ingsForLog]);
+  const logKcal = Math.round((rawTotal.kcal * portions) / recipe.servings);
 
   async function log() {
     const cleaned = adjust ? normalizeIngredients(editIngs) : undefined;
@@ -430,6 +440,7 @@ function RecipeDetailView({ recipe: initialRecipe, onBack }: { recipe: any; onBa
         id: recipe._id,
         servings: portions,
         date: localDateStr(),
+        time: localTimeStr(),
         ingredients: cleaned,
         note: note.trim() || undefined,
       });
@@ -670,7 +681,7 @@ export function RecipesContent({ embedded = false }: { embedded?: boolean }) {
                     onOpen={() => setView({ mode: "detail", recipe: r })}
                     onLog={async () => {
                       try {
-                        await logRecipe({ id: r._id, servings: 1, date: localDateStr() });
+                        await logRecipe({ id: r._id, servings: 1, date: localDateStr(), time: localTimeStr() });
                         toast.success(`Logged ${r.name}`, `${r.perServing.kcal} kcal`);
                       } catch {
                         toast.error("Couldn't log recipe");
