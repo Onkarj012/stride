@@ -9,7 +9,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: "autoUpdate",
+      registerType: "prompt",
       injectRegister: null,
       // Icons are already precached via the workbox glob below; avoid
       // duplicate precache entries.
@@ -21,8 +21,8 @@ export default defineConfig({
           "Stride is your adaptive AI wellness companion — nutrition and workout tracking with AI-driven guidance.",
         start_url: "/",
         display: "standalone",
-        background_color: "#f8f8f8",
-        theme_color: "#f8f8f8",
+        background_color: "#0c0e16",
+        theme_color: "#0c0e16",
         icons: [
           {
             src: "/icons/icon-192.png",

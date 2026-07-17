@@ -4,16 +4,9 @@ import { BrowserRouter } from "react-router-dom";
 import { ClerkProvider, useAuth } from "@clerk/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { ConvexReactClient } from "convex/react";
-import { registerSW } from "virtual:pwa-register";
 import App from "./App";
+import { ServiceWorkerUpdate } from "@/components/ServiceWorkerUpdate";
 import "./styles/global.css";
-
-// Installable PWA: register the generated service worker. registerType is
-// "autoUpdate": when a new build's SW activates (isUpdate/isExternal), the
-// register client calls window.location.reload() — a forced full-page
-// reload, including tabs where the update was detected by another tab.
-// No update prompt/UI for v1.
-registerSW({ immediate: true });
 
 const CLERK_PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string;
 const CONVEX_URL = import.meta.env.VITE_CONVEX_URL as string;
@@ -37,6 +30,7 @@ createRoot(rootEl).render(
         signUpFallbackRedirectUrl="/"
       >
         <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+          <ServiceWorkerUpdate />
           <App />
         </ConvexProviderWithClerk>
       </ClerkProvider>
