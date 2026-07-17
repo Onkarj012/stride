@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { calculateNutritionPlan, type NutritionPlan } from "./tdee_engine";
-import { resolvePlanForDayAdjustment } from "./plan_resolve";
+import { FALLBACK_TARGETS, parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 
 const PLAN_INPUT = {
   weightKg: 80,
@@ -30,10 +30,18 @@ const PROFILE = {
 };
 
 describe("resolvePlanForDayAdjustment", () => {
-  test("returns the same plan when plannedEatPerTrainingDay is already a number", () => {
+  test("recomputes stale planned-EAT baselines while preserving plan targets", () => {
     const plan = calculateNutritionPlan(PLAN_INPUT);
+    const stalePlan: NutritionPlan = { ...plan, plannedDailyEAT: 320, plannedEatPerTrainingDay: 373 };
 
-    expect(resolvePlanForDayAdjustment(plan, PROFILE)).toBe(plan);
+    const result = resolvePlanForDayAdjustment(stalePlan, PROFILE);
+
+    expect(result.plannedDailyEAT).toBe(plan.plannedDailyEAT);
+    expect(result.plannedEatPerTrainingDay).toBe(plan.plannedEatPerTrainingDay);
+    expect(result.calories).toBe(stalePlan.calories);
+    expect(result.protein).toBe(stalePlan.protein);
+    expect(result.carbs).toBe(stalePlan.carbs);
+    expect(result.fat).toBe(stalePlan.fat);
   });
 
   test("recomputes plannedEatPerTrainingDay from profile when missing", () => {
@@ -53,7 +61,7 @@ describe("resolvePlanForDayAdjustment", () => {
     expect(result.protein).toBe(legacyPlan.protein);
     expect(result.carbs).toBe(legacyPlan.carbs);
     expect(result.fat).toBe(legacyPlan.fat);
-    expect(result.plannedDailyEAT).toBe(legacyPlan.plannedDailyEAT);
+    expect(result.plannedDailyEAT).toBe(calculateNutritionPlan(PLAN_INPUT).plannedDailyEAT);
   });
 
   test("falls back to original plan when weeklyWorkouts JSON is invalid", () => {
@@ -101,7 +109,7 @@ describe("resolvePlanForDayAdjustment", () => {
     expect(result.protein).toBe(legacyPlan.protein);
     expect(result.carbs).toBe(legacyPlan.carbs);
     expect(result.fat).toBe(legacyPlan.fat);
-    expect(result.plannedDailyEAT).toBe(legacyPlan.plannedDailyEAT);
+    expect(result.plannedDailyEAT).toBe(0);
   });
 
   test("falls back to original plan when required fields are missing", () => {
@@ -114,5 +122,28 @@ describe("resolvePlanForDayAdjustment", () => {
     expect(
       resolvePlanForDayAdjustment(legacyPlan as NutritionPlan, { ...PROFILE, weight: undefined }),
     ).toBe(legacyPlan);
+  });
+});
+
+describe("parseStoredPlan", () => {
+  const validPlan = calculateNutritionPlan(PLAN_INPUT);
+
+  test("rejects malformed or non-finite target fields", () => {
+    expect(parseStoredPlan(undefined)).toBeNull();
+    expect(parseStoredPlan("not json")).toBeNull();
+    for (const field of ["calories", "protein", "carbs", "fat", "plannedDailyEAT"]) {
+      expect(parseStoredPlan(JSON.stringify({ ...validPlan, [field]: undefined }))).toBeNull();
+      expect(parseStoredPlan(JSON.stringify({ ...validPlan, [field]: -1 }))).toBeNull();
+      expect(parseStoredPlan(JSON.stringify({ ...validPlan, [field]: "not a number" }))).toBeNull();
+    }
+  });
+
+  test("accepts valid plans and omits an invalid optional training-day baseline", () => {
+    const parsed = parseStoredPlan(JSON.stringify({ ...validPlan, plannedEatPerTrainingDay: -50 }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.calories).toBe(validPlan.calories);
+    expect(parsed!.plannedDailyEAT).toBe(validPlan.plannedDailyEAT);
+    expect("plannedEatPerTrainingDay" in parsed!).toBe(false);
+    expect(FALLBACK_TARGETS).toEqual({ calories: 2000, protein: 90, carbs: 250, fat: 65 });
   });
 });

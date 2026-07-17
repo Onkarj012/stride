@@ -7,6 +7,7 @@ import { useUser } from "@clerk/react";
 import { AssistantConsole } from "@/components/home/AssistantConsole";
 import { MacroSummary, MobileIcon, ScreenHeader } from "@/components/mobile/MobileKit";
 import { AgentBadge, NarrativeCard, StatChip, StreakCard, StrideMark, WaterTracker } from "@/components/ui-kit";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { useShortcut } from "@/hooks/useShortcut";
 import { useDailyWindow } from "@/hooks/useDailyWindow";
 import { localDateStr } from "@/lib/utils";
@@ -136,10 +137,10 @@ export function HomePage() {
     fat: Math.round(stats?.todayFat ?? 0),
   };
   const target = {
-    kcal: Math.round(stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 2000),
-    protein: Math.round(stats?.proteinTarget ?? 90),
-    carbs: Math.round(stats?.carbTarget ?? 200),
-    fat: Math.round(stats?.fatTarget ?? 65),
+    kcal: Math.round(stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 0),
+    protein: Math.round(stats?.proteinTarget ?? 0),
+    carbs: Math.round(stats?.carbTarget ?? 0),
+    fat: Math.round(stats?.fatTarget ?? 0),
   };
   const todayLabel = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
   const firstName = user?.firstName ?? user?.username ?? "there";
@@ -156,6 +157,18 @@ export function HomePage() {
     const latest = [...(waterLogs ?? [])].sort((a, b) => (b._creationTime ?? 0) - (a._creationTime ?? 0))[0];
     if (!latest) return;
     await deleteWater({ id: latest._id as Id<"water_logs"> });
+  }
+
+  if (brief === undefined) {
+    return (
+      <div className="flex items-center justify-center min-h-dvh px-5">
+        <div className="space-y-3 w-full max-w-xs">
+          <Skeleton className="h-8 w-3/4 rounded-[14px]" />
+          <Skeleton className="h-40 w-full rounded-[20px]" />
+          <Skeleton className="h-24 w-full rounded-[20px]" />
+        </div>
+      </div>
+    );
   }
 
   return (
