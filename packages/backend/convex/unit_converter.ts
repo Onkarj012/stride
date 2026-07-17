@@ -182,7 +182,25 @@ const FOOD_DENSITIES: Record<string, number> = {
 export interface ConversionResult {
   grams: number;
   confidence: number;
-  method: "exact" | "volume" | "piece" | "estimated";
+  method: "exact" | "volume" | "piece" | "estimated" | "unresolved";
+}
+
+interface DensityResult {
+  density: number;
+  known: boolean;
+}
+
+const HOUSEHOLD_VESSELS = new Set([
+  "katori", "katoris",
+  "glass", "glasses",
+  "tumbler", "tumblers",
+  "mug", "mugs",
+  "bowl", "bowls",
+  "handful", "handfuls",
+]);
+
+function unresolved(): ConversionResult {
+  return { grams: 0, confidence: 0, method: "unresolved" };
 }
 
 /**
@@ -190,7 +208,7 @@ export interface ConversionResult {
  * - "g", "gram", "grams" → direct (exact)
  * - "ml", "cup", "tbsp", "katori", "glass", etc → volume × density (medium confidence)
  * - "piece", "slice", "egg", etc → known piece weights (low confidence)
- * - Unknown → treated as servings (~100g each), never as raw grams (very low confidence)
+ * - Unknown → unresolved so the parser can retry or confirm (no silent 100g guess)
  */
 export function toGrams(
   amount: number,
@@ -232,33 +250,37 @@ export function toGrams(
   const mlPerUnit = VOLUME_TO_ML[unitLower];
   if (mlPerUnit) {
     const ml = amount * mlPerUnit;
-    const density = findFoodDensity(foodLower);
-    return {
-      grams: Math.round(ml * density),
-      confidence: density !== 1.0 ? 0.85 : 0.75,
-      method: "volume",
-    };
+    const { density, known } = findFoodDensity(foodLower);
+    const isHousehold = HOUSEHOLD_VESSELS.has(unitLower);
+    // A household vessel of an unknown-density food is too ambiguous to estimate.
+    if (isHousehold && !known) {
+      return unresolved();
+    }
+    const baseConfidence = known ? 0.85 : 0.45;
+    // Household vessels have variable capacity, so cap their confidence.
+    const confidence = isHousehold ? Math.min(baseConfidence, 0.6) : baseConfidence;
+    return { grams: Math.round(ml * density), confidence, method: "volume" };
   }
 
   // Piece-based units
   if (unitLower === "piece" || unitLower === "pieces" || unitLower === "pc" || unitLower === "pcs") {
     const pieceWeight = findPieceWeight(foodLower);
-    return {
-      grams: amount * pieceWeight,
-      confidence: pieceWeight > 0 ? 0.7 : 0.4,
-      method: "piece",
-    };
+    if (pieceWeight <= 0) {
+      return unresolved();
+    }
+    return { grams: amount * pieceWeight, confidence: 0.7, method: "piece" };
   }
 
-  // Serving-based
+  // Serving-based — the only path allowed to estimate 100g per unit.
   if (unitLower === "serving" || unitLower === "servings" || unitLower === "serve") {
     return { grams: amount * 100, confidence: 0.5, method: "estimated" };
   }
 
   // Bowl/plate approximations
   if (unitLower === "bowl" || unitLower === "bowls") {
-    // For cooked foods, a bowl is roughly 250-300g
-    const density = findFoodDensity(foodLower);
+    // For cooked foods, a bowl is roughly 250-300g; unknown density is too risky.
+    const { density, known } = findFoodDensity(foodLower);
+    if (!known) return unresolved();
     return { grams: Math.round(amount * 250 * density), confidence: 0.4, method: "estimated" };
   }
 
@@ -269,7 +291,8 @@ export function toGrams(
 
   // Handful
   if (unitLower === "handful" || unitLower === "handfuls") {
-    const density = findFoodDensity(foodLower);
+    const { density, known } = findFoodDensity(foodLower);
+    if (!known) return unresolved();
     return { grams: Math.round(amount * 30 * density), confidence: 0.3, method: "estimated" };
   }
 
@@ -278,41 +301,36 @@ export function toGrams(
     return { grams: amount * 0.5, confidence: 0.6, method: "estimated" };
   }
 
-  // Small/medium/large
-  if (unitLower === "small") {
+  // Small/medium/large — relative to a known piece weight.
+  if (unitLower === "small" || unitLower === "medium" || unitLower === "large") {
     const pieceWeight = findPieceWeight(foodLower);
-    return { grams: amount * pieceWeight * 0.7, confidence: 0.4, method: "estimated" };
-  }
-  if (unitLower === "medium") {
-    const pieceWeight = findPieceWeight(foodLower);
-    return { grams: amount * pieceWeight, confidence: 0.4, method: "estimated" };
-  }
-  if (unitLower === "large") {
-    const pieceWeight = findPieceWeight(foodLower);
-    return { grams: amount * pieceWeight * 1.3, confidence: 0.4, method: "estimated" };
+    if (pieceWeight <= 0) {
+      return unresolved();
+    }
+    const multiplier = unitLower === "small" ? 0.7 : unitLower === "large" ? 1.3 : 1;
+    return { grams: amount * pieceWeight * multiplier, confidence: 0.4, method: "estimated" };
   }
 
-  // Unknown unit — try to guess
-  // If it looks like a food name, treat as piece
+  // Last resort: if the unit itself looks like a food name, treat as a piece.
   const pieceWeight = findPieceWeight(unitLower);
   if (pieceWeight > 0) {
     return { grams: amount * pieceWeight, confidence: 0.5, method: "piece" };
   }
 
-  // Default: treat the amount as servings (~100g each, same as the serving
-  // path above). Treating unknown units as grams would collapse
-  // "2 katori dal"-style inputs to 2g, which is never a plausible portion.
-  return { grams: amount * 100, confidence: 0.25, method: "estimated" };
+  // Unknown unit — don't guess 100g. Returning unresolved lets the parser
+  // retry or ask the user to confirm.
+  return unresolved();
 }
 
 /**
  * Find the density of a food for volume-to-weight conversion.
+ * Returns whether the density was found in the table or defaulted to water.
  */
-function findFoodDensity(foodName: string): number {
+function findFoodDensity(foodName: string): DensityResult {
   for (const [key, density] of Object.entries(FOOD_DENSITIES)) {
-    if (foodName.includes(key)) return density;
+    if (foodName.includes(key)) return { density, known: true };
   }
-  return 1.0;
+  return { density: 1.0, known: false };
 }
 
 /**

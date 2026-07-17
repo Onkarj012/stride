@@ -64,16 +64,45 @@ describe("toGrams — vessel/regional units (N8)", () => {
 });
 
 describe("toGrams — unknown unit fallback (N8)", () => {
-  test("unknown unit is treated as servings, never as raw grams", () => {
+  test("unknown unit is unresolved, not silently treated as grams or servings", () => {
     const r = toGrams(2, "vati", "rice");
-    expect(r.grams).toBe(200); // 2 servings × ~100g, not 2 grams
-    expect(r.method).toBe("estimated");
-    expect(r.confidence).toBeLessThanOrEqual(0.3);
+    expect(r.grams).toBe(0);
+    expect(r.method).toBe("unresolved");
+    expect(r.confidence).toBe(0);
   });
 
-  test("single unknown unit still yields a plausible portion", () => {
+  test("single unknown unit is unresolved", () => {
     const r = toGrams(1, "gadget", "chicken curry");
-    expect(r.grams).toBe(100);
-    expect(r.confidence).toBeLessThanOrEqual(0.3);
+    expect(r.grams).toBe(0);
+    expect(r.method).toBe("unresolved");
+  });
+
+  test("explicit serving aliases still estimate 100g each", () => {
+    expect(toGrams(2, "serving", "rice")).toEqual({ grams: 200, confidence: 0.5, method: "estimated" });
+    expect(toGrams(1, "servings", "chicken curry")).toEqual({ grams: 100, confidence: 0.5, method: "estimated" });
+  });
+
+  test("common typo units are unresolved", () => {
+    expect(toGrams(2, "tbps", "olive oil")).toEqual({ grams: 0, confidence: 0, method: "unresolved" });
+  });
+
+  test("household vessel with unknown density is unresolved", () => {
+    const r = toGrams(1, "mug", "cereal");
+    expect(r.grams).toBe(0);
+    expect(r.method).toBe("unresolved");
+  });
+
+  test("household vessel with known density has capped confidence", () => {
+    const r = toGrams(1, "mug", "water");
+    expect(r.grams).toBe(300);
+    expect(r.confidence).toBe(0.6);
+    expect(r.method).toBe("volume");
+  });
+
+  test("exact volume unit with unknown density has reduced confidence", () => {
+    const r = toGrams(1, "cup", "cereal");
+    expect(r.grams).toBe(Math.round(240 * 1.0));
+    expect(r.confidence).toBe(0.45);
+    expect(r.method).toBe("volume");
   });
 });
