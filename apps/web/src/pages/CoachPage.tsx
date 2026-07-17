@@ -110,7 +110,7 @@ export function CoachPage() {
   const rejectWorkoutMemory = useMutation((api as any).workout_memory.rejectMemory);
   const sendToAI = useAction(api.ai.chat);
   const confirmGroup = useAction((api as any).ai.confirmGroup);
-  const resolveClarification = useMutation(api.ai.resolveClarification);
+  const resolveClarification = useAction(api.ai.resolveClarification);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -448,6 +448,7 @@ export function CoachPage() {
         coachType: "auto",
         today: localDateStr(),
         clarificationGroupId: activeClarificationGroupId ?? undefined,
+        clientSubmissionId: crypto.randomUUID(),
       });
       const r = result as Record<string, unknown>;
       const reply = typeof r.reply === "string" ? r.reply : String(result);

@@ -112,6 +112,7 @@ export async function writeMealDomain(
     ingredientBreakdownInvalidated: canonical.ingredientBreakdownInvalidated,
     logSource,
     idempotencyKey,
+    sourceActionId: options.sourceActionId,
   });
   if (options.emitBehavior) await recordBehaviorRow(ctx, canonical.userId, "log", "meal", undefined, date);
   if (options.emitGamification && date === new Date().toISOString().split("T")[0]) {

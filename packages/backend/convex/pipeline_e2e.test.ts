@@ -122,6 +122,18 @@ describe("canonical pipeline end-to-end contract", () => {
     expect(await t.run((ctx) => ctx.db.query("sleep_logs").collect())).toEqual([expect.objectContaining({ hours: 7 })]);
   });
 
+  test("repeated water appends create multiple active rows and aggregate in today brief", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "e2e-user" });
+    mockChatReply(waterMarker(250) + waterMarker(250));
+    const result = await asUser.action(api.ai.chat, { message: "two glasses", today: "2026-07-16" }) as any;
+    expect(result.loggedItem?.type).toBe("multiple");
+    const waterRows = await t.run((ctx) => ctx.db.query("water_logs").collect());
+    expect(waterRows).toHaveLength(2);
+    const brief = await asUser.query(api.insights.getTodayBrief, { today: "2026-07-16" });
+    expect(brief.stats.waterMl).toBe(500);
+  });
+
   test("memory flow persists an explicit fact independently of source-action undo", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "e2e-user" });
@@ -170,6 +182,34 @@ describe("canonical pipeline end-to-end contract", () => {
     expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(0);
   });
 
+  test("partial confirmation group remains retryable and aggregate status is partial", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "e2e-user" });
+    const staged = await t.mutation((internal as any).ai.stageClarificationGroup, {
+      userId: "e2e-user", groupIdempotencyKey: "retry-partial-e2e", sourceSurface: "chat", rawInput: "retry partial", createdAt: Date.now(),
+      members: [
+        { actionType: "meal", memberIdempotencyKey: "retry-good", payload: { name: "Rice", calories: 300, protein: 6, carbs: 60, fat: 2, time: "12:00", date: "2026-07-16", logSource: "e2e" }, provenance: "ai_extracted", confidence: 0.9, validation: { status: "valid", messages: [] }, reversible: true, resolvedDate: "2026-07-16", ordinal: 0 },
+        { actionType: "meal", memberIdempotencyKey: "retry-bad", payload: { name: "" }, provenance: "ai_extracted", confidence: 0.4, validation: { status: "warning", messages: ["unresolved food"] }, reversible: true, resolvedDate: "2026-07-16", ordinal: 1 },
+      ],
+    });
+    const first = await asUser.action((api as any).ai.confirmGroup, { groupId: staged.groupId, decisions: [{ ordinal: 0, action: "confirm" }, { ordinal: 1, action: "confirm" }] }) as any;
+    expect(first.status).toBe("partial");
+    const groupAfterFirst = await t.run((ctx) => ctx.db.get("actionGroups", staged.groupId));
+    expect(groupAfterFirst?.status).toBe("partial");
+
+    const retry = await asUser.action((api as any).ai.confirmGroup, {
+      groupId: staged.groupId,
+      decisions: [{
+        ordinal: 1,
+        action: "confirm",
+        edits: { payload: { name: "Dal", calories: 220, protein: 12, carbs: 35, fat: 4, time: "13:00", date: "2026-07-16", logSource: "e2e" } },
+      }],
+    }) as any;
+    expect(retry.results[0].status).toBe("committed");
+    expect(await t.run((ctx) => ctx.db.get("actionGroups", staged.groupId))).toMatchObject({ status: "committed" });
+    expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(2);
+  });
+
   test("group and member retries are idempotent and expose the already-committed outcome", async () => {
     const t = convexTest(schema, modules);
     const first = await writeMeal(t, "retry-e2e");
@@ -177,8 +217,27 @@ describe("canonical pipeline end-to-end contract", () => {
     expect(second).toBe(first);
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
     const action = await t.run((ctx) => ctx.db.query("actions").first());
+    expect(await t.run((ctx) => ctx.db.get(action!.groupId))).toMatchObject({ status: "pending" });
+    await t.mutation((internal as any).ai.finalizeConfirmationGroup, { groupId: action!.groupId });
+    expect(await t.run((ctx) => ctx.db.get(action!.groupId))).toMatchObject({ status: "committed" });
     const events = await t.query(telemetry, { groupId: action!.groupId });
     expect(events.map((event: any) => event.event)).toEqual(["committed", "already_committed"]);
+  });
+
+  test("reusing a client submission token with different content is rejected by the fingerprint", async () => {
+    const t = convexTest(schema, modules);
+    const token = "client-token-1";
+    const rawInput1 = "I ate oats";
+    const rawInput2 = "I ate rice";
+    const base = { userId: "e2e-user", sourceSurface: "chat" as const, rawInput: rawInput1, model: "e2e-model", clientSubmissionId: token };
+    await t.mutation(writer("writeMealAction"), {
+      group: base,
+      member: member({ name: "Oats", calories: 400, protein: 20, carbs: 40, fat: 15, time: "08:00", date: "2026-07-16", logSource: "e2e" }, `${token}-1`, "ai_extracted"),
+    });
+    await expect(t.mutation(writer("writeMealAction"), {
+      group: { ...base, rawInput: rawInput2 },
+      member: member({ name: "Rice", calories: 400, protein: 20, carbs: 40, fat: 15, time: "08:00", date: "2026-07-16", logSource: "e2e" }, `${token}-2`, "ai_extracted"),
+    })).rejects.toThrow("submission fingerprint");
   });
 
   test("single, repeated, group, and partial-group undo all remain compensating and auditable", async () => {
@@ -191,6 +250,18 @@ describe("canonical pipeline end-to-end contract", () => {
     const events = await t.query(telemetry, { groupId: single.groupId });
     expect(events.map((event: any) => event.event)).toEqual(["committed", "undone", "already_undone"]);
     expect(await t.run((ctx) => ctx.db.get(single.committedRowRef!.id as any))).toMatchObject({ undoneAt: expect.any(Number) });
+  });
+
+  test("undone rows are excluded from today brief projections", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "e2e-user" });
+    await writeMeal(t, "projection-undo");
+    const action = (await t.run((ctx) => ctx.db.query("actions").collect())).find((action) => action.memberIdempotencyKey === "projection-undo-member")!;
+    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action._id });
+    const brief = await asUser.query(api.insights.getTodayBrief, { today: "2026-07-16" });
+    expect(brief.stats.mealsLogged).toBe(0);
+    expect(brief.stats.todayCals).toBe(0);
+    expect(await t.run((ctx) => ctx.db.query("food_memory").first())).toMatchObject({ undoneAt: expect.any(Number), sourceActionIds: [] });
   });
 
   test("date policy covers explicit history, vague clarification, future rejection, and midnight crossing", () => {

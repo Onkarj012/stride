@@ -1,4 +1,4 @@
-import { internalMutation } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import {
@@ -6,12 +6,14 @@ import {
   actionSourceSurfaceValidator,
   actionValidationValidator,
   buildActionMembers,
+  assertTransition,
   assertValidActionEnvelope,
   type ActionType,
 } from "./actions_envelope";
 import {
   deriveGroupKey,
   deriveMemberKey,
+  deriveSubmissionFingerprint,
   ensureGroup,
   ensureMember,
 } from "./actions_idempotency";
@@ -72,7 +74,7 @@ type WriterArgs = {
   };
 };
 
-async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs) {
+async function prepareMember(ctx: MutationCtx, actionType: ActionType, args: WriterArgs) {
   const groupIdempotencyKey = args.group.groupIdempotencyKey ?? deriveGroupKey({
     userId: args.group.userId,
     sourceSurface: args.group.sourceSurface,
@@ -89,6 +91,14 @@ async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs)
     clientLocalTime: args.group.clientLocalTime,
     clientTimeZone: args.group.clientTimeZone,
     createdAt: args.group.createdAt ?? Date.now(),
+    submissionFingerprint: deriveSubmissionFingerprint({
+      userId: args.group.userId,
+      sourceSurface: args.group.sourceSurface,
+      rawInput: args.group.rawInput,
+      clientLocalDate: args.group.clientLocalDate,
+      clientLocalTime: args.group.clientLocalTime,
+      clientTimeZone: args.group.clientTimeZone,
+    }),
   });
   const memberIdempotencyKey = args.member.memberIdempotencyKey ?? deriveMemberKey({
     groupKey: groupIdempotencyKey,
@@ -122,8 +132,10 @@ async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs)
     return { group: groupResult.group, member: ensured.member, shouldExecute: false, state: ensured.state, rowId: ensured.member.committedRowRef?.id };
   }
   if (ensured.state === "reexecute") {
+    if (ensured.member.status === "failed") assertTransition(ensured.member.status, "pending");
     await ctx.db.patch(ensured.member._id, {
       ...member,
+      status: "pending",
       retryCount: ((ensured.member as any).retryCount ?? 0) + 1,
       // Confirmation edits change the executable payload, but never the
       // original extraction that is needed for audit and correction review.
@@ -135,7 +147,7 @@ async function prepareMember(ctx: any, actionType: ActionType, args: WriterArgs)
   return { group: groupResult.group, member: committedMember, shouldExecute: true, state: ensured.state, rowId: undefined };
 }
 
-async function recordWriterTelemetry(ctx: any, prepared: any, event: "committed" | "already_committed" | "failed", mutationResult: { ok: boolean; error?: string; code?: string }, derivedStateVersion?: number) {
+async function recordWriterTelemetry(ctx: MutationCtx, prepared: any, event: "committed" | "already_committed" | "failed", mutationResult: { ok: boolean; error?: string; code?: string }, derivedStateVersion?: number) {
   await insertActionTelemetry(ctx, {
     actionId: String(prepared.member._id),
     groupId: String(prepared.group._id),
@@ -153,14 +165,16 @@ async function recordWriterTelemetry(ctx: any, prepared: any, event: "committed"
   });
 }
 
-async function commitMember(ctx: any, prepared: any, table: string, id: any, undoMetadata?: Record<string, unknown>) {
+async function commitMember(ctx: MutationCtx, prepared: any, table: string, id: any, undoMetadata?: Record<string, unknown>) {
+  assertTransition(prepared.member.status, "committed");
   await ctx.db.patch(prepared.member._id, {
     status: "committed",
     committedRowRef: { table, id: String(id) },
     originalPayload: prepared.member.originalPayload ?? prepared.member.payload,
     ...(undoMetadata ? { payload: { ...prepared.member.payload, ...undoMetadata } } : {}),
   });
-  await ctx.db.patch(prepared.group._id, { status: "committed", resolvedAt: Date.now() });
+  // Member writers commit only the member. Group aggregate status is finalized
+  // by the caller (chat, clarification, or confirmation) after all members.
   return id;
 }
 
@@ -227,17 +241,23 @@ export const writeRecoveryAction = internalMutation({
       ...recoveryPayloadFromDraft(draft),
       ...(payload.mode ? { mode: payload.mode } : {}),
     };
-    const result = await writeRecoveryDomain(ctx, { ...canonicalPayload, userId: prepared.group.userId }, {
+    const result = await writeRecoveryDomain(ctx, {
+      ...canonicalPayload,
+      userId: prepared.group.userId,
+      sourceActionId: String(prepared.member._id),
+    }, {
       emitBehavior: true,
       recomputeDerived: false,
     });
     const table = draft.entryKind === "state" || draft.entryKind === "wellness" ? "sleep_logs" : `${draft.entryKind}_logs`;
+    const undoMetadata: Record<string, unknown> = {};
+    if (result.previous) undoMetadata.previous = result.previous;
     await commitMember(
       ctx,
       prepared,
       table,
       result.id,
-      result.previous !== undefined ? { previous: result.previous } : undefined,
+      undoMetadata,
     );
     const derived = await recomputeForAction(ctx, {
       userId: prepared.group.userId,

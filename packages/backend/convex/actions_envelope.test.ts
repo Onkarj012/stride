@@ -90,6 +90,7 @@ describe("action envelope", () => {
     expect(() => assertTransition("pending", "discarded")).not.toThrow();
     expect(() => assertTransition("pending", "expired")).not.toThrow();
     expect(() => assertTransition("committed", "undone")).not.toThrow();
+    expect(() => assertTransition("failed", "pending")).not.toThrow();
   });
 
   test("rejects every non-canonical status transition", () => {

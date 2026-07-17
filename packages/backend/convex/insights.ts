@@ -4,6 +4,7 @@ import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
 import { getNextCheckInForContext, getTodayCheckInAnswerContext } from "./checkins";
 import { resolvePlanForDayAdjustment } from "./plan_resolve";
 import { deriveRecoveryState } from "./wellness";
+import { readActiveRowsForDate, readActiveSleepForDate, readLatestActiveStepsForDate } from "./active_rows";
 
 const windowValidator = v.union(
   v.literal("morning"),
@@ -82,13 +83,12 @@ export const saveInsights = internalMutation({
   handler: async (ctx, { userId, date, insights }) => {
     const content = JSON.stringify(insights);
     const sourceRows = await Promise.all([
-      ctx.db.query("meals").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("workouts").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
-      // Keep this unfiltered: recovery/rest state rows consumed as stateRows are stored in sleep_logs.
-      ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("steps_logs").withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date)).collect(),
+      readActiveRowsForDate(ctx, "meals", userId, date),
+      readActiveRowsForDate(ctx, "workouts", userId, date),
+      readActiveRowsForDate(ctx, "water_logs", userId, date),
+      readActiveRowsForDate(ctx, "sleep_logs", userId, date),
+      readActiveRowsForDate(ctx, "mood_logs", userId, date),
+      readActiveRowsForDate(ctx, "steps_logs", userId, date),
     ]);
     const sourceRowIds = sourceRows.flat().map((source: any) => String(source._id));
     const generatedAt = Date.now();
@@ -142,33 +142,15 @@ export const getTodayBrief = query({
       ctx.db.query("user_profiles")
         .withIndex("by_user", (q) => q.eq("userId", userId))
         .first(),
-      ctx.db.query("meals")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .collect(),
-      ctx.db.query("workouts")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .collect(),
-      ctx.db.query("meals")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", yesterday))
-        .collect(),
-      ctx.db.query("workouts")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", yesterday))
-        .collect(),
-      ctx.db.query("water_logs")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .collect().then((rows) => rows.filter((row) => !row.undoneAt)),
-      ctx.db.query("sleep_logs")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .collect().then((rows) => rows.find((row) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null),
-      ctx.db.query("steps_logs")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .collect().then((rows) => rows.find((row) => !row.undoneAt) ?? null),
-      ctx.db.query("mood_logs")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .take(10).then((rows) => rows.filter((row) => !row.undoneAt)),
-      ctx.db.query("sleep_logs")
-        .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", today))
-        .collect(),
+      readActiveRowsForDate(ctx, "meals", userId, today),
+      readActiveRowsForDate(ctx, "workouts", userId, today),
+      readActiveRowsForDate(ctx, "meals", userId, yesterday),
+      readActiveRowsForDate(ctx, "workouts", userId, yesterday),
+      readActiveRowsForDate(ctx, "water_logs", userId, today),
+      readActiveSleepForDate(ctx, userId, today),
+      readLatestActiveStepsForDate(ctx, userId, today),
+      readActiveRowsForDate(ctx, "mood_logs", userId, today).then((rows) => rows.slice(0, 10)),
+      readActiveRowsForDate(ctx, "sleep_logs", userId, today),
     ]);
 
     const calorieTarget = profile?.calorieTarget ?? 2000;

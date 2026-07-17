@@ -61,6 +61,7 @@ export const actionGroupValidator = v.object({
   clientTimeZone: v.optional(v.string()),
   createdAt: v.number(),
   resolvedAt: v.optional(v.number()),
+  submissionFingerprint: v.optional(v.string()),
 });
 
 export const actionValidator = v.object({
@@ -152,9 +153,24 @@ export function assertTransition(from: ActionStatus, to: ActionStatus): void {
     ? ["committed", "failed", "discarded", "expired"]
     : from === "committed"
       ? ["undone"]
-      : [];
+      : from === "failed"
+        ? ["discarded", "expired", "pending"]
+        : [];
 
   if (!allowed.includes(to)) {
     throw new Error(`Invalid action status transition: ${from} -> ${to}`);
+  }
+}
+
+export function assertGroupTransition(from: ActionGroupStatus, to: ActionGroupStatus): void {
+  if (from === to) return;
+  const allowed = from === "pending"
+    ? ["committed", "partial", "failed", "discarded", "expired"]
+    : from === "partial" || from === "failed"
+      ? ["committed", "partial", "failed", "discarded", "expired"]
+      : [];
+
+  if (!allowed.includes(to)) {
+    throw new Error(`Invalid group status transition: ${from} -> ${to}`);
   }
 }

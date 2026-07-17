@@ -6,6 +6,7 @@ import { callAI, parseJSON } from "./ai/llm";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 import { assertValidDate } from "./validation";
+import { readActiveRowsForDate, readActiveSleepForDate, readLatestActiveStepsForDate } from "./active_rows";
 
 type CheckInWindow = "morning" | "day" | "evening" | "night";
 type CheckInSource = "registry" | "llm" | "template";
@@ -767,12 +768,12 @@ export const getNextCheckIn = query({
     const [profile, settings, meals, workouts, water, sleep, steps, moods] = await Promise.all([
       ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
       ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
-      ctx.db.query("meals").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("workouts").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("water_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("sleep_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).first(),
-      ctx.db.query("steps_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).first(),
-      ctx.db.query("mood_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).take(10),
+      readActiveRowsForDate(ctx, "meals", userId, date),
+      readActiveRowsForDate(ctx, "workouts", userId, date),
+      readActiveRowsForDate(ctx, "water_logs", userId, date),
+      readActiveSleepForDate(ctx, userId, date),
+      readLatestActiveStepsForDate(ctx, userId, date),
+      readActiveRowsForDate(ctx, "mood_logs", userId, date).then((rows) => rows.slice(0, 10)),
     ]);
 
     return getNextCheckInForContext(ctx, {
@@ -1077,11 +1078,11 @@ export const getDailyLlmContext = internalQuery({
     assertDate(date);
     const [profile, meals, workouts, water, sleep, steps, answers] = await Promise.all([
       ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
-      ctx.db.query("meals").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).take(8),
-      ctx.db.query("workouts").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).take(5),
-      ctx.db.query("water_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).take(10),
-      ctx.db.query("sleep_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect().then((rows) => rows.find((row) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null),
-      ctx.db.query("steps_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).first(),
+      readActiveRowsForDate(ctx, "meals", userId, date).then((rows) => rows.slice(0, 8)),
+      readActiveRowsForDate(ctx, "workouts", userId, date).then((rows) => rows.slice(0, 5)),
+      readActiveRowsForDate(ctx, "water_logs", userId, date).then((rows) => rows.slice(0, 10)),
+      readActiveSleepForDate(ctx, userId, date),
+      readLatestActiveStepsForDate(ctx, userId, date),
       getAnswerSummary(ctx, userId, date),
     ]);
     return {

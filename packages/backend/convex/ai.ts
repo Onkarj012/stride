@@ -1,6 +1,7 @@
-import { action, query, internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { action, query, internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal, api } from "./_generated/api";
-import { deriveGroupKey, deriveMemberKey, ensureGroup, ensureMember } from "./actions_idempotency";
+import { deriveGroupKey, deriveMemberKey, deriveSubmissionFingerprint, ensureGroup, ensureMember } from "./actions_idempotency";
 import { ConvexError, v } from "convex/values";
 import { resolveActionDate } from "./time_resolve";
 import {
@@ -8,10 +9,14 @@ import {
   CONFIRMATION_TTL_MS,
   LOW_CONFIDENCE_CONFIRM_THRESHOLD,
   buildActionMembers,
+  assertGroupTransition,
+  assertTransition,
+  type ActionGroupStatus,
 } from "./actions_envelope";
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { toLegacyPersona } from "./personas";
 import { insertActionTelemetry } from "./telemetry";
+import { assertValidDate } from "./validation";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
   await ctx.runMutation((internal as any).telemetry.record, { input });
@@ -210,7 +215,18 @@ export const stageClarificationGroup = internalMutation({
       clientTimeZone: args.clientTimeZone,
       createdAt: args.createdAt,
       status: "pending",
+      submissionFingerprint: deriveSubmissionFingerprint({
+        userId: args.userId,
+        sourceSurface: args.sourceSurface,
+        rawInput: args.rawInput,
+        clientLocalDate: args.clientLocalDate,
+        clientLocalTime: args.clientLocalTime,
+        clientTimeZone: args.clientTimeZone,
+      }),
     });
+    if (["committed", "discarded", "expired"].includes(groupResult.group.status)) {
+      return { groupId: groupResult.group._id };
+    }
     const members = buildActionMembers({
       groupId: groupResult.group._id,
       userId: args.userId,
@@ -238,9 +254,6 @@ export const stageClarificationGroup = internalMutation({
         });
       }
     }
-    if (groupResult.group.status !== "pending") {
-      await ctx.db.patch(groupResult.group._id, { status: "pending", resolvedAt: undefined });
-    }
     return { groupId: groupResult.group._id };
   },
 });
@@ -256,7 +269,7 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     throw new Error("This confirmation has expired");
   }
   if (group.status === "expired") throw new Error("This confirmation has expired");
-  if (group.status !== "pending") throw new Error("Group is not pending clarification");
+  if (!["pending", "partial", "failed"].includes(group.status)) throw new Error("Group is not pending clarification");
   const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
   const dateCheck = resolveChatActionDate({ explicitDate: date, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
   if (dateCheck.status !== "resolved" && !(group.clientLocalDate !== undefined && group.clientLocalDate === date)) {
@@ -268,6 +281,7 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   const errors: string[] = [];
 
   for (const member of members) {
+    if (member.status !== "pending" && member.status !== "failed") continue;
     try {
       const payload = { ...member.payload, date };
       const groupInput = {
@@ -340,9 +354,12 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push(message);
+      await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, { actionId: member._id, error: message });
       console.error("Failed to resolve clarification member:", err);
     }
   }
+
+  await finalizeActionGroup(ctx, groupId);
 
   if (errors.length > 0 && loggedItems.length === 0) {
     throw new Error(`Could not resolve clarification: ${errors.join("; ")}`);
@@ -352,6 +369,12 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     item.data?.actionId ? pendingMemoryApprovalsForAction(ctx, userId, item.data.actionId) : [],
   ))).flat();
   return { groupId, loggedItems, memoryApprovals, errors: errors.length > 0 ? errors : undefined };
+}
+
+async function finalizeActionGroup(ctx: ActionCtx, groupId: string): Promise<ActionGroupStatus> {
+  const group: Doc<"actionGroups"> | null = await ctx.runMutation(internal.ai.finalizeConfirmationGroup, { groupId: groupId as any });
+  if (!group) throw new Error("Action group not found after finalization");
+  return group.status;
 }
 
 /** Resolve a pending clarification group with an exact date and write through canonical writers. */
@@ -374,6 +397,16 @@ export const getActionGroupForClarification = internalQuery({
   },
 });
 
+export const getActionGroupByKey = internalQuery({
+  args: { userId: v.string(), groupIdempotencyKey: v.string() },
+  handler: async (ctx, { userId, groupIdempotencyKey }) => {
+    return await ctx.db
+      .query("actionGroups")
+      .withIndex("by_group_idempotency_key", (q) => q.eq("userId", userId).eq("groupIdempotencyKey", groupIdempotencyKey))
+      .first();
+  },
+});
+
 export const getPendingMembersForClarification = internalQuery({
   args: { groupId: v.id("actionGroups") },
   handler: async (ctx, { groupId }) => {
@@ -389,6 +422,7 @@ export const expireActionGroup = internalMutation({
     const members = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
     for (const member of members) {
       if (member.status === "pending" || member.status === "failed") {
+        assertTransition(member.status, "expired");
         await ctx.db.patch(member._id, { status: "expired" });
         await insertActionTelemetry(ctx, {
           actionId: String(member._id),
@@ -406,6 +440,7 @@ export const expireActionGroup = internalMutation({
         });
       }
     }
+    assertGroupTransition(group.status, "expired");
     await ctx.db.patch(groupId, { status: "expired", resolvedAt: Date.now() });
     return await ctx.db.get("actionGroups", groupId);
   },
@@ -415,7 +450,12 @@ export const recordConfirmationMemberFailure = internalMutation({
   args: { actionId: v.id("actions"), error: v.string() },
   handler: async (ctx, { actionId, error }) => {
     const member = await ctx.db.get(actionId);
-    if (!member || member.status === "committed") return member;
+    if (!member || member.status === "committed" || member.status === "discarded" || member.status === "expired" || member.status === "undone") return member;
+    if (member.status === "failed") {
+      assertTransition("failed", "pending");
+      await ctx.db.patch(actionId, { status: "pending" });
+    }
+    assertTransition("pending", "failed");
     await ctx.db.patch(actionId, {
       status: "failed",
       validation: {
@@ -442,18 +482,27 @@ export const recordConfirmationMemberFailure = internalMutation({
 });
 
 export const finalizeConfirmationGroup = internalMutation({
-  args: {
-    groupId: v.id("actionGroups"),
-    status: v.union(
-      v.literal("pending"),
-      v.literal("committed"),
-      v.literal("partial"),
-      v.literal("failed"),
-      v.literal("discarded"),
-      v.literal("expired"),
-    ),
-  },
-  handler: async (ctx, { groupId, status }) => {
+  args: { groupId: v.id("actionGroups") },
+  handler: async (ctx, { groupId }) => {
+    const group = await ctx.db.get("actionGroups", groupId);
+    if (!group) throw new Error("Action group not found");
+    const members = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
+    const committedCount = members.filter((member) => member.status === "committed").length;
+    const discardedCount = members.filter((member) => member.status === "discarded").length;
+    const failedCount = members.filter((member) => member.status === "failed").length;
+    const pendingCount = members.filter((member) => member.status === "pending").length;
+    const status = committedCount === members.length && members.length > 0
+      ? "committed"
+      : discardedCount === members.length && members.length > 0
+        ? "discarded"
+        : failedCount === members.length && members.length > 0
+          ? "failed"
+          : committedCount > 0 || discardedCount > 0 || failedCount > 0
+            ? "partial"
+            : pendingCount > 0
+              ? "pending"
+              : "failed";
+    assertGroupTransition(group.status, status);
     await ctx.db.patch(groupId, { status, resolvedAt: status === "pending" ? undefined : Date.now() });
     return await ctx.db.get("actionGroups", groupId);
   },
@@ -463,6 +512,15 @@ type ConfirmationDecision = {
   ordinal: number;
   action: "confirm" | "discard";
   edits?: any;
+};
+
+type ConfirmGroupResult = {
+  groupId: Id<"actionGroups">;
+  status: ActionGroupStatus;
+  results: unknown[];
+  loggedItems: unknown[];
+  unresolvedItems: unknown[];
+  memoryApprovals?: unknown[];
 };
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -481,9 +539,10 @@ function editedConfirmationMember(member: any, decision: ConfirmationDecision) {
     payload.description = edits.description;
     if (member.actionType === "meal" || member.actionType === "workout") payload.name = edits.description;
   }
+  const effectiveDate = payload.date ?? member.resolvedDate;
   return {
-    payload,
-    resolvedDate: typeof edits.date === "string" && edits.date.length > 0 ? edits.date : member.resolvedDate,
+    payload: { ...payload, date: effectiveDate },
+    resolvedDate: effectiveDate,
     resolvedTime: member.resolvedTime,
   };
 }
@@ -529,7 +588,7 @@ export const confirmGroup = action({
       edits: v.optional(v.any()),
     })),
   },
-  handler: async (ctx, { groupId, decisions }) => {
+  handler: async (ctx, { groupId, decisions }): Promise<ConfirmGroupResult> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
@@ -601,12 +660,10 @@ export const confirmGroup = action({
 
       const edited = editedConfirmationMember(member, decision);
       try {
-        if (edited.resolvedDate !== member.resolvedDate) {
-          const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId: group.userId })) as any;
-          const dateCheck = resolveChatActionDate({ explicitDate: edited.resolvedDate, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
-          if (dateCheck.status !== "resolved") {
-            throw new Error(dateCheck.reason ?? "This date cannot be used");
-          }
+        const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId: group.userId })) as any;
+        const dateCheck = resolveChatActionDate({ explicitDate: edited.resolvedDate, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
+        if (dateCheck.status !== "resolved") {
+          throw new Error(dateCheck.reason ?? "This date cannot be used");
         }
 
         const groupInput = {
@@ -656,23 +713,7 @@ export const confirmGroup = action({
       }
     }
 
-    const finalMembers: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
-    const committedCount = finalMembers.filter((member) => member.status === "committed").length;
-    const discardedCount = finalMembers.filter((member) => member.status === "discarded").length;
-    const failedCount = finalMembers.filter((member) => member.status === "failed").length;
-    const pendingCount = finalMembers.filter((member) => member.status === "pending").length;
-    const status = committedCount === finalMembers.length && finalMembers.length > 0
-      ? "committed"
-      : discardedCount === finalMembers.length && finalMembers.length > 0
-        ? "discarded"
-        : failedCount === finalMembers.length && finalMembers.length > 0
-          ? "failed"
-          : committedCount > 0 || discardedCount > 0 || failedCount > 0
-            ? "partial"
-            : pendingCount > 0
-              ? "pending"
-              : "failed";
-    await ctx.runMutation(aiInternal.finalizeConfirmationGroup, { groupId, status });
+    const status = await finalizeActionGroup(ctx, groupId);
     return { groupId, status, results, loggedItems, unresolvedItems, memoryApprovals };
   },
 });
@@ -688,6 +729,7 @@ export const discardConfirmationMember = internalMutation({
     const member = await ctx.db.get(actionId);
     if (!member || member.status === "committed") return member;
     if (member.status === "pending" || member.status === "failed") {
+      assertTransition(member.status, "discarded");
       await ctx.db.patch(actionId, { status: "discarded" });
       const group = await ctx.db.get(member.groupId);
       await insertActionTelemetry(ctx, {
@@ -1110,13 +1152,14 @@ export const chat = action({
     today: v.optional(v.string()),
     image: v.optional(v.string()),
     clarificationGroupId: v.optional(v.id("actionGroups")),
+    clientSubmissionId: v.optional(v.string()),
   },
-  handler: async (ctx, { message, sessionId, coachType, today: todayArg, image, clarificationGroupId }) => {
+  handler: async (ctx, { message, sessionId, coachType, today: todayArg, image, clarificationGroupId, clientSubmissionId }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
     const userName = identity.name ?? "Athlete";
-    const today = todayArg ?? new Date().toISOString().split("T")[0];
+    const today = assertValidDate(todayArg ?? new Date().toISOString().split("T")[0]);
     const restrictedGuidance = hasRestrictedRecoverySignal(message);
 
     // Gather context
@@ -1389,8 +1432,15 @@ Rules:
       | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs }
       | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs };
     const failedItems: FailedLogItem[] = [];
-    const chatGroupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput: message });
-    const chatGroup = { userId, groupIdempotencyKey: chatGroupKey, sourceSurface: "chat" as const, rawInput: message };
+    const chatGroupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput: message, clientSubmissionId });
+    const chatGroup = {
+      userId,
+      groupIdempotencyKey: chatGroupKey,
+      clientSubmissionId,
+      sourceSurface: "chat" as const,
+      rawInput: message,
+      clientLocalDate: today,
+    };
 
     // Candidates held for clarification instead of being written immediately.
     type PendingCandidate = {
@@ -1842,6 +1892,10 @@ Rules:
           console.error("Failed to log parsed AI action:", err);
         }
       }
+      if (readyCandidates.length > 0) {
+        const chatGroupRow = await ctx.runQuery(internal.ai.getActionGroupByKey, { userId, groupIdempotencyKey: chatGroupKey });
+        if (chatGroupRow) await finalizeActionGroup(ctx, chatGroupRow._id);
+      }
     }
 
     if (logOutcomes.length > 0 && !confirmationRequested) {
@@ -1889,6 +1943,7 @@ Rules:
         sourceSurface: "chat",
         rawInput: message,
         model: parseModel,
+        clientLocalDate: today,
         createdAt: Date.now(),
         members: stagedMembers,
       });

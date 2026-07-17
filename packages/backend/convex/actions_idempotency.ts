@@ -2,6 +2,7 @@ import type { MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import {
   buildActionGroup,
+  assertTransition,
   type ActionEnvelope,
   type ActionGroup,
   type ActionGroupInput,
@@ -26,6 +27,31 @@ export type EnsureMemberResult = {
 
 function normalizedContent(value: string): string {
   return value.toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Immutable fingerprint of the group-level submission content. Used to detect
+ * key collisions where the same client submission ID is reused with different
+ * content.
+ */
+export function deriveSubmissionFingerprint(input: {
+  userId: string;
+  sourceSurface: ActionGroup["sourceSurface"];
+  rawInput: string;
+  clientLocalDate?: string;
+  clientLocalTime?: string;
+  clientTimeZone?: string;
+}): string {
+  return stableHash(
+    JSON.stringify([
+      input.userId.trim(),
+      input.sourceSurface,
+      input.rawInput,
+      input.clientLocalDate ?? "",
+      input.clientLocalTime ?? "",
+      input.clientTimeZone ?? "",
+    ]),
+  );
 }
 
 /**
@@ -69,6 +95,10 @@ async function membersForGroup(ctx: MutationCtx, groupId: Doc<"actionGroups">["_
  * Convex retries a conflicting mutation transaction, so the indexed lookup remains the single group creation gate.
  */
 export async function ensureGroup(ctx: MutationCtx, groupFields: ActionGroupInput): Promise<EnsureGroupResult> {
+  const submissionFingerprint = deriveSubmissionFingerprint(groupFields);
+  if (groupFields.submissionFingerprint && groupFields.submissionFingerprint !== submissionFingerprint) {
+    throw new Error("Submission fingerprint does not match the immutable group content");
+  }
   const existing = await ctx.db
     .query("actionGroups")
     .withIndex("by_group_idempotency_key", (q) =>
@@ -80,10 +110,21 @@ export async function ensureGroup(ctx: MutationCtx, groupFields: ActionGroupInpu
     if (existing.userId !== groupFields.userId || existing.groupIdempotencyKey !== groupFields.groupIdempotencyKey) {
       throw new Error("Idempotency key collision: existing action group does not match expected user/group key");
     }
-    return { state: "existing", group: existing, members: await membersForGroup(ctx, existing._id) };
+    const existingFingerprint = existing.submissionFingerprint ?? deriveSubmissionFingerprint(existing);
+    if (existingFingerprint !== submissionFingerprint) {
+      throw new Error("Idempotency key collision: existing action group does not match submission fingerprint");
+    }
+    if (!existing.submissionFingerprint) {
+      await ctx.db.patch(existing._id, { submissionFingerprint });
+    }
+    return {
+      state: "existing",
+      group: { ...existing, submissionFingerprint },
+      members: await membersForGroup(ctx, existing._id),
+    };
   }
 
-  const groupId = await ctx.db.insert("actionGroups", buildActionGroup(groupFields));
+  const groupId = await ctx.db.insert("actionGroups", buildActionGroup({ ...groupFields, submissionFingerprint }));
   const group = await ctx.db.get(groupId);
   if (!group) throw new Error("Action group was not found after insertion");
   return { state: "created", group, members: [] };
@@ -110,6 +151,8 @@ export async function ensureMember(ctx: MutationCtx, memberFields: ActionMemberI
       return { state: "already_committed", shouldExecute: false, member: existing };
     }
     if (existing.status === "pending" || existing.status === "failed") {
+      // Validate the retry transition is allowed by the central rule.
+      if (existing.status === "failed") assertTransition(existing.status, memberFields.status ?? "pending");
       return { state: "reexecute", shouldExecute: true, member: existing };
     }
     return { state: "already_terminal", shouldExecute: false, member: existing };

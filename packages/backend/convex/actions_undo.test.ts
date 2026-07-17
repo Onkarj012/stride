@@ -49,6 +49,7 @@ describe("audited action undo", () => {
     expect((row as any)?.undoneAt).toEqual(expect.any(Number));
     expect(storedAction).toMatchObject({ status: "undone", committedRowRef: { table: "meals", id: mealId } });
     expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("food_memory").first())).toMatchObject({ undoneAt: expect.any(Number), sourceActionIds: [] });
   });
 
   test("repeated undo is an idempotent no-op", async () => {
@@ -125,5 +126,42 @@ describe("audited action undo", () => {
     expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(0);
     expect(await asUser.query(api.workouts.getWorkouts, { date: "2026-07-16" })).toHaveLength(0);
     expect(await asUser.query(api.workouts.getTotalCaloriesBurned, { date: "2026-07-16" })).toMatchObject({ total: 0, count: 0 });
+  });
+
+  test("upsert undo restores previous fields and clears the row undone marker", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    await t.mutation(writerApi.writeRecoveryAction, {
+      group: group("undo-sleep-upsert-1"),
+      member: member({ kind: "sleep", hours: 6, quality: "ok", note: "baseline", date: "2026-07-16" }, "undo-sleep-upsert-1"),
+    });
+    await t.mutation(writerApi.writeRecoveryAction, {
+      group: group("undo-sleep-upsert-2"),
+      member: member({ kind: "sleep", hours: 8, quality: "good", note: "changed", date: "2026-07-16" }, "undo-sleep-upsert-2"),
+    });
+    const action2 = (await t.run((ctx) => ctx.db.query("actions").collect())).find((action) => action.memberIdempotencyKey === "undo-sleep-upsert-2")!;
+    const result = await asUser.mutation(undoApi.undoAction, { actionId: action2._id });
+    const row = await t.run((ctx) => ctx.db.query("sleep_logs").first());
+    expect(result.status).toBe("undone");
+    const action1 = (await t.run((ctx) => ctx.db.query("actions").collect())).find((action) => action.memberIdempotencyKey === "undo-sleep-upsert-1")!;
+    expect(row).toMatchObject({ hours: 6, quality: "ok", note: "baseline", sourceActionId: String(action1._id) });
+    expect(row?.undoneAt).toBeUndefined();
+  });
+
+  test("undoing an older action after a newer update is skipped due to version mismatch", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    await t.mutation(writerApi.writeRecoveryAction, {
+      group: group("undo-sleep-order-1"),
+      member: member({ kind: "sleep", hours: 6, quality: "ok", date: "2026-07-16" }, "undo-sleep-order-1"),
+    });
+    const action1 = (await t.run((ctx) => ctx.db.query("actions").collect())).find((action) => action.memberIdempotencyKey === "undo-sleep-order-1")!;
+    await t.mutation(writerApi.writeRecoveryAction, {
+      group: group("undo-sleep-order-2"),
+      member: member({ kind: "sleep", hours: 8, quality: "good", date: "2026-07-16" }, "undo-sleep-order-2"),
+    });
+    const result = await asUser.mutation(undoApi.undoAction, { actionId: action1._id });
+    expect(result.status).toBe("skipped");
+    expect(result.reason).toContain("Row has changed");
   });
 });

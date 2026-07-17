@@ -176,7 +176,14 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     try {
       let sessionId = activeSessionId
       if (!sessionId) { const session = await createSession({ title: text.slice(0, 40) }); sessionId = session.id; setActiveSessionId(sessionId) }
-      const result = await sendToAI({ message: text, sessionId, coachType: 'auto', today: localDateStr(), clarificationGroupId: activeClarificationGroupId ?? undefined }) as any
+      const result = await sendToAI({
+        message: text,
+        sessionId,
+        coachType: 'auto',
+        today: localDateStr(),
+        clarificationGroupId: activeClarificationGroupId ?? undefined,
+        clientSubmissionId: `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      }) as any
       const loggedItems = loggedItemsFrom(result.loggedItem)
       const blocks: Block[] = [{ kind: 'text', text: typeof result.reply === 'string' ? result.reply : 'Saved.' }, ...blocksFromLoggedItems(loggedItems)]
       setMessages(current => current.map(message => message.id === botId && message.role === 'assistant' ? { ...message, agent: coachToAgent(result.coachType), typing: false, blocks } : message))

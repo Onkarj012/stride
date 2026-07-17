@@ -4,6 +4,7 @@ import schema from "./schema";
 import {
   deriveGroupKey,
   deriveMemberKey,
+  deriveSubmissionFingerprint,
   ensureGroup,
   ensureMember,
   type ActionMemberInput,
@@ -123,5 +124,15 @@ describe("two-level action idempotency", () => {
       payloadFingerprint: contentHash,
       ordinal: 0,
     }));
+  });
+
+  test("reusing a group key with a different submission fingerprint is rejected", async () => {
+    const t = convexTest(schema, modules);
+    const key = deriveGroupKey({ userId: "user-1", sourceSurface: "chat", rawInput: "I had oats", clientSubmissionId: "sub-1" });
+    const fingerprint1 = deriveSubmissionFingerprint({ userId: "user-1", sourceSurface: "chat", rawInput: "I had oats" });
+    const fingerprint2 = deriveSubmissionFingerprint({ userId: "user-1", sourceSurface: "chat", rawInput: "I had rice" });
+    const first = await t.run((ctx) => ensureGroup(ctx, { ...groupFields, groupIdempotencyKey: key, submissionFingerprint: fingerprint1 }));
+    expect(first.state).toBe("created");
+    await expect(t.run((ctx) => ensureGroup(ctx, { ...groupFields, rawInput: "I had rice", groupIdempotencyKey: key, submissionFingerprint: fingerprint2 }))).rejects.toThrow("submission fingerprint");
   });
 });

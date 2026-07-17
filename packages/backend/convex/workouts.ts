@@ -160,6 +160,7 @@ export async function writeWorkoutDomain(
     timestamp,
     logSource,
     idempotencyKey,
+    sourceActionId: options.sourceActionId,
   });
   if (options.emitBehavior) await recordBehaviorRow(ctx, args.userId, "log", "workout", undefined, date);
   if (options.emitGamification && date === new Date().toISOString().split("T")[0]) {

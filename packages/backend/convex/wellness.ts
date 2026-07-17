@@ -1,4 +1,4 @@
-import { query, mutation, internalQuery } from "./_generated/server";
+import { query, mutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { recordBehaviorRow } from "./behavior";
 import { buildRecoveryDraft } from "./recovery_draft";
@@ -14,7 +14,13 @@ function todayDate(): string {
   return new Date().toISOString().split("T")[0];
 }
 
-export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBehavior?: boolean; recomputeDerived?: boolean } = {}) {
+function beforeImage(row: Record<string, any> | null): Record<string, any> | undefined {
+  if (!row) return undefined;
+  const { _id, _creationTime, ...fields } = row;
+  return fields;
+}
+
+export async function writeRecoveryDomain(ctx: MutationCtx, args: any, options: { emitBehavior?: boolean; recomputeDerived?: boolean } = {}) {
   const draft = buildRecoveryDraft({
     ...args,
     date: args.date ?? todayDate(),
@@ -29,15 +35,19 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
     unresolved: draft.unresolved,
     correctionState: draft.correctionState,
     state: draft.state,
+    sourceActionId: args.sourceActionId,
   };
   let id: any;
   let previous: any = undefined;
   switch (draft.entryKind) {
     case "water": {
       if (draft.waterMl == null) throw new Error("water ml is required");
-      const waterRows = await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
-      const existing = waterRows.find((row: any) => !row.undoneAt) ?? null;
+      const existing = args.mode === "upsert"
+        ? (await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect())
+          .find((row: any) => !row.undoneAt) ?? null
+        : null;
       if (existing) {
+        previous = beforeImage(existing);
         await ctx.db.patch(existing._id, { ml: draft.waterMl, time, ...metadata });
         id = existing._id;
       } else {
@@ -49,15 +59,7 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
       if (draft.sleep?.hours == null && draft.sleep?.band == null && draft.sleep?.quality == null && draft.sleep?.intervalStart == null) throw new Error("sleep hours, band, or quality is required");
       const sleepRows = await ctx.db.query("sleep_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
       const existing = sleepRows.find((row: any) => !row.undoneAt && (!row.kind || row.kind === "sleep")) ?? null;
-      previous = existing ? {
-        hours: existing.hours,
-        band: existing.band,
-        quality: existing.quality,
-        note: existing.note,
-        intervalStart: existing.intervalStart,
-        intervalEnd: existing.intervalEnd,
-        intervalDay: existing.intervalDay,
-      } : null;
+      previous = beforeImage(existing);
       const sleepFields = {
         hours: draft.sleep?.hours,
         band: draft.sleep?.band,
@@ -79,9 +81,12 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
     }
     case "mood": {
       if (draft.mood == null) throw new Error("mood rating is required");
-      const moodRows = await ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
-      const existing = moodRows.find((row: any) => !row.undoneAt) ?? null;
+      const existing = args.mode === "upsert"
+        ? (await ctx.db.query("mood_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect())
+          .find((row: any) => !row.undoneAt) ?? null
+        : null;
       if (existing) {
+        previous = beforeImage(existing);
         await ctx.db.patch(existing._id, { rating: draft.mood, note: draft.note, time, ...metadata });
         id = existing._id;
       } else {
@@ -93,7 +98,7 @@ export async function writeRecoveryDomain(ctx: any, args: any, options: { emitBe
       if (draft.steps == null) throw new Error("steps count is required");
       const stepRows = await ctx.db.query("steps_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect();
       const existing = stepRows.find((row: any) => !row.undoneAt) ?? null;
-      previous = existing ? { count: existing.count } : null;
+      previous = beforeImage(existing);
       if (existing) {
         await ctx.db.patch(existing._id, { count: draft.steps, ...metadata });
         id = existing._id;

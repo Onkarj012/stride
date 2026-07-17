@@ -1,8 +1,11 @@
-import { internalQuery, mutation } from "./_generated/server";
+import { internalQuery, mutation, type MutationCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { recordBehaviorRow } from "./behavior";
 import { recomputeForAction, type DerivedActionType } from "./derived_state";
+import { assertTransition } from "./actions_envelope";
 import { insertActionTelemetry } from "./telemetry";
+import { normalizeName } from "./food_memory_match";
 
 type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs";
 
@@ -20,7 +23,7 @@ function asDomainTable(table: string): DomainTable {
   return table as DomainTable;
 }
 
-async function requireUserId(ctx: any): Promise<string> {
+async function requireUserId(ctx: MutationCtx): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
   return identity.subject;
@@ -37,7 +40,13 @@ type UndoResult = {
   actionType?: DerivedActionType;
 };
 
-async function recordUndoTelemetry(ctx: any, group: any, action: any, result: UndoResult, derivedStateVersion?: number) {
+async function recordUndoTelemetry(
+  ctx: MutationCtx,
+  group: Doc<"actionGroups">,
+  action: Doc<"actions">,
+  result: UndoResult,
+  derivedStateVersion?: number,
+) {
   await insertActionTelemetry(ctx, {
     actionId: String(action._id),
     groupId: String(action.groupId),
@@ -56,7 +65,107 @@ async function recordUndoTelemetry(ctx: any, group: any, action: any, result: Un
   });
 }
 
-async function reverseCommittedAction(ctx: any, action: any): Promise<UndoResult & { date?: string; actionType?: DerivedActionType }> {
+function average(values: number[]): number | undefined {
+  if (values.length === 0) return undefined;
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
+}
+
+async function activeSourceRows(ctx: MutationCtx, userId: string, sourceActionIds: string[], table: "meals" | "workouts") {
+  const sources: Array<{ actionId: string; row: any }> = [];
+  for (const sourceActionId of sourceActionIds) {
+    const sourceAction = await ctx.db.get(sourceActionId as any) as Doc<"actions"> | null;
+    if (
+      !sourceAction ||
+      sourceAction.userId !== userId ||
+      sourceAction.status !== "committed" ||
+      sourceAction.committedRowRef?.table !== table
+    ) continue;
+    const row: any = await ctx.db.get(sourceAction.committedRowRef.id as any);
+    if (!row || row.userId !== userId || row.undoneAt) continue;
+    sources.push({ actionId: sourceActionId, row });
+  }
+  return sources;
+}
+
+function workoutDurationMin(row: any): number | undefined {
+  try {
+    const parsed = JSON.parse(row.workoutDraft ?? "null");
+    if (typeof parsed?.durationMin === "number") return parsed.durationMin;
+  } catch {
+    // Fall through to the display duration.
+  }
+  const match = String(row.duration ?? "").match(/\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : undefined;
+}
+
+function workoutExercises(row: any): string | undefined {
+  if (!Array.isArray(row.exercises)) return undefined;
+  const names = row.exercises
+    .map((exercise: any) => exercise?.normalizedName ?? exercise?.name)
+    .filter((name: unknown): name is string => typeof name === "string" && name.length > 0);
+  return names.length > 0 ? JSON.stringify(names) : undefined;
+}
+
+function normalizeWorkoutName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+}
+
+async function compensateInferredMemory(
+  ctx: MutationCtx,
+  action: Doc<"actions">,
+  table: "meals" | "workouts",
+  undoneAt: number,
+) {
+  const actionId = String(action._id);
+  const name = action.payload?.name ?? action.originalPayload?.name;
+  if (typeof name !== "string" || name.length === 0) return;
+  const row = table === "meals"
+    ? await ctx.db.query("food_memory").withIndex("by_user_name", (q) =>
+      q.eq("userId", action.userId).eq("normalizedName", normalizeName(name)),
+    ).first()
+    : await ctx.db.query("workout_memory").withIndex("by_user_name", (q) =>
+      q.eq("userId", action.userId).eq("normalizedName", normalizeWorkoutName(name)),
+    ).first();
+  if (!row || row.memoryType !== "inferred" || !(row.sourceActionIds ?? []).includes(actionId)) return;
+
+  const remainingIds = (row.sourceActionIds ?? []).filter((id) => id !== actionId);
+  const activeSources = await activeSourceRows(ctx, action.userId, remainingIds, table);
+  if (activeSources.length === 0) {
+    await ctx.db.patch(row._id, { sourceActionIds: [], timesLogged: 0, undoneAt });
+    return;
+  }
+
+  const latest = [...activeSources].sort((a, b) => b.row.date.localeCompare(a.row.date))[0].row;
+  if (table === "meals") {
+    await ctx.db.patch(row._id, {
+      sourceActionIds: activeSources.map((source) => source.actionId),
+      timesLogged: activeSources.length,
+      kcal: average(activeSources.map((source) => source.row.calories))!,
+      protein: average(activeSources.map((source) => source.row.protein))!,
+      carbs: average(activeSources.map((source) => source.row.carbs))!,
+      fat: average(activeSources.map((source) => source.row.fat))!,
+      components: latest.components,
+      lastUsedDate: latest.date,
+      undoneAt: undefined,
+    });
+    return;
+  }
+
+  const durations = activeSources.map((source) => workoutDurationMin(source.row)).filter((value): value is number => value !== undefined);
+  const calories = activeSources.map((source) => source.row.caloriesBurned).filter((value): value is number => typeof value === "number");
+  await ctx.db.patch(row._id, {
+    sourceActionIds: activeSources.map((source) => source.actionId),
+    timesLogged: activeSources.length,
+    durationMin: average(durations),
+    caloriesBurned: average(calories),
+    exercises: workoutExercises(latest),
+    intensity: latest.intensity,
+    lastUsedDate: latest.date,
+    undoneAt: undefined,
+  });
+}
+
+async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">): Promise<UndoResult & { date?: string; actionType?: DerivedActionType }> {
   if (action.status === "undone") {
     return {
       actionId: action._id,
@@ -72,20 +181,36 @@ async function reverseCommittedAction(ctx: any, action: any): Promise<UndoResult
   if (!action.committedRowRef) throw new Error("Committed action has no domain row");
 
   const table = asDomainTable(action.committedRowRef.table);
-  const row = await ctx.db.get(action.committedRowRef.id as any);
+  const row: any = await ctx.db.get(action.committedRowRef.id as any);
   if (!row || row.userId !== action.userId) throw new Error("Undo domain row was not found");
 
-  const undoneAt = Date.now();
-  let patch: Record<string, unknown> = { undoneAt };
-  const previous = action.payload?.previous;
-  if (table === "sleep_logs" && previous && typeof previous === "object") {
-    patch = { ...previous, undoneAt };
-  } else if (table === "steps_logs" && previous && typeof previous === "object") {
-    patch = { ...previous, undoneAt };
+  const expectedSourceActionId = String(action._id);
+  if (row.sourceActionId !== expectedSourceActionId) {
+    return {
+      actionId: action._id,
+      groupId: action.groupId,
+      rowId: action.committedRowRef.id,
+      status: "skipped",
+      reason: "Row has changed since the action was committed",
+    };
   }
 
-  await ctx.db.patch(row._id, patch);
+  const previous = action.payload?.previous;
+  const undoneAt = Date.now();
+  const isUpsert = previous && typeof previous === "object";
+  if (isUpsert) {
+    // A full replacement clears fields that the upsert added but the previous row did not have.
+    await ctx.db.replace(row._id, previous);
+  } else {
+    // Rows created by this action are marked undone.
+    await ctx.db.patch(row._id, { undoneAt });
+  }
+
+  assertTransition(action.status, "undone");
   await ctx.db.patch(action._id, { status: "undone", undoneAt });
+  if (table === "meals" || table === "workouts") {
+    await compensateInferredMemory(ctx, action, table, undoneAt);
+  }
   await recordBehaviorRow(ctx, action.userId, "undo", action.actionType, action._id, row.date);
 
   return {

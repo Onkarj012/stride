@@ -35,6 +35,7 @@ export default defineSchema({
     foodMemoryId: v.optional(v.id("food_memory")),
     logSource: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
+    sourceActionId: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   })
     .index("by_user_date", ["userId", "date"])
@@ -70,6 +71,7 @@ export default defineSchema({
     timestamp: v.optional(v.string()),
     logSource: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
+    sourceActionId: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   })
     .index("by_user_date", ["userId", "date"])
@@ -227,6 +229,7 @@ export default defineSchema({
     unresolved: v.optional(v.array(v.string())),
     correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
     state: v.optional(v.string()),
+    sourceActionId: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
@@ -257,6 +260,7 @@ export default defineSchema({
     illness: v.optional(v.string()),
     plannedRest: v.optional(v.boolean()),
     travel: v.optional(v.string()),
+    sourceActionId: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
@@ -271,6 +275,7 @@ export default defineSchema({
     unresolved: v.optional(v.array(v.string())),
     correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
     state: v.optional(v.string()),
+    sourceActionId: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
@@ -283,6 +288,7 @@ export default defineSchema({
     unresolved: v.optional(v.array(v.string())),
     correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
     state: v.optional(v.string()),
+    sourceActionId: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   }).index("by_user_date", ["userId", "date"]),
 
@@ -491,6 +497,7 @@ export default defineSchema({
     clientTimeZone: v.optional(v.string()),
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()),
+    submissionFingerprint: v.optional(v.string()),
   })
     .index("by_user_created_at", ["userId", "createdAt"])
     .index("by_group_idempotency_key", ["userId", "groupIdempotencyKey"]),
