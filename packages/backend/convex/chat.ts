@@ -206,7 +206,7 @@ export const getHomepageMessages = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .filter((q) => q.eq(q.field("title"), title))
       .first();
-    if (!session) return { sessionId: null, messages: [] as { role: string; content: string; ts: number }[] };
+    if (!session) return { sessionId: null, messages: [] as { role: string; content: string; ts: number; id: string }[] };
     const messages = await ctx.db
       .query("chat_messages")
       .withIndex("by_session", (q) => q.eq("sessionId", session._id))
@@ -214,7 +214,7 @@ export const getHomepageMessages = query({
     const sorted = messages
       .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))
       .slice(-30)
-      .map((m) => ({ role: m.role, content: m.content, ts: m._creationTime ?? 0 }));
+      .map((m) => ({ role: m.role, content: m.content, ts: m._creationTime ?? 0, id: m._id }));
     return { sessionId: session._id, messages: sorted };
   },
 });
