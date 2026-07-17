@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { calculateNutritionPlan, type NutritionPlan } from "./tdee_engine";
-import { resolvePlanForDayAdjustment } from "./plan_resolve";
+import { FALLBACK_TARGETS, parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 
 const PLAN_INPUT = {
   weightKg: 80,
@@ -133,5 +133,71 @@ describe("resolvePlanForDayAdjustment", () => {
     expect(
       resolvePlanForDayAdjustment(legacyPlan as NutritionPlan, { ...PROFILE, weight: undefined }),
     ).toBe(legacyPlan);
+  });
+});
+
+describe("parseStoredPlan", () => {
+  const validPlan = calculateNutritionPlan(PLAN_INPUT);
+
+  test("returns null for missing, empty, or invalid JSON", () => {
+    expect(parseStoredPlan(undefined)).toBeNull();
+    expect(parseStoredPlan(null)).toBeNull();
+    expect(parseStoredPlan("")).toBeNull();
+    expect(parseStoredPlan("not json")).toBeNull();
+    expect(parseStoredPlan("123")).toBeNull();
+    expect(parseStoredPlan("[]")).toBeNull();
+  });
+
+  test("returns null when required macro fields are missing or non-finite", () => {
+    for (const field of ["calories", "protein", "carbs", "fat", "plannedDailyEAT"]) {
+      const partial = { ...validPlan, [field]: undefined };
+      expect(parseStoredPlan(JSON.stringify(partial))).toBeNull();
+      expect(parseStoredPlan(JSON.stringify({ ...validPlan, [field]: NaN }))).toBeNull();
+      expect(parseStoredPlan(JSON.stringify({ ...validPlan, [field]: Infinity }))).toBeNull();
+      expect(parseStoredPlan(JSON.stringify({ ...validPlan, [field]: -10 }))).toBeNull();
+      expect(parseStoredPlan(JSON.stringify({ ...validPlan, [field]: "not a number" }))).toBeNull();
+    }
+  });
+
+  test("returns null for negative macro values", () => {
+    expect(parseStoredPlan(JSON.stringify({ ...validPlan, calories: -1 }))).toBeNull();
+    expect(parseStoredPlan(JSON.stringify({ ...validPlan, protein: -1 }))).toBeNull();
+    expect(parseStoredPlan(JSON.stringify({ ...validPlan, carbs: -1 }))).toBeNull();
+    expect(parseStoredPlan(JSON.stringify({ ...validPlan, fat: -1 }))).toBeNull();
+  });
+
+  test("accepts a valid plan and preserves all fields", () => {
+    const parsed = parseStoredPlan(JSON.stringify(validPlan));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.calories).toBe(validPlan.calories);
+    expect(parsed!.protein).toBe(validPlan.protein);
+    expect(parsed!.carbs).toBe(validPlan.carbs);
+    expect(parsed!.fat).toBe(validPlan.fat);
+    expect(parsed!.plannedDailyEAT).toBe(validPlan.plannedDailyEAT);
+    expect(parsed!.plannedEatPerTrainingDay).toBe(validPlan.plannedEatPerTrainingDay);
+  });
+
+  test("treats missing plannedEatPerTrainingDay as optional (legacy)", () => {
+    const legacy = { ...validPlan } as any;
+    delete legacy.plannedEatPerTrainingDay;
+    const parsed = parseStoredPlan(JSON.stringify(legacy));
+    expect(parsed).not.toBeNull();
+    expect("plannedEatPerTrainingDay" in parsed!).toBe(false);
+    expect(parsed!.calories).toBe(validPlan.calories);
+  });
+
+  test("omits invalid plannedEatPerTrainingDay so it can be recomputed", () => {
+    const parsed = parseStoredPlan(
+      JSON.stringify({ ...validPlan, plannedEatPerTrainingDay: -50 }),
+    );
+    expect(parsed).not.toBeNull();
+    expect("plannedEatPerTrainingDay" in parsed!).toBe(false);
+  });
+
+  test("exposes shared fallback constants for non-plan surfaces", () => {
+    expect(FALLBACK_TARGETS.calories).toBe(2000);
+    expect(FALLBACK_TARGETS.protein).toBe(90);
+    expect(FALLBACK_TARGETS.carbs).toBe(250);
+    expect(FALLBACK_TARGETS.fat).toBe(65);
   });
 });

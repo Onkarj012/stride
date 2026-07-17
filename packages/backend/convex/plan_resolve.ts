@@ -1,12 +1,58 @@
 import { calculateNutritionPlan, type NutritionPlan, type PlanInput } from "./tdee_engine";
 import { toPlanInput } from "./profile";
 
-/** Parse a stored `user_profiles.planBreakdown` JSON string into a NutritionPlan. */
+/** Single no-plan fallback policy used by every target surface. */
+export const FALLBACK_TARGETS = {
+  calories: 2000,
+  protein: 90,
+  carbs: 250,
+  fat: 65,
+} as const;
+
+function isNonNegativeFinite(n: unknown): n is number {
+  return typeof n === "number" && isFinite(n) && n >= 0;
+}
+
+/**
+ * Parse a stored `user_profiles.planBreakdown` JSON string into a NutritionPlan.
+ *
+ * Structurally validates every consumed field as finite and non-negative.
+ * `plannedEatPerTrainingDay` is optional (legacy plans may omit it); when
+ * missing or invalid it is omitted so `resolvePlanForDayAdjustment` can
+ * recompute it from the profile. Returns null for malformed/unusable data.
+ */
 export function parseStoredPlan(planBreakdown?: string | null): NutritionPlan | null {
   if (!planBreakdown) return null;
   try {
     const p = JSON.parse(planBreakdown);
-    return typeof p?.plannedDailyEAT === "number" ? (p as NutritionPlan) : null;
+    if (!p || typeof p !== "object" || Array.isArray(p)) return null;
+
+    if (!isNonNegativeFinite(p.calories)) return null;
+    if (!isNonNegativeFinite(p.protein)) return null;
+    if (!isNonNegativeFinite(p.carbs)) return null;
+    if (!isNonNegativeFinite(p.fat)) return null;
+    if (!isNonNegativeFinite(p.plannedDailyEAT)) return null;
+
+    const plan: any = {
+      calories: p.calories,
+      protein: p.protein,
+      carbs: p.carbs,
+      fat: p.fat,
+      plannedDailyEAT: p.plannedDailyEAT,
+    };
+
+    // Preserve extra fields from the stored object, but drop the optional
+    // training-day baseline if it failed validation so it can be recomputed.
+    for (const [key, value] of Object.entries(p)) {
+      if (key !== "plannedEatPerTrainingDay" && !(key in plan)) {
+        plan[key] = value;
+      }
+    }
+    if (isNonNegativeFinite(p.plannedEatPerTrainingDay)) {
+      plan.plannedEatPerTrainingDay = p.plannedEatPerTrainingDay;
+    }
+
+    return plan as NutritionPlan;
   } catch {
     return null;
   }
