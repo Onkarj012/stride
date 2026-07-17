@@ -85,3 +85,46 @@ test("addWorkoutFromAI refreshes the target day's daily_goals", async () => {
   expect(day.proteinGoal).toBe(plan.protein);
   expect(day.fatGoal).toBe(plan.fat);
 });
+
+test("updateWorkout recomputes the affected date's daily_goals when burn changes", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const plan = await asUser.mutation(api.profile.upsertPlanFromOnboarding, PLAN_INPUT);
+  const extraBurn = plan.plannedEatPerTrainingDay + 300;
+
+  const id = await asUser.mutation(api.workouts.addWorkout, {
+    name: "HIIT", sets: "n/a", intensity: "HIGH",
+    date: "2026-05-29", caloriesBurned: extraBurn,
+  });
+  let day = await asUser.query(api.goals.getDailyGoal, { date: "2026-05-29" });
+  expect(day.calorieGoal).toBe(plan.calories + 300);
+
+  await asUser.mutation(api.workouts.updateWorkout, {
+    id, name: "HIIT", sets: "n/a", intensity: "HIGH",
+    caloriesBurned: plan.plannedEatPerTrainingDay + 500,
+  });
+  day = await asUser.query(api.goals.getDailyGoal, { date: "2026-05-29" });
+  expect(day.calorieGoal).toBe(plan.calories + 500);
+  expect(day.carbGoal).toBe(plan.carbs + 125); // 500/4
+});
+
+test("deleteWorkout recomputes the affected date's daily_goals", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const plan = await asUser.mutation(api.profile.upsertPlanFromOnboarding, PLAN_INPUT);
+  const extraBurn = plan.plannedEatPerTrainingDay + 400;
+
+  const id = await asUser.mutation(api.workouts.addWorkout, {
+    name: "Run", sets: "n/a", intensity: "HIGH",
+    date: "2026-05-29", caloriesBurned: extraBurn,
+  });
+  let day = await asUser.query(api.goals.getDailyGoal, { date: "2026-05-29" });
+  expect(day.calorieGoal).toBe(plan.calories + 400);
+
+  await asUser.mutation(api.workouts.deleteWorkout, { id });
+  day = await asUser.query(api.goals.getDailyGoal, { date: "2026-05-29" });
+  expect(day.calorieGoal).toBe(plan.calories);
+  expect(day.carbGoal).toBe(plan.carbs);
+  expect(day.proteinGoal).toBe(plan.protein);
+  expect(day.fatGoal).toBe(plan.fat);
+});

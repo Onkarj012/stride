@@ -61,16 +61,54 @@ test("a day with a stored daily_goals row keeps using it", async () => {
   expect(day?.goal).toBe(1800);
 });
 
-test("without a stored plan, falls back to profile calorieTarget then 2400", async () => {
+test("without a stored plan, falls back to profile calorieTarget then shared fallback", async () => {
   const t = convexTest(schema, modules);
   const asUser = t.withIdentity({ subject: "user1" });
 
-  // No profile at all → legacy 2400 default.
+  // No profile at all → shared fallback default.
   let rows = await asUser.query(api.progress.getProgress, { days: 2, today: "2026-05-29" });
-  for (const row of rows) expect(row.goal).toBe(2400);
+  for (const row of rows) expect(row.goal).toBe(2000);
 
   // Profile with a calorieTarget but no planBreakdown → calorieTarget.
   await asUser.mutation(api.profile.upsertProfile, { calorieTarget: 2100 });
   rows = await asUser.query(api.progress.getProgress, { days: 2, today: "2026-05-29" });
   for (const row of rows) expect(row.goal).toBe(2100);
+});
+
+test("malformed planBreakdown falls back to profile calorieTarget, not NaN", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  await asUser.mutation(api.profile.upsertProfile, { calorieTarget: 2100, planBreakdown: "not json" });
+
+  const rows = await asUser.query(api.progress.getProgress, { days: 2, today: "2026-05-29" });
+  for (const row of rows) {
+    expect(row.goal).toBe(2100);
+    expect(Number.isFinite(row.goal)).toBe(true);
+  }
+});
+
+test("partial plan with missing optional training-day baseline still computes rowless goals", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const plan = await asUser.mutation(api.profile.upsertPlanFromOnboarding, PLAN_INPUT);
+
+  // Simulate a legacy stored plan that omits the optional training-day baseline.
+  const legacyPlan = { ...plan };
+  delete (legacyPlan as any).plannedEatPerTrainingDay;
+  await asUser.mutation(api.profile.upsertProfile, {
+    planBreakdown: JSON.stringify(legacyPlan),
+  });
+
+  await t.run(async (ctx) => {
+    await ctx.db.insert("workouts", {
+      userId: "user1", date: "2026-05-28", name: "Legacy session",
+      sets: "n/a", intensity: "HIGH",
+      caloriesBurned: 400,
+    });
+  });
+
+  const rows = await asUser.query(api.progress.getProgress, { days: 3, today: "2026-05-29" });
+  const trainingDay = rows.find((r) => r.date === "2026-05-28");
+  expect(Number.isFinite(trainingDay?.goal ?? NaN)).toBe(true);
+  expect(trainingDay!.goal).toBeGreaterThan(plan.calories);
 });
