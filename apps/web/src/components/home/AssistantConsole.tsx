@@ -33,6 +33,30 @@ import {
   type StagedActions,
 } from "./logDraftFlow";
 
+function useLocalDate(): string {
+  const [date, setDate] = useState(() => localDateStr());
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+    const scheduleRollover = () => {
+      const now = new Date();
+      const nextMidnight = new Date(now);
+      nextMidnight.setHours(24, 0, 0, 0);
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        setDate(localDateStr());
+        scheduleRollover();
+      }, Math.max(1, nextMidnight.getTime() - now.getTime()));
+    };
+    scheduleRollover();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
+  return date;
+}
+
 type AgentButton = { label: string; value: string; prompt?: string };
 type AgentAction =
   | {
@@ -78,6 +102,7 @@ type HomepageMessage = {
   role: string;
   content: string;
   ts: number;
+  id?: string;
 };
 
 function filterInitialCheckIns(actions: AgentAction[], date: string): AgentAction[] {
@@ -112,10 +137,13 @@ function modalityForContent(content: string): { modality?: Modality; chip?: stri
 }
 
 export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, presenceLine, initialActions = [] }: AssistantConsoleProps) {
-  const today = localDateStr();
+  const today = useLocalDate();
+  const todayRef = useRef(today);
+  todayRef.current = today;
   const dailyWindow = useDailyWindow();
   const [textValue, setTextValue] = useState("");
   const [thinking, setThinking] = useState(false);
+  const inFlightRequestsRef = useRef(0);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
@@ -158,11 +186,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const setPendingDrafts = useCallback((updater: any[] | ((prev: any[]) => any[])) => {
     setPendingDraftsRaw((prev) => {
       const next = normalizeDrafts(typeof updater === "function" ? updater(prev) : updater);
-      savePendingDrafts(sessionStorage, today, next);
+      savePendingDrafts(sessionStorage, todayRef.current, next);
       return next;
     });
-  }, [today]);
+  }, []);
   const pendingTier2Ref = useRef<string>("");
+  const submittingDraftIdsRef = useRef<Set<string>>(new Set());
 
   // Auto-applied memory drafts — removed (all drafts now go through confirm card)
   const [editEntry, setEditEntry] = useState<EditableMeal | null>(null);
@@ -183,17 +212,14 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const messages = (homepageChat?.messages ?? []) as HomepageMessage[];
   const initialActionKey = effectiveInitialActions.map((a) => `${a.type}:${"id" in a ? a.id : ""}`).join("|");
 
-  // Actions returned by send() are held here until the messages query reflects the
-  // persisted AI reply (or a fallback timeout elapses) — see logDraftFlow.ts.
-  // Gated on the AI-message count (not total length) so the user's own echoed
-  // message arriving first can't promote the cards ahead of the text bubble.
+  // Actions returned by send() are held in a queue of staged batches until the
+  // messages query reflects the persisted AI reply whose ID matches the batch.
+  // This keeps confirm cards tied to the correct bubble across overlapping
+  // requests and out-of-order replies. A fallback timeout verifies the batch by
+  // immutable ID before promotion, so it cannot resurrect a confirmed draft.
   const [staged, setStaged] = useState<StagedActions<AgentAction>>(null);
-  // Live mirror of `staged` for the fallback timer: a queued timeout callback can
-  // fire after message-promotion already consumed the batch, and acting on its
-  // stale closure snapshot would re-promote just-confirmed drafts as ghost cards.
   const stagedRef = useRef<StagedActions<AgentAction>>(staged);
-  useEffect(() => { stagedRef.current = staged; }, [staged]);
-  const aiMessageCount = useMemo(() => messages.filter((m) => m.role === "ai").length, [messages]);
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const promoteActions = useCallback((actions: AgentAction[]) => {
     const { drafts, rest } = splitActions(actions);
@@ -201,28 +227,63 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     setAgentActions(rest);
   }, [setPendingDrafts]);
 
-  useEffect(() => {
-    if (!staged) return;
-    const { staged: next, promote } = promoteOnMessages(staged, aiMessageCount);
-    if (promote) {
-      promoteActions(promote);
-      setStaged(next);
-    }
-  }, [aiMessageCount, staged, promoteActions]);
+  // Synchronous state+ref transition helper so the timeout callback never acts
+  // on a stale closure snapshot of the staged queue.
+  const transitionStaged = useCallback((updater: (current: StagedActions<AgentAction>) => StagedActions<AgentAction>) => {
+    const next = updater(stagedRef.current);
+    stagedRef.current = next;
+    setStaged(next);
+  }, []);
 
   useEffect(() => {
-    if (!staged) return;
-    const timer = setTimeout(() => {
-      // Read the live value, not the closure snapshot — bails if the batch was
-      // already promoted (or replaced) before this callback got to run.
-      const { promote } = promoteOnTimeout(stagedRef.current);
-      if (promote) {
-        promoteActions(promote);
-        setStaged(null);
+    transitionStaged((current) => {
+      const result = promoteOnMessages(current, messages);
+      if (result.promote) promoteActions(result.promote);
+      return result.staged;
+    });
+  }, [messages, staged, promoteActions, transitionStaged]);
+
+  useEffect(() => {
+    const batches = stagedRef.current ?? [];
+    const liveBatchIds = new Set(batches.map((batch) => batch.batchId));
+    for (const [batchId, timer] of timersRef.current) {
+      if (!liveBatchIds.has(batchId)) {
+        clearTimeout(timer);
+        timersRef.current.delete(batchId);
       }
-    }, STAGED_FALLBACK_MS);
-    return () => clearTimeout(timer);
-  }, [staged, promoteActions]);
+    }
+    for (const batch of batches) {
+      if (timersRef.current.has(batch.batchId)) continue;
+      const timer = setTimeout(() => {
+        transitionStaged((current) => {
+          const result = promoteOnTimeout(current, batch.batchId);
+          if (result.promote) promoteActions(result.promote);
+          return result.staged;
+        });
+        timersRef.current.delete(batch.batchId);
+      }, STAGED_FALLBACK_MS);
+      timersRef.current.set(batch.batchId, timer);
+    }
+  }, [staged, promoteActions, transitionStaged]);
+
+  useEffect(() => () => {
+    for (const timer of timersRef.current.values()) clearTimeout(timer);
+    timersRef.current.clear();
+  }, []);
+
+  // Midnight rollover: if the local calendar date changes while the console is
+  // mounted, drop staged batches and reload pending drafts scoped to the new
+  // date so yesterday's cards don't leak into today's thread.
+  const prevDateRef = useRef<string>(today);
+  useEffect(() => {
+    if (today === prevDateRef.current) return;
+    prevDateRef.current = today;
+    const restored = loadPendingDrafts(sessionStorage, today);
+    setPendingDraftsRaw(restored);
+    savePendingDrafts(sessionStorage, today, restored);
+    transitionStaged(() => null);
+    setAgentActions(filterInitialCheckIns(effectiveInitialActions, today));
+  }, [today, effectiveInitialActions, transitionStaged]);
 
   // Backend actions/mutations
   const homepageInput = useAction(api.ai.homepageInput);
@@ -334,7 +395,14 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const handleConfirm = useCallback(async (draft: any) => {
     const normalizedDraft = normalizeDraft(draft);
     if (!normalizedDraft) return;
+    if (normalizedDraft.kind === "workout"
+      && (!Number.isFinite(normalizedDraft.kcal) || normalizedDraft.kcal <= 0)) {
+      toast.error("Calories required", "Enter a calorie estimate before confirming this workout.");
+      return;
+    }
     const draftKey = normalizedDraft._clientId;
+    if (submittingDraftIdsRef.current.has(draftKey)) return;
+    submittingDraftIdsRef.current.add(draftKey);
     const matchesDraft = (candidate: any) => candidate?._clientId === draftKey;
     setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? { ...d, ...normalizedDraft, submitting: true, error: undefined } : d));
     const time = new Date().toTimeString().slice(0, 5);
@@ -431,14 +499,16 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         allowDuplicate: isDuplicate ? true : d.allowDuplicate,
       } : d));
       toast.error(isDuplicate ? "Possible duplicate" : "Couldn't log", message);
+    } finally {
+      submittingDraftIdsRef.current.delete(draftKey);
     }
     if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
   }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, recordBehavior, setPendingDrafts, toast, pendingDrafts.length]);
 
   const handleDiscard = useCallback(() => {
-    setPendingDrafts([]);
+    setPendingDrafts((prev) => prev.some((d) => d.submitting) ? prev : []);
     pendingTier2Ref.current = "";
-  }, []);
+  }, [setPendingDrafts]);
 
   /* ── Send to backend ── */
   const send = useCallback(async (text: string, image?: string) => {
@@ -450,6 +520,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       ? `[File: ${attachedFile.name}]\n${attachedFile.content}\n\n${v}`.trim()
       : v;
 
+    inFlightRequestsRef.current += 1;
     setThinking(true);
     setTextValue("");
     setAttachedImage(null);
@@ -457,8 +528,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     // Reset textarea height
     if (activeRef.current) activeRef.current.style.height = "auto";
     recordEngagement(dailyWindow);
-    const countAtSend = aiMessageCount;
-
     try {
       const result = await homepageInput({
         message: messageText,
@@ -466,15 +535,18 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         today,
       });
 
-      setThinking(false);
       setFreshTs(Date.now());
-      const actions = Array.isArray(result.actions) ? result.actions : [];
+      const actions = (Array.isArray(result.actions) ? result.actions : []) as AgentAction[];
+      if (localDateStr() !== today) return;
       // Hold the new cards until the AI reply lands in `messages` (or the fallback
       // timeout fires) so the confirm card never renders before its text bubble.
-      if (actions.length === 0) setAgentActions([]);
-      else setStaged(stageActions(actions, countAtSend));
+      if (actions.length === 0) {
+        setAgentActions([]);
+      } else {
+        const batch = stageActions(actions, result.messageId ?? null);
+        if (batch) transitionStaged((current) => [...(current ?? []), ...batch]);
+      }
     } catch (err) {
-      setThinking(false);
       const raw = err instanceof Error ? err.message : "";
       const msg = raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")
         ? "AI is not configured — contact the app owner to set up the API key."
@@ -486,8 +558,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         ? "Session expired — please sign in again."
         : "Something went wrong. Try again.";
       toast.error("Couldn't reach Stry", msg);
+    } finally {
+      inFlightRequestsRef.current = Math.max(0, inFlightRequestsRef.current - 1);
+      setThinking(inFlightRequestsRef.current > 0);
     }
-  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, today, aiMessageCount]);
+  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, today, transitionStaged]);
 
   const submitQuickQuestionAnswer = useCallback(async (
     action: Extract<AgentAction, { type: "quick_question" }>,
@@ -539,7 +614,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     if (action?.type === "quick_question") {
       const skipped = button.value === "skip";
       void submitQuickQuestionAnswer(action, button.value, button.label, skipped);
-      // A second in-flight send would overwrite the single staged slot
       if (!skipped && button.prompt && !thinking) void send(button.prompt);
       return;
     }
@@ -747,7 +821,11 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                   <LogConfirmCard
                     draft={draft}
                     onConfirm={handleConfirm}
-                    onDiscard={() => setPendingDrafts((prev) => prev.filter((d) => d._clientId !== draft._clientId))}
+                    onDiscard={() => {
+                      setPendingDrafts((prev) => prev.some((d) => d._clientId === draft._clientId && d.submitting)
+                        ? prev
+                        : prev.filter((d) => d._clientId !== draft._clientId));
+                    }}
                   />
                 </div>
               </motion.div>

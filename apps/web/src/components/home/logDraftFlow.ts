@@ -7,38 +7,28 @@
 
 export type AnyDraft = Record<string, any>;
 
-function hashDraftSeed(seed: string): string {
-  let hash = 2166136261;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
+function generateId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
   }
-  return (hash >>> 0).toString(36);
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
-export function draftClientId(draft: any, index = 0): string {
+export function draftClientId(draft: any): string {
   const existing = draft?._clientId;
   if (typeof existing === "string" && existing.trim()) return existing;
-  const seed = JSON.stringify({
-    kind: draft?.kind,
-    date: draft?.date,
-    description: draft?.description,
-    name: draft?.name,
-    kcal: draft?.kcal,
-    index,
-  });
-  return `draft-${hashDraftSeed(seed)}-${index}`;
+  return generateId();
 }
 
-export function normalizeDraft(draft: any, index = 0): AnyDraft | null {
+export function normalizeDraft(draft: any): AnyDraft | null {
   if (!draft || typeof draft !== "object" || Array.isArray(draft)) return null;
-  return { ...draft, _clientId: draftClientId(draft, index) };
+  return { ...draft, _clientId: draftClientId(draft) };
 }
 
 export function normalizeDrafts(drafts: unknown): AnyDraft[] {
   if (!Array.isArray(drafts)) return [];
-  return drafts.flatMap((draft, index) => {
-    const normalized = normalizeDraft(draft, index);
+  return drafts.flatMap((draft) => {
+    const normalized = normalizeDraft(draft);
     return normalized ? [normalized] : [];
   });
 }
@@ -79,30 +69,58 @@ export function splitActions<T extends { type: string; draft?: any }>(
 }
 
 /* ── Race-free card ordering ──
- * Actions returned by `send()` are held in a "staged" state until the
- * `messages` query has caught up with the persisted AI reply (the caller
- * passes the AI-message count at send time and again as the query updates),
- * so the confirm card never renders before its text bubble. A fallback
- * timeout (see STAGED_FALLBACK_MS) guarantees staged actions never get stuck.
+ * Actions returned by `send()` are held in a queue of "staged" batches until
+ * the `messages` query reflects the persisted AI reply whose ID matches the
+ * batch's `messageId`. This keeps confirm cards tied to the correct text
+ * bubble even when requests overlap or replies arrive out of order. A
+ * fallback timeout (see STAGED_FALLBACK_MS) guarantees staged actions never
+ * get stuck; the timeout verifies its batch by immutable `batchId` before
+ * promoting, so it cannot resurrect an already-promoted or confirmed batch.
  */
-export type StagedActions<T> = { actions: T[]; countAtSend: number } | null;
+export type StagedBatch<T> = {
+  batchId: string;
+  messageId: string | null;
+  actions: T[];
+};
 
-export function stageActions<T>(actions: T[], countAtSend: number): StagedActions<T> {
-  return actions.length > 0 ? { actions, countAtSend } : null;
+export type StagedActions<T> = StagedBatch<T>[] | null;
+
+export function stageActions<T>(
+  actions: T[],
+  messageId: string | null = null,
+): StagedActions<T> {
+  if (actions.length === 0) return null;
+  return [{ batchId: generateId(), messageId, actions }];
 }
 
 export function promoteOnMessages<T>(
   staged: StagedActions<T>,
-  deliveredCount: number,
+  messages: Array<{ role: string; id?: string; ts: number; content?: string }>,
 ): { staged: StagedActions<T>; promote: T[] | null } {
-  if (!staged) return { staged, promote: null };
-  if (deliveredCount > staged.countAtSend) return { staged: null, promote: staged.actions };
+  if (!staged || staged.length === 0) return { staged, promote: null };
+
+  // Promote every batch whose assistant-message ID has arrived. A single query
+  // update can contain multiple replies, so stopping after the first match
+  // would leave the others waiting for their fallback timers.
+  const aiIds = new Set(messages.filter((m) => m.role === "ai").map((m) => m.id).filter(Boolean));
+  const delivered = staged.filter((batch) => batch.messageId && aiIds.has(batch.messageId));
+  if (delivered.length > 0) return {
+    staged: staged.filter((batch) => !batch.messageId || !aiIds.has(batch.messageId)),
+    promote: delivered.flatMap((batch) => batch.actions),
+  };
+
   return { staged, promote: null };
 }
 
-export function promoteOnTimeout<T>(staged: StagedActions<T>): { staged: StagedActions<T>; promote: T[] | null } {
-  if (!staged) return { staged, promote: null };
-  return { staged: null, promote: staged.actions };
+export function promoteOnTimeout<T>(
+  staged: StagedActions<T>,
+  batchId: string,
+): { staged: StagedActions<T>; promote: T[] | null } {
+  if (!staged || staged.length === 0) return { staged, promote: null };
+  const index = staged.findIndex((b) => b.batchId === batchId);
+  if (index < 0) return { staged, promote: null };
+  const promoted = staged[index];
+  return { staged: staged.filter((_, i) => i !== index), promote: promoted.actions };
 }
 
 export const STAGED_FALLBACK_MS = 4000;

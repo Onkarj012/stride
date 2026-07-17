@@ -73,4 +73,36 @@ describe("LogConfirmCard", () => {
       calorieResult: expect.objectContaining({ range_low: 260, range_high: 340 }),
     }));
   });
+
+  it("clears stale calories after a duration edit and requires replacement kcal", () => {
+    const onConfirm = vi.fn();
+    render(<LogConfirmCard draft={workoutDraft} onConfirm={onConfirm} onDiscard={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    const durationInput = screen.getByDisplayValue("30");
+    fireEvent.change(durationInput, { target: { value: "45" } });
+    expect(screen.getByRole("button", { name: /enter kcal/i })).toBeDisabled();
+    fireEvent.change(screen.getByDisplayValue("0"), { target: { value: "400" } });
+    fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ duration: 45, kcal: 400, calorieResult: null }));
+  });
+
+  it("clears stale calories after an intensity edit and requires replacement kcal", () => {
+    const onConfirm = vi.fn();
+    render(<LogConfirmCard draft={workoutDraft} onConfirm={onConfirm} onDiscard={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    const intensitySelect = screen.getByDisplayValue("medium");
+    fireEvent.change(intensitySelect, { target: { value: "high" } });
+    expect(screen.getByRole("button", { name: /enter kcal/i })).toBeDisabled();
+    fireEvent.change(screen.getByDisplayValue("0"), { target: { value: "375" } });
+    fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ intensity: "high", kcal: 375, calorieResult: null }));
+  });
+
+  it("disables Edit and Discard while the draft is submitting", () => {
+    const submittingDraft = { ...workoutDraft, submitting: true };
+    render(<LogConfirmCard draft={submittingDraft} onConfirm={() => {}} onDiscard={() => {}} />);
+    expect(screen.getByRole("button", { name: /^refine$/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^edit$/i })).toBeDisabled();
+    expect(screen.getByLabelText("Discard")).toBeDisabled();
+  });
 });

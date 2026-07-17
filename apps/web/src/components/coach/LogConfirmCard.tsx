@@ -228,7 +228,8 @@ function WorkoutCard({
           value={draft.duration}
           unit="min"
           editing={editing}
-          onChange={(v) => onChange({ ...draft, duration: v })}
+          // Changing duration invalidates the engine-derived calorie estimate.
+          onChange={(v) => onChange({ ...draft, duration: v, kcal: 0, calorieResult: null })}
           color="text-lavender"
         />
         {draft.distance != null ? (
@@ -265,7 +266,7 @@ function WorkoutCard({
           {editing ? (
             <select
               value={draft.intensity}
-              onChange={(e) => onChange({ ...draft, intensity: e.target.value as WorkoutDraft["intensity"] })}
+              onChange={(e) => onChange({ ...draft, intensity: e.target.value as WorkoutDraft["intensity"], kcal: 0, calorieResult: null })}
               className="rounded-lg bg-input border border-border px-2 py-1 text-[12px] font-bold text-text focus:outline-none focus:border-lavender"
             >
               <option value="light">light</option>
@@ -418,11 +419,17 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
 
   useEffect(() => {
     setDraft(initialDraft);
+    if ((initialDraft as any).submitting) setEditing(false);
   }, [initialDraft]);
 
   function handleConfirm() {
+    if ((draft as any).submitting) return;
     onConfirm(draft);
   }
+
+  const submitting = Boolean((draft as any).submitting);
+  const needsWorkoutCalories = draft.kind === "workout"
+    && (!Number.isFinite((draft as WorkoutDraft).kcal) || (draft as WorkoutDraft).kcal <= 0);
 
   // Header config per draft kind
   const HEADER_CONFIG: Record<string, { icon: typeof Flame; bg: string; color: string; label: string }> = {
@@ -479,7 +486,8 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
             whileTap={{ scale: 0.95 }}
             type="button"
             onClick={() => setEditing(true)}
-            className="inline-flex items-center justify-center rounded-full border border-lavender/25 bg-lavender-soft px-3 py-2.5 text-[12px] font-bold text-text"
+            disabled={submitting}
+            className="inline-flex items-center justify-center rounded-full border border-lavender/25 bg-lavender-soft px-3 py-2.5 text-[12px] font-bold text-text disabled:opacity-50"
           >
             Refine
           </motion.button>
@@ -487,17 +495,18 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={handleConfirm}
-          disabled={(draft as any).submitting}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink py-2.5 text-[13px] font-bold"
+          disabled={submitting || needsWorkoutCalories}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink py-2.5 text-[13px] font-bold disabled:opacity-50"
         >
           <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
-          {(draft as any).submitting ? "Logging..." : (draft as any).allowDuplicate ? "Log anyway" : "Confirm"}
+          {submitting ? "Logging..." : needsWorkoutCalories ? "Enter kcal" : (draft as any).allowDuplicate ? "Log anyway" : "Confirm"}
         </motion.button>
         <motion.button
           whileTap={{ scale: 0.95 }}
           onClick={() => setEditing((e) => !e)}
+          disabled={submitting}
           className={cn(
-            "inline-flex items-center justify-center gap-1.5 rounded-full border px-4 py-2.5 text-[13px] font-semibold transition-colors",
+            "inline-flex items-center justify-center gap-1.5 rounded-full border px-4 py-2.5 text-[13px] font-semibold transition-colors disabled:opacity-50",
             editing
               ? "bg-lavender-soft border-lavender text-text"
               : "border-border text-text-muted hover:text-text",
@@ -508,8 +517,11 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
         </motion.button>
         <motion.button
           whileTap={{ scale: 0.95 }}
-          onClick={onDiscard}
-          className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-border text-text-muted hover:text-text transition-colors"
+          onClick={() => {
+            if (!submitting) onDiscard();
+          }}
+          disabled={submitting}
+          className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-border text-text-muted hover:text-text transition-colors disabled:opacity-50"
           aria-label="Discard"
         >
           <X className="h-4 w-4" strokeWidth={2} />

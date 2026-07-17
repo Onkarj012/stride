@@ -20,16 +20,26 @@ function fakeStorage(initial: Record<string, string> = {}) {
 }
 
 describe("normalizeDraft / normalizeDrafts", () => {
-  it("assigns a stable _clientId derived from draft content", () => {
+  it("assigns an opaque UUID _clientId to each new draft", () => {
     const a = normalizeDraft({ kind: "meal", description: "Eggs", kcal: 200 });
     const b = normalizeDraft({ kind: "meal", description: "Eggs", kcal: 200 });
     expect(a?._clientId).toBeTruthy();
-    expect(a?._clientId).toBe(b?._clientId);
+    expect(b?._clientId).toBeTruthy();
+    expect(a?._clientId).not.toBe(b?._clientId);
   });
 
   it("preserves an existing _clientId instead of recomputing", () => {
     const draft = normalizeDraft({ kind: "meal", description: "Eggs", kcal: 200, _clientId: "keep-me" });
     expect(draft?._clientId).toBe("keep-me");
+  });
+
+  it("does not collide identical drafts — each keeps its own identity", () => {
+    const drafts = normalizeDrafts([
+      { kind: "water", description: "1L water", ml: 1000 },
+      { kind: "water", description: "1L water", ml: 1000 },
+    ]);
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0]._clientId).not.toBe(drafts[1]._clientId);
   });
 
   it("returns null for non-object drafts", () => {
@@ -124,38 +134,61 @@ describe("splitActions (bug A — single-step log confirm)", () => {
 
 describe("staged actions (bug C — race-free card ordering)", () => {
   it("stageActions returns null for an empty actions array", () => {
-    expect(stageActions([], 3)).toBeNull();
+    expect(stageActions([])).toBeNull();
   });
 
   it("does not promote while the messages query hasn't caught up", () => {
-    const staged = stageActions([{ type: "log_draft", draft: {} }], 2);
-    const result = promoteOnMessages(staged, 2);
+    const staged = stageActions([{ type: "log_draft", draft: {} }], "msg-1");
+    const result = promoteOnMessages(staged, []);
     expect(result.promote).toBeNull();
     expect(result.staged).toBe(staged);
   });
 
-  it("promotes once the messages length passes the count captured at send", () => {
+  it("promotes the batch whose assistant message ID arrives", () => {
     const actions = [{ type: "log_draft", draft: {} }];
-    const staged = stageActions(actions, 2);
-    const result = promoteOnMessages(staged, 4);
-    expect(result.promote).toBe(actions);
-    expect(result.staged).toBeNull();
+    const staged = stageActions(actions, "msg-1");
+    const result = promoteOnMessages(staged, [
+      { role: "user", content: "hi", ts: 1, id: "msg-0" },
+      { role: "ai", content: "ok", ts: 2, id: "msg-1" },
+    ]);
+    expect(result.promote).toEqual(actions);
+    expect(result.staged).toEqual([]);
   });
 
   it("is a no-op when nothing is staged", () => {
-    expect(promoteOnMessages(null, 10)).toEqual({ staged: null, promote: null });
-    expect(promoteOnTimeout(null)).toEqual({ staged: null, promote: null });
+    expect(promoteOnMessages(null, [])).toEqual({ staged: null, promote: null });
+    expect(promoteOnTimeout(null, "any")).toEqual({ staged: null, promote: null });
   });
 
-  it("fallback timeout promotes staged actions unconditionally", () => {
+  it("fallback timeout verifies batchId and promotes only its own batch", () => {
     const actions = [{ type: "log_draft", draft: {} }];
-    const staged = stageActions(actions, 2);
-    // messages never advanced (write may have failed) — the timeout still renders it
-    const stillWaiting = promoteOnMessages(staged, 2);
+    const staged = stageActions(actions, "msg-1");
+    const batchId = staged![0].batchId;
+    const stillWaiting = promoteOnMessages(staged, []);
     expect(stillWaiting.promote).toBeNull();
-    const timedOut = promoteOnTimeout(staged);
+    const timedOut = promoteOnTimeout(staged, batchId);
     expect(timedOut.promote).toBe(actions);
-    expect(timedOut.staged).toBeNull();
+    expect(timedOut.staged).toEqual([]);
+  });
+
+  it("does not promote an unrelated batch on timeout", () => {
+    const staged = stageActions([{ type: "log_draft", draft: {} }], "msg-1");
+    const wrong = promoteOnTimeout(staged, "wrong-id");
+    expect(wrong.promote).toBeNull();
+    expect(wrong.staged).toBe(staged);
+  });
+
+  it("promotes all correlated batches while keeping unrelated batches", () => {
+    const a = stageActions([{ type: "log_draft", draft: { kind: "a" } }], "msg-a")!;
+    const b = stageActions([{ type: "log_draft", draft: { kind: "b" } }], "msg-b")!;
+    const c = stageActions([{ type: "log_draft", draft: { kind: "c" } }], "msg-c")!;
+    const result = promoteOnMessages([...a, ...b, ...c], [
+      { role: "ai", content: "b", ts: 1, id: "msg-b" },
+      { role: "ai", content: "c", ts: 2, id: "msg-c" },
+    ]);
+    expect(result.promote).toEqual([...b[0].actions, ...c[0].actions]);
+    expect(result.staged).toHaveLength(1);
+    expect(result.staged?.[0].messageId).toBe("msg-a");
   });
 });
 

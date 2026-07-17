@@ -1385,6 +1385,7 @@ export const homepageInput = action({
     reply?: string;
     coachType?: CoachType;
     sessionId?: any;
+    messageId?: string;
   }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
@@ -1620,14 +1621,14 @@ Return ONLY:
       const reply = await callAI(replyMessages, 250, image ? visionModel : (settingsModel ?? CHAT_MODEL), apiKey);
 
       // Persist AI reply
-      await ctx.runMutation(internal.chat.addMessage, {
+      const messageId = await ctx.runMutation(internal.chat.addMessage, {
         userId,
         sessionId: activeSessionId,
         role: "ai",
         content: reply,
       });
 
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId };
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId, messageId };
     }
 
     // Step 2: Parse each item in parallel
@@ -1786,10 +1787,10 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
     if (drafts.length === 0) {
       // Fallback to question path
       const reply = "I couldn't parse that. Could you be more specific?";
-      await ctx.runMutation(internal.chat.addMessage, {
+      const messageId = await ctx.runMutation(internal.chat.addMessage, {
         userId, sessionId: activeSessionId, role: "ai", content: reply,
       });
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId };
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId, messageId };
     }
 
     // If any draft has a date != today, mention it in the summary
@@ -1803,7 +1804,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
 
     // Persist the assistant's response (tier1 + tier2) so the chat thread stays meaningful
     const persistedReply = tier2Detail ? `${tier1Summary}\n\n${tier2Detail}` : tier1Summary;
-    await ctx.runMutation(internal.chat.addMessage, {
+    const messageId = await ctx.runMutation(internal.chat.addMessage, {
       userId, sessionId: activeSessionId, role: "ai", content: persistedReply,
     });
 
@@ -1851,6 +1852,6 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       }
     }
 
-    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId };
+    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId, messageId };
   },
 });
