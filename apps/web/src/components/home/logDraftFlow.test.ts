@@ -214,8 +214,20 @@ describe("date-scoped pending-draft persistence (bug D — sessionStorage leak)"
     expect(loadPendingDrafts(fakeStorage(), "2026-07-11")).toEqual([]);
   });
 
-  it("handles the legacy un-scoped array format by dropping it", () => {
-    const storage = fakeStorage({ stride_pending_drafts: JSON.stringify([{ kind: "meal" }]) });
-    expect(loadPendingDrafts(storage, "2026-07-11")).toEqual([]);
+  it("migrates the legacy un-scoped array format into today's dated envelope", () => {
+    const storage = fakeStorage({
+      stride_pending_drafts: JSON.stringify([{ kind: "meal", description: "Eggs", kcal: 200 }]),
+    });
+
+    const restored = loadPendingDrafts(storage, "2026-07-11");
+    expect(restored).toEqual([
+      expect.objectContaining({ kind: "meal", description: "Eggs", kcal: 200, _clientId: expect.any(String) }),
+    ]);
+
+    savePendingDrafts(storage, "2026-07-11", restored);
+    expect(JSON.parse(storage.getItem("stride_pending_drafts")!)).toEqual({
+      date: "2026-07-11",
+      drafts: restored,
+    });
   });
 });

@@ -22,6 +22,7 @@ export function draftClientId(draft: any): string {
 
 export function normalizeDraft(draft: any): AnyDraft | null {
   if (!draft || typeof draft !== "object" || Array.isArray(draft)) return null;
+  if (typeof draft._clientId === "string" && draft._clientId.trim()) return draft;
   return { ...draft, _clientId: draftClientId(draft) };
 }
 
@@ -135,7 +136,8 @@ const PENDING_DRAFTS_KEY = "stride_pending_drafts";
 export function loadPendingDrafts(storage: Pick<Storage, "getItem">, today: string): AnyDraft[] {
   try {
     const raw = JSON.parse(storage.getItem(PENDING_DRAFTS_KEY) ?? "null");
-    if (!raw || typeof raw !== "object" || Array.isArray(raw) || raw.date !== today) return [];
+    if (Array.isArray(raw)) return normalizeDrafts(raw);
+    if (!raw || typeof raw !== "object" || raw.date !== today) return [];
     return normalizeDrafts(raw.drafts);
   } catch {
     return [];

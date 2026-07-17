@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { homepageInputMock, mutationMock } = vi.hoisted(() => {
+const { homepageInputMock, mutationMock, localDateStrMock } = vi.hoisted(() => {
   // useTypewriter reads matchMedia at module load; jsdom doesn't provide it
   Object.defineProperty(window, "matchMedia", {
     writable: true,
@@ -19,6 +19,7 @@ const { homepageInputMock, mutationMock } = vi.hoisted(() => {
   return {
     homepageInputMock: vi.fn(),
     mutationMock: vi.fn().mockResolvedValue(undefined),
+    localDateStrMock: vi.fn(),
   };
 });
 
@@ -39,6 +40,10 @@ vi.mock("@/hooks/useBehavior", () => ({ useBehavior: () => ({ recordEngagement: 
 vi.mock("@/hooks/useReducedMotion", () => ({ useReducedMotion: () => true }));
 vi.mock("@/context/ToastContext", () => ({
   useToast: () => ({ show: vi.fn(), success: vi.fn(), info: vi.fn(), error: vi.fn() }),
+}));
+vi.mock("@/lib/utils", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/utils")>(),
+  localDateStr: localDateStrMock,
 }));
 vi.mock("@/components/coach/BarcodeModal", () => ({ BarcodeModal: () => null }));
 vi.mock("@/components/coach/EditLogModal", () => ({ EditLogModal: () => null }));
@@ -97,6 +102,14 @@ describe("AssistantConsole logging flow", () => {
     sessionStorage.clear();
     mutationMock.mockClear();
     homepageInputMock.mockReset();
+    localDateStrMock.mockReset();
+    localDateStrMock.mockImplementation(() => {
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    });
     messagesValue = { messages: [] };
   });
 
@@ -153,6 +166,31 @@ describe("AssistantConsole logging flow", () => {
     // The second draft is untouched
     expect(screen.getByText("8k steps")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /confirm/i })).toHaveLength(1);
+  });
+
+  it("preserves an edited sibling draft when another card is confirmed", async () => {
+    homepageInputMock.mockResolvedValue({ actions: [waterAction, stepsAction], messageId: "ai-1" });
+    const { rerender } = render(consoleUi());
+
+    await sendMessage("1L water and 8k steps");
+    deliverMessages(rerender, [
+      { role: "user", content: "1L water and 8k steps", ts: 1, id: "user-1" },
+      { role: "ai", content: "Water: 1L · Steps: 8,000. Confirm to log.", ts: 2, id: "ai-1" },
+    ]);
+
+    expect(await screen.findByText("8k steps")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: /^edit$/i })[1]);
+    fireEvent.change(screen.getByDisplayValue("8000"), { target: { value: "9000" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: /confirm/i })[0]);
+    });
+
+    expect(screen.getByDisplayValue("9000")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+    });
+    expect(mutationMock).toHaveBeenCalledWith(expect.objectContaining({ count: 9000 }));
   });
 
   it("stages actions until the AI message arrives so the text bubble renders first (bug C)", async () => {
@@ -408,6 +446,26 @@ describe("AssistantConsole logging flow", () => {
       await vi.advanceTimersByTimeAsync(STAGED_FALLBACK_MS + 50);
     });
     expect(screen.queryByText("1L of water")).not.toBeInTheDocument();
+    expect(JSON.parse(sessionStorage.getItem("stride_pending_drafts")!)).toEqual({
+      date: "2026-07-17",
+      drafts: [],
+    });
+  });
+
+  it("rolls over immediately when midnight passes before the mount effect runs", async () => {
+    localDateStrMock
+      .mockReturnValueOnce("2026-07-16")
+      .mockReturnValue("2026-07-17");
+    sessionStorage.setItem(
+      "stride_pending_drafts",
+      JSON.stringify({ date: "2026-07-16", drafts: [{ kind: "water", description: "yesterday water", ml: 1000 }] }),
+    );
+
+    render(consoleUi());
+
+    await waitFor(() => {
+      expect(screen.queryByText("yesterday water")).not.toBeInTheDocument();
+    });
     expect(JSON.parse(sessionStorage.getItem("stride_pending_drafts")!)).toEqual({
       date: "2026-07-17",
       drafts: [],

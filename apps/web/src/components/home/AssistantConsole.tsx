@@ -48,6 +48,8 @@ function useLocalDate(): string {
         scheduleRollover();
       }, Math.max(1, nextMidnight.getTime() - now.getTime()));
     };
+    const currentDate = localDateStr();
+    setDate((initializedDate) => initializedDate === currentDate ? initializedDate : currentDate);
     scheduleRollover();
     return () => {
       cancelled = true;
