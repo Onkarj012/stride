@@ -9,6 +9,7 @@ export function ServiceWorkerUpdate() {
   const [needReload, setNeedReload] = useState(false);
   const updateSWRef = useRef<((reloadPage?: boolean) => Promise<void>) | null>(null);
   const registeredRef = useRef(false);
+  const userInitiatedRef = useRef(false);
 
   useEffect(() => {
     if (registeredRef.current) return;
@@ -20,10 +21,15 @@ export function ServiceWorkerUpdate() {
         setNeedRefresh(true);
       },
       onNeedReload() {
-        // The new service worker has taken control in another tab; do not
-        // auto-reload. Let the user finish their current work and reload when
-        // ready to avoid losing unsaved state.
-        setNeedReload(true);
+        // When the user already clicked Reload, the new service worker has been
+        // told to skip waiting and the 'controlling' event fired; reload now.
+        // Otherwise another tab activated the worker externally, so just show
+        // the toast and let the user finish their current work before reloading.
+        if (userInitiatedRef.current) {
+          window.location.reload();
+        } else {
+          setNeedReload(true);
+        }
       },
       onOfflineReady() {
         // Intentionally empty — no offline banner needed.
@@ -36,6 +42,13 @@ export function ServiceWorkerUpdate() {
   }, []);
 
   const handleReload = () => {
+    if (needReload) {
+      // The new service worker is already controlling; reload immediately.
+      window.location.reload();
+      return;
+    }
+
+    userInitiatedRef.current = true;
     void updateSWRef.current?.(true);
   };
 
