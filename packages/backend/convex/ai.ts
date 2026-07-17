@@ -282,7 +282,7 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   if (!["pending", "partial", "failed"].includes(group.status)) throw new Error("Group is not pending clarification");
   const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
   const dateCheck = resolveChatActionDate({ explicitDate: date, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
-  if (dateCheck.status !== "resolved" && !(group.clientLocalDate !== undefined && group.clientLocalDate === date)) {
+  if (dateCheck.status !== "resolved") {
     throw new Error(dateCheck.reason ?? "This date cannot be used");
   }
 
