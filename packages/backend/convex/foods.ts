@@ -275,6 +275,8 @@ export const getRecentFoods = query({
 export const searchFoods = action({
   args: { query: v.string() },
   handler: async (ctx, { query: q }): Promise<NormalizedFood[]> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const trimmed = normalizeFoodQuery(q);
     if (!trimmed) return [];
 
@@ -380,6 +382,8 @@ export const searchFoods = action({
 export const lookupBarcode = action({
   args: { barcode: v.string() },
   handler: async (ctx, { barcode }): Promise<NormalizedFood | null> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     // 1. Check local cache
     const cached = await ctx.runQuery(internal.foods.getFoodByBarcode, { barcode }) as any;
     if (cached) {

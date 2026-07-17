@@ -989,14 +989,13 @@ export const estimateMeal = action({
   args: { mealName: v.string() },
   handler: async (ctx, { mealName }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
     const prompt = `Estimate the nutritional values for this meal: "${mealName}".
 
 ${NUTRITION_ACCURACY_RULES}
@@ -1016,14 +1015,13 @@ export const parseMeal = action({
   },
   handler: async (ctx, { description, mealType, time }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
     const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
 
     // Run deterministic nutrition calculation
@@ -1050,28 +1048,27 @@ export const parseWorkout = action({
   },
   handler: async (ctx, { description, duration, intensity }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
     let userPhysique: UserPhysique | undefined;
-    if (userId) {
-      const [settings, profile, metabolicProfile] = await Promise.all([
-        ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
-        ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-        ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
-      ]);
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-      if (profile) {
-        userPhysique = {
-          weight: profile.weight,
-          height: profile.height,
-          age: profile.age,
-          sex: profile.sex,
-          fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
-          metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
-        };
-      }
+    const [settings, profile, metabolicProfile] = await Promise.all([
+      ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
+      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+      ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
+    ]);
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
+    if (profile) {
+      userPhysique = {
+        weight: profile.weight,
+        height: profile.height,
+        age: profile.age,
+        sex: profile.sex,
+        fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
+        metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
+      };
     }
     const result = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
     return result;
@@ -2417,14 +2414,13 @@ export const parseNutritionImage = action({
   },
   handler: async (ctx, { imageDataUrl, userDescription }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
     const visionModel = model && VISION_MODELS.has(model) ? model : DEFAULT_MODEL;
 
     const key = apiKey || process.env.OPENROUTER_API_KEY;
@@ -2499,14 +2495,13 @@ export const estimatePortion = action({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
 
     const servingClause = args.servingSize
       ? `Serving size: ${args.servingSize}${args.servingUnit || "g"}.`
@@ -2542,14 +2537,13 @@ export const calculateProfileMacros = action({
   },
   handler: async (ctx, { weight, height, age, activityLevel }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
 
     const prompt = `Calculate optimal daily macronutrient targets for:
 - Weight: ${weight}kg
@@ -2621,6 +2615,7 @@ Return ONLY a short JSON object: {"suggestion":"one forward-looking next-meal ti
   },
 });
 
+// Deliberately public: this read-only static coach catalog is safe to expose.
 export const getCoaches = query({
   args: {},
   handler: async () => {
@@ -2631,7 +2626,9 @@ export const getCoaches = query({
 
 export const transcribe = action({
   args: { audio: v.string(), mimeType: v.optional(v.string()) },
-  handler: async (_ctx, { audio, mimeType }) => {
+  handler: async (ctx, { audio, mimeType }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("GROQ_API_KEY is not set in Convex environment");
 

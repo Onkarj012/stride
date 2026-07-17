@@ -61,6 +61,8 @@ export const submitCalorieFeedback = mutation({
   },
   handler: async (ctx, { workoutId, feedback }) => {
     const userId = await requireUserId(ctx);
+    const workout = await ctx.db.get(workoutId);
+    if (!workout || workout.userId !== userId) throw new Error("Not found");
 
     // Get existing metabolic profile or create default
     let profile = await ctx.db
