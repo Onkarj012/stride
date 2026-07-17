@@ -15,6 +15,7 @@ import {
   buildIdempotencyKey,
   mealContentHash,
   normalizeLogSource,
+  resolveTargetDateTime,
   timeWindowKey,
 } from "./validation";
 
@@ -67,10 +68,9 @@ function nutritionBreakdownFromRecipeIngredients(
   return buildNutritionResult(items, []);
 }
 
-/** Pure: sum ingredient macros (total) and divide by servings (per-serving). */
-export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: number) {
-  const s = Math.max(1, servings || 1);
-  const total = ingredients.reduce(
+/** Pure: sum ingredient macros without rounding. */
+export function computeRawRecipeTotal(ingredients: RecipeIngredient[]) {
+  return ingredients.reduce(
     (acc, ing) => {
       const ratio = Math.max(0, ing.grams) / 100;
       acc.kcal += Math.max(0, ing.caloriesPer100g || 0) * ratio;
@@ -81,6 +81,12 @@ export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: n
     },
     { kcal: 0, p: 0, c: 0, f: 0 },
   );
+}
+
+/** Pure: sum ingredient macros (total) and divide by servings (per-serving). */
+export function computeRecipeTotals(ingredients: RecipeIngredient[], servings: number) {
+  const s = Math.max(1, servings || 1);
+  const total = computeRawRecipeTotal(ingredients);
   const round = (o: typeof total) => ({ kcal: Math.round(o.kcal), p: r1(o.p), c: r1(o.c), f: r1(o.f) });
   return {
     total: round(total),
@@ -196,14 +202,14 @@ export const logRecipe = mutation({
     if (!recipe || recipe.userId !== userId) throw new Error("Not found");
     const portions = Math.max(0.25, servings ?? 1);
     const ings: RecipeIngredient[] = ingredients ?? JSON.parse(recipe.ingredients);
+    const rawTotal = computeRawRecipeTotal(ings);
     const ingredientList = ings.map((i) => `${i.name} (${i.grams}g)`).join(", ");
     const trimmedNote = note?.trim();
     const components = trimmedNote
       ? `${ingredientList} — ${trimmedNote}`
       : ingredientList;
     const scale = portions / recipe.servings;
-    const targetDate = date ?? new Date().toISOString().split("T")[0];
-    const targetTime = time ?? new Date().toISOString().slice(11, 16);
+    const { date: targetDate, time: targetTime } = resolveTargetDateTime({ date, time }, true);
     const memories = await ctx.db.query("food_memory").withIndex("by_user", (q) => q.eq("userId", userId)).collect();
     const draft = buildMealDraft({
       name: recipe.name,
@@ -224,6 +230,12 @@ export const logRecipe = mutation({
         source: ing.source ?? "database",
         confidence: 0.85,
       })),
+      rawTotals: {
+        kcal: rawTotal.kcal * scale,
+        protein: rawTotal.p * scale,
+        carbs: rawTotal.c * scale,
+        fat: rawTotal.f * scale,
+      },
       memoryMatch: findBestMatch(recipe.name, memories as any[]) ?? undefined,
       nutritionSource: "recipe",
     });

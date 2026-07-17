@@ -20,6 +20,7 @@ import {
   mealContentHash,
   minutesBetweenTimes,
   normalizeLogSource,
+  resolveTargetDateTime,
   timeWindowKey,
   validateMealWrite,
 } from "./validation";
@@ -340,8 +341,7 @@ export const relogMeal = mutation({
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
-    const targetDate = date ?? new Date().toISOString().split("T")[0];
-    const targetTime = time ?? new Date().toISOString().slice(11, 16);
+    const { date: targetDate, time: targetTime } = resolveTargetDateTime({ date, time }, true);
     const memories = usableFoodMemories(await ctx.db.query("food_memory").withIndex("by_user", (q: any) => q.eq("userId", userId)).collect());
     const draft = buildDirectMealDraft({
       name: src.name,

@@ -80,6 +80,7 @@ export type MealDraft = {
   nutritionSource: string;
   foodMemoryId?: string;
   detailInvalidated?: boolean;
+  rawTotals?: MacroValues;
 };
 
 export type MealDraftIngredientInput = {
@@ -111,6 +112,7 @@ export type MealDraftInput = {
   detailInvalidated?: boolean;
   memoryMatch?: MatchResult;
   nutritionSource?: string;
+  rawTotals?: MacroValues;
 };
 
 function round1(value: number): number {
@@ -212,13 +214,13 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
     const quantity = nonNegative(raw.quantity ?? raw.amount ?? (raw.grams != null ? raw.grams : 1));
     const unit = (raw.unit ?? (raw.grams != null ? "g" : "serving")).trim() || "serving";
     const conversion = raw.grams != null
-      ? { grams: nonNegative(raw.grams), confidence: 1 }
+      ? { grams: nonNegative(raw.grams), confidence: 1, method: "exact" as const }
       : toGrams(quantity, unit, foodText);
     const candidates = [...(raw.candidates ?? [])].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
     const hasContribution = raw.nutrition != null || raw.nutritionPer100g != null;
     const selected = raw.unresolved ? null : selectFoodCandidate(candidates);
     const selectedHasNutrition = !selected || selected.caloriesPer100g != null || hasContribution;
-    const unresolved = raw.unresolved === true || (!hasContribution && (!selected || !selectedHasNutrition));
+    const unresolved = raw.unresolved === true || conversion.method === "unresolved" || (!hasContribution && (!selected || !selectedHasNutrition));
     const source = selected?.source === "memory" ? "memory" : normalizeSource(raw.source ?? selected?.source);
     const macros = unresolved
       ? { kcal: 0, protein: 0, carbs: 0, fat: 0 }
@@ -254,9 +256,10 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
     carbs: total.carbs + item.carbs,
     fat: total.fat + item.fat,
   }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
+  const totals = input.rawTotals ?? resolvedTotals;
   // Never accept a whole-meal estimate as a substitute for ingredient math.
   // Unresolved ingredients therefore contribute zero by construction.
-  const estimatedCalories = Math.round(resolvedTotals.kcal);
+  const estimatedCalories = Math.round(totals.kcal);
   const reportedCalories = input.reportedCalories == null ? undefined : Math.round(nonNegative(input.reportedCalories));
   const calorieSource: CalorieSource = input.calorieSource === "reported" && reportedCalories == null
     ? "estimated"
@@ -270,14 +273,14 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
     mealType: input.mealType ?? "unspecified",
     ingredients,
     items: ingredients,
-    calories: calorieSource === "reported" && reportedCalories != null ? reportedCalories : estimatedCalories,
-    protein: round1(resolvedTotals.protein),
-    carbs: round1(resolvedTotals.carbs),
-    fat: round1(resolvedTotals.fat),
-    calories_kcal: calorieSource === "reported" && reportedCalories != null ? reportedCalories : estimatedCalories,
-    protein_g: round1(resolvedTotals.protein),
-    carbs_g: round1(resolvedTotals.carbs),
-    fat_g: round1(resolvedTotals.fat),
+    calories: calorieSource === "reported" && reportedCalories != null ? reportedCalories : Math.round(totals.kcal),
+    protein: round1(totals.protein),
+    carbs: round1(totals.carbs),
+    fat: round1(totals.fat),
+    calories_kcal: calorieSource === "reported" && reportedCalories != null ? reportedCalories : Math.round(totals.kcal),
+    protein_g: round1(totals.protein),
+    carbs_g: round1(totals.carbs),
+    fat_g: round1(totals.fat),
     estimatedCalories,
     reportedCalories,
     calorieSource,
@@ -286,19 +289,21 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
     nutritionSource: input.nutritionSource ?? sourceForDraft(ingredients),
     foodMemoryId: input.foodMemoryId ?? sourceMemory?.entry._id,
     detailInvalidated: input.detailInvalidated,
+    rawTotals: input.rawTotals,
   };
   return draft;
 }
 
 export function mealPayloadFromDraft(draft: MealDraft, extras: Record<string, unknown> = {}) {
+  const totals = draft.rawTotals;
   return {
     ...extras,
     name: draft.name,
     date: draft.date,
-    calories: draft.calories,
-    protein: draft.protein,
-    carbs: draft.carbs,
-    fat: draft.fat,
+    calories: totals ? totals.kcal : draft.calories,
+    protein: totals ? totals.protein : draft.protein,
+    carbs: totals ? totals.carbs : draft.carbs,
+    fat: totals ? totals.fat : draft.fat,
     time: draft.time,
     mealType: draft.mealType,
     confidence: draft.confidence,

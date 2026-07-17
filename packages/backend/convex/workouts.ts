@@ -12,6 +12,7 @@ import {
   isSimilarWorkout,
   minutesBetweenTimes,
   normalizeLogSource,
+  resolveTargetDateTime,
   validateWorkoutWrite,
   workoutTimeWindowKey,
   workoutContentHash,
@@ -371,8 +372,7 @@ export const relogWorkout = mutation({
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
-    const targetDate = date ?? new Date().toISOString().split("T")[0];
-    const targetTime = timestamp ?? new Date().toISOString().slice(11, 16);
+    const { date: targetDate, time: targetTime } = resolveTargetDateTime({ date, time: timestamp });
     const rawInput = `relog:${String(src._id)}:${targetDate}`;
     const groupIdempotencyKey = deriveGroupKey({
       userId,

@@ -20,6 +20,7 @@ import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/compone
 import { useToast } from "@/context/ToastContext";
 import { useLogs } from "@/hooks/useLogs";
 import { localDateStr } from "@/lib/utils";
+import { localDateTime } from "@/lib/localDateTime";
 import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 function periodDays(period: Period): number {
@@ -37,7 +38,8 @@ function TodaysMealsCard({ date }: { date: string }) {
 
   async function handleRelog(id: Id<"meals">, name: string) {
     try {
-      await relogMeal({ id });
+      const { date, time } = localDateTime();
+      await relogMeal({ id, date, time });
       toast.success("Logged again", name);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
@@ -134,7 +136,8 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
 
   async function handleRelog(id: Id<"workouts">, name: string) {
     try {
-      await relogWorkout({ id, idempotencyToken: crypto.randomUUID() });
+      const { date, time } = localDateTime();
+      await relogWorkout({ id, date, timestamp: time, idempotencyToken: crypto.randomUUID() });
       toast.success("Logged again", name);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
@@ -218,7 +221,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
 /* ── Today's AI insights & tips card ── */
 export function TodaysInsightsCard({ date }: { date: string }) {
   const insightsData = useQuery(api.insights.getDailyInsights, { date });
-  const brief = useQuery(api.insights.getTodayBrief, {});
+  const brief = useQuery(api.insights.getTodayBrief, { today: date });
   const generate = useAction(api.ai.generateDailyInsights);
   const toast = useToast();
   const [generating, setGenerating] = useState(false);
@@ -293,7 +296,7 @@ export function TodaysInsightsCard({ date }: { date: string }) {
 /** Compact insights card for the sidebar slot in the Insights grid. */
 function TodaysInsightsMini({ date }: { date: string }) {
   const insightsData = useQuery(api.insights.getDailyInsights, { date });
-  const brief = useQuery(api.insights.getTodayBrief, {});
+  const brief = useQuery(api.insights.getTodayBrief, { today: date });
   const generate = useAction(api.ai.generateDailyInsights);
   const toast = useToast();
   const insights = (insightsData?.insights ?? []) as string[];
@@ -372,7 +375,7 @@ export function InsightsPage() {
   const today = localDateStr();
 
   // Convex progress data (7 or 30 days)
-  const brief = useQuery(api.insights.getTodayBrief, {});
+  const brief = useQuery(api.insights.getTodayBrief, { today });
   const progressRows = (useQuery(api.progress.getProgress, { days, today }) ?? []) as Array<{
     date: string;
     calories: number;

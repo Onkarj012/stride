@@ -4,7 +4,7 @@ import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import { Zap } from "lucide-react";
 import { useToast } from "@/context/ToastContext";
-import { localDateStr } from "@/lib/utils";
+import { localDateTime } from "@/lib/localDateTime";
 
 interface QuickItem {
   key: string;
@@ -43,7 +43,8 @@ export function QuickLogBar() {
         label: r.name,
         kcal: Math.round(r.perServing.kcal),
         run: async () => {
-          await logRecipe({ id: r._id, servings: 1, date: localDateStr() });
+          const { date, time } = localDateTime();
+          await logRecipe({ id: r._id, servings: 1, date, time });
           toast.success(`Logged ${r.name}`);
         },
       });
@@ -54,7 +55,7 @@ export function QuickLogBar() {
         label: f.name,
         kcal: Math.round(f.caloriesPer100g), // per 100g — shown as "X kcal / 100g"
         run: async () => {
-          const time = new Date().toTimeString().slice(0, 5);
+          const { date, time } = localDateTime();
           // Log exactly 100g; label makes the portion explicit.
           const payload = {
             name: f.name,
@@ -63,7 +64,7 @@ export function QuickLogBar() {
             carbs: Math.round(f.carbsPer100g * 10) / 10,
             fat: Math.round(f.fatPer100g * 10) / 10,
             time,
-            date: localDateStr(),
+            date,
             confidence: f.verified ? 0.95 : 0.8,
             nutritionSource: f.source ?? "quick_log",
             nutritionVerified: !!f.verified,
