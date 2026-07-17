@@ -369,6 +369,7 @@ export function InsightsPage() {
   const today = localDateStr();
 
   // Convex progress data (7 or 30 days)
+  const brief = useQuery(api.insights.getTodayBrief, {});
   const progressRows = (useQuery(api.progress.getProgress, { days, today }) ?? []) as Array<{
     date: string;
     calories: number;
@@ -386,9 +387,6 @@ export function InsightsPage() {
   const totalKcal = progressRows.reduce((s, r) => s + r.calories, 0);
   const totalProtein = progressRows.reduce((s, r) => s + r.protein, 0);
   const totalWorkouts = progressRows.reduce((s, r) => s + r.workouts, 0);
-  const avgGoal = progressRows.length > 0
-    ? Math.round(progressRows.reduce((s, r) => s + r.goal, 0) / progressRows.length)
-    : 2400;
 
   // For "today" view, use today's logs directly
   const todayKcal = period === "today"
@@ -418,11 +416,13 @@ export function InsightsPage() {
   // undefined = still loading (null = no profile); gate milestones so
   // thresholds don't flash from fallback to plan values.
   const profileLoaded = profile !== undefined;
+  const targetsLoaded = brief !== undefined;
+  const dailyTargets = brief?.stats;
   const macroTarget = {
-    kcal: avgGoal * days,
-    protein: (profile?.proteinTarget ?? 150) * days,
-    carbs: (profile?.carbTarget ?? 250) * days,
-    fat: (profile?.fatTarget ?? 65) * days,
+    kcal: (dailyTargets?.calorieTarget ?? 0) * days,
+    protein: (dailyTargets?.proteinTarget ?? 0) * days,
+    carbs: (dailyTargets?.carbTarget ?? 0) * days,
+    fat: (dailyTargets?.fatTarget ?? 0) * days,
   };
   const milestoneItems = [
     { label: "Protein", achieved: todayProtein >= macroTarget.protein * 0.7 },
@@ -456,7 +456,7 @@ export function InsightsPage() {
         <NarrativeCard type={period === "today" ? "daily" : "weekly"} narrative={mobileNarrative} date={period === "today" ? "Today" : period === "week" ? "Last 7 days" : "Last 30 days"} />
         <MacroCard kcal={Math.round(todayKcal)} protein={Math.round(todayProtein)} carbs={Math.round(todayCarbs)} fat={Math.round(todayFat)} />
         <StreakCard />
-        {profileLoaded && <MilestoneCard milestones={milestoneItems} />}
+        {profileLoaded && targetsLoaded && <MilestoneCard milestones={milestoneItems} />}
       </div>
     </div>
 
@@ -550,7 +550,7 @@ export function InsightsPage() {
           <StatChip
             className="flex-1"
             label="Calorie goal"
-            value={String(avgGoal)}
+            value={String(dailyTargets?.calorieTarget ?? 0)}
             unit="kcal"
             color="sky"
           />

@@ -11,6 +11,7 @@ import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal
 import { Card } from "@/components/primitives/Card";
 import { Button } from "@/components/primitives/Button";
 import { ProgressBar } from "@/components/primitives/ProgressBar";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { MealLogCard } from "@/components/ui-kit";
 import { MacroCard, MealLogCardEmpty } from "@/components/ui-kit";
 import { MobileIcon, ScreenHeader, SegToggle } from "@/components/mobile/MobileKit";
@@ -97,10 +98,10 @@ export function NutritionPage() {
 
   // Same adjusted source as HomePage so both screens show the same day goal.
   const stats = brief?.stats;
-  const kcalTarget = Math.round(stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 2000);
-  const proteinTarget = Math.round(stats?.proteinTarget ?? 90);
-  const carbTarget = Math.round(stats?.carbTarget ?? 250);
-  const fatTarget = Math.round(stats?.fatTarget ?? 65);
+  const kcalTarget = Math.round(stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 0);
+  const proteinTarget = Math.round(stats?.proteinTarget ?? 0);
+  const carbTarget = Math.round(stats?.carbTarget ?? 0);
+  const fatTarget = Math.round(stats?.fatTarget ?? 0);
 
   const kcalPct = kcalTarget > 0 ? (kcal / kcalTarget) * 100 : 0;
   const groups = groupByTime(meals as any);
@@ -115,6 +116,18 @@ export function NutritionPage() {
     } finally {
       setConfirmDelete(null);
     }
+  }
+
+  if (brief === undefined) {
+    return (
+      <div className="flex items-center justify-center min-h-dvh px-5">
+        <div className="space-y-3 w-full max-w-xs">
+          <Skeleton className="h-8 w-3/4 rounded-[14px]" />
+          <Skeleton className="h-40 w-full rounded-[20px]" />
+          <Skeleton className="h-24 w-full rounded-[20px]" />
+        </div>
+      </div>
+    );
   }
 
   return (
