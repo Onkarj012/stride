@@ -49,7 +49,9 @@ describe("audited action undo", () => {
     expect((row as any)?.undoneAt).toEqual(expect.any(Number));
     expect(storedAction).toMatchObject({ status: "undone", committedRowRef: { table: "meals", id: mealId } });
     expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(0);
-    expect(await t.run((ctx) => ctx.db.query("food_memory").first())).toMatchObject({ undoneAt: expect.any(Number), sourceActionIds: [] });
+    const memory = await t.run((ctx) => ctx.db.query("food_memory").first());
+    expect(memory).toMatchObject({ timesLogged: 0, sourceActionIds: [] });
+    expect(memory?.undoneAt).toBeUndefined();
   });
 
   test("repeated undo is an idempotent no-op", async () => {

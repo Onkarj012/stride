@@ -179,9 +179,12 @@ export function buildRecoveryDraft(input: RecoveryDraftInput): RecoveryDraft {
   if (steps != null) assertInRange("steps", steps, 0, 100_000);
   if (entryKind === "steps" && steps == null) unresolved.push("steps");
 
+  const stateFromKind = typeof input.kind === "string" && RECOVERY_STATES.includes(input.kind as RecoveryState)
+    ? input.kind
+    : "actual";
   const state = assertEnum(
     "recovery state",
-    input.state ?? (input.kind === "rest" || input.plannedRest ? "planned_rest" : RECOVERY_STATES.includes(input.kind as RecoveryState) ? input.kind : "actual"),
+    input.state ?? (input.kind === "rest" || input.plannedRest ? "planned_rest" : stateFromKind),
     RECOVERY_STATES,
   );
   if (state === "planned_rest" && input.plannedRest !== false) input.plannedRest = true;

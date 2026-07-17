@@ -261,7 +261,9 @@ describe("canonical pipeline end-to-end contract", () => {
     const brief = await asUser.query(api.insights.getTodayBrief, { today: "2026-07-16" });
     expect(brief.stats.mealsLogged).toBe(0);
     expect(brief.stats.todayCals).toBe(0);
-    expect(await t.run((ctx) => ctx.db.query("food_memory").first())).toMatchObject({ undoneAt: expect.any(Number), sourceActionIds: [] });
+    const memory = await t.run((ctx) => ctx.db.query("food_memory").first());
+    expect(memory).toMatchObject({ timesLogged: 0, sourceActionIds: [] });
+    expect(memory?.undoneAt).toBeUndefined();
   });
 
   test("date policy covers explicit history, vague clarification, future rejection, and midnight crossing", () => {
@@ -300,7 +302,7 @@ describe("canonical pipeline end-to-end contract", () => {
   test("ambiguous food remains unresolved and missing profile leaves workout estimate unpersonalized/null", async () => {
     const ambiguous = buildMealDraft({
       name: "Mystery bowl", date: "2026-07-16", time: "12:00",
-      ingredients: [{ foodText: "rice", quantity: 1, unit: "serving", candidates: [{ name: "Rice cooked", score: 0.72 }, { name: "Rice dry", score: 0.72 }] }],
+      ingredients: [{ foodText: "rice", quantity: 1, unit: "serving", candidates: [{ name: "Rice cooked", score: 0.72, source: "database" }, { name: "Rice dry", score: 0.72, source: "database" }] }],
     });
     expect(ambiguous.unresolved).toEqual(["rice"]);
 

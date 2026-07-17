@@ -128,7 +128,6 @@ async function compensateInferredMemory(
   ctx: MutationCtx,
   action: Doc<"actions">,
   table: "meals" | "workouts",
-  undoneAt: number,
 ) {
   const actionId = String(action._id);
   const name = action.payload?.name ?? action.originalPayload?.name;
@@ -146,7 +145,7 @@ async function compensateInferredMemory(
   const activeSources = await activeSourceRows(ctx, action.userId, remainingIds, table);
   const unattributedRows = await activeUnattributedRows(ctx, action.userId, table, name);
   if (activeSources.length === 0 && unattributedRows.length === 0) {
-    await ctx.db.patch(row._id, { sourceActionIds: [], timesLogged: 0, undoneAt });
+    await ctx.db.patch(row._id, { sourceActionIds: [], timesLogged: 0 });
     return;
   }
 
@@ -162,7 +161,6 @@ async function compensateInferredMemory(
       fat: average(allSources.map((source) => source.fat))!,
       components: latest.components,
       lastUsedDate: latest.date,
-      undoneAt: undefined,
     });
     return;
   }
@@ -177,7 +175,6 @@ async function compensateInferredMemory(
     exercises: workoutExercises(latest),
     intensity: latest.intensity,
     lastUsedDate: latest.date,
-    undoneAt: undefined,
   });
 }
 
@@ -225,7 +222,7 @@ async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">):
   assertTransition(action.status, "undone");
   await ctx.db.patch(action._id, { status: "undone", undoneAt });
   if (table === "meals" || table === "workouts") {
-    await compensateInferredMemory(ctx, action, table, undoneAt);
+    await compensateInferredMemory(ctx, action, table);
   }
   await recordBehaviorRow(ctx, action.userId, "undo", action.actionType, action._id, row.date);
 

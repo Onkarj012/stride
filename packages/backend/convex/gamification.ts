@@ -48,13 +48,11 @@ export const getStateInternal = internalQuery({
 
 /** Rebuild source-derived progress after an action changes the active log set. */
 export async function recomputeGamificationForUser(ctx: any, userId: string) {
-  const state = await ctx.db
-    .query("user_gamification")
-    .withIndex("by_user", (q: any) => q.eq("userId", userId))
-    .unique();
-  if (!state) return null;
-
-  const [meals, workouts] = await Promise.all([
+  const [state, meals, workouts] = await Promise.all([
+    ctx.db
+      .query("user_gamification")
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
+      .unique(),
     ctx.db.query("meals")
       .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
       .collect().then((rows: any[]) => rows.filter((row) => !row.undoneAt)),
@@ -62,10 +60,10 @@ export async function recomputeGamificationForUser(ctx: any, userId: string) {
       .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
       .collect().then((rows: any[]) => rows.filter((row) => !row.undoneAt)),
   ]);
+  if (!state && meals.length === 0 && workouts.length === 0) return null;
 
-  const today = new Date().toISOString().split("T")[0];
-  const sourceMeals = meals.filter((row: any) => row.date === today);
-  const sourceWorkouts = workouts.filter((row: any) => row.date === today);
+  const sourceMeals = meals;
+  const sourceWorkouts = workouts;
   const sourceDates = Array.from(new Set([...sourceMeals, ...sourceWorkouts].map((row: any) => row.date))).sort();
   const dates = Array.from(new Set([...meals, ...workouts].map((row: any) => row.date))).sort();
   const dayDistance = (from: string, to: string) =>
@@ -90,8 +88,13 @@ export async function recomputeGamificationForUser(ctx: any, userId: string) {
   }
   sourceXp += sourceMeals.length * 10 + sourceWorkouts.length * 20;
 
+  const mealsPerDate = new Map<string, number>();
+  for (const meal of sourceMeals) {
+    mealsPerDate.set(meal.date, (mealsPerDate.get(meal.date) ?? 0) + 1);
+  }
   const sourceMissionIds = [
     meals.length >= 1 ? "first_meal" : null,
+    Array.from(mealsPerDate.values()).some((count) => count >= 3) ? "day_complete" : null,
     workouts.length >= 1 ? "first_workout" : null,
     meals.length >= 50 ? "meals_50" : null,
     meals.length >= 100 ? "meals_100" : null,
@@ -100,18 +103,15 @@ export async function recomputeGamificationForUser(ctx: any, userId: string) {
     longest >= 14 ? "streak_14" : null,
     longest >= 30 ? "streak_30" : null,
   ].filter((id): id is string => id !== null);
-  const sourceMissionNames = new Set([
-    "first_meal", "first_workout", "meals_50", "meals_100",
-    "streak_3", "streak_7", "streak_14", "streak_30",
-  ]);
-  const activeMissionIds = new Set<string>(
-    ((state.missionsCompleted ?? []) as string[]).filter((id) => !sourceMissionNames.has(id)),
-  );
-  for (const id of sourceMissionIds) activeMissionIds.add(id);
-  const missionsCompleted: string[] = Array.from(activeMissionIds);
+  const targetMissionIds = new Set(["hit_protein", "hit_calories"]);
+  const preservedTargetMissionIds = ((state?.missionsCompleted ?? []) as string[])
+    .filter((id) => targetMissionIds.has(id));
+  // Source-recomputable missions never carry unsupported XP. Target-based missions are once-earned badges
+  // preserved because their inputs are transient; known limitation: undo cannot revoke them.
+  const missionsCompleted = [...sourceMissionIds, ...preservedTargetMissionIds];
   const missionXp = missionsCompleted.reduce((sum, id) => sum + (MISSIONS[id]?.xp ?? 0), 0);
 
-  await ctx.db.patch(state._id, {
+  const sourceState = {
     xp: sourceXp + missionXp,
     streakDays: run,
     longestStreak: longest,
@@ -120,7 +120,17 @@ export async function recomputeGamificationForUser(ctx: any, userId: string) {
     totalMealsLogged: meals.length,
     totalWorkoutsLogged: workouts.length,
     missionsCompleted,
-  });
+  };
+  if (state) {
+    await ctx.db.patch(state._id, sourceState);
+  } else {
+    await ctx.db.insert("user_gamification", {
+      userId,
+      ...sourceState,
+      streakFreezes: 0,
+      frozenDates: [],
+    });
+  }
   return { xp: sourceXp + missionXp, streakDays: run, totalMealsLogged: meals.length, totalWorkoutsLogged: workouts.length };
 }
 

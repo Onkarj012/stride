@@ -50,6 +50,22 @@ describe("derived-state recomputation and memory correction", () => {
     await expect(asUser.query(api.goals.getDailyGoal, { date: "2026-07-16" })).resolves.toMatchObject({ calorieGoal: plan.calories + 200 });
   });
 
+  test("a canonical meal write preserves an earned protein-target mission and its XP", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "derived-user" });
+    await asUser.mutation(api.gamification.recordActivity, {
+      type: "meal", date: "2026-07-16", totalProtein: 100, proteinTarget: 100,
+    });
+    const before = await asUser.query(api.gamification.getState);
+
+    await writeMeal(t, "derived-protein-followup");
+
+    const after = await asUser.query(api.gamification.getState);
+    expect(before?.missionsCompleted).toContain("hit_protein");
+    expect(after?.missionsCompleted).toContain("hit_protein");
+    expect(after?.xp).toBe(before?.xp);
+  });
+
   test("undo rebuilds streak and XP from active source rows", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "derived-user" });
@@ -64,6 +80,25 @@ describe("derived-state recomputation and memory correction", () => {
     expect(before?.streakDays).toBe(2);
     expect(after).toMatchObject({ streakDays: 1, totalMealsLogged: 1 });
     expect(after!.xp).toBeLessThan(before!.xp);
+  });
+
+  test("undo drops day-complete mission XP when fewer than three active meals remain", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "derived-user" });
+    await writeMeal(t, "derived-breakfast", "2026-07-16", "Oats");
+    await writeMeal(t, "derived-lunch", "2026-07-16", "Salad");
+    await writeMeal(t, "derived-dinner", "2026-07-16", "Curry");
+    const before = await asUser.query(api.gamification.getState);
+    const actions = await t.run((ctx) => ctx.db.query("actions").collect());
+    const dinnerAction = actions.find((action) => action.memberIdempotencyKey === "derived-dinner-member");
+    if (!dinnerAction) throw new Error("dinner action missing");
+
+    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: dinnerAction._id });
+
+    const after = await asUser.query(api.gamification.getState);
+    expect(before?.missionsCompleted).toContain("day_complete");
+    expect(after?.missionsCompleted).not.toContain("day_complete");
+    expect(after!.xp).toBe(before!.xp - 40);
   });
 
   test("delete followed by a canonical relog leaves one active source and consistent counts", async () => {
@@ -140,7 +175,7 @@ describe("derived-state recomputation and memory correction", () => {
       await t.mutation((internal as any).food_memory.updateFromCorrection, { foodMemoryId: memoryId, name: `Alias ${i}`, kcal: 320, protein: 14, carbs: 44, fat: 9, date: "2026-07-16" });
     }
     const action = (await t.run((ctx) => ctx.db.query("actions").collect()))[0];
-    const correctedMemory = await t.run((ctx) => ctx.db.get(memoryId));
+    const correctedMemory = await t.run((ctx) => ctx.db.query("food_memory").withIndex("by_user", (q) => q.eq("userId", "derived-user")).first());
     expect(correctedMemory?.aliases).toHaveLength(5);
     expect(action.originalPayload).toEqual(original);
   });
