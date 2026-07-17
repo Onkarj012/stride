@@ -149,18 +149,19 @@ export function resolveTargetDateTime(
   }
 
   const now = Date.now();
-  const current = new Date(now).toISOString();
+  const current = localDateTime(now, "UTC");
   const resolved = resolveActionDate({
     now,
     userTimeZone: "UTC",
     explicitDate: date,
     explicitTime: time,
+    clientLocalDate: date === undefined && time === undefined ? current.date : undefined,
     actionKind: "planned",
   });
   if (resolved.status !== "resolved") throw new Error(resolved.reason);
   return {
     date: resolved.date,
-    time: resolved.time ?? current.slice(11, 16),
+    time: resolved.time ?? current.time,
   };
 }
 

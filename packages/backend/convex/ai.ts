@@ -16,7 +16,7 @@ import {
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { toLegacyPersona } from "./personas";
 import { insertActionTelemetry } from "./telemetry";
-import { assertValidDate, stableHash } from "./validation";
+import { assertValidDate, assertValidTime, stableHash } from "./validation";
 import { finalizeActionGroup as finalizeActionGroupInMutation } from "./actions_group";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
@@ -760,6 +760,7 @@ export const commitHomeDraft = mutation({
   handler: async (ctx, { draft: rawDraft, clientSubmissionId }): Promise<{ id: string; actionId: Id<"actions">; groupId: Id<"actionGroups"> }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    if (!clientSubmissionId.trim()) throw new Error("clientSubmissionId is required");
     if (!rawDraft || typeof rawDraft !== "object" || Array.isArray(rawDraft)) {
       throw new Error("A log draft is required");
     }
@@ -770,11 +771,11 @@ export const commitHomeDraft = mutation({
     if (!actionType) throw new Error("Unsupported Home log draft");
 
     const date = assertValidDate(String(draft.date ?? new Date().toISOString().slice(0, 10)));
-    const time = typeof draft.time === "string"
+    const time = assertValidTime(typeof draft.time === "string"
       ? draft.time
       : typeof draft.timestamp === "string"
         ? draft.timestamp
-        : new Date().toISOString().slice(11, 16);
+        : new Date().toISOString().slice(11, 16));
     const groupIdempotencyKey = deriveGroupKey({
       userId: identity.subject,
       sourceSurface: "chat",

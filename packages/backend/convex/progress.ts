@@ -86,7 +86,7 @@ export const getProgress = query({
     };
 
     const result = [];
-    const endMs = new Date(endDate + "T00:00:00").getTime();
+    const endMs = new Date(`${endDate}T00:00:00.000Z`).getTime();
     for (let i = numDays - 1; i >= 0; i--) {
       const d = new Date(endMs - i * 86400000);
       const date = d.toISOString().split("T")[0];
@@ -94,7 +94,7 @@ export const getProgress = query({
       const goals = goalsByDate.get(date) ?? fallbackGoalsForDay(date);
       result.push({
         date,
-        dayLabel: DAY_NAMES[d.getDay()],
+        dayLabel: DAY_NAMES[d.getUTCDay()],
         calories: Math.round(m?.cals ?? 0),
         protein: Math.round(m?.prot ?? 0),
         carbs: Math.round(m?.carbs ?? 0),
