@@ -28,6 +28,26 @@ async function findExistingMealByIdempotencyKey(ctx: any, userId: string, date: 
     .first();
 }
 
+/**
+ * Resolve a date/time pair without mixing a client-supplied local date with
+ * server UTC time. When both are missing, derive both from the same instant.
+ * When only the date is supplied, keep the time on that date's frame.
+ */
+function resolveTargetDateTime(args: { date?: string; time?: string }): { date: string; time: string } {
+  const { date, time } = args;
+  if (date !== undefined && time !== undefined) {
+    return { date, time };
+  }
+  if (date !== undefined) {
+    return { date, time: time ?? "00:00" };
+  }
+  const now = new Date();
+  return {
+    date: now.toISOString().split("T")[0],
+    time: time ?? now.toISOString().slice(11, 16),
+  };
+}
+
 async function assertNoNearDuplicateMeal(ctx: any, userId: string, date: string, meal: any, time: string) {
   const meals = await ctx.db
     .query("meals")
@@ -229,8 +249,10 @@ export const relogMeal = mutation({
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
-    const targetDate = date !== undefined ? assertValidDateStr(date) : new Date().toISOString().split("T")[0];
-    const targetTime = time ?? new Date().toISOString().slice(11, 16);
+    const { date: targetDate, time: targetTime } = resolveTargetDateTime({
+      date: date !== undefined ? assertValidDateStr(date) : undefined,
+      time,
+    });
     const validated = validateMealWrite({
       name: src.name,
       calories: src.calories,

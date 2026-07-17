@@ -20,6 +20,26 @@ async function requireUserId(ctx: any): Promise<string> {
   return identity.subject;
 }
 
+/**
+ * Resolve a date/time pair without mixing a client-supplied local date with
+ * server UTC time. When both are missing, derive both from the same instant.
+ * When only the date is supplied, keep the time on that date's frame.
+ */
+function resolveTargetDateTime(args: { date?: string; time?: string }): { date: string; time: string } {
+  const { date, time } = args;
+  if (date !== undefined && time !== undefined) {
+    return { date, time };
+  }
+  if (date !== undefined) {
+    return { date, time: time ?? "00:00" };
+  }
+  const now = new Date();
+  return {
+    date: now.toISOString().split("T")[0],
+    time: time ?? now.toISOString().slice(11, 16),
+  };
+}
+
 export interface RecipeIngredient {
   name: string;
   grams: number;
@@ -207,8 +227,7 @@ export const logRecipe = mutation({
       : ingredientList;
     const scale = portions / recipe.servings;
     const rawBreakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
-    const targetDate = date ?? new Date().toISOString().split("T")[0];
-    const targetTime = time ?? new Date().toISOString().slice(11, 16);
+    const { date: targetDate, time: targetTime } = resolveTargetDateTime({ date, time });
     // Pass raw scaled values so validateMealWrite performs the single clamp+round step.
     const validated = validateMealWrite({
       name: recipe.name,

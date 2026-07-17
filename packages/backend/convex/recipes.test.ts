@@ -49,6 +49,7 @@ test("updateRecipe recomputes; logRecipe scales into a meal", async () => {
   expect(meals).toHaveLength(1);
   expect(meals[0].calories).toBe(790); // 395 per serving × 2
   expect(meals[0].nutritionSource).toBe("recipe");
+  expect(meals[0].time).toBe("00:00");
 });
 
 test("logRecipe with fractional portions rounds once from raw totals", async () => {
