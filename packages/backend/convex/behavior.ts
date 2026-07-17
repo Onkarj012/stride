@@ -60,7 +60,7 @@ export function deriveBehaviorProfile(
   now: number = Date.now(),
 ) {
   const cutoff = now - 30 * 86_400_000;
-  const recent = rows.filter((r) => r.ts >= cutoff);
+  const recent = rows.filter((r) => r.ts >= cutoff && r.kind !== "undo");
 
   const countBy = (kind: string) => {
     const m: Record<string, number> = {};

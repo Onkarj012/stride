@@ -5,6 +5,7 @@
  */
 
 export interface ExerciseMeta {
+  exerciseId: string;
   canonical_name: string;
   aliases: string[];
   met_value: number;
@@ -242,6 +243,7 @@ export function lookupExercise(name: string): ExerciseMeta | null {
   const categoryFallback = CATEGORY_FALLBACKS.find(({ keywords }) => keywords.test(stripped));
   if (categoryFallback) {
     return {
+      exerciseId: exerciseIdForName(categoryFallback.canonical_name),
       canonical_name: categoryFallback.canonical_name,
       aliases: [],
       met_value: categoryFallback.met_value,
@@ -257,6 +259,7 @@ export function lookupExercise(name: string): ExerciseMeta | null {
 
 function exerciseToMeta(entry: ExerciseDBEntry): ExerciseMeta {
   return {
+    exerciseId: exerciseIdForName(entry.canonical_name),
     canonical_name: entry.canonical_name,
     aliases: entry.aliases,
     met_value: entry.met_value,
@@ -264,6 +267,15 @@ function exerciseToMeta(entry: ExerciseDBEntry): ExerciseMeta {
     muscle_groups: entry.muscle_groups,
     category: entry.category,
   };
+}
+
+function exerciseIdForName(name: string): string {
+  return name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+
+/** Return the canonical exercise catalog for draft normalization. */
+export function listExercises(): ExerciseMeta[] {
+  return EXERCISE_DB.map(exerciseToMeta);
 }
 
 /**
@@ -299,6 +311,7 @@ export function matchExercises(
     const meta = lookupExercise(ex.name);
     if (meta) return { ...meta, matched: true };
     return {
+      exerciseId: exerciseIdForName(ex.name),
       canonical_name: ex.name,
       aliases: [],
       met_value: 5.0,

@@ -4,20 +4,22 @@ import {
   Platform, Animated as RNAnimated,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { useMutation, useQuery } from 'convex/react'
+import { api } from '@convex/_generated/api'
 import * as Haptics from '../../lib/haptics'
 import { MacroCard } from '../../components/MacroCard'
 import { MealLogCard, MealLogCardEmpty } from '../../components/MealLogCard'
 import { Icon } from '../../components/Icon'
 import { useTheme } from '../../components/theme'
 import { Button, SegToggle, Pill, AppText } from '../../components/ui'
-import { MACRO_TOTALS, TODAY_MEALS, RECIPES } from '../../data'
-import type { MealLogCardProps, Recipe, MacroData } from '../../data'
+import type { Recipe, MacroData } from '../../data'
 
 type NutritionView = 'today' | 'recipes'
+type RecipeView = Recipe & { id: string }
 
 // ─── Recipe card ───────────────────────────────────────────────────────────────
 
-function RecipeCard({ recipe, onOpen }: { recipe: Recipe; onOpen: () => void }) {
+function RecipeCard({ recipe, onOpen }: { recipe: RecipeView; onOpen: () => void }) {
   const t = useTheme()
   return (
     <Pressable
@@ -143,7 +145,7 @@ function AddSheet({ visible, onClose }: { visible: boolean; onClose: () => void 
 // ─── Recipe detail modal ────────────────────────────────────────────────────────
 
 function RecipeDetailModal({ recipe, onClose, onLog }: {
-  recipe: Recipe | null; onClose: () => void; onLog: (r: Recipe) => void
+  recipe: RecipeView | null; onClose: () => void; onLog: (r: RecipeView) => void
 }) {
   const t = useTheme()
   const [logged, setLogged] = useState(false)
@@ -416,11 +418,35 @@ function RecipeCreateModal({ visible, onClose, onCreate }: {
 export default function NutritionScreen() {
   const t = useTheme()
   const [view, setView] = useState<NutritionView>('today')
-  const [meals, setMeals] = useState<MealLogCardProps[]>(TODAY_MEALS)
-  const [recipes, setRecipes] = useState<Recipe[]>(RECIPES)
-  const [openRecipe, setOpenRecipe] = useState<Recipe | null>(null)
-  const [creating, setCreating] = useState(false)
+  const [openRecipe, setOpenRecipe] = useState<RecipeView | null>(null)
   const [adding, setAdding] = useState(false)
+  const today = new Date()
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  const meals = useQuery(api.meals.getMeals, { date: todayStr }) as Array<{ _id: string; name: string; time?: string; mealType?: string; calories: number; protein: number; carbs: number; fat: number }> | undefined
+  const profile = useQuery(api.profile.getProfile) as { proteinTarget?: number | null } | null | undefined
+  const rawRecipes = useQuery(api.recipes.getRecipes, {}) as Array<{ _id: string; name: string; servings: number; ingredients: string; steps?: string[]; perServing: { kcal: number; p: number; c: number; f: number }; source?: string }> | undefined
+  const logRecipe = useMutation(api.recipes.logRecipe)
+  const recipeViews: RecipeView[] = (rawRecipes ?? []).map((recipe) => {
+    let ingredients: string[] = []
+    try { ingredients = JSON.parse(recipe.ingredients).map((ingredient: { name: string; grams: number }) => `${ingredient.name} (${ingredient.grams}g)`) } catch { /* malformed saved recipe stays visible */ }
+    return {
+      id: recipe._id,
+      name: recipe.name,
+      tag: 'Saved recipe',
+      macros: { kcal: Math.round(recipe.perServing.kcal), protein: Math.round(recipe.perServing.p), carbs: Math.round(recipe.perServing.c), fat: Math.round(recipe.perServing.f) },
+      prepMin: 0,
+      servings: recipe.servings,
+      blurb: recipe.source ?? 'Saved recipe',
+      ingredients,
+      steps: recipe.steps ?? [],
+    }
+  })
+  const totals = {
+    kcal: Math.round((meals ?? []).reduce((sum, meal) => sum + meal.calories, 0)),
+    protein: Math.round((meals ?? []).reduce((sum, meal) => sum + meal.protein, 0)),
+    carbs: Math.round((meals ?? []).reduce((sum, meal) => sum + meal.carbs, 0)),
+    fat: Math.round((meals ?? []).reduce((sum, meal) => sum + meal.fat, 0)),
+  }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }} edges={['top']}>
@@ -445,19 +471,17 @@ export default function NutritionScreen() {
 
         {view === 'today' ? (
           <>
-            <MacroCard {...MACRO_TOTALS} />
-            {meals.map((m, i) => <MealLogCard key={i} {...m} index={i} />)}
-            <MealLogCardEmpty />
+            {!meals ? <AppText variant="body" color={t.textMuted}>Loading today's meals…</AppText> : <>
+              <MacroCard {...totals} />
+              <AppText variant="caption" color={t.textSubtle}>Protein target: {profile?.proteinTarget ?? 90}g</AppText>
+              {meals.length === 0 ? <MealLogCardEmpty /> : meals.map((meal) => (
+                <MealLogCard key={meal._id} meal={meal.name} time={meal.time ?? meal.mealType ?? 'Meal'} macros={{ kcal: Math.round(meal.calories), protein: Math.round(meal.protein), carbs: Math.round(meal.carbs), fat: Math.round(meal.fat) }} confirmed />
+              ))}
+            </>}
           </>
         ) : (
           <>
-            <Button
-              label="New recipe"
-              icon="plus"
-              variant="primary"
-              onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setCreating(true) }}
-            />
-            {recipes.map((r) => (
+            {!rawRecipes ? <AppText variant="body" color={t.textMuted}>Loading saved recipes…</AppText> : recipeViews.length === 0 ? <AppText variant="body" color={t.textMuted}>No saved recipes yet.</AppText> : recipeViews.map((r) => (
               <RecipeCard key={r.name} recipe={r} onOpen={() => setOpenRecipe(r)} />
             ))}
           </>
@@ -472,13 +496,7 @@ export default function NutritionScreen() {
       <RecipeDetailModal
         recipe={openRecipe}
         onClose={() => setOpenRecipe(null)}
-        onLog={r => setMeals(m => [...m, { meal: r.name, time: `${r.tag} · just now`, macros: r.macros, confirmed: true }])}
-      />
-
-      <RecipeCreateModal
-        visible={creating}
-        onClose={() => setCreating(false)}
-        onCreate={r => setRecipes(list => [r, ...list])}
+        onLog={r => { void logRecipe({ id: r.id as never, date: todayStr }) }}
       />
     </SafeAreaView>
   )

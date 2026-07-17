@@ -95,10 +95,10 @@ export async function applyDayAdjustment(ctx: any, userId: string, date: string)
   if (!plan) return null;
   const resolvedPlan = resolvePlanForDayAdjustment(plan, profile ?? {});
 
-  const workouts = await ctx.db
+  const workouts = (await ctx.db
     .query("workouts")
     .withIndex("by_user_date", (q: any) => q.eq("userId", userId).eq("date", date))
-    .collect();
+    .collect()).filter((workout: any) => !workout.undoneAt);
   const burn = workouts.reduce((s: number, w: any) => s + (w.caloriesBurned ?? 0), 0);
   const adj = adjustCaloriesForDay(resolvedPlan, burn);
 

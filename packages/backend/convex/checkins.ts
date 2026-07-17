@@ -3,6 +3,11 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { ConvexError, v } from "convex/values";
 import { callAI, parseJSON } from "./ai/llm";
+import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { finalizeActionGroupAfterWrite } from "./actions_group";
+import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
+import { assertValidDate } from "./validation";
+import { readActiveRowsForDate, readActiveSleepForDate, readLatestActiveStepsForDate } from "./active_rows";
 
 type CheckInWindow = "morning" | "day" | "evening" | "night";
 type CheckInSource = "registry" | "llm" | "template";
@@ -49,7 +54,7 @@ export type SelectionContext = {
   workoutCount: number;
   waterMl: number;
   hasSleep: boolean;
-  stepsCount: number;
+  stepsCount: number | undefined;
   moodCount: number;
 };
 
@@ -348,6 +353,68 @@ function assertDate(date: string) {
   if (!DATE_RE.test(date)) throw new Error("date must be YYYY-MM-DD");
 }
 
+async function validateSubmittedAnswer(ctx: MutationCtx, userId: string, args: {
+  questionId: string;
+  date: string;
+  window: CheckInWindow;
+  source?: CheckInSource;
+  answerType?: AnswerType;
+  value: string;
+  numericValue?: number;
+  booleanValue?: boolean;
+  templateId?: string;
+  skipped?: boolean;
+}): Promise<CheckInCandidate> {
+  let definition: CheckInCandidate | null = null;
+  if (args.templateId) {
+    const template = templateById(args.templateId);
+    if (template) definition = templateCandidate(template, args.window, await getUserUnits(ctx, userId));
+  }
+  if (!definition) definition = REGISTRY_QUESTIONS.find((question) => question.id === args.questionId) ?? null;
+  if (!definition && args.source === "llm") {
+    const cached = await ctx.db.query("check_in_llm_questions")
+      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
+      .first();
+    // LLM questions are user-scoped and are validated against the stored definition
+    // in submitAnswer below when a cache row is available. This branch intentionally
+    // rejects a question that cannot be tied to a server-owned definition.
+    if (cached) definition = parseLlmCache(cached, args.window).find((question) => question.id === args.questionId) ?? null;
+  }
+  if (!definition) throw new ConvexError("Unknown check-in question");
+  if (args.templateId && definition.templateId !== args.templateId) throw new ConvexError("Check-in template does not match question");
+  if (args.source && args.source !== definition.source) throw new ConvexError("Check-in source does not match question definition");
+  if (args.answerType && args.answerType !== definition.answerType) throw new ConvexError("Check-in answer type does not match question definition");
+
+  const skipped = args.skipped ?? args.value === "skip";
+  if (skipped) return definition;
+  const options = definition.answerType === "scale"
+    ? definition.options ?? scaleOptions(definition.min, definition.max)
+    : definition.options ?? [];
+  if ((definition.answerType === "choice" || definition.answerType === "scale" || definition.answerType === "yes_no") && !options.some((option) => option.value === args.value)) {
+    throw new ConvexError("Check-in answer is not one of the server-defined options");
+  }
+  if (definition.answerType === "number" || definition.answerType === "scale") {
+    if (args.numericValue == null || !Number.isFinite(args.numericValue)) throw new ConvexError("Numeric check-in answer is required");
+    if (definition.min != null && args.numericValue < definition.min) throw new ConvexError("Check-in answer is below the allowed range");
+    if (definition.max != null && args.numericValue > definition.max) throw new ConvexError("Check-in answer is above the allowed range");
+  }
+  if (definition.answerType === "scale" && args.numericValue != null) {
+    const selectedOption = options.find((option) => option.value === args.value);
+    const canonicalNumericValue = selectedOption == null ? Number.NaN : Number(selectedOption.value);
+    if (Number.isFinite(canonicalNumericValue) && args.numericValue !== canonicalNumericValue) {
+      throw new ConvexError("Check-in answer values do not match");
+    }
+  }
+  if (definition.answerType === "yes_no" && args.booleanValue == null && args.value !== "yes" && args.value !== "no") {
+    throw new ConvexError("Boolean check-in answer is required");
+  }
+  if (definition.answerType === "yes_no" && args.booleanValue != null && (args.value === "yes" || args.value === "no")) {
+    const expectedBooleanValue = args.value === "yes";
+    if (args.booleanValue !== expectedBooleanValue) throw new ConvexError("Check-in answer values do not match");
+  }
+  return definition;
+}
+
 function dateAdd(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -382,7 +449,7 @@ export function isCovered(candidate: CheckInCandidate, ctx: SelectionContext): b
     case "water":
       return ctx.waterMl > 0;
     case "steps":
-      return ctx.stepsCount > 0;
+      return ctx.stepsCount != null && ctx.stepsCount > 0;
     case "mood":
       return ctx.moodCount > 0;
     default:
@@ -646,7 +713,7 @@ export async function getNextCheckInForContext(ctx: QueryCtx, args: {
     workoutCount: args.todayWorkouts.length,
     waterMl: args.waterMl,
     hasSleep: !!args.sleep,
-    stepsCount: args.steps?.count ?? 0,
+    stepsCount: args.steps?.count,
     moodCount: args.moodCount,
   };
   const todayAnswers = todayRows.map((row) => ({
@@ -702,12 +769,12 @@ export const getNextCheckIn = query({
     const [profile, settings, meals, workouts, water, sleep, steps, moods] = await Promise.all([
       ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
       ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
-      ctx.db.query("meals").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("workouts").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("water_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).collect(),
-      ctx.db.query("sleep_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).first(),
-      ctx.db.query("steps_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).first(),
-      ctx.db.query("mood_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).take(10),
+      readActiveRowsForDate(ctx, "meals", userId, date),
+      readActiveRowsForDate(ctx, "workouts", userId, date),
+      readActiveRowsForDate(ctx, "water_logs", userId, date),
+      readActiveSleepForDate(ctx, userId, date),
+      readLatestActiveStepsForDate(ctx, userId, date),
+      readActiveRowsForDate(ctx, "mood_logs", userId, date).then((rows) => rows.slice(0, 10)),
     ]);
 
     return getNextCheckInForContext(ctx, {
@@ -807,9 +874,10 @@ export const submitAnswer = mutation({
     time: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    assertDate(args.date);
+    assertValidDate(args.date);
     const userId = await requireUserId(ctx);
     const skipped = args.skipped ?? args.value === "skip";
+    const definition = await validateSubmittedAnswer(ctx, userId, args);
     const now = Date.now();
     const existing = await ctx.db
       .query("check_in_answers")
@@ -825,8 +893,8 @@ export const submitAnswer = mutation({
       }
     }
 
-    const source = args.source ?? (args.templateId ? "template" : "registry");
-    const answerType = args.answerType ?? (args.numericValue != null ? "number" : "choice");
+    const source = definition.source;
+    const answerType = definition.answerType;
     const row = {
       source,
       window: args.window,
@@ -907,48 +975,52 @@ async function applyStructuredAnswer(ctx: MutationCtx, userId: string, args: {
   } else if (kind === "water") {
     const ml = args.numericValue;
     if (ml == null || ml <= 0) return;
-    const existing = await ctx.db
-      .query("water_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, { ml, time });
-    else await ctx.db.insert("water_logs", { userId, date: args.date, ml, time });
+    await writeCheckinRecovery(ctx, userId, args, { kind: "water", ml, mode: "upsert", time });
   } else if (kind === "steps") {
-    const count = Math.round(args.numericValue ?? 0);
+    if (args.numericValue == null) return;
+    const count = Math.round(args.numericValue);
     if (count < 0) return;
-    const existing = await ctx.db
-      .query("steps_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, { count });
-    else await ctx.db.insert("steps_logs", { userId, date: args.date, count });
+    await writeCheckinRecovery(ctx, userId, args, { kind: "steps", count, time });
   } else if (kind === "mood") {
     const rating = Math.round(args.numericValue ?? Number(args.value));
     if (rating < 1 || rating > 5) return;
     const mood = { rating, time, note: `check-in: ${args.questionId}` };
-    const existing = await ctx.db
-      .query("mood_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, mood);
-    else await ctx.db.insert("mood_logs", { userId, date: args.date, ...mood });
+    await writeCheckinRecovery(ctx, userId, args, { kind: "mood", ...mood, mode: "upsert" });
   } else if (kind === "sleep") {
     const sleep = sleepFromAnswer(args.value, args.numericValue);
     if (!sleep) return;
-    const existing = await ctx.db
-      .query("sleep_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existing) await ctx.db.patch(existing._id, sleep);
-    else await ctx.db.insert("sleep_logs", { userId, date: args.date, ...sleep });
+    await writeCheckinRecovery(ctx, userId, args, { kind: "sleep", ...sleep });
   }
+}
+
+async function writeCheckinRecovery(ctx: MutationCtx, userId: string, source: { questionId: string; date: string; value: string }, payload: Record<string, any>) {
+  const draft = buildRecoveryDraft({ ...payload, date: source.date, source: "checkin", entryKind: payload.kind });
+  const canonicalPayload = {
+    ...recoveryPayloadFromDraft(draft),
+    ...(payload.mode ? { mode: payload.mode } : {}),
+  };
+  const rawInput = JSON.stringify({ questionId: source.questionId, date: source.date, value: source.value, payload: canonicalPayload });
+  const groupKey = deriveGroupKey({ userId, sourceSurface: "checkin", rawInput });
+  const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+    group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "checkin", rawInput },
+    member: {
+      memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "recovery", payloadFingerprint: JSON.stringify(payload), ordinal: 0 }),
+      payload: canonicalPayload,
+      provenance: "user_reported",
+      validation: { status: "valid", messages: [] },
+      reversible: true,
+      resolvedDate: source.date,
+    },
+  });
+  await finalizeActionGroupAfterWrite(ctx, userId, groupKey);
+  return result;
 }
 
 function registryStructuredKind(questionId: string): StructuredKind | null {
   return REGISTRY_QUESTIONS.find((question) => question.id === questionId)?.structuredKind ?? null;
 }
 
-function sleepFromAnswer(value: string, numericValue?: number): { hours: number; quality: string; note?: string } | null {
+function sleepFromAnswer(value: string, numericValue?: number): { hours?: number; band?: string; quality?: string; note?: string } | null {
   if (numericValue != null) {
     if (numericValue < 0 || numericValue > 24) return null;
     const quality = numericValue < 6 ? "poor" : numericValue < 7 ? "ok" : numericValue < 8.5 ? "good" : "great";
@@ -956,17 +1028,17 @@ function sleepFromAnswer(value: string, numericValue?: number): { hours: number;
   }
   switch (value) {
     case "under_6":
-      return { hours: 5.5, quality: "poor", note: "from check-in: under 6h" };
+      return { band: "under_6", note: "from check-in: under 6h" };
     case "six_to_eight":
-      return { hours: 7, quality: "good", note: "from check-in: 6-8h" };
+      return { band: "six_to_eight", note: "from check-in: 6-8h" };
     case "eight_plus":
-      return { hours: 8.25, quality: "great", note: "from check-in: 8h+" };
+      return { band: "eight_plus", note: "from check-in: 8h+" };
     case "poor":
-      return { hours: 6, quality: "poor", note: "from check-in: poor sleep" };
+      return { quality: "poor", note: "from check-in: poor sleep" };
     case "ok":
-      return { hours: 7, quality: "ok", note: "from check-in: ok sleep" };
+      return { quality: "ok", note: "from check-in: ok sleep" };
     case "good":
-      return { hours: 8, quality: "good", note: "from check-in: good sleep" };
+      return { quality: "good", note: "from check-in: good sleep" };
     default:
       return null;
   }
@@ -998,7 +1070,7 @@ type DailyLlmContext = {
   meals: Array<{ name: string; mealType?: string }>;
   workouts: Array<{ name: string; intensity: string }>;
   waterMl: number;
-  sleep: { hours: number; quality: string } | null;
+  sleep: { hours?: number; band?: string; quality?: string } | null;
   steps: number | null;
   answers: string;
 };
@@ -1009,11 +1081,11 @@ export const getDailyLlmContext = internalQuery({
     assertDate(date);
     const [profile, meals, workouts, water, sleep, steps, answers] = await Promise.all([
       ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
-      ctx.db.query("meals").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).take(8),
-      ctx.db.query("workouts").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).take(5),
-      ctx.db.query("water_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).take(10),
-      ctx.db.query("sleep_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).first(),
-      ctx.db.query("steps_logs").withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date)).first(),
+      readActiveRowsForDate(ctx, "meals", userId, date).then((rows) => rows.slice(0, 8)),
+      readActiveRowsForDate(ctx, "workouts", userId, date).then((rows) => rows.slice(0, 5)),
+      readActiveRowsForDate(ctx, "water_logs", userId, date).then((rows) => rows.slice(0, 10)),
+      readActiveSleepForDate(ctx, userId, date),
+      readLatestActiveStepsForDate(ctx, userId, date),
       getAnswerSummary(ctx, userId, date),
     ]);
     return {
@@ -1023,7 +1095,7 @@ export const getDailyLlmContext = internalQuery({
       meals: meals.map((meal) => ({ name: meal.name, mealType: meal.mealType })),
       workouts: workouts.map((workout) => ({ name: workout.name, intensity: workout.intensity })),
       waterMl: water.reduce((sum, row) => sum + row.ml, 0),
-      sleep: sleep ? { hours: sleep.hours, quality: sleep.quality } : null,
+      sleep: sleep ? { hours: sleep.hours, band: sleep.band, quality: sleep.quality } : null,
       steps: steps?.count ?? null,
       answers,
     };

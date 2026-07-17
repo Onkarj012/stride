@@ -26,6 +26,31 @@ export type WorkoutValidationInput = {
   parseError?: string;
 };
 
+export function assertValidDate(value: string): string {
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) throw new Error("date must be YYYY-MM-DD");
+  const [year, month, day] = trimmed.split("-").map(Number);
+  const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (month < 1 || month > 12 || day < 1 || day > maxDay) throw new Error("date must be a valid calendar date");
+  return trimmed;
+}
+
+export function assertValidTime(value: string): string {
+  const trimmed = value.trim();
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(trimmed)) throw new Error("time must be HH:MM");
+  return trimmed;
+}
+
+export function assertInRange(field: string, value: number, min: number, max: number): number {
+  if (!Number.isFinite(value) || value < min || value > max) throw new Error(`${field} must be between ${min} and ${max}`);
+  return value;
+}
+
+export function assertEnum<T extends string>(field: string, value: string, allowed: readonly T[]): T {
+  if (!allowed.includes(value as T)) throw new Error(`${field} is invalid`);
+  return value as T;
+}
+
 const MEAL_REJECT_MAX_KCAL = 5000;
 const MEAL_BORDERLINE_MAX_KCAL = 3500;
 const WORKOUT_REJECT_MAX_KCAL = 3000;
@@ -256,6 +281,10 @@ export function workoutContentHash(
   ].join("|"));
 }
 
+/**
+ * Legacy domain-row dedupe remains content-hash plus time-window based. Canonical member keys are authoritative;
+ * callers should use this content hash as the member payloadFingerprint rather than as a competing retry scheme.
+ */
 export function buildIdempotencyKey(parts: {
   userId: string;
   date: string;

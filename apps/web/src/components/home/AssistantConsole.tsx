@@ -215,7 +215,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const upsertSleep = useMutation(api.wellness.upsertSleep);
   const addMood = useMutation(api.wellness.addMood);
   const upsertSteps = useMutation(api.wellness.upsertSteps);
-  const recordActivity = useMutation(api.gamification.recordActivity);
   const recordBehavior = useMutation(api.behavior.recordBehavior);
   const submitCheckInAnswer = useMutation(api.checkins.submitAnswer);
 
@@ -359,7 +358,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         void recordBehavior({ kind: "log", key: "meal_confirm" }).catch(() => {});
         setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
-        if (!isPastDay) await recordActivity({ type: "meal" }).catch(() => {});
       } else if (d.kind === "workout") {
         const calorieResult = d.calorieResult ?? null;
         await addWorkout({
@@ -385,7 +383,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         });
         setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
-        if (!isPastDay) await recordActivity({ type: "workout" }).catch(() => {});
       } else if (d.kind === "sleep") {
         await upsertSleep({ hours: d.hours, quality: d.quality, date });
         setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
@@ -418,7 +415,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       toast.error(isDuplicate ? "Possible duplicate" : "Couldn't log", message);
     }
     if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
-  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordActivity, recordBehavior, setPendingDrafts, toast, pendingDrafts.length]);
+  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordBehavior, setPendingDrafts, toast, pendingDrafts.length]);
 
   const handleDiscard = useCallback(() => {
     setPendingDrafts([]);

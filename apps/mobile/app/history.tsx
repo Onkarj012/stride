@@ -1,215 +1,150 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ScrollView, View, Pressable } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
+import { useQuery } from 'convex/react'
+import { api } from '@convex/_generated/api'
 import Animated, { FadeInDown } from 'react-native-reanimated'
 import * as Haptics from '../lib/haptics'
 import { WorkoutSessionCard } from '../components/WorkoutSessionCard'
 import { MealLogCard } from '../components/MealLogCard'
-import { useTheme, SKY, BUBBLEGUM, MINT, LAVENDER } from '../components/theme'
+import { useTheme, SKY, BUBBLEGUM, MINT } from '../components/theme'
 import { AppText, IconButton, ProgressBar } from '../components/ui'
-import { HISTORY_DAYS, dayDetail } from '../data'
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 const CAL_CELL_GAP = 4
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+const SPRING = { stiffness: 220, damping: 26 } as const
 
-function getMonthGrid(year: number, month: number): (number | null)[][] {
-  const firstDay = new Date(year, month - 1, 1).getDay()
-  const offset = (firstDay + 6) % 7
-  const daysInMonth = new Date(year, month, 0).getDate()
-  const weeks: (number | null)[][] = []
-  let week: (number | null)[] = Array(offset).fill(null)
-  for (let d = 1; d <= daysInMonth; d++) {
-    week.push(d)
-    if (week.length === 7) { weeks.push(week); week = [] }
-  }
-  if (week.length > 0) {
-    while (week.length < 7) week.push(null)
-    weeks.push(week)
-  }
-  return weeks
+type CalendarDay = { meals: number; workouts: number; calories: number; burned: number }
+type HistoryData = {
+  meals?: Array<{ _id: string; name: string; calories: number; protein: number; carbs: number; fat: number; time?: string; mealType?: string }>
+  workouts?: Array<{ _id: string; name: string; duration?: string | null; intensity?: string; caloriesBurned?: number | null; exercises?: unknown; structuredSets?: string | null }>
 }
 
-const SPRING = { stiffness: 220, damping: 26 } as const
+function localDateStr(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function monthGrid(year: number, month: number): (number | null)[][] {
+  const offset = (new Date(year, month - 1, 1).getDay() + 6) % 7
+  const days = new Date(year, month, 0).getDate()
+  const cells: (number | null)[] = [...Array(offset).fill(null)]
+  for (let day = 1; day <= days; day++) cells.push(day)
+  while (cells.length % 7) cells.push(null)
+  return Array.from({ length: cells.length / 7 }, (_, i) => cells.slice(i * 7, i * 7 + 7))
+}
+
+function parseExercises(workout: NonNullable<HistoryData['workouts']>[number]) {
+  const raw = workout.exercises ?? workout.structuredSets
+  if (!raw) return []
+  const parsed = Array.isArray(raw) ? raw : (() => { try { return JSON.parse(raw as string) } catch { return [] } })()
+  return Array.isArray(parsed) ? parsed.map((exercise: any) => ({
+    name: exercise?.normalizedName ?? exercise?.name ?? 'Exercise',
+    sets: Array.isArray(exercise?.sets) ? exercise.sets.map((set: any) => ({
+      weight: set?.weight != null ? String(set.weight) : set?.duration_min != null ? `${set.duration_min} min` : '—',
+      reps: Number(set?.reps ?? 0),
+    })) : [],
+  })) : []
+}
 
 export default function HistoryScreen() {
   const router = useRouter()
-  const [selected, setSelected] = useState(25)
-  const [calYear, setCalYear] = useState(2026)
-  const [calMonth, setCalMonth] = useState(6)
-  const [gridWidth, setGridWidth] = useState(0)
   const t = useTheme()
-  const cellSize = gridWidth > 0 ? Math.floor((gridWidth - CAL_CELL_GAP * 6) / 7) : 36
+  const today = new Date()
+  const [selected, setSelected] = useState(localDateStr(today))
+  const [month, setMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1))
+  const calendarData = useQuery(api.history.getCalendar, { year: month.getFullYear(), month: month.getMonth() + 1 }) as Record<string, CalendarDay> | undefined
+  const dayData = useQuery(api.history.getDayHistory, { date: selected }) as HistoryData | undefined
+  const water = useQuery(api.wellness.getWater, { date: selected }) as Array<{ ml: number }> | undefined
+  const sleep = useQuery(api.wellness.getSleep, { date: selected }) as { hours?: number; band?: string } | null | undefined
+  const recovery = useQuery(api.wellness.getRecoveryState, { date: selected }) as { state?: string; confidence?: string; missingInputs?: string[] } | null | undefined
+  const grid = monthGrid(month.getFullYear(), month.getMonth() + 1)
+  const meals = dayData?.meals ?? []
+  const workouts = dayData?.workouts ?? []
+  const waterMl = water?.reduce((sum, row) => sum + row.ml, 0) ?? 0
+  const macros = useMemo(() => meals.reduce((sum, meal) => ({
+    kcal: sum.kcal + meal.calories,
+    protein: sum.protein + meal.protein,
+    carbs: sum.carbs + meal.carbs,
+    fat: sum.fat + meal.fat,
+  }), { kcal: 0, protein: 0, carbs: 0, fat: 0 }), [meals])
 
-  const detail = dayDetail(selected)
-  const weeks = getMonthGrid(calYear, calMonth)
-  const isJune2026 = calYear === 2026 && calMonth === 6
-
-  function prevMonth() {
+  function shiftMonth(delta: number) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    if (calMonth === 1) { setCalYear(y => y - 1); setCalMonth(12) }
-    else setCalMonth(m => m - 1)
+    const nextMonth = new Date(month.getFullYear(), month.getMonth() + delta, 1)
+    const selectedDay = new Date(`${selected}T12:00:00`).getDate()
+    const lastDay = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate()
+    setMonth(nextMonth)
+    setSelected(localDateStr(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(selectedDay, lastDay))))
   }
 
-  function nextMonth() {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    if (calMonth === 12) { setCalYear(y => y + 1); setCalMonth(1) }
-    else setCalMonth(m => m + 1)
-  }
-
-  const scoreColor = (score: number) => {
-    if (score === 0) return t.dimBgMid
-    if (score === 1) return BUBBLEGUM
-    if (score === 2) return SKY
-    return MINT
-  }
+  const selectedDate = new Date(`${selected}T12:00:00`)
+  const monthLabel = month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }} edges={['top']}>
-      <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 32 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 32 }} showsVerticalScrollIndicator={false}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 20, paddingTop: 8 }}>
           <IconButton icon="back" onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.back() }} size={40} variant="ghost" iconSize={24} iconColor={t.textMuted} marginLeft={-8} />
           <AppText variant="h2">History</AppText>
         </View>
 
-        {/* Calendar */}
-        <Animated.View
-          entering={FadeInDown.springify().stiffness(SPRING.stiffness).damping(SPRING.damping)}
-          style={[{ backgroundColor: t.card, borderRadius: 20, padding: 20, marginBottom: 20 }, t.cardShadow]}
-        >
-          {/* Month navigation */}
+        <Animated.View entering={FadeInDown.springify().stiffness(SPRING.stiffness).damping(SPRING.damping)} style={[{ backgroundColor: t.card, borderRadius: 20, padding: 20, marginBottom: 20 }, t.cardShadow]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-            <IconButton icon="chevronLeft" onPress={prevMonth} size={36} variant="ghost" iconSize={18} iconColor={t.textMuted} />
-            <View style={{ alignItems: 'center' }}>
-              <AppText variant="title" style={{ fontSize: 17, letterSpacing: -0.3 }}>{MONTH_NAMES[calMonth - 1]}</AppText>
-              <AppText variant="caption" style={{ marginTop: 1 }}>{calYear}</AppText>
-            </View>
-            <IconButton icon="chevronRight" onPress={nextMonth} size={36} variant="ghost" iconSize={18} iconColor={t.textMuted} />
+            <IconButton icon="chevronLeft" onPress={() => shiftMonth(-1)} size={36} variant="ghost" iconSize={18} iconColor={t.textMuted} />
+            <AppText variant="title" style={{ fontSize: 17 }}>{monthLabel}</AppText>
+            <IconButton icon="chevronRight" onPress={() => shiftMonth(1)} size={36} variant="ghost" iconSize={18} iconColor={t.textMuted} />
           </View>
-
-          {/* Legend */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16, justifyContent: 'flex-end' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <View style={{ width: 9, height: 9, borderRadius: 3, backgroundColor: MINT }} />
-              <AppText variant="caption" color={t.textMuted} style={{ fontFamily: 'Manrope_600SemiBold', fontSize: 11 }}>Full day</AppText>
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <View style={{ width: 9, height: 9, borderRadius: 3, backgroundColor: SKY }} />
-              <AppText variant="caption" color={t.textMuted} style={{ fontFamily: 'Manrope_600SemiBold', fontSize: 11 }}>Partial</AppText>
-            </View>
-          </View>
-
-          {/* Weekday headers */}
           <View style={{ flexDirection: 'row', marginBottom: 8 }}>
-            {WEEKDAYS.map((d, i) => (
-              <View key={i} style={{ flex: 1, alignItems: 'center' }}>
-                <AppText variant="overline" style={{ fontSize: 11, letterSpacing: 0 }}>{d}</AppText>
-              </View>
-            ))}
+            {WEEKDAYS.map((day, index) => <View key={index} style={{ flex: 1, alignItems: 'center' }}><AppText variant="overline" style={{ fontSize: 11, letterSpacing: 0 }}>{day}</AppText></View>)}
           </View>
-
-          {/* Day grid — onLayout gives true container width, avoiding Dimensions() init issues on Android */}
-          <View
-            onLayout={e => setGridWidth(e.nativeEvent.layout.width)}
-            style={{ gap: CAL_CELL_GAP }}
-          >
-            {gridWidth > 0 && weeks.map((week, wi) => (
-              <View key={wi} style={{ flexDirection: 'row', gap: CAL_CELL_GAP }}>
-                {week.map((day, di) => {
-                  if (day === null) return <View key={di} style={{ width: cellSize, height: cellSize }} />
-                  const entry = isJune2026 ? HISTORY_DAYS.find(h => h.day === day) : undefined
-                  const score = entry?.score ?? 0
-                  const isSelected = isJune2026 && selected === day
-                  return (
-                    <Pressable
-                      key={day}
-                      onPress={() => {
-                        if (!isJune2026) return
-                        Haptics.selectionAsync()
-                        setSelected(day)
-                      }}
-                      style={({ pressed }) => ({
-                        width: cellSize, height: cellSize, borderRadius: 10,
-                        backgroundColor: isSelected ? t.accent : scoreColor(score),
-                        alignItems: 'center', justifyContent: 'center',
-                        transform: [{ scale: pressed ? 0.88 : 1 }],
-                      })}
-                    >
-                      <AppText
-                        variant={isSelected ? 'label' : 'caption'}
-                        color={isSelected ? t.text : score >= 2 ? t.text : t.textMuted}
-                        style={{ fontSize: 12, fontFamily: isSelected ? 'Manrope_800ExtraBold' : 'Manrope_700Bold' }}
-                      >
-                        {day}
-                      </AppText>
-                    </Pressable>
-                  )
-                })}
-              </View>
-            ))}
+          <View style={{ gap: CAL_CELL_GAP }}>
+            {grid.map((week, wi) => <View key={wi} style={{ flexDirection: 'row', gap: CAL_CELL_GAP }}>
+              {week.map((day, di) => {
+                if (day === null) return <View key={di} style={{ flex: 1, aspectRatio: 1 }} />
+                const date = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+                const entry = calendarData?.[date]
+                const active = selected === date
+                return <Pressable key={day} onPress={() => { Haptics.selectionAsync(); setSelected(date) }} style={({ pressed }) => ({ flex: 1, aspectRatio: 1, borderRadius: 10, backgroundColor: active ? t.accent : entry?.meals || entry?.workouts ? entry.workouts ? MINT : SKY : t.dimBg, alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.75 : 1 })}>
+                  <AppText variant={active ? 'label' : 'caption'} color={active ? t.text : entry?.meals || entry?.workouts ? t.text : t.textMuted} style={{ fontSize: 12 }}>{day}</AppText>
+                </Pressable>
+              })}
+            </View>)}
           </View>
         </Animated.View>
 
-        {/* Day detail */}
-        {isJune2026 ? (
-          <Animated.View key={selected} entering={FadeInDown.springify().stiffness(SPRING.stiffness).damping(SPRING.damping)}>
-            <AppText variant="title" style={{ letterSpacing: -0.5, marginBottom: 20 }}>June {selected}, 2026</AppText>
-
-            <AppText variant="overline" style={{ marginBottom: 12 }}>Workout</AppText>
-            {detail.workout ? (
-              <WorkoutSessionCard session={detail.workout} />
-            ) : (
-              <View style={[{ backgroundColor: t.card, borderRadius: 16, padding: 20 }, t.cardShadow]}>
-                <AppText variant="body" color={t.textMuted}>Rest day — no workout logged.</AppText>
-              </View>
-            )}
-
-            <AppText variant="overline" style={{ marginTop: 20, marginBottom: 12 }}>Meals · {detail.meals.length} logged</AppText>
-            <View style={{ gap: 12 }}>
-              {detail.meals.map((m, i) => <MealLogCard key={i} {...m} index={i} />)}
-            </View>
-
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
+        <Animated.View key={selected} entering={FadeInDown.springify().stiffness(SPRING.stiffness).damping(SPRING.damping)}>
+          <AppText variant="title" style={{ letterSpacing: -0.5, marginBottom: 20 }}>{selectedDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</AppText>
+          {!dayData ? <AppText variant="body" color={t.textMuted}>Loading this day…</AppText> : <>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 20 }}>
               <View style={[{ flex: 1, backgroundColor: t.card, borderRadius: 16, padding: 16 }, t.cardShadow]}>
-                <AppText variant="overline" style={{ marginBottom: 8 }}>Sleep</AppText>
-                <AppText variant="hero" style={{ fontSize: 24, letterSpacing: -1 }}>
-                  {detail.sleepHrs.toFixed(1)}<AppText variant="caption"> h</AppText>
-                </AppText>
-                <View style={{ marginTop: 8 }}>
-                  <ProgressBar value={Math.min(detail.sleepHrs / 8, 1)} color={SKY} height={6} animated={false} />
-                </View>
+                <AppText variant="overline" style={{ marginBottom: 8 }}>Calories</AppText>
+                <AppText variant="hero" style={{ fontSize: 24 }}>{Math.round(macros.kcal)}</AppText>
+                <AppText variant="caption" color={t.textMuted}>P {Math.round(macros.protein)} · C {Math.round(macros.carbs)} · F {Math.round(macros.fat)}</AppText>
               </View>
               <View style={[{ flex: 1, backgroundColor: t.card, borderRadius: 16, padding: 16 }, t.cardShadow]}>
                 <AppText variant="overline" style={{ marginBottom: 8 }}>Water</AppText>
-                <AppText variant="hero" style={{ fontSize: 24, letterSpacing: -1 }}>
-                  {(detail.waterMl / 1000).toFixed(1)}<AppText variant="caption"> L</AppText>
-                </AppText>
-                <View style={{ marginTop: 8 }}>
-                  <ProgressBar value={Math.min(detail.waterMl / 2500, 1)} color={BUBBLEGUM} height={6} animated={false} />
-                </View>
+                <AppText variant="hero" style={{ fontSize: 24 }}>{(waterMl / 1000).toFixed(1)}<AppText variant="caption"> L</AppText></AppText>
+                <ProgressBar value={Math.min(waterMl / 2500, 1)} color={SKY} height={6} animated={false} />
               </View>
             </View>
-          </Animated.View>
-        ) : (
-          <Animated.View entering={FadeInDown.springify().stiffness(SPRING.stiffness).damping(SPRING.damping)}>
-            <View style={[{ backgroundColor: t.card, borderRadius: 16, padding: 20, alignItems: 'center' }, t.cardShadow]}>
-              <AppText variant="label" color={t.textMuted} style={{ textAlign: 'center', fontSize: 15 }}>
-                No data for {MONTH_NAMES[calMonth - 1]} {calYear}
-              </AppText>
-              <AppText variant="small" color={t.textSubtle} style={{ marginTop: 4, textAlign: 'center' }}>
-                Navigate to June 2026 to see logged days.
-              </AppText>
+
+            <AppText variant="overline" style={{ marginBottom: 12 }}>Workout · {workouts.length}</AppText>
+            {workouts.length === 0 ? <View style={[{ backgroundColor: t.card, borderRadius: 16, padding: 20, marginBottom: 20 }, t.cardShadow]}><AppText variant="body" color={t.textMuted}>Rest day — no workout logged.</AppText></View> : workouts.map(workout => <View key={workout._id} style={{ marginBottom: 12 }}><WorkoutSessionCard session={{ title: workout.name, date: workout.intensity ?? 'Logged workout', durationMin: Number.parseInt(workout.duration ?? '', 10) || 0, burnKcal: workout.caloriesBurned ?? 0, exercises: parseExercises(workout) }} /></View>)}
+
+            <AppText variant="overline" style={{ marginTop: 8, marginBottom: 12 }}>Meals · {meals.length} logged</AppText>
+            <View style={{ gap: 12 }}>
+              {meals.length === 0 ? <View style={[{ backgroundColor: t.card, borderRadius: 16, padding: 20 }, t.cardShadow]}><AppText variant="body" color={t.textMuted}>No meals logged.</AppText></View> : meals.map(meal => <MealLogCard key={meal._id} meal={meal.name} time={meal.time ?? meal.mealType ?? 'Meal'} macros={{ kcal: Math.round(meal.calories), protein: Math.round(meal.protein), carbs: Math.round(meal.carbs), fat: Math.round(meal.fat) }} confirmed />)}
             </View>
-          </Animated.View>
-        )}
+
+            {(recovery || sleep) && <View style={{ marginTop: 20, padding: 14, borderRadius: 14, borderWidth: 1, borderColor: t.border, backgroundColor: t.card }}>
+              <AppText variant="label">{recovery ? 'Recovery record' : 'Sleep record'}</AppText>
+              {recovery && <AppText variant="caption" color={t.textMuted} style={{ marginTop: 4 }}>state: {recovery.state ?? 'unknown'} · {recovery.confidence ?? 'confidence unavailable'}</AppText>}
+              {recovery && recovery.missingInputs?.length ? <AppText variant="caption" color={t.textMuted}>unresolved: {recovery.missingInputs.join(', ')}</AppText> : null}
+              {sleep?.hours != null ? <AppText variant="caption" color={t.textMuted}>sleep: {sleep.hours}h</AppText> : sleep?.band ? <AppText variant="caption" color={t.textMuted}>sleep band: {sleep.band.replaceAll('_', ' ')}</AppText> : null}
+            </View>}
+          </>}
+        </Animated.View>
       </ScrollView>
     </SafeAreaView>
   )

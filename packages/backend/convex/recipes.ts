@@ -1,5 +1,10 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { finalizeActionGroupAfterWrite } from "./actions_group";
+import { findBestMatch } from "./food_memory_match";
+import { buildMealDraft, mealPayloadFromDraft } from "./nutrition_draft";
 import {
   buildNutritionResult,
   computeNutrition,
@@ -11,7 +16,6 @@ import {
   mealContentHash,
   normalizeLogSource,
   timeWindowKey,
-  validateMealWrite,
 } from "./validation";
 
 async function requireUserId(ctx: any): Promise<string> {
@@ -186,73 +190,71 @@ export const logRecipe = mutation({
     ingredients: v.optional(ingredientValidator),
     note: v.optional(v.string()),
   },
-  handler: async (ctx, { id, servings, date, time, ingredients, note }) => {
+  handler: async (ctx, { id, servings, date, time, ingredients, note }): Promise<any> => {
     const userId = await requireUserId(ctx);
     const recipe = await ctx.db.get(id);
     if (!recipe || recipe.userId !== userId) throw new Error("Not found");
     const portions = Math.max(0.25, servings ?? 1);
     const ings: RecipeIngredient[] = ingredients ?? JSON.parse(recipe.ingredients);
-    const { perServing: ps } = computeRecipeTotals(ings, recipe.servings);
     const ingredientList = ings.map((i) => `${i.name} (${i.grams}g)`).join(", ");
     const trimmedNote = note?.trim();
     const components = trimmedNote
       ? `${ingredientList} — ${trimmedNote}`
       : ingredientList;
     const scale = portions / recipe.servings;
-    const rawBreakdown = nutritionBreakdownFromRecipeIngredients(ings, scale);
     const targetDate = date ?? new Date().toISOString().split("T")[0];
     const targetTime = time ?? new Date().toISOString().slice(11, 16);
-    const validated = validateMealWrite({
+    const memories = await ctx.db.query("food_memory").withIndex("by_user", (q) => q.eq("userId", userId)).collect();
+    const draft = buildMealDraft({
       name: recipe.name,
-      calories: Math.round(ps.kcal * portions),
-      protein: r1(ps.p * portions),
-      carbs: r1(ps.c * portions),
-      fat: r1(ps.f * portions),
+      date: targetDate,
       time: targetTime,
-      confidence: rawBreakdown.confidence,
+      mealType: "unspecified",
+      ingredients: ings.map((ing) => ({
+        foodText: ing.name,
+        quantity: Math.max(0, ing.grams) * scale,
+        unit: "g",
+        grams: Math.max(0, ing.grams) * scale,
+        nutritionPer100g: {
+          kcal: ing.caloriesPer100g,
+          protein: ing.proteinPer100g,
+          carbs: ing.carbsPer100g,
+          fat: ing.fatPer100g,
+        },
+        source: ing.source ?? "database",
+        confidence: 0.85,
+      })),
+      memoryMatch: findBestMatch(recipe.name, memories as any[]) ?? undefined,
       nutritionSource: "recipe",
     });
-    const breakdown = {
-      ...rawBreakdown,
-      calories_kcal: validated.calories,
-      protein_g: validated.protein,
-      carbs_g: validated.carbs,
-      fat_g: validated.fat,
-    };
     const logSource = normalizeLogSource("recipe", "recipe");
     const idempotencyKey = buildIdempotencyKey({
       userId,
       date: targetDate,
       source: logSource,
-      contentHash: mealContentHash(validated),
+      contentHash: mealContentHash(draft),
       timeWindow: timeWindowKey(targetTime),
     });
-    const existing = await ctx.db
-      .query("meals")
-      .withIndex("by_user_date_and_idempotency_key", (q) =>
-        q.eq("userId", userId).eq("date", targetDate).eq("idempotencyKey", idempotencyKey),
-      )
-      .first();
-    if (existing) return existing._id;
-
-    return ctx.db.insert("meals", {
-      userId,
-      date: targetDate,
-      name: validated.name,
-      calories: validated.calories,
-      protein: validated.protein,
-      carbs: validated.carbs,
-      fat: validated.fat,
-      time: validated.time,
-      mealType: "unspecified",
-      confidence: validated.confidence,
-      nutritionSource: validated.nutritionSource,
-      components,
-      structuredItems: JSON.stringify(breakdown.items),
-      ingredientBreakdown: JSON.stringify(breakdown),
-      logSource,
-      idempotencyKey,
+    const rawInput = JSON.stringify({ id, portions, targetDate, targetTime, ingredients: ings, note: trimmedNote });
+    const groupKey = deriveGroupKey({ userId, sourceSurface: "recipe", rawInput });
+    const payload = mealPayloadFromDraft(draft, { components, logSource });
+    const mealId = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
+      group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "recipe", rawInput },
+      member: {
+        memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "meal", payloadFingerprint: idempotencyKey, ordinal: 0 }),
+        payload: {
+          ...payload,
+        },
+        provenance: "database_match",
+        confidence: draft.confidence,
+        validation: { status: "valid", messages: [] },
+        reversible: true,
+        resolvedDate: targetDate,
+        resolvedTime: targetTime,
+      },
     });
+    await finalizeActionGroupAfterWrite(ctx, userId, groupKey);
+    return mealId;
   },
 });
 

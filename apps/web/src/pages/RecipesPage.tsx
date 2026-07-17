@@ -397,7 +397,6 @@ function RecipeDetailView({ recipe: initialRecipe, onBack }: { recipe: any; onBa
 
   const logRecipe = useMutation(api.recipes.logRecipe);
   const deleteRecipe = useMutation(api.recipes.deleteRecipe);
-  const recordActivity = useMutation(api.gamification.recordActivity);
   const toast = useToast();
 
   const baseIngs = useMemo(() => parseIngs(recipe.ingredients), [recipe.ingredients]);
@@ -433,7 +432,6 @@ function RecipeDetailView({ recipe: initialRecipe, onBack }: { recipe: any; onBa
         ingredients: cleaned,
         note: note.trim() || undefined,
       });
-      await recordActivity({ type: "meal" }).catch(() => {});
       toast.success(`Logged ${recipe.name}`, `${logKcal} kcal`);
       onBack();
     } catch (e) { toast.error("Couldn't log", e instanceof Error ? e.message : undefined); }

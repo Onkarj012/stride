@@ -1,3 +1,5 @@
+import { toCanonicalPersona, toLegacyPersona } from "./personas";
+
 export type CoachType = "overall" | "workout" | "diet" | "recovery" | "mindset" | "water" | "habit";
 
 export interface CoachConfig {
@@ -75,7 +77,7 @@ const KEYWORDS: Record<CoachType, string[]> = {
 };
 
 export function getCoach(type?: string): CoachConfig {
-  return COACHES[(type as CoachType) ?? "overall"] ?? COACHES.overall;
+  return COACHES[toLegacyPersona(type) as CoachType] ?? COACHES.overall;
 }
 
 /** Tone instruction derived from the user's coachingStyle preference + runtime state. */
@@ -127,7 +129,10 @@ export function behaviorSummary(profile?: {
 } | null): string {
   if (!profile) return "";
   const parts: string[] = [];
-  if (profile.preferredCoach) parts.push(`most-used specialist: ${profile.preferredCoach}`);
+  if (profile.preferredCoach) {
+    const canonical = toCanonicalPersona(profile.preferredCoach);
+    parts.push(`most-used specialist: ${profile.preferredCoach}${profile.preferredCoach === canonical ? "" : ` (${canonical})`}`);
+  }
   if (profile.engagedWindows?.length) parts.push(`most active: ${profile.engagedWindows.join("/")}`);
   if (profile.topSuggestions?.length) parts.push(`acts on: ${profile.topSuggestions.slice(0, 3).join(", ")}`);
   if (profile.acceptRate != null) parts.push(`estimate acceptance: ${Math.round(profile.acceptRate * 100)}%`);
@@ -155,8 +160,9 @@ export function applyBehaviorBias(
   scores: Record<CoachType, number>,
   preferredCoach?: string | null,
 ): Record<CoachType, number> {
-  if (preferredCoach && preferredCoach in COACHES && preferredCoach !== "overall") {
-    return { ...scores, [preferredCoach]: (scores[preferredCoach as CoachType] ?? 0) + 0.5 };
+  const legacyCoach = toLegacyPersona(preferredCoach);
+  if (legacyCoach in COACHES && legacyCoach !== "overall") {
+    return { ...scores, [legacyCoach]: (scores[legacyCoach] ?? 0) + 0.5 };
   }
   return scores;
 }

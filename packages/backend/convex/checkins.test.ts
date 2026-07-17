@@ -103,7 +103,8 @@ describe("check-in selection", () => {
     expect(next?.id).not.toBe("sleep_quality_morning");
 
     const sleep = await asUser.query(api.wellness.getSleep, { date: "2026-07-07" });
-    expect(sleep).toMatchObject({ hours: 5.5, quality: "poor" });
+    expect(sleep).toMatchObject({ band: "under_6" });
+    expect(sleep?.hours).toBeUndefined();
   });
 
   test("three consecutive skips backs a question off for three days", () => {

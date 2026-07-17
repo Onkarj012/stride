@@ -1,4 +1,4 @@
-import { internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -41,10 +41,98 @@ export const getStateInternal = internalQuery({
   handler: async (ctx, { userId }) => {
     return ctx.db
       .query("user_gamification")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
       .unique();
   },
 });
+
+/** Rebuild source-derived progress after an action changes the active log set. */
+export async function recomputeGamificationForUser(ctx: any, userId: string) {
+  const [state, meals, workouts] = await Promise.all([
+    ctx.db
+      .query("user_gamification")
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
+      .unique(),
+    ctx.db.query("meals")
+      .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+      .collect().then((rows: any[]) => rows.filter((row) => !row.undoneAt)),
+    ctx.db.query("workouts")
+      .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+      .collect().then((rows: any[]) => rows.filter((row) => !row.undoneAt)),
+  ]);
+  if (!state && meals.length === 0 && workouts.length === 0) return null;
+
+  const sourceMeals = meals;
+  const sourceWorkouts = workouts;
+  const sourceDates = Array.from(new Set([...sourceMeals, ...sourceWorkouts].map((row: any) => row.date))).sort();
+  const dates = Array.from(new Set([...meals, ...workouts].map((row: any) => row.date))).sort();
+  const dayDistance = (from: string, to: string) =>
+    Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+  let run = 0;
+  let longest = 0;
+  let sourceRun = 0;
+  let sourceLongest = 0;
+  let sourceXp = 0;
+  let previousDate: string | undefined;
+  for (const date of dates) {
+    run = previousDate && dayDistance(previousDate, date) === 1 ? run + 1 : 1;
+    longest = Math.max(longest, run);
+    previousDate = date;
+  }
+  previousDate = undefined;
+  for (const date of sourceDates) {
+    sourceRun = previousDate && dayDistance(previousDate, date) === 1 ? sourceRun + 1 : 1;
+    sourceLongest = Math.max(sourceLongest, sourceRun);
+    sourceXp += 10 + Math.min(sourceRun * 2, 20);
+    previousDate = date;
+  }
+  sourceXp += sourceMeals.length * 10 + sourceWorkouts.length * 20;
+
+  const mealsPerDate = new Map<string, number>();
+  for (const meal of sourceMeals) {
+    mealsPerDate.set(meal.date, (mealsPerDate.get(meal.date) ?? 0) + 1);
+  }
+  const sourceMissionIds = [
+    meals.length >= 1 ? "first_meal" : null,
+    Array.from(mealsPerDate.values()).some((count) => count >= 3) ? "day_complete" : null,
+    workouts.length >= 1 ? "first_workout" : null,
+    meals.length >= 50 ? "meals_50" : null,
+    meals.length >= 100 ? "meals_100" : null,
+    longest >= 3 ? "streak_3" : null,
+    longest >= 7 ? "streak_7" : null,
+    longest >= 14 ? "streak_14" : null,
+    longest >= 30 ? "streak_30" : null,
+  ].filter((id): id is string => id !== null);
+  const targetMissionIds = new Set(["hit_protein", "hit_calories"]);
+  const preservedTargetMissionIds = ((state?.missionsCompleted ?? []) as string[])
+    .filter((id) => targetMissionIds.has(id));
+  // Source-recomputable missions never carry unsupported XP. Target-based missions are once-earned badges
+  // preserved because their inputs are transient; known limitation: undo cannot revoke them.
+  const missionsCompleted = [...sourceMissionIds, ...preservedTargetMissionIds];
+  const missionXp = missionsCompleted.reduce((sum, id) => sum + (MISSIONS[id]?.xp ?? 0), 0);
+
+  const sourceState = {
+    xp: sourceXp + missionXp,
+    streakDays: run,
+    longestStreak: longest,
+    lastLoggedDate: dates.at(-1),
+    totalDaysLogged: dates.length,
+    totalMealsLogged: meals.length,
+    totalWorkoutsLogged: workouts.length,
+    missionsCompleted,
+  };
+  if (state) {
+    await ctx.db.patch(state._id, sourceState);
+  } else {
+    await ctx.db.insert("user_gamification", {
+      userId,
+      ...sourceState,
+      streakFreezes: 0,
+      frozenDates: [],
+    });
+  }
+  return { xp: sourceXp + missionXp, streakDays: run, totalMealsLogged: meals.length, totalWorkoutsLogged: workouts.length };
+}
 
 // ─── Public queries ───────────────────────────────────────────────────────────
 
@@ -57,7 +145,7 @@ export const getState = query({
 
     const state = await ctx.db
       .query("user_gamification")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
       .unique();
 
     if (!state) {
@@ -94,26 +182,12 @@ export const getState = query({
 
 // ─── Update progress mutation ─────────────────────────────────────────────────
 
-export const recordActivity = mutation({
-  args: {
-    type: v.union(v.literal("meal"), v.literal("workout")),
-    date: v.optional(v.string()),
-    // For macro adherence checks
-    totalCalories: v.optional(v.number()),
-    totalProtein: v.optional(v.number()),
-    calorieTarget: v.optional(v.number()),
-    proteinTarget: v.optional(v.number()),
-    mealsLoggedToday: v.optional(v.number()),
-  },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
-    const userId = identity.subject;
+export async function recordActivityForUser(ctx: any, userId: string, args: any) {
     const today = args.date ?? new Date().toISOString().split("T")[0];
 
     let state = await ctx.db
       .query("user_gamification")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
       .unique();
 
     const isNew = !state;
@@ -257,7 +331,37 @@ export const recordActivity = mutation({
       streakDays,
       newFreezes: newFreezes > existing.streakFreezes,
     };
+}
+
+export const recordActivity = mutation({
+  args: {
+    type: v.union(v.literal("meal"), v.literal("workout")),
+    date: v.optional(v.string()),
+    totalCalories: v.optional(v.number()),
+    totalProtein: v.optional(v.number()),
+    calorieTarget: v.optional(v.number()),
+    proteinTarget: v.optional(v.number()),
+    mealsLoggedToday: v.optional(v.number()),
   },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    return recordActivityForUser(ctx, identity.subject, args);
+  },
+});
+
+export const recordActivityFor = internalMutation({
+  args: {
+    userId: v.string(),
+    type: v.union(v.literal("meal"), v.literal("workout")),
+    date: v.optional(v.string()),
+    totalCalories: v.optional(v.number()),
+    totalProtein: v.optional(v.number()),
+    calorieTarget: v.optional(v.number()),
+    proteinTarget: v.optional(v.number()),
+    mealsLoggedToday: v.optional(v.number()),
+  },
+  handler: async (ctx, { userId, ...args }) => recordActivityForUser(ctx, userId, args),
 });
 
 // ─── Use streak freeze ────────────────────────────────────────────────────────

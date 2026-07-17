@@ -76,7 +76,8 @@ export const submitCalorieFeedback = mutation({
         totalWorkoutsTracked: 0,
         lastCalibrationDate: undefined,
       });
-      profile = { _id: id, userId, metabolicFactor: 1.0, fitnessLevel: "beginner", totalWorkoutsTracked: 0 };
+      profile = await ctx.db.get(id);
+      if (!profile) throw new Error("Metabolic profile could not be created");
     }
 
     // Record feedback
@@ -88,28 +89,28 @@ export const submitCalorieFeedback = mutation({
       metabolicFactorSnapshot: profile.metabolicFactor,
     });
 
-    // Increment tracked workouts
-    const newTotal = profile.totalWorkoutsTracked + 1;
-
     // Adjust metabolic factor based on feedback
     let newFactor = profile.metabolicFactor;
+    const feedbackCount = (await ctx.db
+      .query("calorie_feedback")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect()).length;
 
-    if (feedback === "too_high" && newTotal >= MIN_FEEDBACKS_BEFORE_ADJUST) {
+    if (feedback === "too_high" && feedbackCount >= MIN_FEEDBACKS_BEFORE_ADJUST) {
       newFactor = Math.max(MIN_FACTOR, newFactor - ADJUSTMENT_STEP);
-    } else if (feedback === "too_low" && newTotal >= MIN_FEEDBACKS_BEFORE_ADJUST) {
+    } else if (feedback === "too_low" && feedbackCount >= MIN_FEEDBACKS_BEFORE_ADJUST) {
       newFactor = Math.min(MAX_FACTOR, newFactor + ADJUSTMENT_STEP);
     }
     // "accurate" feedback — no change, reinforces current factor
 
     await ctx.db.patch(profile._id, {
       metabolicFactor: Math.round(newFactor * 100) / 100,
-      totalWorkoutsTracked: newTotal,
       lastCalibrationDate: new Date().toISOString().split("T")[0],
     });
 
     return {
       metabolicFactor: Math.round(newFactor * 100) / 100,
-      totalWorkoutsTracked: newTotal,
+      totalWorkoutsTracked: profile.totalWorkoutsTracked,
     };
   },
 });
@@ -177,7 +178,8 @@ export const getMetabolicProfileForContext = query({
 });
 
 /**
- * Increment total workouts tracked. Called after each workout log.
+ * Increment total workouts tracked after a committed canonical workout action.
+ * Raw inserts and calorie-feedback submissions must not call this.
  */
 export const incrementWorkoutCount = internalMutation({
   args: {
@@ -203,5 +205,30 @@ export const incrementWorkoutCount = internalMutation({
     }
   },
 });
+
+/** Rebuild the calibration sample count from active workout source rows. */
+export async function recomputeWorkoutCountForUser(ctx: any, userId: string) {
+  const workouts = (await ctx.db
+    .query("workouts")
+    .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+    .collect()).filter((workout: any) => !workout.undoneAt);
+  const count = workouts.length;
+  const profile = await ctx.db
+    .query("user_metabolic_profiles")
+    .withIndex("by_user", (q: any) => q.eq("userId", userId))
+    .first();
+
+  if (profile) {
+    await ctx.db.patch(profile._id, { totalWorkoutsTracked: count });
+  } else if (count > 0) {
+    await ctx.db.insert("user_metabolic_profiles", {
+      userId,
+      metabolicFactor: 1.0,
+      fitnessLevel: "beginner",
+      totalWorkoutsTracked: count,
+    });
+  }
+  return count;
+}
 
 export { CALCULATION_VERSION };
