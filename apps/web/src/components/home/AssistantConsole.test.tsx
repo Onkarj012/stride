@@ -471,4 +471,31 @@ describe("AssistantConsole logging flow", () => {
       drafts: [],
     });
   });
+
+  it("does not skip the next midnight when the clock crosses during effect setup", async () => {
+    vi.useFakeTimers({ now: new Date("2026-07-16T23:59:59.900") });
+    localDateStrMock
+      .mockReturnValueOnce("2026-07-16")
+      .mockImplementationOnce((date?: Date) => {
+        vi.setSystemTime(new Date("2026-07-17T00:00:00.100"));
+        return !date || date.getDate() === 16 ? "2026-07-16" : "2026-07-17";
+      });
+    sessionStorage.setItem(
+      "stride_pending_drafts",
+      JSON.stringify({ date: "2026-07-16", drafts: [{ kind: "water", description: "boundary water", ml: 1000 }] }),
+    );
+
+    render(consoleUi());
+    expect(screen.getByText("boundary water")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200);
+    });
+
+    expect(screen.queryByText("boundary water")).not.toBeInTheDocument();
+    expect(JSON.parse(sessionStorage.getItem("stride_pending_drafts")!)).toEqual({
+      date: "2026-07-17",
+      drafts: [],
+    });
+  });
 });

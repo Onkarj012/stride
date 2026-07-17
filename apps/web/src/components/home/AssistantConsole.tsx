@@ -40,16 +40,17 @@ function useLocalDate(): string {
     let cancelled = false;
     const scheduleRollover = () => {
       const now = new Date();
+      const currentDate = localDateStr(now);
       const nextMidnight = new Date(now);
       nextMidnight.setHours(24, 0, 0, 0);
       timer = setTimeout(() => {
         if (cancelled) return;
-        setDate(localDateStr());
+        const rolloverDate = localDateStr(new Date());
+        setDate((initializedDate) => initializedDate === rolloverDate ? initializedDate : rolloverDate);
         scheduleRollover();
       }, Math.max(1, nextMidnight.getTime() - now.getTime()));
+      setDate((initializedDate) => initializedDate === currentDate ? initializedDate : currentDate);
     };
-    const currentDate = localDateStr();
-    setDate((initializedDate) => initializedDate === currentDate ? initializedDate : currentDate);
     scheduleRollover();
     return () => {
       cancelled = true;
