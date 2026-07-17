@@ -2,6 +2,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { deriveGroupKey } from "./actions_idempotency";
+import { finalizeActionGroupAfterWrite } from "./actions_group";
 import { recordBehaviorRow } from "./behavior";
 import { recordActivityForUser } from "./gamification";
 import { recomputeForAction } from "./derived_state";
@@ -379,7 +380,7 @@ export const relogWorkout = mutation({
       rawInput,
       clientSubmissionId: idempotencyToken,
     });
-    return ctx.runMutation(internal.actions_writer.writeWorkoutAction, {
+    const resultId = await ctx.runMutation(internal.actions_writer.writeWorkoutAction, {
       group: { userId, groupIdempotencyKey, sourceSurface: "direct_ui", rawInput },
       member: {
         payload: {
@@ -416,6 +417,8 @@ export const relogWorkout = mutation({
         resolvedTime: targetTime,
       },
     });
+    await finalizeActionGroupAfterWrite(ctx, userId, groupIdempotencyKey);
+    return resultId;
   },
 });
 
@@ -424,10 +427,10 @@ export const relogWorkout = mutation({
 export const getWorkoutsForContext = internalQuery({
   args: { userId: v.string(), date: v.string() },
   handler: async (ctx, { userId, date }) =>
-    ctx.db
+    (await ctx.db
       .query("workouts")
       .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .collect(),
+      .collect()).filter((workout) => !workout.undoneAt),
 });
 
 export const getRecentWorkoutNames = internalQuery({

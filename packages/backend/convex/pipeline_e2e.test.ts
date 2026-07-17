@@ -212,13 +212,13 @@ describe("canonical pipeline end-to-end contract", () => {
 
   test("group and member retries are idempotent and expose the already-committed outcome", async () => {
     const t = convexTest(schema, modules);
-    const first = await writeMeal(t, "retry-e2e");
-    const second = await writeMeal(t, "retry-e2e");
+    const asUser = t.withIdentity({ subject: "e2e-user" });
+    const meal = { name: "Oats", calories: 400, protein: 20, carbs: 40, fat: 15, time: "08:00", date: "2026-07-16", logSource: "e2e" };
+    const first = await asUser.mutation(api.meals.addMeal, meal);
+    const second = await asUser.mutation(api.meals.addMeal, meal);
     expect(second).toBe(first);
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
     const action = await t.run((ctx) => ctx.db.query("actions").first());
-    expect(await t.run((ctx) => ctx.db.get(action!.groupId))).toMatchObject({ status: "pending" });
-    await t.mutation((internal as any).ai.finalizeConfirmationGroup, { groupId: action!.groupId });
     expect(await t.run((ctx) => ctx.db.get(action!.groupId))).toMatchObject({ status: "committed" });
     const events = await t.query(telemetry, { groupId: action!.groupId });
     expect(events.map((event: any) => event.event)).toEqual(["committed", "already_committed"]);

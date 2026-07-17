@@ -174,3 +174,22 @@ export function assertGroupTransition(from: ActionGroupStatus, to: ActionGroupSt
     throw new Error(`Invalid group status transition: ${from} -> ${to}`);
   }
 }
+
+export function deriveActionGroupStatus(statuses: readonly ActionStatus[]): ActionGroupStatus {
+  const committedCount = statuses.filter((status) => status === "committed" || status === "undone").length;
+  const discardedCount = statuses.filter((status) => status === "discarded").length;
+  const failedCount = statuses.filter((status) => status === "failed").length;
+  const pendingCount = statuses.filter((status) => status === "pending").length;
+
+  return committedCount === statuses.length && statuses.length > 0
+    ? "committed"
+    : discardedCount === statuses.length && statuses.length > 0
+      ? "discarded"
+      : failedCount === statuses.length && statuses.length > 0
+        ? "failed"
+        : committedCount > 0 || discardedCount > 0 || failedCount > 0
+          ? "partial"
+          : pendingCount > 0
+            ? "pending"
+            : "failed";
+}

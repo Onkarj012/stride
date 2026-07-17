@@ -46,10 +46,7 @@ export function deriveSubmissionFingerprint(input: {
     JSON.stringify([
       input.userId.trim(),
       input.sourceSurface,
-      input.rawInput,
-      input.clientLocalDate ?? "",
-      input.clientLocalTime ?? "",
-      input.clientTimeZone ?? "",
+      normalizedContent(input.rawInput),
     ]),
   );
 }
@@ -112,7 +109,11 @@ export async function ensureGroup(ctx: MutationCtx, groupFields: ActionGroupInpu
     }
     const existingFingerprint = existing.submissionFingerprint ?? deriveSubmissionFingerprint(existing);
     if (existingFingerprint !== submissionFingerprint) {
-      throw new Error("Idempotency key collision: existing action group does not match submission fingerprint");
+      const sameNormalizedContent = existing.sourceSurface === groupFields.sourceSurface
+        && normalizedContent(existing.rawInput) === normalizedContent(groupFields.rawInput);
+      if (!sameNormalizedContent) {
+        throw new Error("Idempotency key collision: existing action group does not match submission fingerprint");
+      }
     }
     if (!existing.submissionFingerprint) {
       await ctx.db.patch(existing._id, { submissionFingerprint });

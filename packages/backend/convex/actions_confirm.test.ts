@@ -132,6 +132,59 @@ describe("large-batch confirmation", () => {
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
   });
 
+  test("reconfirming an undone member keeps the terminal group committed", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "confirm-user" });
+    const staged = await stageGroup(t, "reconfirm-undone", [mealPayload("once")]);
+    const decision = { groupId: staged.groupId, decisions: [{ ordinal: 0, action: "confirm" as const }] };
+    await asUser.action((api as any).ai.confirmGroup, decision);
+    const action = await t.run((ctx) => ctx.db.query("actions").first());
+    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
+    const repeated = await asUser.action((api as any).ai.confirmGroup, decision) as any;
+    expect(repeated.status).toBe("committed");
+    expect(await t.run((ctx) => ctx.db.get(staged.groupId))).toMatchObject({ status: "committed" });
+  });
+
+  test("confirmation edits cannot inject server-only undo metadata", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "confirm-user" });
+    const staged = await t.mutation((internal as any).ai.stageClarificationGroup, {
+      userId: "confirm-user",
+      groupIdempotencyKey: "forged-previous",
+      sourceSurface: "chat",
+      rawInput: "water",
+      createdAt: Date.now(),
+      members: [{
+        actionType: "recovery",
+        memberIdempotencyKey: "forged-previous-member",
+        payload: { kind: "water", ml: 500, time: "08:00", date: "2026-07-16" },
+        provenance: "ai_extracted",
+        validation: { status: "valid", messages: [] },
+        reversible: true,
+        ordinal: 0,
+      }],
+    });
+    const result = await asUser.action((api as any).ai.confirmGroup, {
+      groupId: staged.groupId,
+      decisions: [{
+        ordinal: 0,
+        action: "confirm",
+        edits: {
+          payload: {
+            ml: 750,
+            previous: { userId: "confirm-user", date: "2026-07-16", ml: 999, time: "00:00", source: "forged" },
+          },
+        },
+      }],
+    }) as any;
+    expect(result.status).toBe("committed");
+    const action = await t.run((ctx) => ctx.db.query("actions").first());
+    expect(action?.payload?.previous).toBeUndefined();
+    const undone = await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
+    expect(undone.status).toBe("undone");
+    expect(await t.run((ctx) => ctx.db.query("water_logs").first())).toMatchObject({ ml: 750, undoneAt: expect.any(Number) });
+  });
+
   test("expires stale confirmation groups and refuses commits", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "confirm-user" });

@@ -16,7 +16,8 @@ import {
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { toLegacyPersona } from "./personas";
 import { insertActionTelemetry } from "./telemetry";
-import { assertValidDate } from "./validation";
+import { assertValidDate, stableHash } from "./validation";
+import { finalizeActionGroup as finalizeActionGroupInMutation, finalizeActionGroupAfterWrite } from "./actions_group";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
   await ctx.runMutation((internal as any).telemetry.record, { input });
@@ -204,6 +205,15 @@ export const stageClarificationGroup = internalMutation({
     })),
   },
   handler: async (ctx, args) => {
+    if (args.clientLocalDate) {
+      assertValidDate(args.clientLocalDate);
+      const serverDate = new Date().toISOString().slice(0, 10);
+      const [year, month, day] = serverDate.split("-").map(Number);
+      const toleranceDate = new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+      if (args.clientLocalDate > toleranceDate) {
+        throw new Error("Client local date cannot be in the future");
+      }
+    }
     const groupResult = await ensureGroup(ctx, {
       userId: args.userId,
       groupIdempotencyKey: args.groupIdempotencyKey,
@@ -486,25 +496,7 @@ export const finalizeConfirmationGroup = internalMutation({
   handler: async (ctx, { groupId }) => {
     const group = await ctx.db.get("actionGroups", groupId);
     if (!group) throw new Error("Action group not found");
-    const members = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
-    const committedCount = members.filter((member) => member.status === "committed").length;
-    const discardedCount = members.filter((member) => member.status === "discarded").length;
-    const failedCount = members.filter((member) => member.status === "failed").length;
-    const pendingCount = members.filter((member) => member.status === "pending").length;
-    const status = committedCount === members.length && members.length > 0
-      ? "committed"
-      : discardedCount === members.length && members.length > 0
-        ? "discarded"
-        : failedCount === members.length && members.length > 0
-          ? "failed"
-          : committedCount > 0 || discardedCount > 0 || failedCount > 0
-            ? "partial"
-            : pendingCount > 0
-              ? "pending"
-              : "failed";
-    assertGroupTransition(group.status, status);
-    await ctx.db.patch(groupId, { status, resolvedAt: status === "pending" ? undefined : Date.now() });
-    return await ctx.db.get("actionGroups", groupId);
+    return finalizeActionGroupInMutation(ctx, groupId);
   },
 });
 
@@ -529,11 +521,16 @@ function isRecord(value: unknown): value is Record<string, any> {
 
 function editedConfirmationMember(member: any, decision: ConfirmationDecision) {
   const edits = isRecord(decision.edits) ? decision.edits : {};
-  const payloadEdits = isRecord(edits.payload) ? edits.payload : {};
+  const payloadEdits = isRecord(edits.payload)
+    ? Object.fromEntries(Object.entries(edits.payload).filter(([key]) => key !== "previous"))
+    : {};
   const directPayloadEdits = Object.fromEntries(
-    Object.entries(edits).filter(([key]) => key !== "date" && key !== "description" && key !== "payload"),
+    Object.entries(edits).filter(([key]) => key !== "date" && key !== "description" && key !== "payload" && key !== "previous"),
   );
-  const payload = { ...member.payload, ...directPayloadEdits, ...payloadEdits };
+  const basePayload = isRecord(member.payload)
+    ? Object.fromEntries(Object.entries(member.payload).filter(([key]) => key !== "previous"))
+    : {};
+  const payload = { ...basePayload, ...directPayloadEdits, ...payloadEdits };
   if (typeof edits.date === "string" && edits.date.length > 0) payload.date = edits.date;
   if (typeof edits.description === "string" && edits.description.length > 0) {
     payload.description = edits.description;
@@ -1004,8 +1001,10 @@ export const logMeal = action({
     const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsedMeal, date: today }, { userId, useMemory: true }));
 
     const draft = nutrition.ingredientBreakdown as MealDraft;
+    const rawInput = description ?? JSON.stringify(parsedData ?? {});
+    const groupIdempotencyKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput });
     const id = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
-      group: { userId, sourceSurface: "chat", rawInput: description ?? JSON.stringify(parsedData ?? {}), clientLocalDate: today },
+      group: { userId, groupIdempotencyKey, sourceSurface: "chat", rawInput, clientLocalDate: today },
       member: {
         payload: mealPayloadFromDraft(draft, { aiSuggestion: parsedMeal.aiSuggestion, components: parsedMeal.components, logSource: "ai" }),
         provenance: draft.nutritionSource === "database" ? "database_match" : draft.nutritionSource === "memory" ? "database_match" : "ai_estimated",
@@ -1016,6 +1015,7 @@ export const logMeal = action({
         resolvedTime: parsedMeal.time,
       },
     });
+    await finalizeActionGroupAfterWrite(ctx, userId, groupIdempotencyKey);
     data = {
       _id: id,
       name: parsedMeal.name,
@@ -1432,13 +1432,14 @@ Rules:
       | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs }
       | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs };
     const failedItems: FailedLogItem[] = [];
-    const chatGroupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput: message, clientSubmissionId });
+    const submissionRawInput = image ? `${message}\n[image:${stableHash(image)}]` : message;
+    const chatGroupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput: submissionRawInput, clientSubmissionId });
     const chatGroup = {
       userId,
       groupIdempotencyKey: chatGroupKey,
       clientSubmissionId,
       sourceSurface: "chat" as const,
-      rawInput: message,
+      rawInput: submissionRawInput,
       clientLocalDate: today,
     };
 
@@ -1877,11 +1878,43 @@ Rules:
       logOutcomes.push({ type, name: candidate.description, ok: true, ...actionMetadata });
     }
 
-    const readyCandidates = parsedCandidates.filter((candidate) => !candidate.reason);
     if (parsedCandidates.length > AUTO_WRITE_MAX_ACTIONS) {
       confirmationRequested = true;
       confirmation = { groupId: "", items: [] };
-    } else {
+    }
+    const readyCandidates = parsedCandidates.filter((candidate) => !candidate.reason);
+    const candidatesToStage = parsedCandidates;
+    let stagedGroupId: string | undefined;
+    const stagedMembersByKey = new Map<string, { _id: string }>();
+    if (candidatesToStage.length > 0) {
+      const stagedMembers = candidatesToStage.map((candidate) => ({
+        ...markerMember(
+          chatGroupKey,
+          candidate.actionType,
+          candidate.payload,
+          candidate.ordinal,
+          candidate.confidence,
+          candidate.validation,
+          candidate.resolvedDate,
+        ),
+        actionType: candidate.actionType,
+        ordinal: candidate.ordinal,
+      }));
+      const staged: { groupId: string } = await ctx.runMutation(internal.ai.stageClarificationGroup, {
+        userId,
+        groupIdempotencyKey: chatGroupKey,
+        sourceSurface: "chat",
+        rawInput: submissionRawInput,
+        model: parseModel,
+        clientLocalDate: today,
+        createdAt: Date.now(),
+        members: stagedMembers,
+      });
+      stagedGroupId = staged.groupId;
+      const stagedRows: any[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: staged.groupId as any });
+      for (const row of stagedRows) stagedMembersByKey.set(row.memberIdempotencyKey, row);
+    }
+    if (!confirmationRequested) {
       for (const candidate of readyCandidates) {
         try {
           await writeCandidate(candidate);
@@ -1889,6 +1922,18 @@ Rules:
           const error = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
           const errorCode = getConvexErrorCode(err);
           logOutcomes.push({ type: candidate.actionType, name: candidate.description, ok: false, error, errorCode });
+          const member = stagedMembersByKey.get(markerMember(
+            chatGroupKey,
+            candidate.actionType,
+            candidate.payload,
+            candidate.ordinal,
+            candidate.confidence,
+            candidate.validation,
+            candidate.resolvedDate,
+          ).memberIdempotencyKey);
+          if (member) {
+            await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, { actionId: member._id as any, error });
+          }
           console.error("Failed to log parsed AI action:", err);
         }
       }
@@ -1922,34 +1967,10 @@ Rules:
     }
 
     let clarification: { groupId: string; items: any[]; question: string } | undefined;
-    const candidatesToStage = confirmationRequested ? parsedCandidates : pendingCandidates;
-    if (candidatesToStage.length > 0) {
-      const stagedMembers = candidatesToStage.map((candidate) => ({
-        ...markerMember(
-          chatGroupKey,
-          candidate.actionType,
-          candidate.payload,
-          candidate.ordinal,
-          candidate.confidence,
-          candidate.validation,
-          candidate.resolvedDate,
-        ),
-        actionType: candidate.actionType,
-        ordinal: candidate.ordinal,
-      }));
-      const staged: { groupId: string } = await ctx.runMutation(internal.ai.stageClarificationGroup, {
-        userId,
-        groupIdempotencyKey: chatGroupKey,
-        sourceSurface: "chat",
-        rawInput: message,
-        model: parseModel,
-        clientLocalDate: today,
-        createdAt: Date.now(),
-        members: stagedMembers,
-      });
+    if (stagedGroupId) {
       if (confirmationRequested) {
         confirmation = {
-          groupId: staged.groupId,
+          groupId: stagedGroupId,
           items: parsedCandidates.map((candidate) => ({
             actionType: candidate.actionType,
             description: candidate.description,
@@ -1964,7 +1985,7 @@ Rules:
       } else {
         const questions = [...new Set(pendingCandidates.map((c) => c.question).filter((q): q is string => typeof q === "string" && q.length > 0))];
         clarification = {
-          groupId: staged.groupId,
+          groupId: stagedGroupId,
           items: pendingCandidates.map((candidate) => ({
             actionType: candidate.actionType,
             description: candidate.description,

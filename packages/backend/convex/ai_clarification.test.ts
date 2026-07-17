@@ -87,6 +87,83 @@ describe("clarification flow", () => {
     expect(actions[0]).toMatchObject({ status: "pending", groupId: clarification.groupId });
   });
 
+  test("mixed ready and vague members remain resolvable in one partial group", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    mockChatReply(
+      'I found both entries.⟦LOG_WATER⟧{"ml":500,"date":"2026-07-16"}⟦/LOG_WATER⟧⟦LOG_MEAL⟧{"description":"pizza","date":"UNKNOWN_VAGUE","question":"Which date did you eat this?"}⟦/LOG_MEAL⟧',
+    );
+
+    const result = await asUser.action(api.ai.chat, {
+      message: "pizza and sleep",
+      sessionId: undefined,
+      coachType: "auto",
+      today: "2026-07-16",
+    }) as any;
+    const groupId = result.clarification.groupId;
+    expect(await t.run((ctx) => ctx.db.get("actionGroups", groupId))).toMatchObject({ status: "partial" });
+    expect(await t.run((ctx) => ctx.db.query("actions").collect())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "committed" }),
+      expect.objectContaining({ status: "pending" }),
+    ]));
+    expect(await t.run((ctx) => ctx.db.query("water_logs").collect())).toHaveLength(1);
+
+    const resolved = await asUser.action(api.ai.resolveClarification, { groupId, date: "2026-07-15" });
+    expect(resolved.loggedItems).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.get("actionGroups", groupId))).toMatchObject({ status: "committed" });
+  });
+
+  test("staging rejects a future client-local date before clarification can trust it", async () => {
+    const t = convexTest(schema, modules);
+    await expect(t.mutation((internal as any).ai.stageClarificationGroup, {
+      userId: "user1",
+      groupIdempotencyKey: "future-client-date",
+      sourceSurface: "chat",
+      rawInput: "future date",
+      clientLocalDate: "2099-01-01",
+      createdAt: Date.now(),
+      members: [{
+        actionType: "meal",
+        memberIdempotencyKey: "future-client-date-member",
+        payload: { name: "Pizza", date: "2026-07-16" },
+        provenance: "ai_extracted",
+        validation: { status: "warning", messages: [] },
+        reversible: true,
+        ordinal: 0,
+      }],
+    })).rejects.toThrow("future");
+  });
+
+  test("auto-write failure is persisted so the aggregate cannot look fully committed", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    const reply = 'Two similar entries.⟦LOG_WORKOUT⟧{"description":"running","date":"2026-07-16"}⟦/LOG_WORKOUT⟧⟦LOG_WORKOUT⟧{"description":"running variation","date":"2026-07-16"}⟦/LOG_WORKOUT⟧';
+    mockedCallAI.mockImplementation(async (messages) => {
+      if (isTitlePrompt(messages)) return "Chat";
+      if (promptText(messages).includes("professional fitness trainer")) {
+        const prompt = messages.at(-1)?.content;
+        return JSON.stringify({
+          name: typeof prompt === "string" && prompt.includes("running variation") ? "Running variation" : "Running",
+          exercises: [{ name: "running", muscle_group: "cardio", weight_unit: "bodyweight", sets: [{ duration_min: "30" }] }],
+          duration: "30",
+          intensity: "MEDIUM",
+          caloriesBurned: 250,
+          rationale: "Keep it steady.",
+        });
+      }
+      return reply;
+    });
+
+    await t.run((ctx) => ctx.db.insert("user_profiles", { userId: "user1", activityLevel: "moderate", weight: 75, age: 30, sex: "male" }));
+    await asUser.action(api.ai.chat, { message: "two pizzas", today: "2026-07-16" });
+    const actions = await t.run((ctx) => ctx.db.query("actions").collect());
+    expect(actions).toHaveLength(2);
+    expect(actions.map((action) => action.status).sort()).toEqual(["committed", "failed"]);
+    const group = await t.run((ctx) => ctx.db.get("actionGroups", actions[0].groupId));
+    expect(group?.status).toBe("partial");
+  });
+
   test("low confidence meal → clarification", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });

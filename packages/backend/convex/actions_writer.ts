@@ -122,6 +122,10 @@ async function prepareMember(ctx: MutationCtx, actionType: ActionType, args: Wri
     }],
   })[0];
   assertValidActionEnvelope(member);
+  if (["committed", "discarded", "expired"].includes(groupResult.group.status)) {
+    const existingMember = groupResult.members.find((candidate) => candidate.memberIdempotencyKey === member.memberIdempotencyKey);
+    if (!existingMember) throw new Error("Cannot add an action member to a terminal action group");
+  }
   const ensured = await ensureMember(ctx, member);
   if (!ensured.shouldExecute) {
     if (ensured.state === "already_committed" || ensured.state === "already_terminal") {
@@ -167,11 +171,14 @@ async function recordWriterTelemetry(ctx: MutationCtx, prepared: any, event: "co
 
 async function commitMember(ctx: MutationCtx, prepared: any, table: string, id: any, undoMetadata?: Record<string, unknown>) {
   assertTransition(prepared.member.status, "committed");
+  const userPayload = prepared.member.payload && typeof prepared.member.payload === "object"
+    ? Object.fromEntries(Object.entries(prepared.member.payload).filter(([key]) => key !== "previous"))
+    : prepared.member.payload;
   await ctx.db.patch(prepared.member._id, {
     status: "committed",
     committedRowRef: { table, id: String(id) },
     originalPayload: prepared.member.originalPayload ?? prepared.member.payload,
-    ...(undoMetadata ? { payload: { ...prepared.member.payload, ...undoMetadata } } : {}),
+    ...(undoMetadata ? { payload: { ...userPayload, ...undoMetadata } } : { payload: userPayload }),
   });
   // Member writers commit only the member. Group aggregate status is finalized
   // by the caller (chat, clarification, or confirmation) after all members.

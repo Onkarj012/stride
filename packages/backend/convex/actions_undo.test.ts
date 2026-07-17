@@ -128,6 +128,40 @@ describe("audited action undo", () => {
     expect(await asUser.query(api.workouts.getTotalCaloriesBurned, { date: "2026-07-16" })).toMatchObject({ total: 0, count: 0 });
   });
 
+  test("coach workout context excludes a soft-undone workout", async () => {
+    const t = convexTest(schema, modules);
+    const workoutId = await t.mutation(writerApi.writeWorkoutAction, {
+      group: group("context-undone-workout"),
+      member: member({ name: "Lift", sets: "3", duration: "20", intensity: "HIGH", date: "2026-07-16", timestamp: "11:00", caloriesBurned: 180, logSource: "test" }, "context-undone-workout-member"),
+    });
+    await t.run((ctx) => ctx.db.patch(workoutId, { undoneAt: Date.now() }));
+    expect(await t.query((internal as any).workouts.getWorkoutsForContext, { userId: "undo-user", date: "2026-07-16" })).toEqual([]);
+  });
+
+  test("undoing a canonical workout preserves memory backed by an active actionless workout", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    await t.run((ctx) => ctx.db.insert("workouts", {
+      userId: "undo-user",
+      date: "2026-07-16",
+      name: "Run",
+      sets: "1",
+      duration: "30",
+      intensity: "MODERATE",
+      timestamp: "09:00",
+      caloriesBurned: 200,
+    }));
+    await t.mutation(writerApi.writeWorkoutAction, {
+      group: group("memory-attributed-workout"),
+      member: member({ name: "Run", sets: "1", duration: "30", intensity: "MODERATE", date: "2026-07-16", timestamp: "12:00", caloriesBurned: 220, logSource: "test" }, "memory-attributed-workout-member"),
+    });
+    const action = (await t.run((ctx) => ctx.db.query("actions").collect())).find((candidate) => candidate.memberIdempotencyKey === "memory-attributed-workout-member")!;
+    await asUser.mutation(undoApi.undoAction, { actionId: action._id });
+    const memory = await t.run((ctx) => ctx.db.query("workout_memory").first());
+    expect(memory).toMatchObject({ timesLogged: 1, sourceActionIds: [] });
+    expect(memory?.undoneAt).toBeUndefined();
+  });
+
   test("upsert undo restores previous fields and clears the row undone marker", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "undo-user" });

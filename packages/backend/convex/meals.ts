@@ -6,6 +6,7 @@ import { recordActivityForUser } from "./gamification";
 import { recomputeForAction } from "./derived_state";
 import { recordFoodMemoryRow } from "./food_memory";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { finalizeActionGroupAfterWrite } from "./actions_group";
 import { findBestMatch } from "./food_memory_match";
 import {
   buildDirectMealDraft,
@@ -185,7 +186,7 @@ export const addMeal = mutation({
     const rawInput = JSON.stringify({ source: args.logSource ?? "manual", date, time: args.time, args });
     const groupKey = deriveGroupKey({ userId, sourceSurface: "direct_ui", rawInput });
     const provenance = draft.nutritionSource === "database" ? "database_match" : draft.nutritionSource === "ai_estimate" ? "ai_estimated" : "user_reported";
-    return ctx.runMutation((internal as any).actions_writer.writeMealAction, {
+    const resultId = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
       group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "direct_ui", rawInput },
       member: {
         memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "meal", payloadFingerprint: JSON.stringify(payload), ordinal: 0 }),
@@ -198,6 +199,8 @@ export const addMeal = mutation({
         resolvedTime: args.time,
       },
     });
+    await finalizeActionGroupAfterWrite(ctx, userId, groupKey);
+    return resultId;
   },
 });
 
@@ -376,7 +379,7 @@ export const relogMeal = mutation({
     if (existing) return existing._id;
     const rawInput = JSON.stringify({ source: "relog", sourceMealId: id, date: targetDate, time: targetTime });
     const groupKey = deriveGroupKey({ userId, sourceSurface: "direct_ui", rawInput });
-    return ctx.runMutation((internal as any).actions_writer.writeMealAction, {
+    const resultId = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
       group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "direct_ui", rawInput },
       member: {
         memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "meal", payloadFingerprint: idempotencyKey, ordinal: 0 }),
@@ -389,6 +392,8 @@ export const relogMeal = mutation({
         resolvedTime: targetTime,
       },
     });
+    await finalizeActionGroupAfterWrite(ctx, userId, groupKey);
+    return resultId;
   },
 });
 

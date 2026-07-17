@@ -87,6 +87,20 @@ async function activeSourceRows(ctx: MutationCtx, userId: string, sourceActionId
   return sources;
 }
 
+async function activeUnattributedRows(ctx: MutationCtx, userId: string, table: "meals" | "workouts", name: string) {
+  const normalized = table === "meals" ? normalizeName(name) : normalizeWorkoutName(name);
+  const rows = await ctx.db
+    .query(table)
+    .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+    .collect();
+  return rows.filter((row: any) => {
+    const rowName = typeof row.name === "string"
+      ? table === "meals" ? normalizeName(row.name) : normalizeWorkoutName(row.name)
+      : "";
+    return !row.undoneAt && !row.sourceActionId && rowName === normalized;
+  });
+}
+
 function workoutDurationMin(row: any): number | undefined {
   try {
     const parsed = JSON.parse(row.workoutDraft ?? "null");
@@ -130,20 +144,22 @@ async function compensateInferredMemory(
 
   const remainingIds = (row.sourceActionIds ?? []).filter((id) => id !== actionId);
   const activeSources = await activeSourceRows(ctx, action.userId, remainingIds, table);
-  if (activeSources.length === 0) {
+  const unattributedRows = await activeUnattributedRows(ctx, action.userId, table, name);
+  if (activeSources.length === 0 && unattributedRows.length === 0) {
     await ctx.db.patch(row._id, { sourceActionIds: [], timesLogged: 0, undoneAt });
     return;
   }
 
-  const latest = [...activeSources].sort((a, b) => b.row.date.localeCompare(a.row.date))[0].row;
+  const allSources = [...activeSources.map((source) => source.row), ...unattributedRows];
+  const latest = [...allSources].sort((a, b) => b.date.localeCompare(a.date))[0];
   if (table === "meals") {
     await ctx.db.patch(row._id, {
       sourceActionIds: activeSources.map((source) => source.actionId),
-      timesLogged: activeSources.length,
-      kcal: average(activeSources.map((source) => source.row.calories))!,
-      protein: average(activeSources.map((source) => source.row.protein))!,
-      carbs: average(activeSources.map((source) => source.row.carbs))!,
-      fat: average(activeSources.map((source) => source.row.fat))!,
+      timesLogged: allSources.length,
+      kcal: average(allSources.map((source) => source.calories))!,
+      protein: average(allSources.map((source) => source.protein))!,
+      carbs: average(allSources.map((source) => source.carbs))!,
+      fat: average(allSources.map((source) => source.fat))!,
       components: latest.components,
       lastUsedDate: latest.date,
       undoneAt: undefined,
@@ -151,11 +167,11 @@ async function compensateInferredMemory(
     return;
   }
 
-  const durations = activeSources.map((source) => workoutDurationMin(source.row)).filter((value): value is number => value !== undefined);
-  const calories = activeSources.map((source) => source.row.caloriesBurned).filter((value): value is number => typeof value === "number");
+  const durations = allSources.map((source) => workoutDurationMin(source)).filter((value): value is number => value !== undefined);
+  const calories = allSources.map((source) => source.caloriesBurned).filter((value): value is number => typeof value === "number");
   await ctx.db.patch(row._id, {
     sourceActionIds: activeSources.map((source) => source.actionId),
-    timesLogged: activeSources.length,
+    timesLogged: allSources.length,
     durationMin: average(durations),
     caloriesBurned: average(calories),
     exercises: workoutExercises(latest),

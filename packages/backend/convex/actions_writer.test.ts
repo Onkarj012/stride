@@ -146,4 +146,39 @@ describe("canonical action writers", () => {
       sourceActionId: expect.any(String),
     });
   });
+
+  test("water upsert targets the original check-in row when an append exists", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(writer("writeRecoveryAction"), {
+      group: group("writer-water-original", "writer-water-original-group"),
+      member: member({ kind: "water", ml: 500, time: "08:00", date: "2026-07-16", mode: "upsert" }, "writer-water-original-member"),
+    });
+    await t.mutation(writer("writeRecoveryAction"), {
+      group: group("writer-water-append", "writer-water-append-group"),
+      member: member({ kind: "water", ml: 250, time: "09:00", date: "2026-07-16" }, "writer-water-append-member"),
+    });
+    await t.mutation(writer("writeRecoveryAction"), {
+      group: group("writer-water-update", "writer-water-update-group"),
+      member: member({ kind: "water", ml: 750, time: "10:00", date: "2026-07-16", mode: "upsert" }, "writer-water-update-member"),
+    });
+    const rows = await t.run((ctx) => ctx.db.query("water_logs").withIndex("by_user_date", (q) => q.eq("userId", "writer-user").eq("date", "2026-07-16")).collect());
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.time === "10:00")?.ml).toBe(750);
+    expect(rows.find((row) => row.time === "09:00")?.ml).toBe(250);
+    expect(rows.reduce((sum, row) => sum + row.ml, 0)).toBe(1000);
+  });
+
+  test("writers reject adding a new member to a terminal group", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(writer("writeMealAction"), {
+      group: group("terminal-group", "terminal-group-key"),
+      member: member({ name: "Oats", calories: 300, protein: 12, carbs: 45, fat: 8, time: "08:00", date: "2026-07-16", logSource: "test" }, "terminal-member-1"),
+    });
+    const action = await t.run((ctx) => ctx.db.query("actions").first());
+    await t.mutation((internal as any).ai.finalizeConfirmationGroup, { groupId: action!.groupId });
+    await expect(t.mutation(writer("writeMealAction"), {
+      group: group("terminal-group", "terminal-group-key"),
+      member: member({ name: "Rice", calories: 300, protein: 6, carbs: 60, fat: 2, time: "12:00", date: "2026-07-16", logSource: "test" }, "terminal-member-2"),
+    })).rejects.toThrow("terminal action group");
+  });
 });

@@ -135,4 +135,22 @@ describe("two-level action idempotency", () => {
     expect(first.state).toBe("created");
     await expect(t.run((ctx) => ensureGroup(ctx, { ...groupFields, rawInput: "I had rice", groupIdempotencyKey: key, submissionFingerprint: fingerprint2 }))).rejects.toThrow("submission fingerprint");
   });
+
+  test("fingerprint follows normalized content and ignores client-local date metadata", () => {
+    const first = deriveSubmissionFingerprint({
+      userId: "user-1", sourceSurface: "chat", rawInput: "  I   had OATS ",
+      clientLocalDate: "2026-07-16", clientLocalTime: "08:00", clientTimeZone: "UTC",
+    });
+    const retry = deriveSubmissionFingerprint({
+      userId: "user-1", sourceSurface: "chat", rawInput: "i had oats",
+      clientLocalDate: "2026-07-17", clientLocalTime: "09:00", clientTimeZone: "Asia/Kolkata",
+    });
+    expect(retry).toBe(first);
+  });
+
+  test("image identity remains part of otherwise identical submission content", () => {
+    const first = deriveSubmissionFingerprint({ userId: "user-1", sourceSurface: "chat", rawInput: "log lunch\n[image:image-a]" });
+    const second = deriveSubmissionFingerprint({ userId: "user-1", sourceSurface: "chat", rawInput: "log lunch\n[image:image-b]" });
+    expect(second).not.toBe(first);
+  });
 });

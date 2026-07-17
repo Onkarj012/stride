@@ -2,6 +2,7 @@ import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { finalizeActionGroupAfterWrite } from "./actions_group";
 import { findBestMatch } from "./food_memory_match";
 import { buildMealDraft, mealPayloadFromDraft } from "./nutrition_draft";
 import {
@@ -237,7 +238,7 @@ export const logRecipe = mutation({
     const rawInput = JSON.stringify({ id, portions, targetDate, targetTime, ingredients: ings, note: trimmedNote });
     const groupKey = deriveGroupKey({ userId, sourceSurface: "recipe", rawInput });
     const payload = mealPayloadFromDraft(draft, { components, logSource });
-    return ctx.runMutation((internal as any).actions_writer.writeMealAction, {
+    const mealId = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
       group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "recipe", rawInput },
       member: {
         memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "meal", payloadFingerprint: idempotencyKey, ordinal: 0 }),
@@ -252,6 +253,8 @@ export const logRecipe = mutation({
         resolvedTime: targetTime,
       },
     });
+    await finalizeActionGroupAfterWrite(ctx, userId, groupKey);
+    return mealId;
   },
 });
 

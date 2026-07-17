@@ -4,6 +4,7 @@ import type { Doc } from "./_generated/dataModel";
 import { ConvexError, v } from "convex/values";
 import { callAI, parseJSON } from "./ai/llm";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { finalizeActionGroupAfterWrite } from "./actions_group";
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 import { assertValidDate } from "./validation";
 import { readActiveRowsForDate, readActiveSleepForDate, readLatestActiveStepsForDate } from "./active_rows";
@@ -1000,7 +1001,7 @@ async function writeCheckinRecovery(ctx: MutationCtx, userId: string, source: { 
   };
   const rawInput = JSON.stringify({ questionId: source.questionId, date: source.date, value: source.value, payload: canonicalPayload });
   const groupKey = deriveGroupKey({ userId, sourceSurface: "checkin", rawInput });
-  return ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+  const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
     group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "checkin", rawInput },
     member: {
       memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "recovery", payloadFingerprint: JSON.stringify(payload), ordinal: 0 }),
@@ -1011,6 +1012,8 @@ async function writeCheckinRecovery(ctx: MutationCtx, userId: string, source: { 
       resolvedDate: source.date,
     },
   });
+  await finalizeActionGroupAfterWrite(ctx, userId, groupKey);
+  return result;
 }
 
 function registryStructuredKind(questionId: string): StructuredKind | null {
