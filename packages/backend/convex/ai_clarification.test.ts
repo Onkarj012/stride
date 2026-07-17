@@ -87,6 +87,26 @@ describe("clarification flow", () => {
     expect(actions[0]).toMatchObject({ status: "pending", groupId: clarification.groupId });
   });
 
+  test("all-ready auto-write returns no clarification payload", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    mockChatReply('Logged.⟦LOG_WATER⟧{"ml":500,"date":"2026-07-16"}⟦/LOG_WATER⟧');
+
+    const result = await asUser.action(api.ai.chat, {
+      message: "I drank 500ml water",
+      sessionId: undefined,
+      coachType: "auto",
+      today: "2026-07-16",
+    }) as Record<string, unknown>;
+
+    expect(result.clarification).toBeUndefined();
+    expect(result.loggedItem).toMatchObject({ type: "water" });
+    expect(await t.run((ctx) => ctx.db.query("water_logs").collect())).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.query("actionGroups").collect())).toEqual([
+      expect.objectContaining({ status: "committed" }),
+    ]);
+  });
+
   test("mixed ready and vague members remain resolvable in one partial group", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });
@@ -223,6 +243,39 @@ describe("clarification flow", () => {
 
     const meals = await t.run((ctx) => ctx.db.query("meals").collect());
     expect(meals).toHaveLength(0);
+  });
+
+  test("tokenless logMeal separates date/time submissions while deduping an identical retry", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    const parsedData = {
+      name: "Oats",
+      time: "08:00",
+      ingredients: [],
+      reportedCalories: 300,
+    };
+
+    const first = await asUser.action(api.ai.logMeal, {
+      description: "my usual oats",
+      parsedData,
+      date: "2026-07-16",
+    });
+    const second = await asUser.action(api.ai.logMeal, {
+      description: "my usual oats",
+      parsedData: { ...parsedData, time: "09:00" },
+      date: "2026-07-17",
+    });
+    const retry = await asUser.action(api.ai.logMeal, {
+      description: "my usual oats",
+      parsedData,
+      date: "2026-07-16",
+    });
+
+    expect(second._id).not.toBe(first._id);
+    expect(retry._id).toBe(first._id);
+    expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(2);
+    expect(await t.run((ctx) => ctx.db.query("actionGroups").collect())).toHaveLength(2);
+    expect(await t.run((ctx) => ctx.db.query("actions").collect())).toHaveLength(2);
   });
 
   test("resolveClarification with exact date → committed via canonical writer + same groupId", async () => {

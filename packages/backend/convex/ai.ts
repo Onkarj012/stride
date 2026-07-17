@@ -17,7 +17,7 @@ import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction,
 import { toLegacyPersona } from "./personas";
 import { insertActionTelemetry } from "./telemetry";
 import { assertValidDate, stableHash } from "./validation";
-import { finalizeActionGroup as finalizeActionGroupInMutation, finalizeActionGroupAfterWrite } from "./actions_group";
+import { finalizeActionGroup as finalizeActionGroupInMutation } from "./actions_group";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
   await ctx.runMutation((internal as any).telemetry.record, { input });
@@ -1002,10 +1002,15 @@ export const logMeal = action({
 
     const draft = nutrition.ingredientBreakdown as MealDraft;
     const rawInput = description ?? JSON.stringify(parsedData ?? {});
-    const groupIdempotencyKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput });
+    const groupIdempotencyKey = deriveGroupKey({
+      userId,
+      sourceSurface: "chat",
+      rawInput: `${rawInput}\n[date:${today}]\n[time:${parsedMeal.time}]`,
+    });
     const id = await ctx.runMutation((internal as any).actions_writer.writeMealAction, {
       group: { userId, groupIdempotencyKey, sourceSurface: "chat", rawInput, clientLocalDate: today },
       member: {
+        memberIdempotencyKey: deriveMemberKey({ groupKey: groupIdempotencyKey, actionType: "meal", payloadFingerprint: "log-meal", ordinal: 0 }),
         payload: mealPayloadFromDraft(draft, { aiSuggestion: parsedMeal.aiSuggestion, components: parsedMeal.components, logSource: "ai" }),
         provenance: draft.nutritionSource === "database" ? "database_match" : draft.nutritionSource === "memory" ? "database_match" : "ai_estimated",
         confidence: draft.confidence,
@@ -1015,7 +1020,9 @@ export const logMeal = action({
         resolvedTime: parsedMeal.time,
       },
     });
-    await finalizeActionGroupAfterWrite(ctx, userId, groupIdempotencyKey);
+    const group = await ctx.runQuery(internal.ai.getActionGroupByKey, { userId, groupIdempotencyKey });
+    if (!group) throw new Error("Action group not found after canonical write");
+    await finalizeActionGroup(ctx, group._id);
     data = {
       _id: id,
       name: parsedMeal.name,
@@ -1982,7 +1989,7 @@ Rules:
           })),
         };
         cleanReply = [cleanReply, `I found ${parsedCandidates.length} items. Review them before saving.`].filter(Boolean).join("\n\n");
-      } else {
+      } else if (pendingCandidates.length > 0) {
         const questions = [...new Set(pendingCandidates.map((c) => c.question).filter((q): q is string => typeof q === "string" && q.length > 0))];
         clarification = {
           groupId: stagedGroupId,

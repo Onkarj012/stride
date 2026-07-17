@@ -475,7 +475,7 @@ export function CoachPage() {
         : undefined;
       const memoryApprovals = Array.isArray(r.memoryApprovals) ? r.memoryApprovals as MemoryApprovalEntry[] : [];
       if (clarification) setActiveClarificationGroupId(clarification.groupId as Id<"actionGroups">);
-      else if (loggedItem && activeClarificationGroupId) setActiveClarificationGroupId(null);
+      else if (activeClarificationGroupId) setActiveClarificationGroupId(null);
 
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: reply, agent, streamed: true }]);
       scroll();

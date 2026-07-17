@@ -190,6 +190,7 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
       const undoEntries = undoEntriesFrom(loggedItems)
       if (undoEntries.length) setMessages(current => [...current, { id: `undo-${Date.now()}`, role: 'undo', groupId: undoEntries[0].groupId, entries: undoEntries }])
       if (result.clarification?.groupId) { setActiveClarificationGroupId(result.clarification.groupId); setMessages(current => [...current, { id: `clarify-${Date.now()}`, role: 'clarification', payload: result.clarification }]) }
+      else setActiveClarificationGroupId(null)
       if (result.confirmation?.groupId) setMessages(current => [...current, { id: `confirm-${Date.now()}`, role: 'confirmation', payload: result.confirmation }])
     } catch (error) {
       setMessages(current => current.map(message => message.id === botId && message.role === 'assistant' ? { ...message, typing: false, blocks: [{ kind: 'text', text: error instanceof Error ? error.message : 'Could not reach Stry right now.' }] } : message))
