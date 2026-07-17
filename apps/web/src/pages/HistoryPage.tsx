@@ -11,6 +11,7 @@ import { OverlayHeader } from "@/components/mobile/MobileKit";
 import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
+import { localDateTime } from "@/lib/localDateTime";
 import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 const DAYS = ["M", "T", "W", "T", "F", "S", "S"];
@@ -279,7 +280,8 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
     if (relogging) return;
     setRelogging(id);
     try {
-      await relogMeal({ id });
+      const { date, time } = localDateTime();
+      await relogMeal({ id, date, time });
       toast.success("Logged again", `${name} added to today`);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
@@ -292,7 +294,8 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
     if (relogging) return;
     setRelogging(id);
     try {
-      await relogWorkout({ id, idempotencyToken: crypto.randomUUID() });
+      const { date, time } = localDateTime();
+      await relogWorkout({ id, date, timestamp: time, idempotencyToken: crypto.randomUUID() });
       toast.success("Logged again", `${name} added to today`);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");

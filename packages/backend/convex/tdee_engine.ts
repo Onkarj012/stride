@@ -9,6 +9,8 @@
  *
  *   BMR: Katch-McArdle when bodyFat% known, else Mifflin-St Jeor.
  *   NEAT: (MET-1)×kg×h   EAT: MET×kg×h
+ *   plannedDailyEAT / plannedEatPerTrainingDay: (MET-1)×kg×h — net baselines
+ *   matching the (MET-1) convention of logged burn in calorie_engine.
  */
 
 export type Sex = "male" | "female";
@@ -171,7 +173,17 @@ export function calculateTDEE(input: PlanInput): TdeeBreakdown {
     return sum + calcMETCalories(met, weightKg, hours) * sessions;
   }, 0);
   const eat = weeklyEat / 7;
-  const plannedEatPerTrainingDay = trainingDaysPerWeek > 0 ? weeklyEat / trainingDaysPerWeek : 0;
+  // Planned baselines for the per-day adjustment use NET MET (MET − 1) so they
+  // match how logged workout burn is computed (calorie_engine uses (MET-1)×kg×h).
+  // The gross weeklyEat above still feeds TDEE, so base plan calories are unchanged.
+  const weeklyEatNet = weeklyWorkouts.reduce((sum, w) => {
+    const met = WORKOUT_MET[(w.type as WorkoutType)] ?? WORKOUT_MET.strength;
+    const hours = Math.max(0, (w.durationMin ?? 0) / 60);
+    const sessions = Math.max(0, w.sessionsPerWeek ?? 0);
+    return sum + calcMETCalories(met, weightKg, hours, true) * sessions;
+  }, 0);
+  const plannedDailyEat = weeklyEatNet / 7;
+  const plannedEatPerTrainingDay = trainingDaysPerWeek > 0 ? weeklyEatNet / trainingDaysPerWeek : 0;
 
   const tdee = bmr + neatJob + neatLifestyle + eat;
   const finalTDEE = Math.round(tdee * TEF);
@@ -183,7 +195,7 @@ export function calculateTDEE(input: PlanInput): TdeeBreakdown {
     tef: Math.round(tdee * (TEF - 1)),
     tdee: Math.round(tdee),
     finalTDEE,
-    plannedDailyEAT: Math.round(eat),
+    plannedDailyEAT: Math.round(plannedDailyEat),
     plannedEatPerTrainingDay: Math.round(plannedEatPerTrainingDay),
   };
 }

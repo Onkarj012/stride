@@ -164,6 +164,45 @@ describe("canonical pipeline end-to-end contract", () => {
     expect(await low.run((ctx) => ctx.db.query("water_logs").collect())).toHaveLength(0);
   });
 
+  test("chat confirmation commits canonical envelopes, retries idempotently, undoes, recomputes, and enforces relog date/time pairs", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "e2e-user" });
+    mockChatReply([
+      '⟦LOG_WORKOUT⟧{"description":"30 min run","date":"2026-07-15"}⟦/LOG_WORKOUT⟧',
+      waterMarker(250, "2026-07-15"),
+      waterMarker(300, "2026-07-15"),
+      waterMarker(350, "2026-07-15"),
+      waterMarker(400, "2026-07-15"),
+    ].join(""));
+
+    const chatResult = await asUser.action(api.ai.chat, { message: "five logs", today: "2026-07-16" }) as any;
+    expect(chatResult.confirmation.items).toHaveLength(5);
+    const groupId = chatResult.confirmation.groupId;
+    const decisions = Array.from({ length: 5 }, (_, ordinal) => ({ ordinal, action: "confirm" as const }));
+    const first = await asUser.action((api as any).ai.confirmGroup, { groupId, decisions }) as any;
+    expect(first.status).toBe("committed");
+    expect(first.results.every((result: any) => result.status === "committed")).toBe(true);
+
+    const actions = await t.run((ctx) => ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect());
+    expect(actions).toHaveLength(5);
+    expect(actions.every((action) => action.status === "committed" && action.reversible)).toBe(true);
+    const workout = await t.run((ctx) => ctx.db.query("workouts").withIndex("by_user_date", (q) => q.eq("userId", "e2e-user").eq("date", "2026-07-15")).first());
+    expect(workout).toMatchObject({ name: "Run", date: "2026-07-15", sourceActionId: String(actions.find((action) => action.actionType === "workout")!._id) });
+    const versionBeforeRetry = (await t.run((ctx) => ctx.db.query("derived_state_versions").withIndex("by_user_date", (q) => q.eq("userId", "e2e-user").eq("date", "2026-07-15")).first()))?.version ?? 0;
+
+    const retry = await asUser.action((api as any).ai.confirmGroup, { groupId, decisions }) as any;
+    expect(retry.results.every((result: any) => result.status === "already_committed")).toBe(true);
+    expect(await t.run((ctx) => ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect())).toHaveLength(5);
+    expect((await t.run((ctx) => ctx.db.query("derived_state_versions").withIndex("by_user_date", (q) => q.eq("userId", "e2e-user").eq("date", "2026-07-15")).first()))?.version).toBe(versionBeforeRetry);
+
+    await expect(asUser.mutation(api.workouts.relogWorkout, { id: workout!._id, date: "2026-07-15" })).rejects.toThrow("provided together");
+    const undo = await asUser.mutation((api as any).actions_undo.undoGroup, { groupId });
+    expect(undo.results.filter((result: any) => result.status === "undone")).toHaveLength(5);
+    expect((await t.run((ctx) => ctx.db.get(workout!._id)))?.undoneAt).toEqual(expect.any(Number));
+    expect((await t.run((ctx) => ctx.db.query("derived_state_versions").withIndex("by_user_date", (q) => q.eq("userId", "e2e-user").eq("date", "2026-07-15")).first()))?.version).toBeGreaterThan(versionBeforeRetry);
+    expect((await asUser.query(api.insights.getTodayBrief, { today: "2026-07-15" })).stats.waterMl).toBe(0);
+  });
+
   test("partial confirmation saves valid members, leaves unresolved items visible, and group undo reverses only successes", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "e2e-user" });

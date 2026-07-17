@@ -105,7 +105,7 @@ export function resolveActionDate(input: ResolveActionDateInput): ActionDateReso
   const phrase = input.relativePhrase?.trim().toLowerCase().replace(/\s+/g, " ");
 
   if (input.explicitDate !== undefined && (!explicitDate || !isValidDate(explicitDate))) {
-    return { status: "rejected", reason: "Explicit date must be a valid YYYY-MM-DD date" };
+    return { status: "rejected", reason: "Explicit date must be a valid calendar date in YYYY-MM-DD format" };
   }
   if (input.explicitTime !== undefined && (!explicitTime || !isValidTime(explicitTime))) {
     return { status: "rejected", reason: "Explicit time must be a valid HH:MM time" };
@@ -136,6 +136,33 @@ export function resolveActionDate(input: ResolveActionDateInput): ActionDateReso
   return explicitTime === undefined
     ? { status: "resolved", date }
     : { status: "resolved", date, time: explicitTime };
+}
+
+/** Resolve a target date/time for direct re-logs using the canonical date policy. */
+export function resolveTargetDateTime(
+  args: { date?: string; time?: string },
+  requirePair = false,
+): { date: string; time: string } {
+  const { date, time } = args;
+  if (requirePair && ((date === undefined) !== (time === undefined))) {
+    throw new Error("date and time must be provided together");
+  }
+
+  const now = Date.now();
+  const current = localDateTime(now, "UTC");
+  const resolved = resolveActionDate({
+    now,
+    userTimeZone: "UTC",
+    explicitDate: date,
+    explicitTime: time,
+    clientLocalDate: date === undefined && time === undefined ? current.date : undefined,
+    actionKind: "planned",
+  });
+  if (resolved.status !== "resolved") throw new Error(resolved.reason);
+  return {
+    date: resolved.date,
+    time: resolved.time ?? current.time,
+  };
 }
 
 export function resolveIntervalDay(input: { startMs: number; endMs: number; userTimeZone: string }): string {

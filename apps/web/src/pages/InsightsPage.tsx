@@ -20,6 +20,7 @@ import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/compone
 import { useToast } from "@/context/ToastContext";
 import { useLogs } from "@/hooks/useLogs";
 import { localDateStr } from "@/lib/utils";
+import { localDateTime } from "@/lib/localDateTime";
 import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 function periodDays(period: Period): number {
@@ -37,7 +38,8 @@ function TodaysMealsCard({ date }: { date: string }) {
 
   async function handleRelog(id: Id<"meals">, name: string) {
     try {
-      await relogMeal({ id });
+      const { date, time } = localDateTime();
+      await relogMeal({ id, date, time });
       toast.success("Logged again", name);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
@@ -134,7 +136,8 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
 
   async function handleRelog(id: Id<"workouts">, name: string) {
     try {
-      await relogWorkout({ id, idempotencyToken: crypto.randomUUID() });
+      const { date, time } = localDateTime();
+      await relogWorkout({ id, date, timestamp: time, idempotencyToken: crypto.randomUUID() });
       toast.success("Logged again", name);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
@@ -218,7 +221,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
 /* ── Today's AI insights & tips card ── */
 export function TodaysInsightsCard({ date }: { date: string }) {
   const insightsData = useQuery(api.insights.getDailyInsights, { date });
-  const brief = useQuery(api.insights.getTodayBrief, {});
+  const brief = useQuery(api.insights.getTodayBrief, { today: date });
   const generate = useAction(api.ai.generateDailyInsights);
   const toast = useToast();
   const [generating, setGenerating] = useState(false);
@@ -293,7 +296,7 @@ export function TodaysInsightsCard({ date }: { date: string }) {
 /** Compact insights card for the sidebar slot in the Insights grid. */
 function TodaysInsightsMini({ date }: { date: string }) {
   const insightsData = useQuery(api.insights.getDailyInsights, { date });
-  const brief = useQuery(api.insights.getTodayBrief, {});
+  const brief = useQuery(api.insights.getTodayBrief, { today: date });
   const generate = useAction(api.ai.generateDailyInsights);
   const toast = useToast();
   const insights = (insightsData?.insights ?? []) as string[];
@@ -372,6 +375,7 @@ export function InsightsPage() {
   const today = localDateStr();
 
   // Convex progress data (7 or 30 days)
+  const brief = useQuery(api.insights.getTodayBrief, { today });
   const progressRows = (useQuery(api.progress.getProgress, { days, today }) ?? []) as Array<{
     date: string;
     calories: number;
@@ -380,6 +384,9 @@ export function InsightsPage() {
     fat: number;
     workouts: number;
     goal: number;
+    proteinGoal?: number;
+    carbGoal?: number;
+    fatGoal?: number;
   }>;
 
   // Today's logs (used for "today" macros and milestones)
@@ -389,9 +396,6 @@ export function InsightsPage() {
   const totalKcal = progressRows.reduce((s, r) => s + r.calories, 0);
   const totalProtein = progressRows.reduce((s, r) => s + r.protein, 0);
   const totalWorkouts = progressRows.reduce((s, r) => s + r.workouts, 0);
-  const avgGoal = progressRows.length > 0
-    ? Math.round(progressRows.reduce((s, r) => s + r.goal, 0) / progressRows.length)
-    : 2400;
 
   // For "today" view, use today's logs directly
   const todayKcal = period === "today"
@@ -416,8 +420,23 @@ export function InsightsPage() {
   ).size;
 
   const weeklySummary = useQuery(api.insights.getWeeklySummary);
+  const profile = useQuery(api.profile.getProfile);
 
-  const macroTarget = { kcal: avgGoal * days, protein: 150 * days, carbs: 200 * days, fat: 60 * days };
+  // Wait for real targets so milestone thresholds do not flash from fallback values.
+  const profileLoaded = profile !== undefined;
+  const targetsLoaded = brief !== undefined;
+  const dailyTargets = brief?.stats;
+  const finiteGoal = (value: number | undefined, fallback: number | undefined): number =>
+    Number.isFinite(value) ? value! : Number.isFinite(fallback) ? fallback! : 0;
+  const macroTarget = progressRows.reduce(
+    (totals, row) => ({
+      kcal: totals.kcal + row.goal,
+      protein: totals.protein + finiteGoal(row.proteinGoal, dailyTargets?.proteinTarget),
+      carbs: totals.carbs + finiteGoal(row.carbGoal, dailyTargets?.carbTarget),
+      fat: totals.fat + finiteGoal(row.fatGoal, dailyTargets?.fatTarget),
+    }),
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+  );
   const milestoneItems = [
     { label: "Protein", achieved: todayProtein >= macroTarget.protein * 0.7 },
     { label: "Training", achieved: period === "today" ? workoutMin > 0 : totalWorkouts > 0 },
@@ -450,7 +469,7 @@ export function InsightsPage() {
         <NarrativeCard type={period === "today" ? "daily" : "weekly"} narrative={mobileNarrative} date={period === "today" ? "Today" : period === "week" ? "Last 7 days" : "Last 30 days"} />
         <MacroCard kcal={Math.round(todayKcal)} protein={Math.round(todayProtein)} carbs={Math.round(todayCarbs)} fat={Math.round(todayFat)} />
         <StreakCard />
-        <MilestoneCard milestones={milestoneItems} />
+        {profileLoaded && targetsLoaded && <MilestoneCard milestones={milestoneItems} />}
       </div>
     </div>
 
@@ -485,6 +504,7 @@ export function InsightsPage() {
 
       {/* Nutrition + Today's Insights (replaces Active Days) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {profileLoaded && targetsLoaded && (
         <Card tone="card" radius="lg" padding="lg" className="lg:col-span-2 space-y-5">
           <div className="flex items-center justify-between">
             <h3 className="text-h3 text-text">Nutrition</h3>
@@ -502,6 +522,7 @@ export function InsightsPage() {
             />
           </div>
         </Card>
+        )}
 
         {/* Today's Insights replaces Active Days */}
         {period === "today" ? (
@@ -541,13 +562,15 @@ export function InsightsPage() {
             unit="kcal/day"
             color="peach"
           />
-          <StatChip
-            className="flex-1"
-            label="Calorie goal"
-            value={String(avgGoal)}
-            unit="kcal"
-            color="sky"
-          />
+          {profileLoaded && targetsLoaded && (
+            <StatChip
+              className="flex-1"
+              label="Calorie goal"
+              value={String(dailyTargets?.calorieTarget ?? 0)}
+              unit="kcal"
+              color="sky"
+            />
+          )}
         </div>
       </div>
 

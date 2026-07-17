@@ -1,8 +1,8 @@
 import { query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
-import { adjustCaloriesForDay, type NutritionPlan } from "./tdee_engine";
+import { adjustCaloriesForDay } from "./tdee_engine";
 import { getNextCheckInForContext, getTodayCheckInAnswerContext } from "./checkins";
-import { resolvePlanForDayAdjustment } from "./plan_resolve";
+import { FALLBACK_TARGETS, parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 import { deriveRecoveryState } from "./wellness";
 import { readActiveRowsForDate, readActiveSleepForDate, readLatestActiveStepsForDate } from "./active_rows";
 
@@ -153,10 +153,6 @@ export const getTodayBrief = query({
       readActiveRowsForDate(ctx, "sleep_logs", userId, today),
     ]);
 
-    const calorieTarget = profile?.calorieTarget ?? 2000;
-    const proteinTarget = profile?.proteinTarget ?? 90;
-    const carbTarget = profile?.carbTarget ?? 250;
-    const fatTarget = profile?.fatTarget ?? 65;
     const todayCals = todayMeals.reduce((s, m) => s + m.calories, 0);
     const todayProtein = todayMeals.reduce((s, m) => s + m.protein, 0);
     const todayCarbs = todayMeals.reduce((s, m) => s + m.carbs, 0);
@@ -185,14 +181,26 @@ export const getTodayBrief = query({
     }
 
     // Task 19: dynamic per-day target from base plan + today's actual burn.
-    let plan: NutritionPlan | null = null;
-    try {
-      const p = profile?.planBreakdown ? JSON.parse(profile.planBreakdown) : null;
-      if (p && typeof p.plannedDailyEAT === "number") plan = resolvePlanForDayAdjustment(p as NutritionPlan, profile ?? {});
-    } catch { /* no plan */ }
+    const parsed = parseStoredPlan(profile?.planBreakdown);
+    const plan = parsed ? resolvePlanForDayAdjustment(parsed, profile ?? {}) : null;
     const todayBurn = todayWorkouts.reduce((s, w) => s + (w.caloriesBurned ?? 0), 0);
+
+    let calorieTarget = profile?.calorieTarget ?? FALLBACK_TARGETS.calories;
+    let proteinTarget = profile?.proteinTarget ?? FALLBACK_TARGETS.protein;
+    let carbTarget = profile?.carbTarget ?? FALLBACK_TARGETS.carbs;
+    let fatTarget = profile?.fatTarget ?? FALLBACK_TARGETS.fat;
+    if (plan) {
+      calorieTarget = plan.calories;
+      proteinTarget = plan.protein;
+      carbTarget = plan.carbs;
+      fatTarget = plan.fat;
+    }
+
     const dayAdj = plan ? adjustCaloriesForDay(plan, todayBurn) : null;
     const adjustedCalorieTarget = dayAdj?.calorieGoal ?? calorieTarget;
+    const adjustedProteinTarget = dayAdj?.proteinGoal ?? proteinTarget;
+    const adjustedCarbTarget = dayAdj?.carbGoal ?? carbTarget;
+    const adjustedFatTarget = dayAdj?.fatGoal ?? fatTarget;
     const adjustmentNote = dayAdj && dayAdj.calorieGoal !== plan!.calories ? dayAdj.note : null;
 
     const hour = localNow.getUTCHours();
@@ -401,11 +409,11 @@ export const getTodayBrief = query({
         adjustedCalorieTarget,
         adjustmentNote,
         todayProtein: Math.round(todayProtein),
-        proteinTarget,
+        proteinTarget: adjustedProteinTarget,
         todayCarbs: Math.round(todayCarbs),
-        carbTarget,
+        carbTarget: adjustedCarbTarget,
         todayFat: Math.round(todayFat),
-        fatTarget,
+        fatTarget: adjustedFatTarget,
         waterMl,
         waterTarget,
         mealsLogged: todayMeals.length,

@@ -83,6 +83,21 @@ test("barcode grams, milliliters, and servings preserve original quantity and co
   expect(serving.ingredients[0]).toMatchObject({ quantity: 2, unit: "servings", grams: 200 });
 });
 
+test("unknown unit conversion stays unresolved in the canonical meal draft", () => {
+  const draft = buildMealDraft({
+    ...base,
+    ingredients: [{
+      foodText: "rice",
+      quantity: 1,
+      unit: "vati",
+      nutritionPer100g: { kcal: 130, protein: 2.7, carbs: 28, fat: 0.3 },
+      source: "database",
+    }],
+  });
+  expect(draft.ingredients[0]).toMatchObject({ grams: 0, unresolved: true, kcal: 0 });
+  expect(draft.unresolved).toEqual(["rice"]);
+});
+
 test("meal edits explicitly invalidate the prior ingredient detail", async () => {
   const t = convexTest(schema, modules);
   const user = t.withIdentity({ subject: "edit-user" });

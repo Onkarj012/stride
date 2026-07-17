@@ -3,6 +3,7 @@ import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { useLogs } from "@/hooks/useLogs";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { localDateStr } from "@/lib/utils";
 import { useSnapshot } from "@/context/SnapshotContext";
 
@@ -20,6 +21,7 @@ export function RightPanel() {
   const { expanded, toggle } = useSnapshot();
   const reduceMotion = useReducedMotion();
   const profile = useQuery(api.profile.getProfile);
+  const brief = useQuery(api.insights.getTodayBrief, {});
   const { logs } = useLogs(localDateStr());
   const streakInfo = useQuery(api.history.getStreak, { today: new Date().toISOString().split("T")[0] });
 
@@ -29,8 +31,9 @@ export function RightPanel() {
   const workoutMin = logs.reduce((s, l) => s + (l.workout?.duration ?? 0), 0);
   const streak = streakInfo?.streak ?? 0;
 
-  const kcalTarget = profile?.calorieTarget ?? 2000;
-  const proteinTarget = profile?.proteinTarget ?? 90;
+  const stats = brief?.stats;
+  const kcalTarget = stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 0;
+  const proteinTarget = stats?.proteinTarget ?? 0;
   const waterTarget = 2500;
 
   const kcalPct = kcalTarget > 0 ? (kcal / kcalTarget) * 100 : 0;
@@ -52,6 +55,15 @@ export function RightPanel() {
     >
       {expanded ? (
           <div className="h-full w-[312px] overflow-y-auto p-4">
+            {brief === undefined && (
+              <div className="space-y-3">
+                <Skeleton className="h-32 w-full rounded-[18px]" />
+                <Skeleton className="h-24 w-full rounded-[14px]" />
+                <Skeleton className="h-24 w-full rounded-[14px]" />
+              </div>
+            )}
+            {brief !== undefined && (
+            <>
             {/* Header */}
             <div className="flex items-center justify-between mb-4">
               <span className="text-[11px] font-extrabold uppercase tracking-[2px] text-ink/35 dark:text-white/35">Your day</span>
@@ -202,6 +214,8 @@ export function RightPanel() {
               </div>
             )}
             </div>
+            </>
+            )}
           </div>
         ) : (
           <button onClick={toggle} className="w-12 h-full flex flex-col items-center pt-5 gap-3 text-ink/45 dark:text-white/40 hover:text-ink dark:hover:text-white cursor-pointer">

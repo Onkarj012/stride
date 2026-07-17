@@ -26,6 +26,14 @@ const VOLUME_TO_ML: Record<string, number> = {
   pint: 473,
   quart: 946,
   gallon: 3785,
+  katori: 150,
+  katoris: 150,
+  glass: 250,
+  glasses: 250,
+  tumbler: 200,
+  tumblers: 200,
+  mug: 300,
+  mugs: 300,
 };
 
 // Known piece weights in grams (average/common sizes)
@@ -173,7 +181,21 @@ const FOOD_DENSITIES: Record<string, number> = {
 export interface ConversionResult {
   grams: number;
   confidence: number;
-  method: "exact" | "volume" | "piece" | "estimated";
+  method: "exact" | "volume" | "piece" | "estimated" | "unresolved";
+}
+
+interface DensityResult {
+  density: number;
+  known: boolean;
+}
+
+const HOUSEHOLD_VESSELS = new Set([
+  "katori", "katoris", "glass", "glasses", "tumbler", "tumblers", "mug", "mugs",
+  "bowl", "bowls", "handful", "handfuls",
+]);
+
+function unresolved(): ConversionResult {
+  return { grams: 0, confidence: 0, method: "unresolved" };
 }
 
 /**
@@ -192,11 +214,11 @@ export function toGrams(
   const foodLower = foodName.toLowerCase().trim();
 
   // Direct weight units — highest confidence
-  if (unitLower === "g" || unitLower === "gram" || unitLower === "grams" || unitLower === "gm") {
+  if (unitLower === "g" || unitLower === "gram" || unitLower === "grams" || unitLower === "gm" || unitLower === "gms" || unitLower === "gm." || unitLower === "gr" || unitLower === "grm") {
     return { grams: amount, confidence: 1.0, method: "exact" };
   }
 
-  if (unitLower === "kg" || unitLower === "kilogram" || unitLower === "kilograms") {
+  if (unitLower === "kg" || unitLower === "kgs" || unitLower === "kilogram" || unitLower === "kilograms" || unitLower === "kilo" || unitLower === "kilos") {
     return { grams: amount * 1000, confidence: 1.0, method: "exact" };
   }
 
@@ -216,22 +238,19 @@ export function toGrams(
   const mlPerUnit = VOLUME_TO_ML[unitLower];
   if (mlPerUnit) {
     const ml = amount * mlPerUnit;
-    const density = findFoodDensity(foodLower);
-    return {
-      grams: Math.round(ml * density),
-      confidence: density !== 1.0 ? 0.85 : 0.75,
-      method: "volume",
-    };
+    const { density, known } = findFoodDensity(foodLower);
+    const isHousehold = HOUSEHOLD_VESSELS.has(unitLower);
+    if (isHousehold && !known) return unresolved();
+    const baseConfidence = known ? 0.85 : 0.45;
+    const confidence = isHousehold ? Math.min(baseConfidence, 0.6) : baseConfidence;
+    return { grams: Math.round(ml * density), confidence, method: "volume" };
   }
 
   // Piece-based units
   if (unitLower === "piece" || unitLower === "pieces" || unitLower === "pc" || unitLower === "pcs") {
     const pieceWeight = findPieceWeight(foodLower);
-    return {
-      grams: amount * pieceWeight,
-      confidence: pieceWeight > 0 ? 0.7 : 0.4,
-      method: "piece",
-    };
+    if (pieceWeight <= 0) return unresolved();
+    return { grams: amount * pieceWeight, confidence: 0.7, method: "piece" };
   }
 
   // Serving-based
@@ -242,7 +261,8 @@ export function toGrams(
   // Bowl/plate approximations
   if (unitLower === "bowl" || unitLower === "bowls") {
     // For cooked foods, a bowl is roughly 250-300g
-    const density = findFoodDensity(foodLower);
+    const { density, known } = findFoodDensity(foodLower);
+    if (!known) return unresolved();
     return { grams: Math.round(amount * 250 * density), confidence: 0.4, method: "estimated" };
   }
 
@@ -253,7 +273,8 @@ export function toGrams(
 
   // Handful
   if (unitLower === "handful" || unitLower === "handfuls") {
-    const density = findFoodDensity(foodLower);
+    const { density, known } = findFoodDensity(foodLower);
+    if (!known) return unresolved();
     return { grams: Math.round(amount * 30 * density), confidence: 0.3, method: "estimated" };
   }
 
@@ -263,17 +284,11 @@ export function toGrams(
   }
 
   // Small/medium/large
-  if (unitLower === "small") {
+  if (unitLower === "small" || unitLower === "medium" || unitLower === "large") {
     const pieceWeight = findPieceWeight(foodLower);
-    return { grams: amount * pieceWeight * 0.7, confidence: 0.4, method: "estimated" };
-  }
-  if (unitLower === "medium") {
-    const pieceWeight = findPieceWeight(foodLower);
-    return { grams: amount * pieceWeight, confidence: 0.4, method: "estimated" };
-  }
-  if (unitLower === "large") {
-    const pieceWeight = findPieceWeight(foodLower);
-    return { grams: amount * pieceWeight * 1.3, confidence: 0.4, method: "estimated" };
+    if (pieceWeight <= 0) return unresolved();
+    const multiplier = unitLower === "small" ? 0.7 : unitLower === "large" ? 1.3 : 1;
+    return { grams: amount * pieceWeight * multiplier, confidence: 0.4, method: "estimated" };
   }
 
   // Unknown unit — try to guess
@@ -283,18 +298,17 @@ export function toGrams(
     return { grams: amount * pieceWeight, confidence: 0.5, method: "piece" };
   }
 
-  // Default: assume it's grams
-  return { grams: amount, confidence: 0.3, method: "estimated" };
+  return unresolved();
 }
 
 /**
  * Find the density of a food for volume-to-weight conversion.
  */
-function findFoodDensity(foodName: string): number {
+function findFoodDensity(foodName: string): DensityResult {
   for (const [key, density] of Object.entries(FOOD_DENSITIES)) {
-    if (foodName.includes(key)) return density;
+    if (foodName.includes(key)) return { density, known: true };
   }
-  return 1.0;
+  return { density: 1.0, known: false };
 }
 
 /**

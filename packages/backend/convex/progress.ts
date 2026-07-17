@@ -1,5 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
+import { adjustCaloriesForDay } from "./tdee_engine";
+import { FALLBACK_TARGETS, parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -20,7 +22,7 @@ export const getProgress = query({
       .toISOString()
       .split("T")[0];
 
-    const [allMeals, allWorkouts, allGoals] = await Promise.all([
+    const [allMeals, allWorkouts, allGoals, profile] = await Promise.all([
       ctx.db
         .query("meals")
         .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
@@ -34,6 +36,10 @@ export const getProgress = query({
         .withIndex("by_user_date", (q) => q.eq("userId", userId).gte("date", startDate))
         .filter((q) => q.lte(q.field("date"), endDate))
         .collect(),
+      ctx.db
+        .query("user_profiles")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .first(),
     ]);
 
     const mealsByDate = new Map<string, { cals: number; prot: number; carbs: number; fat: number }>();
@@ -43,30 +49,61 @@ export const getProgress = query({
     }
 
     const workoutsByDate = new Map<string, number>();
+    const burnByDate = new Map<string, number>();
     for (const w of allWorkouts.filter((row: any) => row.date <= endDate && !row.undoneAt)) {
       workoutsByDate.set(w.date, (workoutsByDate.get(w.date) ?? 0) + 1);
+      burnByDate.set(w.date, (burnByDate.get(w.date) ?? 0) + (w.caloriesBurned ?? 0));
     }
 
-    const goalsByDate = new Map<string, number>();
+    const goalsByDate = new Map<string, { calorieGoal: number; proteinGoal: number; carbGoal: number; fatGoal: number }>();
     for (const g of allGoals) {
-      goalsByDate.set(g.date, g.calorieGoal);
+      goalsByDate.set(g.date, {
+        calorieGoal: g.calorieGoal,
+        proteinGoal: g.proteinGoal,
+        carbGoal: g.carbGoal,
+        fatGoal: g.fatGoal,
+      });
     }
+
+    const parsed = parseStoredPlan(profile?.planBreakdown);
+    const plan = parsed ? resolvePlanForDayAdjustment(parsed, profile ?? {}) : null;
+    const fallbackGoalsForDay = (date: string) => {
+      if (plan) {
+        const adjusted = adjustCaloriesForDay(plan, burnByDate.get(date) ?? 0);
+        return {
+          calorieGoal: adjusted.calorieGoal,
+          proteinGoal: adjusted.proteinGoal,
+          carbGoal: adjusted.carbGoal,
+          fatGoal: adjusted.fatGoal,
+        };
+      }
+      return {
+        calorieGoal: profile?.calorieTarget ?? FALLBACK_TARGETS.calories,
+        proteinGoal: profile?.proteinTarget ?? FALLBACK_TARGETS.protein,
+        carbGoal: profile?.carbTarget ?? FALLBACK_TARGETS.carbs,
+        fatGoal: profile?.fatTarget ?? FALLBACK_TARGETS.fat,
+      };
+    };
 
     const result = [];
-    const endMs = new Date(endDate + "T00:00:00").getTime();
+    const endMs = new Date(`${endDate}T00:00:00.000Z`).getTime();
     for (let i = numDays - 1; i >= 0; i--) {
       const d = new Date(endMs - i * 86400000);
       const date = d.toISOString().split("T")[0];
       const m = mealsByDate.get(date);
+      const goals = goalsByDate.get(date) ?? fallbackGoalsForDay(date);
       result.push({
         date,
-        dayLabel: DAY_NAMES[d.getDay()],
+        dayLabel: DAY_NAMES[d.getUTCDay()],
         calories: Math.round(m?.cals ?? 0),
         protein: Math.round(m?.prot ?? 0),
         carbs: Math.round(m?.carbs ?? 0),
         fat: Math.round(m?.fat ?? 0),
         workouts: workoutsByDate.get(date) ?? 0,
-        goal: goalsByDate.get(date) ?? 2400,
+        goal: goals.calorieGoal,
+        proteinGoal: goals.proteinGoal,
+        carbGoal: goals.carbGoal,
+        fatGoal: goals.fatGoal,
       });
     }
     return result;

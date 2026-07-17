@@ -1,4 +1,4 @@
-import { action, query, internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
+import { action, mutation, query, internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal, api } from "./_generated/api";
 import { deriveGroupKey, deriveMemberKey, deriveSubmissionFingerprint, ensureGroup, ensureMember } from "./actions_idempotency";
@@ -16,7 +16,7 @@ import {
 import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
 import { toLegacyPersona } from "./personas";
 import { insertActionTelemetry } from "./telemetry";
-import { assertValidDate, stableHash } from "./validation";
+import { assertValidDate, assertValidTime, stableHash } from "./validation";
 import { finalizeActionGroup as finalizeActionGroupInMutation } from "./actions_group";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
@@ -750,6 +750,123 @@ export const discardConfirmationMember = internalMutation({
 
 
 // ─── Public actions ───────────────────────────────────────────────────────────
+
+/** Commit a Home confirmation card through the canonical action envelope. */
+export const commitHomeDraft = mutation({
+  args: {
+    draft: v.any(),
+    clientSubmissionId: v.string(),
+  },
+  handler: async (ctx, { draft: rawDraft, clientSubmissionId }): Promise<{ id: string; actionId: Id<"actions">; groupId: Id<"actionGroups"> }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    if (!clientSubmissionId.trim()) throw new Error("clientSubmissionId is required");
+    if (!rawDraft || typeof rawDraft !== "object" || Array.isArray(rawDraft)) {
+      throw new Error("A log draft is required");
+    }
+
+    const draft = rawDraft as Record<string, any>;
+    const kind = draft.kind;
+    const actionType = kind === "workout" ? "workout" : ["sleep", "water", "mood", "steps"].includes(kind) ? "recovery" : null;
+    if (!actionType) throw new Error("Unsupported Home log draft");
+
+    const date = assertValidDate(String(draft.date ?? new Date().toISOString().slice(0, 10)));
+    const time = assertValidTime(typeof draft.time === "string"
+      ? draft.time
+      : typeof draft.timestamp === "string"
+        ? draft.timestamp
+        : new Date().toISOString().slice(11, 16));
+    const groupIdempotencyKey = deriveGroupKey({
+      userId: identity.subject,
+      sourceSurface: "chat",
+      rawInput: `home-confirm:${clientSubmissionId}`,
+      clientSubmissionId,
+    });
+    const group = {
+      userId: identity.subject,
+      groupIdempotencyKey,
+      sourceSurface: "chat" as const,
+      rawInput: `home-confirm:${clientSubmissionId}`,
+      clientLocalDate: date,
+      clientLocalTime: time,
+      createdAt: Date.now(),
+    };
+    const reportedCalories = kind === "workout" && typeof draft.reportedCalories === "number"
+      ? draft.reportedCalories
+      : kind === "workout" && draft.calorieSource === "reported" && typeof draft.kcal === "number"
+        ? draft.kcal
+        : undefined;
+    const estimatedCalories = kind === "workout" && typeof draft.estimatedCalories === "number"
+      ? draft.estimatedCalories
+      : kind === "workout" && reportedCalories == null && typeof draft.kcal === "number"
+        ? draft.kcal
+        : undefined;
+    const payload = kind === "workout"
+      ? {
+          name: String(draft.description ?? draft.name ?? "Workout"),
+          sets: String(draft.sets ?? "1"),
+          duration: String(draft.duration ?? ""),
+          intensity: String(draft.intensity ?? "MEDIUM").toUpperCase(),
+          date,
+          timestamp: time,
+          exercises: draft.exercises ?? undefined,
+          rationale: draft.rationale ?? undefined,
+          caloriesBurned: typeof draft.kcal === "number" && draft.kcal > 0 ? draft.kcal : undefined,
+          reportedCalories,
+          estimatedCalories,
+          calorieSource: reportedCalories != null ? "reported" as const : estimatedCalories != null ? "estimated" as const : undefined,
+          calorieConfidence: draft.calorieResult?.confidence,
+          calorieRangeLow: draft.calorieResult?.range_low,
+          calorieRangeHigh: draft.calorieResult?.range_high,
+          calorieEstimateRough: draft.calorieResult?.rough,
+          calorieBreakdown: draft.calorieResult?.breakdown ? JSON.stringify(draft.calorieResult.breakdown) : undefined,
+          calculationVersion: draft.calorieResult ? 1 : undefined,
+          structuredSets: draft.exercises ? JSON.stringify(draft.exercises) : undefined,
+          logSource: "home",
+          allowDuplicate: draft.allowDuplicate,
+        }
+      : {
+          kind,
+          date,
+          time,
+          source: "home",
+          note: draft.description,
+          ...(kind === "sleep" ? { hours: draft.hours, quality: draft.quality } : {}),
+          ...(kind === "water" ? { ml: draft.ml } : {}),
+          ...(kind === "mood" ? { rating: draft.rating } : {}),
+          ...(kind === "steps" ? { count: draft.count } : {}),
+        };
+    const memberIdempotencyKey = deriveMemberKey({
+      groupKey: groupIdempotencyKey,
+      actionType,
+      payloadFingerprint: clientSubmissionId,
+      ordinal: 0,
+    });
+    const member = {
+      memberIdempotencyKey,
+      payload,
+      provenance: kind === "workout" && reportedCalories != null ? "user_reported" as const : "ai_extracted" as const,
+      validation: { status: draft.parseError ? "error" as const : "valid" as const, messages: draft.parseError ? [String(draft.parseError)] : [] },
+      reversible: true,
+      resolvedDate: date,
+      resolvedTime: time,
+    };
+    const result: any = actionType === "workout"
+      ? await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group, member })
+      : await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group, member });
+    const action = await ctx.db
+      .query("actions")
+      .withIndex("by_member_idempotency_key", (q) => q.eq("userId", identity.subject).eq("memberIdempotencyKey", memberIdempotencyKey))
+      .first();
+    if (!action) throw new Error("Canonical action envelope was not created");
+    await finalizeActionGroupInMutation(ctx, action.groupId);
+    return {
+      id: actionType === "recovery" ? String((result as any)?.id ?? result) : String(result),
+      actionId: action._id,
+      groupId: action.groupId,
+    };
+  },
+});
 
 export const parseOnboarding = action({
   args: { field: v.string(), text: v.string() },
@@ -2590,6 +2707,7 @@ export const homepageInput = action({
     reply?: string;
     coachType?: CoachType;
     sessionId?: any;
+    messageId?: string;
     restricted?: boolean;
   }> => {
     const identity = await ctx.auth.getUserIdentity();
@@ -2828,14 +2946,14 @@ Return ONLY:
       const reply = await callAI(replyMessages, 250, image ? visionModel : (settingsModel ?? CHAT_MODEL), apiKey);
 
       // Persist AI reply
-      await ctx.runMutation(internal.chat.addMessage, {
+      const messageId = await ctx.runMutation(internal.chat.addMessage, {
         userId,
         sessionId: activeSessionId,
         role: "ai",
         content: reply,
       });
 
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId, restricted: restrictedGuidance };
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId, messageId, restricted: restrictedGuidance };
     }
 
     // Step 2: Parse each item in parallel
@@ -2943,6 +3061,9 @@ Return ONLY:
             type: parsed.name,
             duration: parseDurationMinutes(parsed.duration ?? "30 min") || 30,
             kcal: finalKcal,
+            reportedCalories: statedKcal,
+            estimatedCalories: statedKcal == null ? parsed.calorieResult?.total_kcal : undefined,
+            calorieSource: statedKcal != null ? "reported" : parsed.calorieResult?.total_kcal != null ? "estimated" : undefined,
             intensity: (parsed.intensity?.toLowerCase() === "high" ? "high" : parsed.intensity?.toLowerCase() === "low" ? "light" : "medium"),
             sets: parsed.sets,
             rationale: parsed.rationale,
@@ -3010,10 +3131,10 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
     if (drafts.length === 0) {
       // Fallback to question path
       const reply = "I couldn't parse that. Could you be more specific?";
-      await ctx.runMutation(internal.chat.addMessage, {
+      const messageId = await ctx.runMutation(internal.chat.addMessage, {
         userId, sessionId: activeSessionId, role: "ai", content: reply,
       });
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId, restricted: restrictedGuidance };
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId, messageId, restricted: restrictedGuidance };
     }
 
     // If any draft has a date != today, mention it in the summary
@@ -3027,7 +3148,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
 
     // Persist the assistant's response (tier1 + tier2) so the chat thread stays meaningful
     const persistedReply = tier2Detail ? `${tier1Summary}\n\n${tier2Detail}` : tier1Summary;
-    await ctx.runMutation(internal.chat.addMessage, {
+    const messageId = await ctx.runMutation(internal.chat.addMessage, {
       userId, sessionId: activeSessionId, role: "ai", content: persistedReply,
     });
 
@@ -3075,6 +3196,6 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       }
     }
 
-    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId, restricted: restrictedGuidance };
+    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId, messageId, restricted: restrictedGuidance };
   },
 });

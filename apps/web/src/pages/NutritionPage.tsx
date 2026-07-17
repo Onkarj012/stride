@@ -11,6 +11,7 @@ import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal
 import { Card } from "@/components/primitives/Card";
 import { Button } from "@/components/primitives/Button";
 import { ProgressBar } from "@/components/primitives/ProgressBar";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { MealLogCard } from "@/components/ui-kit";
 import { MacroCard, MealLogCardEmpty } from "@/components/ui-kit";
 import { MobileIcon, ScreenHeader, SegToggle } from "@/components/mobile/MobileKit";
@@ -91,7 +92,7 @@ export function NutritionPage() {
   const navigate = useNavigate();
   const today = localDateStr();
   const meals = (useQuery(api.meals.getMeals, { date: today }) ?? []) as any[];
-  const profile = useQuery(api.profile.getProfile);
+  const brief = useQuery(api.insights.getTodayBrief, { today });
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const toast = useToast();
 
@@ -105,9 +106,11 @@ export function NutritionPage() {
   const carbs = Math.round(meals.reduce((s, m) => s + (m.carbs ?? 0), 0));
   const fat = Math.round(meals.reduce((s, m) => s + (m.fat ?? 0), 0));
 
-  const kcalTarget = profile?.calorieTarget ?? 2000;
-  const proteinTarget = profile?.proteinTarget ?? 90;
-  const carbTarget = 200;
+  const stats = brief?.stats;
+  const kcalTarget = Math.round(stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 0);
+  const proteinTarget = Math.round(stats?.proteinTarget ?? 0);
+  const carbTarget = Math.round(stats?.carbTarget ?? 0);
+  const fatTarget = Math.round(stats?.fatTarget ?? 0);
 
   const kcalPct = kcalTarget > 0 ? (kcal / kcalTarget) * 100 : 0;
   const groups = groupByTime(meals as any);
@@ -122,6 +125,18 @@ export function NutritionPage() {
     } finally {
       setConfirmDelete(null);
     }
+  }
+
+  if (brief === undefined) {
+    return (
+      <div className="flex items-center justify-center min-h-dvh px-5">
+        <div className="space-y-3 w-full max-w-xs">
+          <Skeleton className="h-8 w-3/4 rounded-[14px]" />
+          <Skeleton className="h-40 w-full rounded-[20px]" />
+          <Skeleton className="h-24 w-full rounded-[20px]" />
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -253,6 +268,14 @@ export function NutritionPage() {
               </div>
               <ProgressBar className="mt-1" height="sm" tone="sky" track="rgba(255,255,255,0.18)"
                 value={carbTarget > 0 ? carbs / carbTarget : 0} />
+            </div>
+            <div>
+              <div className="flex justify-between text-[11px]">
+                <span className="text-white/55 font-semibold">Fat</span>
+                <span className="text-white font-extrabold">{fat}g / {fatTarget}g</span>
+              </div>
+              <ProgressBar className="mt-1" height="sm" tone="bubblegum" track="rgba(255,255,255,0.18)"
+                value={fatTarget > 0 ? fat / fatTarget : 0} />
             </div>
           </div>
         </Card>
