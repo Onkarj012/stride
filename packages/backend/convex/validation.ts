@@ -93,13 +93,25 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-const DATE_STR_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** Validate a client-supplied calendar date string (YYYY-MM-DD). */
+/** Validate a client-supplied calendar date string (YYYY-MM-DD).
+ *  Round-trips year/month/day so impossible dates such as 2026-02-31 are rejected.
+ */
 export function assertValidDateStr(date: string): string {
   const trimmed = date.trim();
-  if (!DATE_STR_RE.test(trimmed)) {
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
     throw new Error("date must be YYYY-MM-DD");
+  }
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+  const parsed = new Date(year, month - 1, day);
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    throw new Error("date is not a valid calendar date");
   }
   return trimmed;
 }

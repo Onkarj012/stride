@@ -53,6 +53,28 @@ describe("validateMealWrite", () => {
     ]));
     expect(result.confidence).toBe(0.35);
   });
+
+  test("clamps fractional values above the borderline and rejects above the reject max", () => {
+    const clamped = validateMealWrite({
+      ...validMeal,
+      calories: 3500.4,
+      protein: 600.1,
+      carbs: 900.5,
+      fat: 450.2,
+    });
+    expect(clamped.calories).toBe(3500);
+    expect(clamped.protein).toBe(600);
+    expect(clamped.carbs).toBe(900);
+    expect(clamped.fat).toBe(450);
+    expect(clamped.validationFlags).toEqual(expect.arrayContaining([
+      "calories_clamped",
+      "protein_clamped",
+      "carbs_clamped",
+      "fat_clamped",
+    ]));
+
+    expect(() => validateMealWrite({ ...validMeal, calories: 5000.1 })).toThrow(/unrealistically high/);
+  });
 });
 
 describe("validateWorkoutWrite", () => {
@@ -80,6 +102,17 @@ describe("assertValidDateStr", () => {
     expect(() => assertValidDateStr("07/12/2026")).toThrow(/YYYY-MM-DD/);
     expect(() => assertValidDateStr("2026-7-12")).toThrow(/YYYY-MM-DD/);
     expect(() => assertValidDateStr("not-a-date")).toThrow(/YYYY-MM-DD/);
+  });
+
+  test("rejects impossible calendar dates and empty string", () => {
+    expect(() => assertValidDateStr("2026-02-31")).toThrow(/valid calendar date/);
+    expect(() => assertValidDateStr("2026-13-10")).toThrow(/valid calendar date/);
+    expect(() => assertValidDateStr("")).toThrow(/YYYY-MM-DD/);
+  });
+
+  test("accepts leap years and rejects non-leap February 29", () => {
+    expect(assertValidDateStr("2024-02-29")).toBe("2024-02-29");
+    expect(() => assertValidDateStr("2023-02-29")).toThrow(/valid calendar date/);
   });
 });
 

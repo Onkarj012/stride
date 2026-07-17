@@ -19,7 +19,7 @@ import { PeriodSwitcher, type Period } from "@/components/insights/PeriodSwitche
 import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { useToast } from "@/context/ToastContext";
 import { useLogs } from "@/hooks/useLogs";
-import { localDateStr } from "@/lib/utils";
+import { localDateStr, localTimeStr } from "@/lib/utils";
 
 function periodDays(period: Period): number {
   return period === "today" ? 1 : period === "week" ? 7 : 30;
@@ -36,7 +36,7 @@ function TodaysMealsCard({ date }: { date: string }) {
 
   async function handleRelog(id: Id<"meals">, name: string) {
     try {
-      await relogMeal({ id, date: localDateStr() });
+      await relogMeal({ id, date: localDateStr(), time: localTimeStr() });
       toast.success("Logged again", name);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
@@ -132,7 +132,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
 
   async function handleRelog(id: Id<"workouts">, name: string) {
     try {
-      await relogWorkout({ id, date: localDateStr(), idempotencyToken: crypto.randomUUID() });
+      await relogWorkout({ id, date: localDateStr(), timestamp: localTimeStr(), idempotencyToken: crypto.randomUUID() });
       toast.success("Logged again", name);
     } catch (err) {
       toast.error("Couldn't re-log", err instanceof Error ? err.message : "Try again");
@@ -215,7 +215,7 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
 /* ── Today's AI insights & tips card ── */
 export function TodaysInsightsCard({ date }: { date: string }) {
   const insightsData = useQuery(api.insights.getDailyInsights, { date });
-  const brief = useQuery(api.insights.getTodayBrief, { today: localDateStr() });
+  const brief = useQuery(api.insights.getTodayBrief, { today: date });
   const generate = useAction(api.ai.generateDailyInsights);
   const toast = useToast();
   const [generating, setGenerating] = useState(false);
@@ -290,7 +290,7 @@ export function TodaysInsightsCard({ date }: { date: string }) {
 /** Compact insights card for the sidebar slot in the Insights grid. */
 function TodaysInsightsMini({ date }: { date: string }) {
   const insightsData = useQuery(api.insights.getDailyInsights, { date });
-  const brief = useQuery(api.insights.getTodayBrief, { today: localDateStr() });
+  const brief = useQuery(api.insights.getTodayBrief, { today: date });
   const generate = useAction(api.ai.generateDailyInsights);
   const toast = useToast();
   const insights = (insightsData?.insights ?? []) as string[];

@@ -229,7 +229,7 @@ export const relogMeal = mutation({
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
-    const targetDate = date ? assertValidDateStr(date) : new Date().toISOString().split("T")[0];
+    const targetDate = date !== undefined ? assertValidDateStr(date) : new Date().toISOString().split("T")[0];
     const targetTime = time ?? new Date().toISOString().slice(11, 16);
     const validated = validateMealWrite({
       name: src.name,
