@@ -6,6 +6,7 @@ import { Button } from "@/components/primitives/Button";
 
 export function ServiceWorkerUpdate() {
   const [needRefresh, setNeedRefresh] = useState(false);
+  const [needReload, setNeedReload] = useState(false);
   const updateSWRef = useRef<((reloadPage?: boolean) => Promise<void>) | null>(null);
   const registeredRef = useRef(false);
 
@@ -17,6 +18,12 @@ export function ServiceWorkerUpdate() {
       immediate: true,
       onNeedRefresh() {
         setNeedRefresh(true);
+      },
+      onNeedReload() {
+        // The new service worker has taken control in another tab; do not
+        // auto-reload. Let the user finish their current work and reload when
+        // ready to avoid losing unsaved state.
+        setNeedReload(true);
       },
       onOfflineReady() {
         // Intentionally empty — no offline banner needed.
@@ -32,9 +39,12 @@ export function ServiceWorkerUpdate() {
     void updateSWRef.current?.(true);
   };
 
+  const showReload = needRefresh || needReload;
+  const reloadLabel = needReload ? "App updated — reload when ready" : "Update available";
+
   return (
     <AnimatePresence>
-      {needRefresh && (
+      {showReload && (
         <motion.div
           initial={{ opacity: 0, y: 16, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -45,7 +55,7 @@ export function ServiceWorkerUpdate() {
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-border-strong bg-card px-4 py-3 shadow-[var(--shadow-elev)]">
             <div className="flex items-center gap-2.5 min-w-0">
               <RefreshCw className="h-4 w-4 shrink-0 text-text-muted" />
-              <p className="text-[13.5px] font-semibold text-text">Update available</p>
+              <p className="text-[13.5px] font-semibold text-text">{reloadLabel}</p>
             </div>
             <Button size="sm" variant="primary" onClick={handleReload} className="shrink-0">
               Reload
