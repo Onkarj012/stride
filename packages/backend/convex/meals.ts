@@ -30,21 +30,21 @@ async function findExistingMealByIdempotencyKey(ctx: any, userId: string, date: 
 
 /**
  * Resolve a date/time pair without mixing a client-supplied local date with
- * server UTC time. When both are missing, derive both from the same instant.
- * When only the date is supplied, keep the time on that date's frame.
+ * server UTC time. Explicit date and time must arrive together; when both are
+ * missing, derive both from the same instant.
  */
 function resolveTargetDateTime(args: { date?: string; time?: string }): { date: string; time: string } {
   const { date, time } = args;
   if (date !== undefined && time !== undefined) {
-    return { date, time };
+    return { date: assertValidDateStr(date), time };
   }
-  if (date !== undefined) {
-    return { date, time: time ?? "00:00" };
+  if (date !== undefined || time !== undefined) {
+    throw new Error("date and time must be provided together");
   }
-  const now = new Date();
+  const now = new Date().toISOString();
   return {
-    date: now.toISOString().split("T")[0],
-    time: time ?? now.toISOString().slice(11, 16),
+    date: now.split("T")[0],
+    time: now.slice(11, 16),
   };
 }
 
@@ -249,10 +249,7 @@ export const relogMeal = mutation({
     const userId = await requireUserId(ctx);
     const src = await ctx.db.get(id);
     if (!src || src.userId !== userId) throw new Error("Not found");
-    const { date: targetDate, time: targetTime } = resolveTargetDateTime({
-      date: date !== undefined ? assertValidDateStr(date) : undefined,
-      time,
-    });
+    const { date: targetDate, time: targetTime } = resolveTargetDateTime({ date, time });
     const validated = validateMealWrite({
       name: src.name,
       calories: src.calories,

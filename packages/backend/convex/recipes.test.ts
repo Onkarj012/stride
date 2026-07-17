@@ -44,19 +44,19 @@ test("updateRecipe recomputes; logRecipe scales into a meal", async () => {
   let recipes = await asUser.query(api.recipes.getRecipes, {});
   expect(recipes[0].perServing.kcal).toBe(395); // now 1 serving
 
-  await asUser.mutation(api.recipes.logRecipe, { id, servings: 2, date: "2026-05-29" });
+  await asUser.mutation(api.recipes.logRecipe, { id, servings: 2, date: "2026-05-29", time: "12:00" });
   const meals = await asUser.query(api.meals.getMeals, { date: "2026-05-29" });
   expect(meals).toHaveLength(1);
   expect(meals[0].calories).toBe(790); // 395 per serving × 2
   expect(meals[0].nutritionSource).toBe("recipe");
-  expect(meals[0].time).toBe("00:00");
+  expect(meals[0].time).toBe("12:00");
 });
 
 test("logRecipe with fractional portions rounds once from raw totals", async () => {
   const t = convexTest(schema, modules);
   const asUser = t.withIdentity({ subject: "user1" });
   const id = await asUser.mutation(api.recipes.createRecipe, { name: "Oats", servings: 2, ingredients: INGREDIENTS });
-  await asUser.mutation(api.recipes.logRecipe, { id, servings: 1.5, date: "2026-05-31" });
+  await asUser.mutation(api.recipes.logRecipe, { id, servings: 1.5, date: "2026-05-31", time: "12:00" });
   const meals = await asUser.query(api.meals.getMeals, { date: "2026-05-31" });
   expect(meals).toHaveLength(1);
   // Raw total 395.2 kcal → round(395.2 × 1.5 / 2) = 296.
@@ -77,7 +77,7 @@ test("logRecipe passes raw scaled values into validateMealWrite for clamp/flag b
     { name: "Oil", grams: 50, caloriesPer100g: 7000.8, proteinPer100g: 0, carbsPer100g: 0, fatPer100g: 100 },
   ];
   const id = await asUser.mutation(api.recipes.createRecipe, { name: "Rich", servings: 1, ingredients: clampCal });
-  await asUser.mutation(api.recipes.logRecipe, { id, servings: 1, date: "2026-06-01" });
+  await asUser.mutation(api.recipes.logRecipe, { id, servings: 1, date: "2026-06-01", time: "12:00" });
   const meals = await asUser.query(api.meals.getMeals, { date: "2026-06-01" });
   expect(meals).toHaveLength(1);
   // Raw 3500.4 kcal would have been rounded to 3500 before validation, hiding the clamp.
@@ -87,7 +87,7 @@ test("logRecipe passes raw scaled values into validateMealWrite for clamp/flag b
     { name: "Oil", grams: 50, caloriesPer100g: 10000.2, proteinPer100g: 0, carbsPer100g: 0, fatPer100g: 100 },
   ];
   const rejectId = await asUser.mutation(api.recipes.createRecipe, { name: "TooRich", servings: 1, ingredients: rejectCal });
-  await expect(asUser.mutation(api.recipes.logRecipe, { id: rejectId, servings: 1, date: "2026-06-02" })).rejects.toThrow(/unrealistically high/);
+  await expect(asUser.mutation(api.recipes.logRecipe, { id: rejectId, servings: 1, date: "2026-06-02", time: "12:00" })).rejects.toThrow(/unrealistically high/);
 });
 
 test("logRecipe with date+time preserves local midnight boundaries", async () => {
@@ -106,6 +106,20 @@ test("logRecipe with date+time preserves local midnight boundaries", async () =>
   expect(morning[0].time).toBe("00:15");
 });
 
+test("relog and recipe log require explicit date and time together", async () => {
+  const t = convexTest(schema, modules);
+  const asUser = t.withIdentity({ subject: "user1" });
+  const mealId = await asUser.mutation(api.meals.addMeal, {
+    name: "Oats", calories: 200, protein: 10, carbs: 30, fat: 5, date: "2026-07-16", time: "12:00",
+  });
+  const recipeId = await asUser.mutation(api.recipes.createRecipe, { name: "Oats", servings: 1, ingredients: INGREDIENTS });
+
+  await expect(asUser.mutation(api.meals.relogMeal, { id: mealId, time: "23:45" })).rejects.toThrow(/date and time must be provided together/);
+  await expect(asUser.mutation(api.recipes.logRecipe, { id: recipeId, time: "23:45" })).rejects.toThrow(/date and time must be provided together/);
+  await expect(asUser.mutation(api.meals.relogMeal, { id: mealId, date: "2026-07-17" })).rejects.toThrow(/date and time must be provided together/);
+  await expect(asUser.mutation(api.recipes.logRecipe, { id: recipeId, date: "2026-07-17" })).rejects.toThrow(/date and time must be provided together/);
+});
+
 test("logRecipe appends user note to components, not aiSuggestion", async () => {
   const t = convexTest(schema, modules);
   const asUser = t.withIdentity({ subject: "user1" });
@@ -113,6 +127,7 @@ test("logRecipe appends user note to components, not aiSuggestion", async () => 
   await asUser.mutation(api.recipes.logRecipe, {
     id,
     date: "2026-05-30",
+    time: "12:00",
     note: "extra cheese, skipped the oil",
   });
   const meals = await asUser.query(api.meals.getMeals, { date: "2026-05-30" });
