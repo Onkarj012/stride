@@ -45,6 +45,9 @@ test("getTodayBrief surfaces adjusted target + note", async () => {
   });
   const brief = await asUser.query(api.insights.getTodayBrief, { today: "2026-05-29" });
   expect(brief.stats.adjustedCalorieTarget).toBe(plan.calories + 600);
+  expect(brief.stats.proteinTarget).toBe(plan.protein);
+  expect(brief.stats.carbTarget).toBe(plan.carbs + 150); // 600/4
+  expect(brief.stats.fatTarget).toBe(plan.fat);
   expect(brief.stats.adjustmentNote).toMatch(/\+600 kcal/);
 });
 

@@ -202,6 +202,9 @@ export const getTodayBrief = query({
 
     const dayAdj = plan ? adjustCaloriesForDay(plan, todayBurn) : null;
     const adjustedCalorieTarget = dayAdj?.calorieGoal ?? calorieTarget;
+    const adjustedProteinTarget = dayAdj?.proteinGoal ?? proteinTarget;
+    const adjustedCarbTarget = dayAdj?.carbGoal ?? carbTarget;
+    const adjustedFatTarget = dayAdj?.fatGoal ?? fatTarget;
     const adjustmentNote = dayAdj && dayAdj.calorieGoal !== plan!.calories ? dayAdj.note : null;
 
     const hour = localNow.getUTCHours();
@@ -406,11 +409,11 @@ export const getTodayBrief = query({
         adjustedCalorieTarget,
         adjustmentNote,
         todayProtein: Math.round(todayProtein),
-        proteinTarget,
+        proteinTarget: adjustedProteinTarget,
         todayCarbs: Math.round(todayCarbs),
-        carbTarget,
+        carbTarget: adjustedCarbTarget,
         todayFat: Math.round(todayFat),
-        fatTarget,
+        fatTarget: adjustedFatTarget,
         waterMl,
         waterTarget,
         mealsLogged: todayMeals.length,

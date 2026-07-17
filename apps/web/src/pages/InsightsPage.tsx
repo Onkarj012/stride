@@ -491,23 +491,25 @@ export function InsightsPage() {
 
       {/* Nutrition + Today's Insights (replaces Active Days) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card tone="card" radius="lg" padding="lg" className="lg:col-span-2 space-y-5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-h3 text-text">Nutrition</h3>
-            <span className="text-[13px] text-text-muted">
-              {Math.round(todayKcal)} / {macroTarget.kcal} kcal
-            </span>
-          </div>
-          <div className="flex flex-col sm:flex-row items-center gap-6">
-            <MacroDonut kcal={todayKcal} protein={todayProtein} carbs={todayCarbs} fat={todayFat} />
-            <MacroBars
-              protein={todayProtein}
-              carbs={todayCarbs}
-              fat={todayFat}
-              target={{ protein: macroTarget.protein, carbs: macroTarget.carbs, fat: macroTarget.fat }}
-            />
-          </div>
-        </Card>
+        {profileLoaded && targetsLoaded && (
+          <Card tone="card" radius="lg" padding="lg" className="lg:col-span-2 space-y-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-h3 text-text">Nutrition</h3>
+              <span className="text-[13px] text-text-muted">
+                {Math.round(todayKcal)} / {macroTarget.kcal} kcal
+              </span>
+            </div>
+            <div className="flex flex-col sm:flex-row items-center gap-6">
+              <MacroDonut kcal={todayKcal} protein={todayProtein} carbs={todayCarbs} fat={todayFat} />
+              <MacroBars
+                protein={todayProtein}
+                carbs={todayCarbs}
+                fat={todayFat}
+                target={{ protein: macroTarget.protein, carbs: macroTarget.carbs, fat: macroTarget.fat }}
+              />
+            </div>
+          </Card>
+        )}
 
         {/* Today's Insights replaces Active Days */}
         {period === "today" ? (
@@ -547,13 +549,15 @@ export function InsightsPage() {
             unit="kcal/day"
             color="peach"
           />
-          <StatChip
-            className="flex-1"
-            label="Calorie goal"
-            value={String(dailyTargets?.calorieTarget ?? 0)}
-            unit="kcal"
-            color="sky"
-          />
+          {profileLoaded && targetsLoaded && (
+            <StatChip
+              className="flex-1"
+              label="Calorie goal"
+              value={String(dailyTargets?.calorieTarget ?? 0)}
+              unit="kcal"
+              color="sky"
+            />
+          )}
         </div>
       </div>
 
