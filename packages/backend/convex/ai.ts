@@ -274,7 +274,7 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   const group = await ctx.runQuery(internal.ai.getActionGroupForClarification, { groupId: groupId as any });
   if (!group) throw new Error("Clarification group not found");
   if (group.userId !== userId) throw new Error("Not authorized");
-  if (group.status === "pending" && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
+  if (["pending", "partial", "failed"].includes(group.status) && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
     await ctx.runMutation(internal.ai.expireActionGroup, { groupId: groupId as any });
     throw new Error("This confirmation has expired");
   }

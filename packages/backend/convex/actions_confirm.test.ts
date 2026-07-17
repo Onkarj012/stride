@@ -199,6 +199,25 @@ describe("large-batch confirmation", () => {
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(0);
   });
 
+  test("expires stale partial groups before resolving clarification", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "confirm-user" });
+    const staged = await stageGroup(t, "expired-partial", [mealPayload("saved"), { name: "failed" }]);
+    await asUser.action((api as any).ai.confirmGroup, {
+      groupId: staged.groupId,
+      decisions: [{ ordinal: 0, action: "confirm" }, { ordinal: 1, action: "confirm" }],
+    });
+    await t.run((ctx) => ctx.db.patch(staged.groupId, { createdAt: Date.now() - CONFIRMATION_TTL_MS - 1 }));
+
+    await expect(asUser.action((api as any).ai.resolveClarification, {
+      groupId: staged.groupId,
+      date: "2026-07-16",
+    })).rejects.toThrow("This confirmation has expired");
+    expect(await t.run((ctx) => ctx.db.get(staged.groupId))).toMatchObject({ status: "expired" });
+    expect((await t.run((ctx) => ctx.db.query("actions").collect())).map((action) => action.status).sort()).toEqual(["committed", "expired"]);
+    expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
+  });
+
   test("group undo after partial confirmation reverses only committed members", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "confirm-user" });
