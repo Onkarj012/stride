@@ -121,7 +121,7 @@ test("canonical write, edit, relog, and undo preserve structured detail and adju
   await user.mutation(api.workouts.updateWorkout, { id, name: "Edited summary", sets: stored!.sets, duration: stored!.duration, intensity: stored!.intensity });
   const edited: any = await t.run((ctx) => ctx.db.get(id));
   expect(JSON.parse(edited!.structuredSets!)).toEqual(before);
-  const relogId = await user.mutation(api.workouts.relogWorkout, { id, date: "2026-07-17", idempotencyToken: "relog-1" });
+  const relogId = await user.mutation(api.workouts.relogWorkout, { id, date: "2026-07-17", timestamp: "12:00", idempotencyToken: "relog-1" });
   const relogged: any = await t.run((ctx) => ctx.db.get(relogId));
   expect(JSON.parse(relogged!.structuredSets!)).toEqual(before);
   expect(await t.run((ctx) => ctx.db.query("actions").withIndex("by_user_status", (q) => q.eq("userId", "workout-pipeline-user").eq("status", "committed")).collect())).toHaveLength(2);

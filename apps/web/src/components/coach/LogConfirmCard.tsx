@@ -192,6 +192,33 @@ function MealCard({
 }
 
 /* ── Workout card ── */
+function clearWorkoutEstimate(draft: WorkoutDraft): WorkoutDraft {
+  const reportedCalories = typeof (draft as any).reportedCalories === "number"
+    ? (draft as any).reportedCalories
+    : (draft as any).calorieSource === "reported" && Number.isFinite(draft.kcal)
+      ? draft.kcal
+      : undefined;
+  return {
+    ...draft,
+    kcal: reportedCalories ?? 0,
+    reportedCalories,
+    estimatedCalories: undefined,
+    calorieSource: reportedCalories != null ? "reported" : undefined,
+    calorieResult: null,
+  } as WorkoutDraft;
+}
+
+function setReportedWorkoutCalories(draft: WorkoutDraft, kcal: number): WorkoutDraft {
+  return {
+    ...draft,
+    kcal,
+    reportedCalories: kcal,
+    estimatedCalories: undefined,
+    calorieSource: "reported",
+    calorieResult: null,
+  } as WorkoutDraft;
+}
+
 function WorkoutCard({
   draft,
   editing,
@@ -210,7 +237,7 @@ function WorkoutCard({
           value={draft.duration}
           unit="min"
           editing={editing}
-          onChange={(v) => onChange({ ...draft, duration: v, kcal: 0, calorieResult: null })}
+          onChange={(v) => onChange({ ...clearWorkoutEstimate(draft), duration: v })}
           color="text-lavender"
         />
         {draft.distance != null ? (
@@ -233,7 +260,7 @@ function WorkoutCard({
           value={draft.kcal}
           unit="kcal"
           editing={editing}
-          onChange={(v) => onChange({ ...draft, kcal: v, calorieResult: null })}
+          onChange={(v) => onChange(setReportedWorkoutCalories(draft, v))}
           color="text-peach"
         />
       </div>
@@ -245,7 +272,7 @@ function WorkoutCard({
           {editing ? (
             <select
               value={draft.intensity}
-              onChange={(e) => onChange({ ...draft, intensity: e.target.value as WorkoutDraft["intensity"], kcal: 0, calorieResult: null })}
+              onChange={(e) => onChange({ ...clearWorkoutEstimate(draft), intensity: e.target.value as WorkoutDraft["intensity"] })}
               className="rounded-lg bg-input border border-border px-2 py-1 text-[12px] font-bold text-text focus:outline-none focus:border-lavender"
             >
               <option value="light">light</option>

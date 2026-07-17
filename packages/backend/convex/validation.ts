@@ -41,25 +41,6 @@ export function assertValidTime(value: string): string {
   return trimmed;
 }
 
-export function resolveTargetDateTime(
-  args: { date?: string; time?: string },
-  requirePair = false,
-): { date: string; time: string } {
-  const { date, time } = args;
-  if (requirePair && ((date === undefined) !== (time === undefined))) {
-    throw new Error("date and time must be provided together");
-  }
-  if (date !== undefined && time !== undefined) {
-    return { date: assertValidDate(date), time: assertValidTime(time) };
-  }
-
-  const now = new Date().toISOString();
-  return {
-    date: date === undefined ? now.slice(0, 10) : assertValidDate(date),
-    time: time === undefined ? now.slice(11, 16) : assertValidTime(time),
-  };
-}
-
 export function assertInRange(field: string, value: number, min: number, max: number): number {
   if (!Number.isFinite(value) || value < min || value > max) throw new Error(`${field} must be between ${min} and ${max}`);
   return value;

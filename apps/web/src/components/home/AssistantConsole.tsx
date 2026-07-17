@@ -282,11 +282,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const homepageInput = useAction(api.ai.homepageInput);
   const clearHomepageMessages = useMutation(api.chat.clearHomepageMessages);
   const addMeal = useMutation(api.meals.addMeal);
-  const addWorkout = useMutation(api.workouts.addWorkout);
-  const addWater = useMutation(api.wellness.addWater);
-  const upsertSleep = useMutation(api.wellness.upsertSleep);
-  const addMood = useMutation(api.wellness.addMood);
-  const upsertSteps = useMutation(api.wellness.upsertSteps);
+  const commitHomeDraft = useMutation(api.ai.commitHomeDraft);
   const recordBehavior = useMutation(api.behavior.recordBehavior);
   const submitCheckInAnswer = useMutation(api.checkins.submitAnswer);
 
@@ -438,46 +434,22 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
       } else if (d.kind === "workout") {
-        const calorieResult = d.calorieResult ?? null;
-        await addWorkout({
-          name: d.description,
-          sets: d.sets || "1",
-          duration: String(d.duration),
-          intensity: d.intensity.toUpperCase(),
-          date,
-          exercises: d.exercises ?? undefined,
-          caloriesBurned: d.kcal,
-          timestamp: time,
-          rationale: tier2 || d.rationale || undefined,
-          calorieConfidence: calorieResult?.confidence,
-          calorieRangeLow: calorieResult?.range_low,
-          calorieRangeHigh: calorieResult?.range_high,
-          calorieEstimateRough: calorieResult?.rough,
-          calorieBreakdown: calorieResult?.breakdown ? JSON.stringify(calorieResult.breakdown) : undefined,
-          calculationVersion: calorieResult ? 1 : undefined,
-          structuredSets: d.exercises ? JSON.stringify(d.exercises) : undefined,
-          logSource: "home",
-          parseError: d.parseError,
-          allowDuplicate: d.allowDuplicate,
-        });
+        await commitHomeDraft({ draft: { ...d, date, timestamp: time, rationale: tier2 || d.rationale || undefined }, clientSubmissionId: draftKey });
         setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
       } else if (d.kind === "sleep") {
-        await upsertSleep({ hours: d.hours, quality: d.quality, date });
+        await commitHomeDraft({ draft: { ...d, date, time }, clientSubmissionId: draftKey });
         setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
         toast.success(`Sleep logged${dateNote}`, `${d.hours.toFixed(1)}h · ${d.quality}`);
-      } else if (d.kind === "water") {
-        await addWater({ ml: d.ml, date, time });
+      } else if (d.kind === "water" || d.kind === "mood" || d.kind === "steps") {
+        await commitHomeDraft({ draft: { ...d, date, time }, clientSubmissionId: draftKey });
         setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Water logged${dateNote}`, `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`);
-      } else if (d.kind === "mood") {
-        await addMood({ rating: d.rating, date, time, note: d.description });
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Mood logged${dateNote}`, `${d.rating}/5`);
-      } else if (d.kind === "steps") {
-        await upsertSteps({ count: d.count, date });
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Steps logged${dateNote}`, `${d.count.toLocaleString()} steps`);
+        const detail = d.kind === "water"
+          ? `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`
+          : d.kind === "mood"
+            ? `${d.rating}/5`
+            : `${d.count.toLocaleString()} steps`;
+        toast.success(`${d.kind[0].toUpperCase()}${d.kind.slice(1)} logged${dateNote}`, detail);
       }
     } catch (err) {
       const duplicate = getNearDuplicateData(err);
@@ -496,7 +468,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       submittingDraftIdsRef.current.delete(draftKey);
     }
     if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
-  }, [addMeal, addWorkout, addWater, upsertSleep, addMood, upsertSteps, recordBehavior, setPendingDrafts, toast, pendingDrafts.length]);
+  }, [addMeal, commitHomeDraft, recordBehavior, setPendingDrafts, toast, pendingDrafts.length]);
 
   const handleDiscard = useCallback(() => {
     setPendingDrafts((prev) => prev.some((draft) => draft.submitting) ? prev : []);

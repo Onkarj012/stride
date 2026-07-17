@@ -55,16 +55,34 @@ export const getProgress = query({
       burnByDate.set(w.date, (burnByDate.get(w.date) ?? 0) + (w.caloriesBurned ?? 0));
     }
 
-    const goalsByDate = new Map<string, number>();
+    const goalsByDate = new Map<string, { calorieGoal: number; proteinGoal: number; carbGoal: number; fatGoal: number }>();
     for (const g of allGoals) {
-      goalsByDate.set(g.date, g.calorieGoal);
+      goalsByDate.set(g.date, {
+        calorieGoal: g.calorieGoal,
+        proteinGoal: g.proteinGoal,
+        carbGoal: g.carbGoal,
+        fatGoal: g.fatGoal,
+      });
     }
 
     const parsed = parseStoredPlan(profile?.planBreakdown);
     const plan = parsed ? resolvePlanForDayAdjustment(parsed, profile ?? {}) : null;
-    const fallbackGoalForDay = (date: string): number => {
-      if (plan) return adjustCaloriesForDay(plan, burnByDate.get(date) ?? 0).calorieGoal;
-      return profile?.calorieTarget ?? FALLBACK_TARGETS.calories;
+    const fallbackGoalsForDay = (date: string) => {
+      if (plan) {
+        const adjusted = adjustCaloriesForDay(plan, burnByDate.get(date) ?? 0);
+        return {
+          calorieGoal: adjusted.calorieGoal,
+          proteinGoal: adjusted.proteinGoal,
+          carbGoal: adjusted.carbGoal,
+          fatGoal: adjusted.fatGoal,
+        };
+      }
+      return {
+        calorieGoal: profile?.calorieTarget ?? FALLBACK_TARGETS.calories,
+        proteinGoal: profile?.proteinTarget ?? FALLBACK_TARGETS.protein,
+        carbGoal: profile?.carbTarget ?? FALLBACK_TARGETS.carbs,
+        fatGoal: profile?.fatTarget ?? FALLBACK_TARGETS.fat,
+      };
     };
 
     const result = [];
@@ -73,6 +91,7 @@ export const getProgress = query({
       const d = new Date(endMs - i * 86400000);
       const date = d.toISOString().split("T")[0];
       const m = mealsByDate.get(date);
+      const goals = goalsByDate.get(date) ?? fallbackGoalsForDay(date);
       result.push({
         date,
         dayLabel: DAY_NAMES[d.getDay()],
@@ -81,7 +100,10 @@ export const getProgress = query({
         carbs: Math.round(m?.carbs ?? 0),
         fat: Math.round(m?.fat ?? 0),
         workouts: workoutsByDate.get(date) ?? 0,
-        goal: goalsByDate.get(date) ?? fallbackGoalForDay(date),
+        goal: goals.calorieGoal,
+        proteinGoal: goals.proteinGoal,
+        carbGoal: goals.carbGoal,
+        fatGoal: goals.fatGoal,
       });
     }
     return result;

@@ -15,9 +15,9 @@ import {
   buildIdempotencyKey,
   mealContentHash,
   normalizeLogSource,
-  resolveTargetDateTime,
   timeWindowKey,
 } from "./validation";
+import { resolveTargetDateTime } from "./time_resolve";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();

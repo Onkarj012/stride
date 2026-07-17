@@ -33,6 +33,24 @@ describe("LogConfirmCard", () => {
     expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({ duration: 45, kcal: 400, calorieResult: null }));
   });
 
+  it("keeps user-reported calories when another workout field changes", () => {
+    const onConfirm = vi.fn();
+    render(<LogConfirmCard draft={{ ...workoutDraft, kcal: 300, reportedCalories: 300, calorieSource: "reported" } as WorkoutDraft} onConfirm={onConfirm} onDiscard={() => {}} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    fireEvent.change(screen.getByDisplayValue("30"), { target: { value: "45" } });
+    fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+
+    expect(onConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      duration: 45,
+      kcal: 300,
+      reportedCalories: 300,
+      calorieSource: "reported",
+      estimatedCalories: undefined,
+      calorieResult: null,
+    }));
+  });
+
   it("disables editing, discard, and duplicate confirm while submitting", () => {
     const onConfirm = vi.fn();
     render(<LogConfirmCard draft={{ ...workoutDraft, submitting: true }} onConfirm={onConfirm} onDiscard={() => {}} />);

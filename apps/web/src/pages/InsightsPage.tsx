@@ -384,6 +384,9 @@ export function InsightsPage() {
     fat: number;
     workouts: number;
     goal: number;
+    proteinGoal: number;
+    carbGoal: number;
+    fatGoal: number;
   }>;
 
   // Today's logs (used for "today" macros and milestones)
@@ -423,12 +426,15 @@ export function InsightsPage() {
   const profileLoaded = profile !== undefined;
   const targetsLoaded = brief !== undefined;
   const dailyTargets = brief?.stats;
-  const macroTarget = {
-    kcal: (dailyTargets?.calorieTarget ?? 0) * days,
-    protein: (dailyTargets?.proteinTarget ?? 0) * days,
-    carbs: (dailyTargets?.carbTarget ?? 0) * days,
-    fat: (dailyTargets?.fatTarget ?? 0) * days,
-  };
+  const macroTarget = progressRows.reduce(
+    (totals, row) => ({
+      kcal: totals.kcal + row.goal,
+      protein: totals.protein + row.proteinGoal,
+      carbs: totals.carbs + row.carbGoal,
+      fat: totals.fat + row.fatGoal,
+    }),
+    { kcal: 0, protein: 0, carbs: 0, fat: 0 },
+  );
   const milestoneItems = [
     { label: "Protein", achieved: todayProtein >= macroTarget.protein * 0.7 },
     { label: "Training", achieved: period === "today" ? workoutMin > 0 : totalWorkouts > 0 },
