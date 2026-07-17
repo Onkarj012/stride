@@ -1,7 +1,7 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { adjustCaloriesForDay } from "./tdee_engine";
-import { parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
+import { FALLBACK_TARGETS, parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -9,7 +9,12 @@ async function requireUserId(ctx: any): Promise<string> {
   return identity.subject;
 }
 
-const DEFAULTS = { calorieGoal: 2400, proteinGoal: 180, carbGoal: 280, fatGoal: 80 };
+const DEFAULTS = {
+  calorieGoal: FALLBACK_TARGETS.calories,
+  proteinGoal: FALLBACK_TARGETS.protein,
+  carbGoal: FALLBACK_TARGETS.carbs,
+  fatGoal: FALLBACK_TARGETS.fat,
+};
 
 export const getDailyGoal = query({
   args: { date: v.string() },

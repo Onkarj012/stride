@@ -147,6 +147,7 @@ export const updateWorkout = mutation({
     const userId = await requireUserId(ctx);
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
+    const date = workout.date;
     const patch: any = {
       name: validated.name,
       sets: validated.sets,
@@ -166,6 +167,7 @@ export const updateWorkout = mutation({
     if (fields.calculationVersion !== undefined) patch.calculationVersion = fields.calculationVersion;
     if (fields.structuredSets !== undefined) patch.structuredSets = fields.structuredSets;
     await ctx.db.patch(id, patch);
+    await applyDayAdjustment(ctx, userId, date);
   },
 });
 
@@ -175,7 +177,9 @@ export const deleteWorkout = mutation({
     const userId = await requireUserId(ctx);
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
+    const date = workout.date;
     await ctx.db.delete(id);
+    await applyDayAdjustment(ctx, userId, date);
   },
 });
 

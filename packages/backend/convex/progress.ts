@@ -1,7 +1,7 @@
 import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { adjustCaloriesForDay } from "./tdee_engine";
-import { parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
+import { FALLBACK_TARGETS, parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -69,7 +69,7 @@ export const getProgress = query({
     const plan = parsed ? resolvePlanForDayAdjustment(parsed, profile ?? {}) : null;
     const fallbackGoalForDay = (date: string): number => {
       if (plan) return adjustCaloriesForDay(plan, burnByDate.get(date) ?? 0).calorieGoal;
-      return profile?.calorieTarget ?? 2400;
+      return profile?.calorieTarget ?? FALLBACK_TARGETS.calories;
     };
 
     const result = [];
