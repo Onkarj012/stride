@@ -440,6 +440,13 @@ export async function runNutritionEngine(
         if (!foodText || amount <= 0) continue;
 
         const conversion = toGrams(amount, unit, foodText);
+        if (conversion.method === "unresolved") {
+          // Don't silently persist a zero-gram item for a unit we could not
+          // convert. Treat it like other low-confidence items so the AI
+          // fallback can fill in the gap.
+          unresolved.push(foodText);
+          continue;
+        }
         const grams = conversion.grams;
 
         const cachedResults: any[] = await ctx.runQuery(internal.foods.searchFoodsInCache, { query: foodText });

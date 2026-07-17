@@ -1,6 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import { callAI } from "./llm";
-import { parseWorkoutDescription } from "./parse";
+import { parseWorkoutDescription, runNutritionEngine } from "./parse";
 
 vi.mock("./llm", async () => {
   const actual = await vi.importActual<typeof import("./llm")>("./llm");
@@ -133,5 +133,43 @@ walking: 5 min, 11 incline, then 5min of normal walking`);
 
     expect(result.caloriesBurned).toBe(75);
     expect(result.calorieResult?.total_kcal).toBeGreaterThan(75);
+  });
+});
+
+describe("runNutritionEngine", () => {
+  test("keeps unresolved unit conversions out of zero-gram breakdown items", async () => {
+    const result = await runNutritionEngine(
+      {
+        runQuery: vi.fn().mockResolvedValue([
+          {
+            name: "olive oil",
+            caloriesPer100g: 884,
+            proteinPer100g: 0,
+            carbsPer100g: 0,
+            fatPer100g: 100,
+            source: "usda",
+          },
+        ]),
+        runAction: vi.fn(),
+        runMutation: vi.fn(),
+      },
+      {
+        calories: 120,
+        protein: 0,
+        carbs: 0,
+        fat: 13,
+        ingredients: [
+          { food_text: "olive oil", amount: 2, unit: "tbps", is_oil_or_fat: true },
+        ],
+        cooking_method: "unknown",
+        portion_scale: 1,
+      },
+    );
+
+    expect(result.nutritionSource).toBe("ai_estimated");
+    expect(result.calories).toBe(120);
+    expect(result.ingredientBreakdown?.unresolved).toEqual(["olive oil"]);
+    expect(result.ingredientBreakdown?.items).toEqual([]);
+    expect(result.ingredientBreakdown?.items.some((item) => item.grams === 0)).toBe(false);
   });
 });
