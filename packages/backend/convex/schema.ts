@@ -139,6 +139,7 @@ export default defineSchema({
   user_profiles: defineTable({
     userId: v.string(),
     weight: v.optional(v.number()),
+    weightUpdatedByActionId: v.optional(v.string()),
     height: v.optional(v.number()),
     age: v.optional(v.number()),
     sex: v.optional(v.string()),
@@ -322,6 +323,8 @@ export default defineSchema({
     weightKg: v.number(),
     source: v.string(), // check_in | profile
     createdAt: v.number(),
+    sourceActionId: v.optional(v.string()),
+    undoneAt: v.optional(v.number()),
   })
     .index("by_user_date", ["userId", "date"])
     .index("by_user", ["userId"]),
@@ -563,10 +566,13 @@ export default defineSchema({
     resolvedDate: v.optional(v.string()),
     resolvedTime: v.optional(v.string()),
     committedRowRef: v.optional(v.object({ table: v.string(), id: v.string() })),
+    committedRowTable: v.optional(v.string()),
+    committedRowId: v.optional(v.string()),
     undoneAt: v.optional(v.number()),
   })
     .index("by_group", ["groupId"])
     .index("by_user_status", ["userId", "status"])
+    .index("by_user_committed_row", ["userId", "committedRowTable", "committedRowId"])
     .index("by_member_idempotency_key", ["userId", "memberIdempotencyKey"]),
 
   action_telemetry: defineTable({

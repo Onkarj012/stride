@@ -1,8 +1,12 @@
 import { query, mutation, internalQuery, type MutationCtx } from "./_generated/server";
-import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { ConvexError, v } from "convex/values";
 import { recordBehaviorRow } from "./behavior";
 import { buildRecoveryDraft } from "./recovery_draft";
 import { recomputeForAction } from "./derived_state";
+import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
+import { finalizeActionGroupAfterWrite } from "./actions_group";
+import { tombstoneActionOwnedRow } from "./actions_undo";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -46,6 +50,22 @@ export async function writeRecoveryDomain(ctx: MutationCtx, args: any, options: 
         ? (await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect())
           .find((row: any) => !row.undoneAt) ?? null
         : null;
+      if (args.source === "direct_ui" && args.mode !== "upsert" && args.mode !== "allow_duplicate") {
+        const now = Date.now();
+        const previousDate = new Date(new Date(`${date}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
+        const candidateRows = (await Promise.all([date, previousDate].map((candidateDate) =>
+          ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", candidateDate)).collect(),
+        ))).flat();
+        const duplicate = candidateRows
+          .find((row: any) => !row.undoneAt && row.ml === draft.waterMl && now - row._creationTime <= 10_000);
+        if (duplicate) {
+          throw new ConvexError({
+            code: "NEAR_DUPLICATE",
+            message: "Looks like you already logged this — log anyway?",
+            waterId: duplicate._id,
+          });
+        }
+      }
       if (existing) {
         previous = beforeImage(existing);
         await ctx.db.patch(existing._id, { ml: draft.waterMl, time, ...metadata });
@@ -147,6 +167,55 @@ export async function writeRecoveryDomain(ctx: MutationCtx, args: any, options: 
   return { id, previous };
 }
 
+export async function writeWeightDomain(ctx: MutationCtx, args: {
+  userId: string;
+  date: string;
+  weightKg: number;
+  source?: string;
+  sourceActionId?: string;
+}) {
+  const profile = await ctx.db
+    .query("user_profiles")
+    .withIndex("by_user", (q: any) => q.eq("userId", args.userId))
+    .first();
+  const previousProfile = beforeImage(profile);
+  if (profile) {
+    await ctx.db.patch(profile._id, { weight: args.weightKg, weightUpdatedByActionId: args.sourceActionId });
+  } else {
+    await ctx.db.insert("user_profiles", {
+      userId: args.userId,
+      weight: args.weightKg,
+      weightUpdatedByActionId: args.sourceActionId,
+      activityLevel: "moderate",
+    });
+  }
+
+  const existingWeight = (await ctx.db
+    .query("weight_logs")
+    .withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", args.date))
+    .collect()).find((row: any) => !row.undoneAt) ?? null;
+  const previous = beforeImage(existingWeight);
+  let id: any;
+  if (existingWeight) {
+    await ctx.db.patch(existingWeight._id, {
+      weightKg: args.weightKg,
+      source: args.source ?? "check_in",
+      sourceActionId: args.sourceActionId,
+    });
+    id = existingWeight._id;
+  } else {
+    id = await ctx.db.insert("weight_logs", {
+      userId: args.userId,
+      date: args.date,
+      weightKg: args.weightKg,
+      source: args.source ?? "check_in",
+      createdAt: Date.now(),
+      sourceActionId: args.sourceActionId,
+    });
+  }
+  return { id, previous, previousProfile };
+}
+
 // ─── Water ───────────────────────────────────────────────────────────────
 
 export const getWater = query({
@@ -165,10 +234,35 @@ export const addWater = mutation({
     ml: v.number(),
     date: v.optional(v.string()),
     time: v.optional(v.string()),
+    idempotencyToken: v.optional(v.string()),
+    allowDuplicate: v.optional(v.boolean()),
   },
-  handler: async (ctx, { ml, date, time }) => {
+  handler: async (ctx, { ml, date, time, idempotencyToken, allowDuplicate }): Promise<any> => {
     const userId = await requireUserId(ctx);
-    return (await writeRecoveryDomain(ctx, { kind: "water", userId, ml, date, time })).id;
+    const targetDate = date ?? todayDate();
+    const rawInput = JSON.stringify({ kind: "water", ml, date: targetDate, time: time ?? null });
+    const groupKey = deriveGroupKey({ userId, sourceSurface: "direct_ui", rawInput, clientSubmissionId: idempotencyToken });
+    const result: any = await ctx.runMutation(internal.actions_writer.writeRecoveryAction, {
+      group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "direct_ui", rawInput },
+      member: {
+        memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "recovery", payloadFingerprint: rawInput, ordinal: 0 }),
+        payload: {
+          kind: "water",
+          ml,
+          date: targetDate,
+          time,
+          source: "direct_ui",
+          ...(allowDuplicate ? { allowDuplicate: true, mode: "allow_duplicate" } : {}),
+        },
+        provenance: "user_reported",
+        validation: { status: "valid", messages: [] },
+        reversible: true,
+        resolvedDate: targetDate,
+        resolvedTime: time,
+      },
+    });
+    await finalizeActionGroupAfterWrite(ctx, userId, groupKey);
+    return result?.id ?? result;
   },
 });
 
@@ -178,7 +272,9 @@ export const deleteWater = mutation({
     const userId = await requireUserId(ctx);
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
-    await ctx.db.delete(id);
+    const deletion = await tombstoneActionOwnedRow(ctx, { userId, table: "water_logs", row });
+    if (deletion === "already_tombstoned") return;
+    if (deletion === "not_action_owned") await ctx.db.delete(id);
     await recomputeForAction(ctx, { userId, actionType: "recovery", date: row.date });
   },
 });

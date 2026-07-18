@@ -7,6 +7,7 @@ import { recomputeForAction } from "./derived_state";
 import { recordFoodMemoryRow } from "./food_memory";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 import { finalizeActionGroupAfterWrite } from "./actions_group";
+import { tombstoneActionOwnedRow } from "./actions_undo";
 import { findBestMatch } from "./food_memory_match";
 import {
   buildDirectMealDraft,
@@ -316,7 +317,9 @@ export const deleteMeal = mutation({
     const userId = await requireUserId(ctx);
     const meal = await ctx.db.get(id);
     if (!meal || meal.userId !== userId) throw new Error("Not found");
-    await ctx.db.delete(id);
+    const deletion = await tombstoneActionOwnedRow(ctx, { userId, table: "meals", row: meal });
+    if (deletion === "already_tombstoned") return;
+    if (deletion === "not_action_owned") await ctx.db.delete(id);
     await recomputeForAction(ctx, { userId, actionType: "meal", date: meal.date });
   },
 });

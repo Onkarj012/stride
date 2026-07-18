@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import { SPRING_CARD } from '@/lib/motion'
 
@@ -7,28 +7,45 @@ export interface WaterTrackerProps {
   current?: number
   target?: number
   unit?: 'ml' | 'oz'
-  onAdd?: (amount: number) => void | Promise<void>
+  onAdd?: (amount: number, idempotencyToken: string) => void | Promise<void>
   onRemove?: (amount: number) => void | Promise<void>
 }
 
 export function WaterTracker({ initial = 1200, current, target = 2500, unit = 'ml', onAdd, onRemove }: WaterTrackerProps) {
   const [localCurrent, setLocalCurrent] = useState(initial)
+  const [pending, setPending] = useState(false)
+  const addIntentToken = useRef<string | null>(null)
   const controlled = current !== undefined
   const value = controlled ? current : localCurrent
   const step = unit === 'ml' ? 250 : 8
   const pct = Math.min(value / target, 1)
 
-  function add() {
+  async function add() {
     if (controlled) {
-      void onAdd?.(step)
+      if (!onAdd || addIntentToken.current) return
+      const token = crypto.randomUUID()
+      addIntentToken.current = token
+      setPending(true)
+      try {
+        await onAdd(step, token)
+      } finally {
+        addIntentToken.current = null
+        setPending(false)
+      }
       return
     }
     setLocalCurrent(c => Math.min(target, c + step))
   }
 
-  function remove() {
+  async function remove() {
     if (controlled) {
-      void onRemove?.(step)
+      if (!onRemove || pending) return
+      setPending(true)
+      try {
+        await onRemove(step)
+      } finally {
+        setPending(false)
+      }
       return
     }
     setLocalCurrent(c => Math.max(0, c - step))
@@ -58,15 +75,15 @@ export function WaterTracker({ initial = 1200, current, target = 2500, unit = 'm
 
         <div className="flex items-center gap-2 ml-auto">
           <button
-            onClick={remove}
-            disabled={controlled && (!onRemove || value <= 0)}
+            onClick={() => void remove()}
+            disabled={pending || (controlled && (!onRemove || value <= 0))}
             className="w-10 h-10 rounded-full bg-surface dark:bg-ink/40 flex items-center justify-center text-ink dark:text-surface font-extrabold text-[18px] hover:bg-sky/40 transition-colors cursor-pointer active:scale-95"
           >
             −
           </button>
           <button
-            onClick={add}
-            disabled={controlled && !onAdd}
+            onClick={() => void add()}
+            disabled={pending || (controlled && !onAdd)}
             className="w-10 h-10 rounded-full bg-sky flex items-center justify-center text-ink font-extrabold text-[18px] hover:bg-sky/80 transition-colors cursor-pointer active:scale-95"
           >
             +

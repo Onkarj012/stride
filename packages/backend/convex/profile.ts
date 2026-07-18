@@ -133,6 +133,9 @@ export const upsertProfile = mutation({
         patch[field] = val;
       }
     }
+    if (args.weight !== undefined) {
+      patch.weightUpdatedByActionId = undefined;
+    }
 
     if (existing) {
       await ctx.db.patch(existing._id, patch);
@@ -421,6 +424,7 @@ export const upsertPlanFromOnboarding = mutation({
       scheduleNote: args.scheduleNote,
     };
     for (const k of Object.keys(patch)) if (patch[k] === undefined) delete patch[k];
+    patch.weightUpdatedByActionId = undefined;
 
     const existing = await ctx.db
       .query("user_profiles")

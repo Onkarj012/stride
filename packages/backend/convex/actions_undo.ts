@@ -7,7 +7,7 @@ import { assertTransition } from "./actions_envelope";
 import { insertActionTelemetry } from "./telemetry";
 import { normalizeName } from "./food_memory_match";
 
-type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs";
+type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs" | "weight_logs";
 
 const DOMAIN_TABLES = new Set<DomainTable>([
   "meals",
@@ -16,6 +16,7 @@ const DOMAIN_TABLES = new Set<DomainTable>([
   "sleep_logs",
   "mood_logs",
   "steps_logs",
+  "weight_logs",
 ]);
 
 function asDomainTable(table: string): DomainTable {
@@ -178,6 +179,53 @@ async function compensateInferredMemory(
   });
 }
 
+/** Mark a directly deleted canonical row and its committed action as undone. */
+export async function tombstoneActionOwnedRow(ctx: MutationCtx, input: {
+  userId: string;
+  table: DomainTable;
+  row: { _id: string; date: string; userId: string; sourceActionId?: string; undoneAt?: number };
+}): Promise<"tombstoned" | "already_tombstoned" | "not_action_owned"> {
+  if (input.row.undoneAt) return "already_tombstoned";
+  let action: Doc<"actions"> | null = null;
+  if (input.row.sourceActionId) {
+    action = await ctx.db.get(input.row.sourceActionId as any) as Doc<"actions"> | null;
+  }
+  if (!action) {
+    const committed = await ctx.db
+      .query("actions")
+      .withIndex("by_user_committed_row", (q) =>
+        q.eq("userId", input.userId).eq("committedRowTable", input.table).eq("committedRowId", input.row._id),
+      )
+      .filter((q) => q.eq(q.field("status"), "committed"))
+      .first();
+    action = committed;
+  }
+  if (!action) {
+    if (input.row.sourceActionId) throw new Error("Action-owned row has no matching action");
+    return "not_action_owned";
+  }
+  if (
+    action.userId !== input.userId
+    || action.committedRowRef?.table !== input.table
+    || action.committedRowRef.id !== input.row._id
+  ) throw new Error("Action-owned row does not match its action");
+  if (action.status !== "committed" && action.status !== "undone") {
+    throw new Error(`Action-owned row cannot be deleted while its action is ${action.status}`);
+  }
+
+  const undoneAt = Date.now();
+  if (!input.row.undoneAt) await ctx.db.patch(input.row._id as any, { undoneAt });
+  if (action.status === "committed") {
+    assertTransition(action.status, "undone");
+    await ctx.db.patch(action._id, { status: "undone", undoneAt });
+  }
+  if (input.table === "meals" || input.table === "workouts") {
+    await compensateInferredMemory(ctx, action, input.table);
+  }
+  await recordBehaviorRow(ctx, input.userId, "undo", action.actionType, action._id, input.row.date);
+  return "tombstoned";
+}
+
 async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">): Promise<UndoResult & { date?: string; actionType?: DerivedActionType }> {
   if (action.status === "undone") {
     return {
@@ -217,6 +265,37 @@ async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">):
   } else {
     // Rows created by this action are marked undone.
     await ctx.db.patch(row._id, { undoneAt });
+  }
+
+  if (table === "weight_logs" && action.payload && Object.prototype.hasOwnProperty.call(action.payload, "previousProfile")) {
+    const profile = await ctx.db
+      .query("user_profiles")
+      .withIndex("by_user", (q) => q.eq("userId", action.userId))
+      .first();
+    if (profile?.weightUpdatedByActionId === expectedSourceActionId) {
+      const previousProfile = action.payload.previousProfile;
+      const profileFields = Object.keys(profile);
+      const isSyntheticProfile = previousProfile == null
+        && profile.activityLevel === "moderate"
+        && profileFields.every((field) =>
+          field === "_id"
+          || field === "_creationTime"
+          || field === "userId"
+          || field === "weight"
+          || field === "weightUpdatedByActionId"
+          || field === "activityLevel",
+        );
+      if (isSyntheticProfile) {
+        await ctx.db.delete(profile._id);
+      } else {
+        await ctx.db.patch(profile._id, {
+          weight: previousProfile && typeof previousProfile === "object" ? previousProfile.weight : undefined,
+          weightUpdatedByActionId: previousProfile && typeof previousProfile === "object"
+            ? previousProfile.weightUpdatedByActionId
+            : undefined,
+        });
+      }
+    }
   }
 
   assertTransition(action.status, "undone");
@@ -313,10 +392,12 @@ export const undoGroup = mutation({
 export const getCommittedActionForRow = internalQuery({
   args: { userId: v.string(), table: v.string(), rowId: v.string() },
   handler: async (ctx, { userId, table, rowId }) => {
-    const actions = await ctx.db
+    return ctx.db
       .query("actions")
-      .withIndex("by_user_status", (q) => q.eq("userId", userId).eq("status", "committed"))
-      .collect();
-    return actions.find((action) => action.committedRowRef?.table === table && action.committedRowRef.id === rowId) ?? null;
+      .withIndex("by_user_committed_row", (q) =>
+        q.eq("userId", userId).eq("committedRowTable", table).eq("committedRowId", rowId),
+      )
+      .filter((q) => q.eq(q.field("status"), "committed"))
+      .first();
   },
 });

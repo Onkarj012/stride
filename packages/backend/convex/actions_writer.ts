@@ -17,10 +17,16 @@ import {
   ensureGroup,
   ensureMember,
 } from "./actions_idempotency";
-import { stableHash } from "./validation";
+import {
+  assertInRange,
+  assertValidDate,
+  PROFILE_WEIGHT_KG_MAX,
+  PROFILE_WEIGHT_KG_MIN,
+  stableHash,
+} from "./validation";
 import { writeMealDomain } from "./meals";
 import { writeWorkoutDomain } from "./workouts";
-import { writeRecoveryDomain } from "./wellness";
+import { writeRecoveryDomain, writeWeightDomain } from "./wellness";
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 import { recomputeForAction } from "./derived_state";
 import { insertActionTelemetry } from "./telemetry";
@@ -177,6 +183,8 @@ async function commitMember(ctx: MutationCtx, prepared: any, table: string, id: 
   await ctx.db.patch(prepared.member._id, {
     status: "committed",
     committedRowRef: { table, id: String(id) },
+    committedRowTable: table,
+    committedRowId: String(id),
     originalPayload: prepared.member.originalPayload ?? prepared.member.payload,
     ...(undoMetadata ? { payload: { ...userPayload, ...undoMetadata } } : { payload: userPayload }),
   });
@@ -238,6 +246,31 @@ export const writeRecoveryAction = internalMutation({
       return prepared.rowId ? { id: prepared.rowId } : prepared.rowId;
     }
     const payload = prepared.member.payload as Record<string, any>;
+    if (payload.kind === "weight") {
+      const dateValue = payload.date ?? prepared.member.resolvedDate;
+      if (typeof dateValue !== "string") throw new Error("weight date is required");
+      const date = assertValidDate(dateValue);
+      const weightKg = assertInRange("weightKg", payload.weightKg, PROFILE_WEIGHT_KG_MIN, PROFILE_WEIGHT_KG_MAX);
+      const result = await writeWeightDomain(ctx, {
+        userId: prepared.group.userId,
+        date,
+        weightKg,
+        source: payload.source ?? "check_in",
+        sourceActionId: String(prepared.member._id),
+      });
+      const committedId = await commitMember(ctx, prepared, "weight_logs", result.id, {
+        ...(result.previous ? { previous: result.previous } : {}),
+        previousProfile: result.previousProfile ?? null,
+        weightKg,
+      });
+      const derived = await recomputeForAction(ctx, {
+        userId: prepared.group.userId,
+        actionType: "recovery",
+        date,
+      });
+      await recordWriterTelemetry(ctx, prepared, "committed", { ok: true }, derived.derivedStateVersion);
+      return { id: committedId, previous: result.previous };
+    }
     const draft = buildRecoveryDraft({
       ...payload,
       date: payload.date ?? prepared.member.resolvedDate,

@@ -2,7 +2,8 @@
  * agents.ts — MemoryAgent
  *
  * MemoryAgent extracts user-stated food/ingredient facts and aliases from
- * messages and silently patches food_memory / user_ingredients. It runs
+ * messages and can propose food/ingredient memory updates. Automatic writes are
+ * gated for beta; it runs
  * fire-and-forget from homepageInput via runMemoryAgentAction.
  */
 
@@ -11,6 +12,10 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { callAI } from "./ai/llm";
 // user_ingredients module is accessed via internal.user_ingredients (Convex codegen)
+
+// Beta keeps extracted memory suggestions out of domain state until explicit
+// confirmation is available. See plans/005-beta-release.md P1.
+export const MEMORY_AUTO_PERSIST = false;
 
 // ─── Shared context passed to every agent ────────────────────────────────────
 
@@ -93,6 +98,8 @@ Return ONLY a JSON array, or [] if nothing applies.`;
       per100g?: { kcal?: number | null; protein?: number | null; carbs?: number | null; fat?: number | null };
       notes?: string;
     }>;
+
+    if (!MEMORY_AUTO_PERSIST) return;
 
     for (const fact of facts) {
       if (!fact.name) continue;

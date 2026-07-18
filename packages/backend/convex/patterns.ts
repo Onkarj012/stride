@@ -136,10 +136,10 @@ export const getPatterns = query({
     ]);
 
     return derivePatterns({
-      meals: meals.map((m: any) => ({ date: m.date, protein: m.protein })),
-      workouts: workouts.map((w: any) => ({ date: w.date })),
+      meals: meals.filter((m: any) => !m.undoneAt).map((m: any) => ({ date: m.date, protein: m.protein })),
+      workouts: workouts.filter((w: any) => !w.undoneAt).map((w: any) => ({ date: w.date })),
       sleep: sleep.filter((s: any) => !s.undoneAt && (!s.kind || s.kind === "sleep")).map((s: any) => ({ date: s.date, hours: s.hours })),
-      water: water.map((w: any) => ({ date: w.date, ml: w.ml })),
+      water: water.filter((w: any) => !w.undoneAt).map((w: any) => ({ date: w.date, ml: w.ml })),
       proteinTarget: profile?.proteinTarget ?? 90,
       waterTarget: profile?.waterTarget ?? 2000,
     });
@@ -163,10 +163,10 @@ export const getPatternsForContext = internalQuery({
       ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
     ]);
     return derivePatterns({
-      meals: meals.map((m: any) => ({ date: m.date, protein: m.protein })),
-      workouts: workouts.map((w: any) => ({ date: w.date })),
+      meals: meals.filter((m: any) => !m.undoneAt).map((m: any) => ({ date: m.date, protein: m.protein })),
+      workouts: workouts.filter((w: any) => !w.undoneAt).map((w: any) => ({ date: w.date })),
       sleep: sleep.filter((s: any) => !s.undoneAt && (!s.kind || s.kind === "sleep")).map((s: any) => ({ date: s.date, hours: s.hours })),
-      water: water.map((w: any) => ({ date: w.date, ml: w.ml })),
+      water: water.filter((w: any) => !w.undoneAt).map((w: any) => ({ date: w.date, ml: w.ml })),
       proteinTarget: profile?.proteinTarget ?? 90,
       waterTarget: profile?.waterTarget ?? 2000,
     });

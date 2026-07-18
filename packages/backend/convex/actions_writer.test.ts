@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import schema from "./schema";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 const modules = (import.meta as ImportMeta & {
   glob: (pattern: string) => Record<string, () => Promise<any>>;
@@ -65,6 +65,22 @@ describe("canonical action writers", () => {
     expect(actions[0]).toMatchObject({ actionType: "workout", status: "committed", committedRowRef: { table: "workouts" } });
   });
 
+  test("rejects malformed weight actions before writing domain rows", async () => {
+    const t = convexTest(schema, modules);
+
+    await expect(t.mutation(writer("writeRecoveryAction"), {
+      group: group("invalid weight", "invalid-weight-range-group"),
+      member: member({ kind: "weight", weightKg: 401, date: "2026-07-16" }, "invalid-weight-range-member"),
+    })).rejects.toThrow(/weightKg/);
+    await expect(t.mutation(writer("writeRecoveryAction"), {
+      group: group("missing weight date", "missing-weight-date-group"),
+      member: member({ kind: "weight", weightKg: 80 }, "missing-weight-date-member"),
+    })).rejects.toThrow(/weight date/);
+
+    expect(await t.run((ctx) => ctx.db.query("user_profiles").collect())).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("weight_logs").collect())).toHaveLength(0);
+  });
+
   test("routes recovery kinds through one writer and preserves upsert results", async () => {
     const t = convexTest(schema, modules);
     const base = { group: group("writer recovery", "writer-recovery-group") };
@@ -124,6 +140,28 @@ describe("canonical action writers", () => {
     expect(waterRows).toHaveLength(2);
     expect(waterRows.reduce((sum, row) => sum + row.ml, 0)).toBe(500);
     expect(moodRows).toHaveLength(2);
+  });
+
+  test("public water dedupes one intent and allows a confirmed identical second intent", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "writer-user" });
+    const args = { ml: 500, date: "2026-07-16", time: "12:00", idempotencyToken: "water-tap-1" };
+    const first = await asUser.mutation(api.wellness.addWater, args);
+    const second = await asUser.mutation(api.wellness.addWater, args);
+    const duplicateArgs = { ...args, date: "2026-07-17", time: "00:00", idempotencyToken: "water-tap-2" };
+
+    await expect(asUser.mutation(api.wellness.addWater, duplicateArgs)).rejects.toMatchObject({
+      data: { code: "NEAR_DUPLICATE" },
+    });
+    const confirmed = await asUser.mutation(api.wellness.addWater, { ...duplicateArgs, allowDuplicate: true });
+    const rows = await t.run((ctx) => ctx.db.query("water_logs").collect());
+    const actions = await t.run((ctx) => ctx.db.query("actions").collect());
+
+    expect(first).toBe(second);
+    expect(confirmed).not.toBe(first);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ ml: 500, sourceActionId: String(actions[0]._id) });
+    expect(actions).toHaveLength(2);
   });
 
   test("water upsert from check-in replaces the active row and records a previous", async () => {
