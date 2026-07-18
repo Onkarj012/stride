@@ -210,9 +210,26 @@ export function tryParseJSON<T>(text: string): T | null {
   return null;
 }
 
+type JSONParseDiagnostics = {
+  context: string;
+  maxTokens?: number;
+};
+
 /** Extract and parse the first JSON object/array from LLM text, or fallback. */
-export function parseJSON<T>(text: string, fallback: T): T {
+export function parseJSON<T>(text: string, fallback: T, diagnostics?: JSONParseDiagnostics): T {
   const parsed = tryParseJSON<T>(text);
-  if (parsed == null) return fallback;
+  if (parsed == null) {
+    if (diagnostics) {
+      const trimmed = text.trim();
+      console.warn(JSON.stringify({
+        event: "ai_json_parse_failed",
+        context: diagnostics.context,
+        maxTokens: diagnostics.maxTokens,
+        rawResponseLength: text.length,
+        responseEndedWithJsonDelimiter: /[}\]]$/.test(trimmed),
+      }));
+    }
+    return fallback;
+  }
   return parsed;
 }

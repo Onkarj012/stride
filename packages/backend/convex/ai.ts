@@ -2764,6 +2764,56 @@ export const transcribe = action({
 // Intent helpers (looksLikeLog, looksLikeFoodEstimate, extractUserMacros,
 // applyUserMacros) and their regexes → ./ai/intent
 
+const EXTRACTION_MAX_TOKENS = 1_600;
+const EXTRACTION_HISTORY_TURNS = 12;
+
+type HomepageHistoryEntry = { role: string; content: string };
+type HomepageHistoryMessage = { role: "user" | "assistant"; content: string };
+
+export function trimHomepageHistory(history: HomepageHistoryEntry[]): HomepageHistoryMessage[] {
+  return history
+    .slice(0, -1) // The current user message is persisted before history is loaded.
+    .slice(-EXTRACTION_HISTORY_TURNS)
+    .flatMap((entry): HomepageHistoryMessage[] => {
+      const role = entry.role === "ai" ? "assistant" : entry.role;
+      if (role !== "user" && role !== "assistant") return [];
+      return [{ role, content: entry.content }];
+    });
+}
+
+export function isUnusablePlaceholderMeal(description: string, parsed: {
+  calories?: unknown;
+  protein?: unknown;
+  carbs?: unknown;
+  fat?: unknown;
+  parseError?: unknown;
+}): boolean {
+  const normalized = description
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  const genericPlaceholder = normalized.length === 0
+    || /^(?:(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth) )?(?:meal|food|dish|breakfast|lunch|dinner|snack)(?: \d+)?$/.test(normalized);
+  const allZero = [parsed.calories, parsed.protein, parsed.carbs, parsed.fat]
+    .every((value) => Number(value) === 0);
+  return genericPlaceholder && typeof parsed.parseError === "string" && allZero;
+}
+
+export function disambiguateCardTitles(titles: string[]): string[] {
+  const normalized = titles.map((title) => title.trim().toLowerCase());
+  const counts = new Map<string, number>();
+  for (const title of normalized) counts.set(title, (counts.get(title) ?? 0) + 1);
+
+  const seen = new Map<string, number>();
+  return titles.map((title, index) => {
+    const key = normalized[index];
+    if ((counts.get(key) ?? 0) < 2) return title;
+    const ordinal = (seen.get(key) ?? 0) + 1;
+    seen.set(key, ordinal);
+    return `${title} (${ordinal})`;
+  });
+}
+
 export const homepageInput = action({
   args: {
     message: v.string(),
@@ -2816,6 +2866,13 @@ export const homepageInput = action({
       apiKey: settings?.openRouterKey ?? undefined,
     }).catch(() => {});
 
+    const history = await ctx.runQuery(internal.chat.getMessagesForContext, {
+      userId,
+      sessionId: activeSessionId,
+    }) as HomepageHistoryEntry[];
+    const trimmedHistory = trimHomepageHistory(history);
+    assertHistoryEntries(trimmedHistory);
+
     // Heuristic pre-check
     const estimateMode = looksLikeFoodEstimate(message);
     const userMacros = extractUserMacros(message);
@@ -2856,6 +2913,10 @@ CRITICAL CLASSIFICATION RULES:
 - "X steps" / "walked X steps" → steps log, isQuestion=false
 - Pure questions ("how am I doing?", "what should I eat?", "explain X") → isQuestion=true, items=[]
 - Food estimate questions ("how many calories is X?", "can I have X?", "would X fit?") → isQuestion=false and add a meal item, but the app may ask before logging.
+- Resolve references such as "log those", "log the meals I mentioned", or "log N meals" from the recent conversation.
+- For referenced meals, copy the specific food details from prior USER messages. Never invent generic items such as "meal", "food", or numbered placeholders.
+- Do not extract items from prior messages unless the current USER message explicitly refers to them.
+- If the referenced details are not present in the conversation, return isQuestion=false with items=[] instead of fabricating descriptions.
 
 Date inference rules:
 - "yesterday" → ${yesterdayStr}
@@ -2888,40 +2949,51 @@ Return ONLY valid JSON, no markdown.`;
 
     const extractMessages: AIMessage[] = [
       { role: "system", content: extractSystem },
+      ...trimmedHistory,
       image
         ? { role: "user", content: [{ type: "text", text: message || "What do you see?" }, { type: "image_url", image_url: { url: image } }] }
         : { role: "user", content: message },
     ];
 
-    const extractRaw = await callAI(ctx, userId, extractMessages, 400, intentModel, apiKey);
+    // Twelve full-day entries at ~80 output tokens each need ~960 tokens; 1,600
+    // leaves room for longer descriptions, dates, the envelope, and ~50% headroom.
+    const extractRaw = await callAI(ctx, userId, extractMessages, EXTRACTION_MAX_TOKENS, intentModel, apiKey);
+    const extractionFallback = { isQuestion: true, items: [] as { type: string; description: string; date?: string }[] };
     let extracted = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
       extractRaw,
-      { isQuestion: true, items: [] },
+      extractionFallback,
+      { context: "homepage_item_extraction", maxTokens: EXTRACTION_MAX_TOKENS },
     );
+    const extractionParseFailed = extracted === extractionFallback;
 
-    // Sanity check: if our heuristic strongly suggests this is a log but the LLM
-    // returned isQuestion=true with no items, force a second extraction pass.
-    if (heuristicSaysLog && (extracted.isQuestion || (extracted.items?.length ?? 0) === 0)) {
-      const forcePrompt = `The user message below IS a log report (food, drink, workout, sleep, mood, or steps).
-Today's date is ${today}.
-Extract every item as JSON. NEVER return isQuestion=true here.
-
-USER MESSAGE:
-"""
-${message}
-"""
-
-Return ONLY:
-{"isQuestion": false, "items": [{"type":"meal|workout|sleep|water|mood|steps","description":"...","date":"YYYY-MM-DD"}]}`;
-      const forcedRaw = await callAI(ctx, userId, [{ role: "user", content: forcePrompt }], 300, intentModel, apiKey).catch(() => "");
-      if (forcedRaw) {
-        const forced = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
-          forcedRaw,
-          { isQuestion: true, items: [] },
-        );
-        if (forced.items && forced.items.length > 0) {
-          extracted = { isQuestion: false, items: forced.items };
-        }
+    // Retry malformed output even when heuristics miss a narrative log report.
+    // A valid but suspicious question/empty result still uses the heuristic gate.
+    if (extractionParseFailed || (heuristicSaysLog && (extracted.isQuestion || (extracted.items?.length ?? 0) === 0))) {
+      const retryInstruction = heuristicSaysLog
+        ? "The current user message is a log report. Resolve any references from the conversation and never return generic placeholders."
+        : "The previous response was malformed. Re-evaluate the request, remembering that conversational full-day descriptions can be logs even without explicit logging keywords.";
+      const retryMessages: AIMessage[] = [
+        { role: "system", content: `${extractSystem}\n\nRETRY: Return complete valid JSON. ${retryInstruction}` },
+        ...trimmedHistory,
+        image
+          ? { role: "user", content: [{ type: "text", text: message || "What do you see?" }, { type: "image_url", image_url: { url: image } }] }
+          : { role: "user", content: message },
+      ];
+      const forcedRaw = await callAI(ctx, userId, retryMessages, EXTRACTION_MAX_TOKENS, intentModel, apiKey).catch((error: unknown) => {
+        console.warn(JSON.stringify({
+          event: "ai_extraction_retry_failed",
+          message: error instanceof Error ? error.message : String(error),
+        }));
+        return "";
+      });
+      const forcedFallback = { isQuestion: true, items: [] as { type: string; description: string; date?: string }[] };
+      const forced = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
+        forcedRaw,
+        forcedFallback,
+        { context: "homepage_item_extraction_retry", maxTokens: EXTRACTION_MAX_TOKENS },
+      );
+      if (forced.items && forced.items.length > 0) {
+        extracted = { isQuestion: false, items: forced.items };
       }
     }
 
@@ -2946,11 +3018,10 @@ Return ONLY:
     if (extracted.isQuestion || extracted.items.length === 0) {
       const coachType: CoachType = classifyCoachType(message);
       const coach = getCoach(coachType);
-      const [todayMealsList, todayWorkoutsList, profile, history, topMemories, lastSleepQ, patternsQ, topRecipesQ, topWkMemQ, behaviorQ, settingsQ, userIngredientsQ, checkInAnswersQ] = await Promise.all([
+      const [todayMealsList, todayWorkoutsList, profile, topMemories, lastSleepQ, patternsQ, topRecipesQ, topWkMemQ, behaviorQ, settingsQ, userIngredientsQ, checkInAnswersQ] = await Promise.all([
         ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
         ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
         ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-        ctx.runQuery(internal.chat.getMessagesForContext, { userId, sessionId: activeSessionId }),
         ctx.runQuery(internal.food_memory.getTopForContext, { userId, limit: 6 }),
         ctx.runQuery(internal.wellness.getLastSleepForContext, { userId }),
         ctx.runQuery(internal.patterns.getPatternsForContext, { userId }),
@@ -2961,7 +3032,6 @@ Return ONLY:
         ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
         ctx.runQuery(internal.checkins.getAnswerContextForContext, { userId, date: today }),
       ]);
-      assertHistoryEntries(history as { content: string }[]);
       const userName = identity.name ?? "Athlete";
       let context = `USER: ${userName}\n`;
       if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
@@ -3003,12 +3073,6 @@ Return ONLY:
       };
       const tone = toneInstruction(settingsQ?.coachingStyle, toneOpts);
 
-      // Drop the trailing user message (we already saved it) when injecting history
-      const trimmedHistory = (history as { role: string; content: string }[])
-        .slice(0, -1)
-        .slice(-12) // keep only last ~12 turns to stay within context
-        .map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content }));
-
       const systemContent = `${coach.systemPrompt}${tone ? `\n\n${tone}` : ""}\n\n${context}\n\nKeep your reply concise — under 60 words unless the user asks for detail.${restrictedGuidance ? `\n\n${RESTRICTED_GUIDANCE}` : ""}`;
       const replyMessages: AIMessage[] = [
         { role: "system", content: systemContent },
@@ -3046,6 +3110,7 @@ Return ONLY:
 
     const drafts: any[] = [];
     const summaryParts: string[] = [];
+    let skippedPlaceholderMeals = 0;
 
     for (const item of extracted.items) {
       try {
@@ -3093,6 +3158,10 @@ Return ONLY:
           // ── End memory match — fall through to LLM parse ──────────────────
 
           const parsed = await parseMealDescription(desc, "unspecified", "", ctx, userId, settingsModel, apiKey, userIngredients as any[]);
+          if (isUnusablePlaceholderMeal(desc, parsed)) {
+            skippedPlaceholderMeals += 1;
+            continue;
+          }
           const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsed, date: item.date, description: desc }, { userId, useMemory: true }));
           const canonicalDraft = nutrition.ingredientBreakdown as MealDraft;
           const baseDraft = {
@@ -3207,7 +3276,9 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
 
     if (drafts.length === 0) {
       // Fallback to question path
-      const reply = "I couldn't parse that. Could you be more specific?";
+      const reply = skippedPlaceholderMeals > 0
+        ? `I couldn't catch the details for ${skippedPlaceholderMeals === 1 ? "that meal" : `${skippedPlaceholderMeals} of those meals`}. Could you describe ${skippedPlaceholderMeals === 1 ? "it" : "them"} again?`
+        : "I couldn't parse that. Could you be more specific?";
       const messageId = await ctx.runMutation(internal.chat.addMessage, {
         userId, sessionId: activeSessionId, role: "ai", content: reply,
       });
@@ -3217,7 +3288,10 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
     // If any draft has a date != today, mention it in the summary
     const nonTodayDates = [...new Set(drafts.map((d) => d.date).filter((d) => d && d !== today))];
     const dateNote = nonTodayDates.length > 0 ? ` (for ${nonTodayDates.join(", ")})` : "";
-    const tier1Summary = summaryParts.join(" · ") + dateNote + ". Confirm to log.";
+    const skippedNote = skippedPlaceholderMeals > 0
+      ? ` I couldn't catch the details for ${skippedPlaceholderMeals === 1 ? "1 meal" : `${skippedPlaceholderMeals} meals`}; please describe ${skippedPlaceholderMeals === 1 ? "it" : "them"} again.`
+      : "";
+    const tier1Summary = summaryParts.join(" · ") + dateNote + `. Confirm to log.${skippedNote}`;
 
     // Tier 2: brief analysis of the combined log
     const tier2Prompt = `Give a brief, encouraging analysis (2-3 sentences) of what the user just logged: ${summaryParts.join(", ")}. Be specific and actionable.`;
@@ -3230,9 +3304,13 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
     });
 
     const actions: any[] = [];
+    const cardTitles = disambiguateCardTitles(drafts.map((draft) => {
+      if (draft.kind === "meal" && draft.nutritionSource === "macro_conflict") return "Macro check";
+      return draft.description ?? (draft.kind === "meal" ? "Log this meal?" : `Log ${draft.kind}?`);
+    }));
 
     // Always show a log_draft card for every draft — deterministic confirm flow
-    for (const draft of drafts) {
+    for (const [draftIndex, draft] of drafts.entries()) {
       if (draft.kind === "meal") {
         const rangeLow = Math.max(0, Math.round(draft.kcal * 0.88));
         const rangeHigh = Math.round(draft.kcal * 1.12);
@@ -3240,7 +3318,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
         if (isMacroConflict) {
           actions.push({
             type: "macro_conflict",
-            title: "Macro check",
+            title: cardTitles[draftIndex],
             body: `${draft.engineEstimate ? `My estimate is ~${draft.engineEstimate.kcal} kcal. ` : ""}Your numbers differ significantly — which should I use?`,
             draft,
             buttons: [
@@ -3253,7 +3331,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
             type: "log_draft",
             source: hasUserMacros ? "user_macros" : draft.nutritionSource ?? "estimate",
             draft,
-            title: draft.description ?? "Log this meal?",
+            title: cardTitles[draftIndex],
             body: estimateMode
               ? `${rangeLow}–${rangeHigh} kcal depending on portions.`
               : draft.parseError,
@@ -3265,7 +3343,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
           type: "log_draft",
           source: draft.kind,
           draft,
-          title: draft.description ?? `Log ${draft.kind}?`,
+          title: cardTitles[draftIndex],
           body: draft.kind === "workout" && draft.calorieResult
             ? `~${draft.calorieResult.range_low}-${draft.calorieResult.range_high} kcal, rough. Refine duration or intensity if needed.`
             : draft.parseError,
