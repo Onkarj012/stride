@@ -13,6 +13,7 @@ import type { Id } from "@convex/_generated/dataModel";
 import type { LogCategory, LogEntry } from "@/lib/storage";
 import { mealToLogEntry, workoutToLogEntry } from "@/lib/normalizers";
 import { localDateStr } from "@/lib/utils";
+import { getAIErrorMessage } from "@/lib/ai-errors";
 
 function todayDate(): string {
   return localDateStr();
@@ -102,7 +103,8 @@ export function useLogs(date?: string) {
       const time = now.toTimeString().slice(0, 5);
       const targetDate = dateOverride && /^\d{4}-\d{2}-\d{2}$/.test(dateOverride) ? dateOverride : d;
 
-      if (category === "meal") {
+      try {
+        if (category === "meal") {
         const meal = extra?.meal;
         await addMeal({
           name: text,
@@ -120,7 +122,7 @@ export function useLogs(date?: string) {
           ingredientBreakdown: meal?.ingredientBreakdown,
           logSource: meal?.logSource,
         });
-      } else if (category === "workout") {
+        } else if (category === "workout") {
         const w = extra?.workout;
         await addWorkout({
           name: text,
@@ -140,21 +142,26 @@ export function useLogs(date?: string) {
           structuredSets: w?.structuredSets,
           logSource: w?.logSource,
         });
-      } else if (category === "water") {
+        } else if (category === "water") {
         const ml = extra?.water?.ml ?? 250;
         await addWater({ ml, date: targetDate, time });
-      } else if (category === "sleep") {
+        } else if (category === "sleep") {
         const s = extra?.sleep;
         if (!s) return null;
         await upsertSleep({ hours: s.hours, quality: s.quality, date: targetDate, note: text });
-      } else if (category === "mood") {
+        } else if (category === "mood") {
         const m = extra?.mood;
         if (!m) return null;
         await addMood({ rating: m.rating, date: targetDate, time, note: m.note ?? text });
-      } else if (category === "steps") {
+        } else if (category === "steps") {
         const count = extra?.steps?.count;
         if (!count) return null;
         await upsertSteps({ count, date: targetDate });
+        }
+      } catch (error) {
+        const message = getAIErrorMessage(error);
+        if (message) throw new Error(message);
+        throw error;
       }
       return null;
     },

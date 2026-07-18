@@ -5,6 +5,14 @@
  * ai_utils.ts). Imported by ai.ts, agents.ts, and anything needing an LLM call.
  */
 
+import { internal } from "../_generated/api";
+import type { ActionCtx } from "../_generated/server";
+import {
+  estimateCostUsd,
+  estimateMessageTokens,
+  usageFromResponse,
+} from "../ai_guard";
+
 export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 // Split-model strategy: cheap model for high-volume parsing/extraction,
 // upgraded model for chat replies users actually read.
@@ -31,79 +39,115 @@ export interface AIMessage {
 }
 
 /**
- * Call OpenRouter with retry + fallback. Up to 4 attempts; attempts 3–4 use
- * FALLBACK_MODEL. Retries on 5xx, 429, empty content, network errors, 60s abort.
+ * Call OpenRouter with retry + fallback. Up to 3 attempts; the final attempt
+ * uses FALLBACK_MODEL. Only transient provider failures are retried.
  */
-export async function callAI(messages: AIMessage[], maxTokens = 500, model?: string, apiKey?: string): Promise<string> {
+export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage[], maxTokens = 500, model?: string, apiKey?: string): Promise<string> {
   const key = apiKey || process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
 
   const primaryModel = model || DEFAULT_MODEL;
+  const estimatedInputTokens = estimateMessageTokens(messages);
+  const estimatedOutputTokens = Math.max(1, Math.round(maxTokens));
+  // Reserve the worst case for the two primary attempts plus the fallback.
+  // Retries reuse this reservation, so they do not bypass either guard.
+  const reservedCostUsd = [primaryModel, primaryModel, FALLBACK_MODEL]
+    .reduce((sum, attemptModel) => sum + estimateCostUsd(attemptModel, estimatedInputTokens, estimatedOutputTokens), 0);
+  const reservation = await ctx.runMutation(internal.ai_guard.checkAndReserve, {
+    userId,
+    model: primaryModel,
+    estimatedInputTokens,
+    estimatedOutputTokens,
+    estimatedCostUsd: reservedCostUsd,
+  });
   let lastError: Error | null = null;
+  let settled = false;
 
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const backoffMs = 250 * 2 ** attempt;
-    const wait = () => new Promise((r) => setTimeout(r, backoffMs));
-    const useFallback = attempt >= 2;
-    const currentModel = useFallback ? FALLBACK_MODEL : primaryModel;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const backoffMs = 250 * 2 ** attempt;
+      const currentModel = attempt >= 2 ? FALLBACK_MODEL : primaryModel;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+      let res: Response;
 
-    try {
-      const res = await fetch(OPENROUTER_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({ model: currentModel, messages, max_tokens: maxTokens }),
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const status = res.status;
-        const errBody = await res.text();
+      try {
+        res = await fetch(OPENROUTER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify({ model: currentModel, messages, max_tokens: maxTokens }),
+          signal: controller.signal,
+        });
+      } catch (err) {
+        const error = err as Error;
+        const errorMessage = error.message.toLowerCase();
+        const isTransient = error.name === "AbortError" || [
+          "fetch failed",
+          "econnrefused",
+          "etimedout",
+          "econnreset",
+          "network",
+        ].some((needle) => errorMessage.includes(needle));
+        if (!isTransient) throw err;
+        lastError = error.name === "AbortError"
+          ? new Error("OpenRouter request timed out after 60s")
+          : error;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+        break;
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (!res!.ok) {
+        const status = res!.status;
+        const errBody = await res!.text();
         if (status >= 500 || status === 429) {
           lastError = new Error(`OpenRouter error ${status}: ${errBody}`);
-          await wait();
-          continue;
+          if (attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+            continue;
+          }
+          break;
         }
         throw new Error(`OpenRouter error ${status}: ${errBody}`);
       }
-      const data = await res.json() as any;
-      if (data.error) {
-        lastError = new Error(`OpenRouter API error: ${data.error.message}`);
-        await wait();
-        continue;
-      }
+
+      const data = await res!.json() as any;
+      if (data.error) throw new Error(`OpenRouter API error: ${data.error.message}`);
       const content = data.choices?.[0]?.message?.content;
-      if (!content) {
-        lastError = new Error("OpenRouter returned empty response");
-        await wait();
-        continue;
-      }
+      if (!content) throw new Error("OpenRouter returned empty response");
+
+      const usage = usageFromResponse(
+        data.usage,
+        estimatedInputTokens,
+        Math.min(maxTokens, Math.max(1, Math.ceil(String(content).length / 3))),
+      );
+      await ctx.runMutation(internal.ai_guard.settleUsage, {
+        userId,
+        model: currentModel,
+        bucketKey: reservation.bucketKey,
+        reservedCostUsd: reservation.reservedCostUsd,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        actualCostUsd: estimateCostUsd(currentModel, usage.inputTokens, usage.outputTokens),
+      });
+      settled = true;
       return content;
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        lastError = new Error("OpenRouter request timed out after 60s");
-        await wait();
-        continue;
-      }
-      const error = err as Error;
-      if (
-        error.message.includes("fetch failed") ||
-        error.message.includes("ECONNREFUSED") ||
-        error.message.includes("ETIMEDOUT") ||
-        error.message.includes("ECONNRESET") ||
-        error.message.includes("network")
-      ) {
-        lastError = error;
-        await wait();
-        continue;
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
+    }
+
+    throw lastError || new Error("OpenRouter failed after maximum retries");
+  } finally {
+    if (!settled) {
+      await ctx.runMutation(internal.ai_guard.releaseReservation, {
+        userId,
+        bucketKey: reservation.bucketKey,
+        reservedCostUsd: reservation.reservedCostUsd,
+      });
     }
   }
-
-  throw lastError || new Error("OpenRouter failed after maximum retries");
 }
 
 /** Extract and parse the first JSON object/array from LLM text, or null. */

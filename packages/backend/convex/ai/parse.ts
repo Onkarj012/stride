@@ -6,7 +6,9 @@
  */
 
 import { internal } from "../_generated/api";
+import type { ActionCtx } from "../_generated/server";
 import { callAI, tryParseJSON } from "./llm";
+import { AI_INPUT_LIMITS, assertMaxChars, assertIngredients } from "../ai_guard";
 import {
   calculateWorkoutCalories,
   parseDurationMinutes,
@@ -163,7 +165,13 @@ export async function parseMealDescription(
   model?: string,
   apiKey?: string,
   userIngredients?: Array<{ name: string; caloriesPer100g?: number; proteinPer100g?: number; carbsPer100g?: number; fatPer100g?: number; notes?: string }>,
+  ctx?: ActionCtx,
+  userId?: string,
 ) {
+  assertMaxChars(description, AI_INPUT_LIMITS.textChars, "meal description");
+  assertMaxChars(mealType, AI_INPUT_LIMITS.textChars, "meal type");
+  assertMaxChars(time, AI_INPUT_LIMITS.textChars, "meal time");
+  assertIngredients(userIngredients, "user ingredients");
   const ingredientContext = userIngredients && userIngredients.length > 0
     ? `\nUSER'S PERSONAL INGREDIENT DATABASE (use these values instead of generic database values when the ingredient name matches):\n` +
       userIngredients.map((i) => {
@@ -202,7 +210,7 @@ Instructions:
 Return ONLY a JSON object (no other text, no markdown):
 {"name":"short descriptive name (max 4 words)","calories":450,"protein":35,"carbs":40,"fat":18,"components":"comma-separated ingredient list","suggestion":"one forward-looking next-meal tip (max 20 words)","ingredients":[{"food_text":"paneer","amount":150,"unit":"g","is_oil_or_fat":false,"confidence":0.9}],"cooking_method":"fried","portion_scale":1.0,"total_recipe_servings":2,"missing_fields":["oil_amount"]}`;
 
-  const content = await callAI([{ role: "user", content: prompt }], 1000, model, apiKey);
+  const content = await callAI(ctx!, userId!, [{ role: "user", content: prompt }], 1000, model, apiKey);
   const mealTime = normalizedTimeOrNow(time);
   const result = tryParseJSON<any>(content);
   if (!result || typeof result !== "object" || Array.isArray(result)) {
@@ -269,7 +277,10 @@ Return ONLY a JSON object (no other text, no markdown):
   };
 }
 
-export async function parseWorkoutDescription(description: string, duration?: string, intensity?: string, model?: string, apiKey?: string, userPhysique?: UserPhysique): Promise<ParsedWorkoutResult> {
+export async function parseWorkoutDescription(description: string, duration?: string, intensity?: string, model?: string, apiKey?: string, userPhysique?: UserPhysique, ctx?: ActionCtx, userId?: string): Promise<ParsedWorkoutResult> {
+  assertMaxChars(description, AI_INPUT_LIMITS.textChars, "workout description");
+  if (duration) assertMaxChars(duration, AI_INPUT_LIMITS.textChars, "workout duration");
+  if (intensity) assertMaxChars(intensity, AI_INPUT_LIMITS.textChars, "workout intensity");
   const physiqueInfo = userPhysique?.weight
     ? `\nUser physique: ${userPhysique.weight}kg${userPhysique.height ? `, ${userPhysique.height}cm` : ""}${userPhysique.age ? `, ${userPhysique.age}yo` : ""}${userPhysique.sex ? `, ${userPhysique.sex}` : ""}${userPhysique.fitnessLevel ? `, fitness: ${userPhysique.fitnessLevel}` : ""}`
     : "";
@@ -299,7 +310,7 @@ Rules:
 Return ONLY valid JSON:
 {"name":"session name","exercises":[{"name":"exercise name","muscle_group":"chest","weight_unit":"kg","sets":[{"weight":"12.5","reps":"15"}]},{"name":"cardio name","muscle_group":"cardio","weight_unit":"bodyweight","sets":[{"distance_km":"0.75","duration_min":"10","incline":"11","pace":"13.2","calories_per_hr":"425"}]}],"duration":"estimated total duration","intensity":"LOW|MEDIUM|HIGH|MAX","caloriesBurned":0,"rationale":"one coaching tip (max 15 words)","restClues":"any rest pattern info"}`;
 
-  const content = await callAI([{ role: "user", content: prompt }], 1200, model, apiKey);
+  const content = await callAI(ctx!, userId!, [{ role: "user", content: prompt }], 1200, model, apiKey);
   const parsedJson = tryParseJSON<any>(content);
   const result = parsedJson && typeof parsedJson === "object" && !Array.isArray(parsedJson)
     ? parsedJson
@@ -422,6 +433,7 @@ export async function runNutritionEngine(
   const breakdownItems: ItemBreakdown[] = [];
   const unresolved: string[] = [];
   const ingredients = parsedMeal.ingredients || [];
+  assertIngredients(ingredients);
 
   if (parsedMeal.parseError) {
     return {

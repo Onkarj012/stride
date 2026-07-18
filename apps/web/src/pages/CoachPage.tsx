@@ -19,6 +19,7 @@ import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useToast } from "@/context/ToastContext";
 import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
 import { cn, localDateStr } from "@/lib/utils";
+import { getAIErrorMessage } from "@/lib/ai-errors";
 import { MobileIcon, StatusBar } from "@/components/mobile/MobileKit";
 import type { Agent, CoachingStyle } from "@/lib/storage";
 
@@ -528,13 +529,14 @@ export function CoachPage() {
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : "";
-      const userMsg = raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")
+      const userMsg = getAIErrorMessage(err)
+        ?? (raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")
         ? "AI is not configured — contact the app owner to set up the API key."
         : raw.includes("429") || raw.toLowerCase().includes("rate limit") || raw.toLowerCase().includes("quota")
         ? "Stry is busy — try again in a moment."
         : raw.toLowerCase().includes("timeout") || raw.toLowerCase().includes("timed out")
         ? "Request timed out — check your connection."
-        : "Couldn't reach Stry right now. Please try again.";
+        : "Couldn't reach Stry right now. Please try again.");
       setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: userMsg, streamed: false }]);
       toast.error("Error", userMsg);
     } finally {
@@ -868,7 +870,7 @@ export function CoachPage() {
               placeholder={voice.recording ? "Listening..." : voice.transcribing ? "Transcribing..." : "Message Stry — what did you eat or train?"}
               ariaLabel="Message Stry"
             />
-            {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
+            {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{getAIErrorMessage(voice.error) ?? voice.error}</p>}
           </div>
         </div>
       </div>

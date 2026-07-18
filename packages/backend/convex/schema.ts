@@ -2,6 +2,18 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  ai_usage_buckets: defineTable({
+    scope: v.union(v.literal("user"), v.literal("global")),
+    ownerKey: v.string(),
+    bucketKey: v.string(),
+    requestCount: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    costUsd: v.number(),
+    reservedCostUsd: v.number(),
+    rateLimitTimestamps: v.array(v.number()),
+  }).index("by_scope_owner_bucket", ["scope", "ownerKey", "bucketKey"]),
+
   users: defineTable({
     clerkId: v.string(),
     email: v.string(),

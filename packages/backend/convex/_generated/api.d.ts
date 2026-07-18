@@ -9,14 +9,17 @@
  */
 
 import type * as actions_envelope from "../actions_envelope.js";
+import type * as actions_group from "../actions_group.js";
 import type * as actions_idempotency from "../actions_idempotency.js";
 import type * as actions_undo from "../actions_undo.js";
 import type * as actions_writer from "../actions_writer.js";
+import type * as active_rows from "../active_rows.js";
 import type * as agents from "../agents.js";
 import type * as ai from "../ai.js";
 import type * as ai_intent from "../ai/intent.js";
 import type * as ai_llm from "../ai/llm.js";
 import type * as ai_parse from "../ai/parse.js";
+import type * as ai_guard from "../ai_guard.js";
 import type * as behavior from "../behavior.js";
 import type * as calibration from "../calibration.js";
 import type * as calorie_engine from "../calorie_engine.js";
@@ -66,14 +69,17 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   actions_envelope: typeof actions_envelope;
+  actions_group: typeof actions_group;
   actions_idempotency: typeof actions_idempotency;
   actions_undo: typeof actions_undo;
   actions_writer: typeof actions_writer;
+  active_rows: typeof active_rows;
   agents: typeof agents;
   ai: typeof ai;
   "ai/intent": typeof ai_intent;
   "ai/llm": typeof ai_llm;
   "ai/parse": typeof ai_parse;
+  ai_guard: typeof ai_guard;
   behavior: typeof behavior;
   calibration: typeof calibration;
   calorie_engine: typeof calorie_engine;

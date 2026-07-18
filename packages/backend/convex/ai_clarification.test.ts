@@ -29,7 +29,7 @@ function isMealParsePrompt(messages: any[]): boolean {
 }
 
 function mockChatReply(reply: string) {
-  mockedCallAI.mockImplementation(async (messages) => {
+  mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
     if (isTitlePrompt(messages)) return "Chat";
     if (isMealParsePrompt(messages)) {
       return JSON.stringify({
@@ -159,7 +159,7 @@ describe("clarification flow", () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });
     const reply = 'Two similar entries.⟦LOG_WORKOUT⟧{"description":"running","date":"2026-07-16"}⟦/LOG_WORKOUT⟧⟦LOG_WORKOUT⟧{"description":"running variation","date":"2026-07-16"}⟦/LOG_WORKOUT⟧';
-    mockedCallAI.mockImplementation(async (messages) => {
+    mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
       if (isTitlePrompt(messages)) return "Chat";
       if (promptText(messages).includes("professional fitness trainer")) {
         const prompt = messages.at(-1)?.content;
@@ -187,7 +187,7 @@ describe("clarification flow", () => {
   test("low confidence meal → clarification", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });
-    mockedCallAI.mockImplementation(async (messages) => {
+    mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
       if (isTitlePrompt(messages)) return "Chat";
       if (isMealParsePrompt(messages)) {
         return JSON.stringify({
