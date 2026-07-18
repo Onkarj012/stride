@@ -132,3 +132,14 @@ Merge order: **#33 → #31 salvage → #30 salvage → #32 salvage → close #29
 - Beta is invite-gated.
 - AI ceilings: $0.25/user/day, $3/user/month, $50 global/month; in-app metering + provider hard caps.
 - Execution started with Workstream 1 (stabilize PR #33).
+
+## 7. EXECUTION STATUS (2026-07-18)
+
+All P0 code workstreams merged to main (a3b360d): #33 canonical pipeline, #34 salvage,
+#35 AI cost shield, #36 truthful numbers, #37 canonical write gaps, #38 observability,
+#39 first-run UX. Backend 277/277 tests, web 21/21, production build clean.
+
+Remaining before launch: owner visual verification of UI changes, then the ops
+checklist in §4 (Convex prod, Clerk prod, Vercel envs, Sentry DSN, provider spend
+caps, invite gating, smoke test). P1 deferrals: cron dispatcher pagination, guard
+UTC day-buckets, mobile settings parity, memory-agent confirmation flow, chunk split.
