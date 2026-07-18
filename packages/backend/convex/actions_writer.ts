@@ -20,7 +20,7 @@ import {
 import { stableHash } from "./validation";
 import { writeMealDomain } from "./meals";
 import { writeWorkoutDomain } from "./workouts";
-import { writeRecoveryDomain } from "./wellness";
+import { writeRecoveryDomain, writeWeightDomain } from "./wellness";
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 import { recomputeForAction } from "./derived_state";
 import { insertActionTelemetry } from "./telemetry";
@@ -238,6 +238,27 @@ export const writeRecoveryAction = internalMutation({
       return prepared.rowId ? { id: prepared.rowId } : prepared.rowId;
     }
     const payload = prepared.member.payload as Record<string, any>;
+    if (payload.kind === "weight") {
+      const result = await writeWeightDomain(ctx, {
+        userId: prepared.group.userId,
+        date: payload.date ?? prepared.member.resolvedDate,
+        weightKg: payload.weightKg,
+        source: payload.source ?? "check_in",
+        sourceActionId: String(prepared.member._id),
+      });
+      const committedId = await commitMember(ctx, prepared, "weight_logs", result.id, {
+        ...(result.previous ? { previous: result.previous } : {}),
+        previousProfile: result.previousProfile ?? null,
+        weightKg: payload.weightKg,
+      });
+      const derived = await recomputeForAction(ctx, {
+        userId: prepared.group.userId,
+        actionType: "recovery",
+        date: payload.date ?? prepared.member.resolvedDate,
+      });
+      await recordWriterTelemetry(ctx, prepared, "committed", { ok: true }, derived.derivedStateVersion);
+      return { id: committedId, previous: result.previous };
+    }
     const draft = buildRecoveryDraft({
       ...payload,
       date: payload.date ?? prepared.member.resolvedDate,

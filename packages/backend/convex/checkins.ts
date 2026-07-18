@@ -953,25 +953,7 @@ async function applyStructuredAnswer(ctx: MutationCtx, userId: string, args: {
     if (inputWeight == null || inputWeight <= 0) return;
     const units = await getUserUnits(ctx, userId);
     const weightKg = units === "imperial" ? inputWeight * LB_TO_KG : inputWeight;
-    const profile = await ctx.db
-      .query("user_profiles")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
-    if (profile) {
-      await ctx.db.patch(profile._id, { weight: weightKg });
-    } else {
-      await ctx.db.insert("user_profiles", { userId, weight: weightKg, activityLevel: "moderate" });
-    }
-
-    const existingWeight = await ctx.db
-      .query("weight_logs")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", args.date))
-      .first();
-    if (existingWeight) {
-      await ctx.db.patch(existingWeight._id, { weightKg, source: "check_in" });
-    } else {
-      await ctx.db.insert("weight_logs", { userId, date: args.date, weightKg, source: "check_in", createdAt: Date.now() });
-    }
+    await writeCheckinWeight(ctx, userId, args, weightKg);
   } else if (kind === "water") {
     const ml = args.numericValue;
     if (ml == null || ml <= 0) return;
@@ -1006,6 +988,25 @@ async function writeCheckinRecovery(ctx: MutationCtx, userId: string, source: { 
     member: {
       memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "recovery", payloadFingerprint: JSON.stringify(payload), ordinal: 0 }),
       payload: canonicalPayload,
+      provenance: "user_reported",
+      validation: { status: "valid", messages: [] },
+      reversible: true,
+      resolvedDate: source.date,
+    },
+  });
+  await finalizeActionGroupAfterWrite(ctx, userId, groupKey);
+  return result;
+}
+
+async function writeCheckinWeight(ctx: MutationCtx, userId: string, source: { questionId: string; date: string; value: string }, weightKg: number) {
+  const payload = { kind: "weight", weightKg, date: source.date, source: "check_in" };
+  const rawInput = JSON.stringify({ questionId: source.questionId, date: source.date, value: source.value, payload });
+  const groupKey = deriveGroupKey({ userId, sourceSurface: "checkin", rawInput });
+  const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, {
+    group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "checkin", rawInput },
+    member: {
+      memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "recovery", payloadFingerprint: JSON.stringify(payload), ordinal: 0 }),
+      payload,
       provenance: "user_reported",
       validation: { status: "valid", messages: [] },
       reversible: true,

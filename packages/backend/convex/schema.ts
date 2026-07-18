@@ -322,6 +322,8 @@ export default defineSchema({
     weightKg: v.number(),
     source: v.string(), // check_in | profile
     createdAt: v.number(),
+    sourceActionId: v.optional(v.string()),
+    undoneAt: v.optional(v.number()),
   })
     .index("by_user_date", ["userId", "date"])
     .index("by_user", ["userId"]),

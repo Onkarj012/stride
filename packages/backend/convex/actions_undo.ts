@@ -7,7 +7,7 @@ import { assertTransition } from "./actions_envelope";
 import { insertActionTelemetry } from "./telemetry";
 import { normalizeName } from "./food_memory_match";
 
-type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs";
+type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs" | "weight_logs";
 
 const DOMAIN_TABLES = new Set<DomainTable>([
   "meals",
@@ -16,6 +16,7 @@ const DOMAIN_TABLES = new Set<DomainTable>([
   "sleep_logs",
   "mood_logs",
   "steps_logs",
+  "weight_logs",
 ]);
 
 function asDomainTable(table: string): DomainTable {
@@ -178,6 +179,44 @@ async function compensateInferredMemory(
   });
 }
 
+/** Mark a directly deleted canonical row and its committed action as undone. */
+export async function tombstoneActionOwnedRow(ctx: MutationCtx, input: {
+  userId: string;
+  table: DomainTable;
+  row: { _id: string; date: string; userId: string; sourceActionId?: string; undoneAt?: number };
+}): Promise<boolean> {
+  let action: Doc<"actions"> | null = null;
+  if (input.row.sourceActionId) {
+    action = await ctx.db.get(input.row.sourceActionId as any) as Doc<"actions"> | null;
+  }
+  if (!action) {
+    const committed = await ctx.db
+      .query("actions")
+      .withIndex("by_user_status", (q) => q.eq("userId", input.userId).eq("status", "committed"))
+      .collect();
+    action = committed.find((candidate) =>
+      candidate.committedRowRef?.table === input.table && candidate.committedRowRef.id === input.row._id,
+    ) ?? null;
+  }
+  if (
+    !action
+    || action.userId !== input.userId
+    || action.committedRowRef?.table !== input.table
+    || action.committedRowRef.id !== input.row._id
+    || action.status !== "committed"
+  ) return false;
+
+  const undoneAt = Date.now();
+  if (!input.row.undoneAt) await ctx.db.patch(input.row._id as any, { undoneAt });
+  assertTransition(action.status, "undone");
+  await ctx.db.patch(action._id, { status: "undone", undoneAt });
+  if (input.table === "meals" || input.table === "workouts") {
+    await compensateInferredMemory(ctx, action, input.table);
+  }
+  await recordBehaviorRow(ctx, input.userId, "undo", action.actionType, action._id, input.row.date);
+  return true;
+}
+
 async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">): Promise<UndoResult & { date?: string; actionType?: DerivedActionType }> {
   if (action.status === "undone") {
     return {
@@ -217,6 +256,21 @@ async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">):
   } else {
     // Rows created by this action are marked undone.
     await ctx.db.patch(row._id, { undoneAt });
+  }
+
+  if (table === "weight_logs" && action.payload && Object.prototype.hasOwnProperty.call(action.payload, "previousProfile")) {
+    const profile = await ctx.db
+      .query("user_profiles")
+      .withIndex("by_user", (q) => q.eq("userId", action.userId))
+      .first();
+    if (profile && profile.weight === row.weightKg) {
+      const previousProfile = action.payload.previousProfile;
+      if (previousProfile === null) {
+        await ctx.db.delete(profile._id);
+      } else if (previousProfile && typeof previousProfile === "object") {
+        await ctx.db.replace(profile._id, previousProfile);
+      }
+    }
   }
 
   assertTransition(action.status, "undone");

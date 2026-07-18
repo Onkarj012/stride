@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import schema from "./schema";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 const modules = (import.meta as ImportMeta & {
   glob: (pattern: string) => Record<string, () => Promise<any>>;
@@ -124,6 +124,21 @@ describe("canonical action writers", () => {
     expect(waterRows).toHaveLength(2);
     expect(waterRows.reduce((sum, row) => sum + row.ml, 0)).toBe(500);
     expect(moodRows).toHaveLength(2);
+  });
+
+  test("public water retries with the same client token commit one row and one action", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "writer-user" });
+    const args = { ml: 500, date: "2026-07-16", time: "12:00", idempotencyToken: "water-tap-1" };
+    const first = await asUser.mutation(api.wellness.addWater, args);
+    const second = await asUser.mutation(api.wellness.addWater, args);
+    const rows = await t.run((ctx) => ctx.db.query("water_logs").collect());
+    const actions = await t.run((ctx) => ctx.db.query("actions").collect());
+
+    expect(first).toBe(second);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ ml: 500, sourceActionId: String(actions[0]._id) });
+    expect(actions).toHaveLength(1);
   });
 
   test("water upsert from check-in replaces the active row and records a previous", async () => {

@@ -17,6 +17,7 @@ import {
   workoutContentHash,
 } from "./validation";
 import { resolveTargetDateTime } from "./time_resolve";
+import { tombstoneActionOwnedRow } from "./actions_undo";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -351,7 +352,7 @@ export const deleteWorkout = mutation({
     const userId = await requireUserId(ctx);
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
-    await ctx.db.delete(id);
+    if (!(await tombstoneActionOwnedRow(ctx, { userId, table: "workouts", row: workout }))) await ctx.db.delete(id);
     await recomputeForAction(ctx, { userId, actionType: "workout", date: workout.date });
   },
 });

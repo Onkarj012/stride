@@ -252,6 +252,32 @@ describe("check-in selection", () => {
     expect(weightLogs[0].weightKg).toBeCloseTo(72.57472, 5);
   });
 
+  test("weight check-in is one reversible action that restores the prior profile", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    await asUser.mutation(api.profile.upsertProfile, { weight: 80, activityLevel: "moderate" });
+
+    await asUser.mutation(api.checkins.submitAnswer, {
+      questionId: "template_daily_weigh_in",
+      date: "2026-07-08",
+      window: "morning",
+      source: "template",
+      answerType: "number",
+      value: "75",
+      numericValue: 75,
+      templateId: "daily_weigh_in",
+    });
+
+    const action = await t.run((ctx) => ctx.db.query("actions").first());
+    expect(action).toMatchObject({ actionType: "recovery", status: "committed", committedRowRef: { table: "weight_logs" } });
+    expect(action?.payload?.previousProfile).toMatchObject({ weight: 80 });
+
+    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
+
+    expect((await asUser.query(api.profile.getProfile, {}))?.weight).toBe(80);
+    expect(await t.run((ctx) => ctx.db.query("weight_logs").first())).toMatchObject({ weightKg: 75, undoneAt: expect.any(Number) });
+  });
+
   test("editing same-day water and mood check-ins patches existing logs", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });

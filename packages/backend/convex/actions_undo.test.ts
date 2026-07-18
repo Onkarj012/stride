@@ -66,6 +66,19 @@ describe("audited action undo", () => {
     expect(repeated).toMatchObject({ actionId: action._id, status: "already_undone" });
   });
 
+  test("deleting a canonical meal tombstones its row and synchronizes the action", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    const mealId = await writeMeal(t, "delete-canonical-meal");
+    const action = (await t.run((ctx) => ctx.db.query("actions").collect()))[0];
+
+    await asUser.mutation(api.meals.deleteMeal, { id: mealId });
+
+    expect(await t.run((ctx) => ctx.db.get(mealId))).toMatchObject({ undoneAt: expect.any(Number) });
+    expect(await t.run((ctx) => ctx.db.get(action._id))).toMatchObject({ status: "undone", undoneAt: expect.any(Number) });
+    expect(await asUser.mutation(undoApi.undoAction, { actionId: action._id })).toMatchObject({ status: "already_undone" });
+  });
+
   test("group undo reverses committed members and skips failed and undone members", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "undo-user" });

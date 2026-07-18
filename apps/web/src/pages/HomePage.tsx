@@ -150,7 +150,7 @@ export function HomePage() {
     : (stats?.waterMl ?? 0);
 
   async function handleAddWater(ml: number) {
-    await addWater({ ml, date: today });
+    await addWater({ ml, date: today, idempotencyToken: crypto.randomUUID() });
   }
 
   async function handleRemoveWater() {

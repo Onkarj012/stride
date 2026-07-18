@@ -162,7 +162,7 @@ export function useLogs(date?: string) {
         });
         } else if (category === "water") {
         const ml = requireWaterAmount(extra?.water);
-        await addWater({ ml, date: targetDate, time });
+        await addWater({ ml, date: targetDate, time, idempotencyToken: crypto.randomUUID() });
         } else if (category === "sleep") {
         const s = extra?.sleep;
         if (!s) return null;
