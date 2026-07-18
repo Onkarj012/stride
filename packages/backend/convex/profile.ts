@@ -1,6 +1,15 @@
 import { query, mutation, internalQuery, action } from "./_generated/server";
 import { v } from "convex/values";
 import { calculateNutritionPlan as computePlan, type PlanInput } from "./tdee_engine";
+import {
+  assertInRange,
+  PROFILE_AGE_MAX,
+  PROFILE_AGE_MIN,
+  PROFILE_HEIGHT_CM_MAX,
+  PROFILE_HEIGHT_CM_MIN,
+  PROFILE_WEIGHT_KG_MAX,
+  PROFILE_WEIGHT_KG_MIN,
+} from "./validation";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -90,6 +99,9 @@ export const upsertProfile = mutation({
     waterTarget: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    if (args.weight !== undefined) assertInRange("weight", args.weight, PROFILE_WEIGHT_KG_MIN, PROFILE_WEIGHT_KG_MAX);
+    if (args.height !== undefined) assertInRange("height", args.height, PROFILE_HEIGHT_CM_MIN, PROFILE_HEIGHT_CM_MAX);
+    if (args.age !== undefined) assertInRange("age", args.age, PROFILE_AGE_MIN, PROFILE_AGE_MAX);
     const numericFields = ["weight", "height", "age", "calorieTarget", "proteinTarget", "carbTarget", "fatTarget", "bodyFat", "leanMass", "dailySteps", "trainingDays", "cardioMinutes", "workHoursPerDay", "goalWeightKg", "waterTarget"] as const;
     for (const field of numericFields) {
       const val = args[field as keyof typeof args];
@@ -376,6 +388,9 @@ export const upsertPlanFromOnboarding = mutation({
     scheduleNote: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    assertInRange("weightKg", args.weightKg, PROFILE_WEIGHT_KG_MIN, PROFILE_WEIGHT_KG_MAX);
+    assertInRange("heightCm", args.heightCm, PROFILE_HEIGHT_CM_MIN, PROFILE_HEIGHT_CM_MAX);
+    assertInRange("age", args.age, PROFILE_AGE_MIN, PROFILE_AGE_MAX);
     const userId = await requireUserId(ctx);
     const plan = computePlan(toPlanInput(args));
 

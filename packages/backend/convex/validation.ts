@@ -12,6 +12,8 @@ export type MealValidationInput = {
   confidence?: number;
   nutritionSource?: string;
   parseError?: string;
+  reportedCalories?: number;
+  estimatedCalories?: number;
 };
 
 export type WorkoutValidationInput = {
@@ -23,8 +25,17 @@ export type WorkoutValidationInput = {
   calorieConfidence?: number;
   calorieRangeLow?: number;
   calorieRangeHigh?: number;
+  reportedCalories?: number;
+  estimatedCalories?: number;
   parseError?: string;
 };
+
+export const PROFILE_WEIGHT_KG_MIN = 20;
+export const PROFILE_WEIGHT_KG_MAX = 400;
+export const PROFILE_HEIGHT_CM_MIN = 100;
+export const PROFILE_HEIGHT_CM_MAX = 250;
+export const PROFILE_AGE_MIN = 13;
+export const PROFILE_AGE_MAX = 100;
 
 export function assertValidDate(value: string): string {
   const trimmed = value.trim();
@@ -63,6 +74,10 @@ const MACRO_MAX_GRAMS = {
 const LOW_CONFIDENCE = 0.35;
 const DEFAULT_MEAL_CONFIDENCE = 0.7;
 const DEFAULT_WORKOUT_CONFIDENCE = 0.55;
+
+export function validateCalorieValue(field: string, value: number, max: number): number {
+  return assertInRange(field, value, 0, max);
+}
 
 function assertFiniteNonNegative(field: string, value: number): number {
   if (!Number.isFinite(value) || Number.isNaN(value)) {
@@ -144,12 +159,21 @@ export function validateMealWrite(input: MealValidationInput): ValidationResult<
   const carbs = assertFiniteNonNegative("carbs", input.carbs);
   const fat = assertFiniteNonNegative("fat", input.fat);
 
+  const reportedCalories = input.reportedCalories == null
+    ? undefined
+    : validateCalorieValue("reportedCalories", input.reportedCalories, MEAL_REJECT_MAX_KCAL);
+  const estimatedCalories = input.estimatedCalories == null
+    ? undefined
+    : validateCalorieValue("estimatedCalories", input.estimatedCalories, MEAL_REJECT_MAX_KCAL);
+
   const sanitized = {
     ...input,
     calories: Math.round(clampWithFlag("calories", calories, MEAL_BORDERLINE_MAX_KCAL, flags)),
     protein: round1(clampWithFlag("protein", protein, MACRO_MAX_GRAMS.protein, flags)),
     carbs: round1(clampWithFlag("carbs", carbs, MACRO_MAX_GRAMS.carbs, flags)),
     fat: round1(clampWithFlag("fat", fat, MACRO_MAX_GRAMS.fat, flags)),
+    reportedCalories: reportedCalories == null ? undefined : Math.round(reportedCalories),
+    estimatedCalories: estimatedCalories == null ? undefined : Math.round(estimatedCalories),
     time: assertValidMealTime(input.time),
     nutritionSource: input.nutritionSource?.trim() || "manual",
     confidence: normalizeConfidence(input.confidence, DEFAULT_MEAL_CONFIDENCE, flags),
@@ -183,6 +207,17 @@ export function validateWorkoutWrite(input: WorkoutValidationInput): ValidationR
     }
     sanitized.caloriesBurned = Math.round(
       clampWithFlag("caloriesBurned", caloriesBurned, WORKOUT_BORDERLINE_MAX_KCAL, flags),
+    );
+  }
+
+  if (input.reportedCalories != null) {
+    sanitized.reportedCalories = Math.round(
+      validateCalorieValue("reportedCalories", input.reportedCalories, WORKOUT_REJECT_MAX_KCAL),
+    );
+  }
+  if (input.estimatedCalories != null) {
+    sanitized.estimatedCalories = Math.round(
+      validateCalorieValue("estimatedCalories", input.estimatedCalories, WORKOUT_REJECT_MAX_KCAL),
     );
   }
 

@@ -108,8 +108,8 @@ export async function writeMealDomain(
     foodMemoryId: canonical.foodMemoryId,
     structuredItems: canonical.structuredItems,
     ingredientBreakdown: canonical.ingredientBreakdown,
-    reportedCalories: canonical.reportedCalories,
-    estimatedCalories: canonical.estimatedCalories,
+    reportedCalories: validated.reportedCalories,
+    estimatedCalories: validated.estimatedCalories,
     calorieSource: canonical.calorieSource,
     ingredientBreakdownInvalidated: canonical.ingredientBreakdownInvalidated,
     logSource,
@@ -219,6 +219,9 @@ export const updateMeal = mutation({
     components: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, { id, ...fields }) => {
+    const userId = await requireUserId(ctx);
+    const meal = await ctx.db.get(id);
+    if (!meal || meal.userId !== userId) throw new Error("Not found");
     const validated = validateMealWrite({
       name: fields.name,
       calories: fields.calories,
@@ -226,28 +229,10 @@ export const updateMeal = mutation({
       carbs: fields.carbs,
       fat: fields.fat,
       time: fields.time,
+      reportedCalories: meal.reportedCalories,
+      estimatedCalories: meal.estimatedCalories,
       confidence: 1,
       nutritionSource: "user_corrected",
-    });
-    const userId = await requireUserId(ctx);
-    const meal = await ctx.db.get(id);
-    if (!meal || meal.userId !== userId) throw new Error("Not found");
-    const correctedDraft = buildMealDraft({
-      name: validated.name,
-      date: meal.date,
-      time: validated.time,
-      mealType: fields.mealType ?? "unspecified",
-      ingredients: [{
-        foodText: validated.name,
-        quantity: 1,
-        unit: "serving",
-        nutrition: { kcal: validated.calories, protein: validated.protein, carbs: validated.carbs, fat: validated.fat },
-        source: "user_reported",
-        confidence: 1,
-      }],
-      reportedCalories: validated.calories,
-      calorieSource: "reported",
-      detailInvalidated: true,
     });
     await ctx.db.patch(id, {
       name: validated.name,
@@ -261,8 +246,8 @@ export const updateMeal = mutation({
       mealType: fields.mealType ?? "unspecified",
       aiSuggestion: fields.aiSuggestion ?? undefined,
       components: fields.components ?? undefined,
-      reportedCalories: correctedDraft.reportedCalories,
-      estimatedCalories: meal.estimatedCalories,
+      reportedCalories: validated.calories,
+      estimatedCalories: validated.estimatedCalories,
       calorieSource: "reported",
       ingredientBreakdownInvalidated: true,
     });
@@ -307,9 +292,21 @@ export const setMealCalorieSource = mutation({
     if (!meal || meal.userId !== userId) throw new Error("Not found");
     const value = source === "reported" ? meal.reportedCalories : meal.estimatedCalories;
     if (value == null) throw new Error(`Meal has no ${source} calorie value`);
-    await ctx.db.patch(id, { calories: value, calorieSource: source });
+    const validated = validateMealWrite({
+      name: meal.name,
+      calories: value,
+      protein: meal.protein,
+      carbs: meal.carbs,
+      fat: meal.fat,
+      time: meal.time,
+      reportedCalories: meal.reportedCalories,
+      estimatedCalories: meal.estimatedCalories,
+      confidence: meal.confidence,
+      nutritionSource: meal.nutritionSource,
+    });
+    await ctx.db.patch(id, { calories: validated.calories, calorieSource: source });
     await recomputeForAction(ctx, { userId, actionType: "meal", date: meal.date });
-    return { id, calories: value, calorieSource: source };
+    return { id, calories: validated.calories, calorieSource: source };
   },
 });
 

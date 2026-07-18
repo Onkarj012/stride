@@ -19,6 +19,24 @@ function todayDate(): string {
   return localDateStr();
 }
 
+export function requireMealNutrition(meal: LogEntry["meal"]): NonNullable<LogEntry["meal"]> {
+  if (
+    !meal
+    || [meal.kcal, meal.protein, meal.carbs, meal.fat].some((value) => typeof value !== "number" || !Number.isFinite(value))
+    || meal.kcal <= 0
+    || [meal.protein, meal.carbs, meal.fat].some((value) => value < 0)
+  ) {
+    throw new Error("Meal nutrition is required before logging");
+  }
+  return meal;
+}
+
+export function requireWaterAmount(water: LogEntry["water"]): number {
+  const ml = water?.ml;
+  if (typeof ml !== "number" || !Number.isFinite(ml) || ml <= 0) throw new Error("Water amount is required before logging");
+  return ml;
+}
+
 export function useLogs(date?: string) {
   const d = date ?? todayDate();
 
@@ -105,13 +123,13 @@ export function useLogs(date?: string) {
 
       try {
         if (category === "meal") {
-        const meal = extra?.meal;
+        const meal = requireMealNutrition(extra?.meal);
         await addMeal({
           name: text,
-          calories: meal?.kcal ?? 0,
-          protein: meal?.protein ?? 0,
-          carbs: meal?.carbs ?? 0,
-          fat: meal?.fat ?? 0,
+          calories: meal.kcal,
+          protein: meal.protein,
+          carbs: meal.carbs,
+          fat: meal.fat,
           time, date: targetDate,
           aiSuggestion: extra?.aiInsight,
           components: meal?.items?.join(", "),
@@ -143,7 +161,7 @@ export function useLogs(date?: string) {
           logSource: w?.logSource,
         });
         } else if (category === "water") {
-        const ml = extra?.water?.ml ?? 250;
+        const ml = requireWaterAmount(extra?.water);
         await addWater({ ml, date: targetDate, time });
         } else if (category === "sleep") {
         const s = extra?.sleep;

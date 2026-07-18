@@ -10,6 +10,7 @@ import { internal } from "./_generated/api";
 import { findBestMatch, type FoodMemoryEntry, type MatchResult } from "./food_memory_match";
 import { computeNutrition, type NormalizedFood } from "./nutrition_engine";
 import { toGrams } from "./unit_converter";
+import { assertInRange } from "./validation";
 
 export const FOOD_QUALITY_THRESHOLD = 0.7;
 export const FOOD_RUNNER_UP_MARGIN = 0.15;
@@ -72,15 +73,16 @@ export type MealDraft = {
   protein_g: number;
   carbs_g: number;
   fat_g: number;
-  estimatedCalories: number;
+  estimatedCalories?: number;
   reportedCalories?: number;
-  calorieSource: CalorieSource;
+  calorieSource?: CalorieSource;
   unresolved: string[];
   confidence: number;
   nutritionSource: string;
   foodMemoryId?: string;
   detailInvalidated?: boolean;
   rawTotals?: MacroValues;
+  validationFlags: string[];
 };
 
 export type MealDraftIngredientInput = {
@@ -122,6 +124,38 @@ function round1(value: number): number {
 function nonNegative(value: unknown): number {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, number) : 0;
+}
+
+const INGREDIENT_QUANTITY_BORDERLINE = 1_000;
+const INGREDIENT_QUANTITY_REJECT_MAX = 10_000;
+const INGREDIENT_GRAMS_BORDERLINE = 2_000;
+const INGREDIENT_GRAMS_REJECT_MAX = 10_000;
+const INGREDIENT_KCAL_BORDERLINE = 3_500;
+const INGREDIENT_KCAL_REJECT_MAX = 5_000;
+const INGREDIENT_MACRO_BORDERLINE = { protein: 600, carbs: 900, fat: 450 } as const;
+const INGREDIENT_MACRO_REJECT_MAX = { protein: 1_000, carbs: 1_500, fat: 750 } as const;
+
+function boundedNonNegative(
+  field: string,
+  value: unknown,
+  borderlineMax: number,
+  rejectMax: number,
+  flags: string[],
+): number {
+  const number = nonNegative(value);
+  assertInRange(field, number, 0, rejectMax);
+  if (number > borderlineMax) {
+    flags.push(`${field}_clamped`);
+    return borderlineMax;
+  }
+  return number;
+}
+
+function hasCompleteMacros(value: unknown): value is MacroValues {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return [candidate.kcal, candidate.protein, candidate.carbs, candidate.fat]
+    .every((field) => typeof field === "number" && Number.isFinite(field) && field >= 0);
 }
 
 function normalizeSource(source: string | undefined): IngredientSource {
@@ -173,21 +207,21 @@ export function selectFoodCandidate(candidates: MealCandidate[]): MealCandidate 
   return best;
 }
 
-function ingredientMacros(input: MealDraftIngredientInput, grams: number): MacroValues {
+function ingredientMacros(input: MealDraftIngredientInput, grams: number, flags: string[]): MacroValues {
   if (input.nutrition) {
     return {
-      kcal: nonNegative(input.nutrition.kcal),
-      protein: nonNegative(input.nutrition.protein),
-      carbs: nonNegative(input.nutrition.carbs),
-      fat: nonNegative(input.nutrition.fat),
+      kcal: boundedNonNegative("ingredient.kcal", input.nutrition.kcal, INGREDIENT_KCAL_BORDERLINE, INGREDIENT_KCAL_REJECT_MAX, flags),
+      protein: boundedNonNegative("ingredient.protein", input.nutrition.protein, INGREDIENT_MACRO_BORDERLINE.protein, INGREDIENT_MACRO_REJECT_MAX.protein, flags),
+      carbs: boundedNonNegative("ingredient.carbs", input.nutrition.carbs, INGREDIENT_MACRO_BORDERLINE.carbs, INGREDIENT_MACRO_REJECT_MAX.carbs, flags),
+      fat: boundedNonNegative("ingredient.fat", input.nutrition.fat, INGREDIENT_MACRO_BORDERLINE.fat, INGREDIENT_MACRO_REJECT_MAX.fat, flags),
     };
   }
   if (input.nutritionPer100g) {
     const result = computeNutrition({
-      caloriesPer100g: nonNegative(input.nutritionPer100g.kcal),
-      proteinPer100g: nonNegative(input.nutritionPer100g.protein),
-      carbsPer100g: nonNegative(input.nutritionPer100g.carbs),
-      fatPer100g: nonNegative(input.nutritionPer100g.fat),
+      caloriesPer100g: boundedNonNegative("nutritionPer100g.kcal", input.nutritionPer100g.kcal, INGREDIENT_KCAL_BORDERLINE, INGREDIENT_KCAL_REJECT_MAX, flags),
+      proteinPer100g: boundedNonNegative("nutritionPer100g.protein", input.nutritionPer100g.protein, INGREDIENT_MACRO_BORDERLINE.protein, INGREDIENT_MACRO_REJECT_MAX.protein, flags),
+      carbsPer100g: boundedNonNegative("nutritionPer100g.carbs", input.nutritionPer100g.carbs, INGREDIENT_MACRO_BORDERLINE.carbs, INGREDIENT_MACRO_REJECT_MAX.carbs, flags),
+      fatPer100g: boundedNonNegative("nutritionPer100g.fat", input.nutritionPer100g.fat, INGREDIENT_MACRO_BORDERLINE.fat, INGREDIENT_MACRO_REJECT_MAX.fat, flags),
     }, grams);
     return { kcal: result.calories_kcal, protein: result.protein_g, carbs: result.carbs_g, fat: result.fat_g };
   }
@@ -207,19 +241,25 @@ function averageConfidence(ingredients: MealDraftIngredient[]): number {
 
 /** Build the one canonical meal draft used by all meal sources. */
 export function buildMealDraft(input: MealDraftInput): MealDraft {
+  const validationFlags: string[] = [];
   const sourceMemory = input.memoryMatch && input.memoryMatch.entry.timesLogged >= 2 ? input.memoryMatch : undefined;
   const rawIngredients = input.ingredients ?? [];
   const ingredients = rawIngredients.map((raw): MealDraftIngredient => {
     const foodText = (raw.foodText ?? raw.name ?? "Ingredient").trim() || "Ingredient";
-    const quantity = nonNegative(raw.quantity ?? raw.amount ?? (raw.grams != null ? raw.grams : 1));
+    const quantity = boundedNonNegative("ingredient.quantity", raw.quantity ?? raw.amount ?? (raw.grams != null ? raw.grams : 1), INGREDIENT_QUANTITY_BORDERLINE, INGREDIENT_QUANTITY_REJECT_MAX, validationFlags);
     const unit = (raw.unit ?? (raw.grams != null ? "g" : "serving")).trim() || "serving";
     const conversion = raw.grams != null
-      ? { grams: nonNegative(raw.grams), confidence: 1, method: "exact" as const }
+      ? { grams: boundedNonNegative("ingredient.grams", raw.grams, INGREDIENT_GRAMS_BORDERLINE, INGREDIENT_GRAMS_REJECT_MAX, validationFlags), confidence: 1, method: "exact" as const }
       : toGrams(quantity, unit, foodText);
     const candidates = [...(raw.candidates ?? [])].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-    const hasContribution = raw.nutrition != null || raw.nutritionPer100g != null;
+    const hasContribution = hasCompleteMacros(raw.nutrition) || hasCompleteMacros(raw.nutritionPer100g);
     const selected = raw.unresolved ? null : selectFoodCandidate(candidates);
-    const selectedHasNutrition = !selected || selected.caloriesPer100g != null || hasContribution;
+    const selectedHasNutrition = !selected || (
+      selected.caloriesPer100g != null
+      && selected.proteinPer100g != null
+      && selected.carbsPer100g != null
+      && selected.fatPer100g != null
+    ) || hasContribution;
     const unresolved = raw.unresolved === true || conversion.method === "unresolved" || (!hasContribution && (!selected || !selectedHasNutrition));
     const source = selected?.source === "memory" ? "memory" : normalizeSource(raw.source ?? selected?.source);
     const macros = unresolved
@@ -227,11 +267,11 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
       : selected && selected.caloriesPer100g != null
         ? ingredientMacros({ nutritionPer100g: {
           kcal: selected.caloriesPer100g,
-          protein: selected.proteinPer100g ?? 0,
-          carbs: selected.carbsPer100g ?? 0,
-          fat: selected.fatPer100g ?? 0,
-        } }, conversion.grams)
-        : ingredientMacros(raw, conversion.grams);
+          protein: selected.proteinPer100g!,
+          carbs: selected.carbsPer100g!,
+          fat: selected.fatPer100g!,
+        } }, conversion.grams, validationFlags)
+        : ingredientMacros(raw, conversion.grams, validationFlags);
     const confidence = Math.max(0, Math.min(1, raw.confidence ?? Math.min(conversion.confidence, selected?.score ?? 1)));
     return {
       foodText,
@@ -256,15 +296,36 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
     carbs: total.carbs + item.carbs,
     fat: total.fat + item.fat,
   }), { kcal: 0, protein: 0, carbs: 0, fat: 0 });
-  const totals = input.rawTotals ?? resolvedTotals;
+  const completeRawTotals = input.rawTotals != null && hasCompleteMacros(input.rawTotals)
+    ? input.rawTotals
+    : undefined;
+  const hasRawTotals = completeRawTotals != null;
+  const totals = completeRawTotals ? {
+    kcal: boundedNonNegative("meal.kcal", completeRawTotals.kcal, INGREDIENT_KCAL_BORDERLINE, INGREDIENT_KCAL_REJECT_MAX, validationFlags),
+    protein: boundedNonNegative("meal.protein", completeRawTotals.protein, INGREDIENT_MACRO_BORDERLINE.protein, INGREDIENT_MACRO_REJECT_MAX.protein, validationFlags),
+    carbs: boundedNonNegative("meal.carbs", completeRawTotals.carbs, INGREDIENT_MACRO_BORDERLINE.carbs, INGREDIENT_MACRO_REJECT_MAX.carbs, validationFlags),
+    fat: boundedNonNegative("meal.fat", completeRawTotals.fat, INGREDIENT_MACRO_BORDERLINE.fat, INGREDIENT_MACRO_REJECT_MAX.fat, validationFlags),
+  } : resolvedTotals;
   // Never accept a whole-meal estimate as a substitute for ingredient math.
   // Unresolved ingredients therefore contribute zero by construction.
-  const estimatedCalories = Math.round(totals.kcal);
   const reportedCalories = input.reportedCalories == null ? undefined : Math.round(nonNegative(input.reportedCalories));
-  const calorieSource: CalorieSource = input.calorieSource === "reported" && reportedCalories == null
-    ? "estimated"
-    : input.calorieSource ?? (reportedCalories != null ? "reported" : "estimated");
   const unresolved = ingredients.filter((item) => item.unresolved).map((item) => item.foodText);
+  const hasUsableIngredients = rawIngredients.length > 0;
+  const hasExplicitNutrition = reportedCalories != null || hasRawTotals;
+  const nutritionUnavailable = !hasUsableIngredients && !hasExplicitNutrition;
+  if (nutritionUnavailable) unresolved.push("meal nutrition");
+  if (input.rawTotals != null && !hasRawTotals) unresolved.push("meal nutrition");
+  const hasResolvedNutrition = hasRawTotals || (rawIngredients.length > 0 && unresolved.length === 0) || reportedCalories != null;
+  const estimatedCalories = hasResolvedNutrition ? Math.round(totals.kcal) : undefined;
+  const calorieSource: CalorieSource | undefined = input.calorieSource === "reported" && reportedCalories != null
+    ? "reported"
+    : input.calorieSource === "estimated" && estimatedCalories != null
+      ? "estimated"
+      : reportedCalories != null
+        ? "reported"
+        : estimatedCalories != null
+          ? "estimated"
+          : undefined;
   const draft: MealDraft = {
     kind: "meal",
     name: input.name,
@@ -285,11 +346,12 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
     reportedCalories,
     calorieSource,
     unresolved,
-    confidence: averageConfidence(ingredients),
-    nutritionSource: input.nutritionSource ?? sourceForDraft(ingredients),
+    confidence: validationFlags.length ? Math.min(0.35, averageConfidence(ingredients)) : averageConfidence(ingredients),
+    nutritionSource: input.nutritionSource ?? (nutritionUnavailable ? "parse_error" : sourceForDraft(ingredients)),
     foodMemoryId: input.foodMemoryId ?? sourceMemory?.entry._id,
     detailInvalidated: input.detailInvalidated,
     rawTotals: input.rawTotals,
+    validationFlags,
   };
   return draft;
 }

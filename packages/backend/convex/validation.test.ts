@@ -1,5 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { isSimilarWorkout, timeWindowKey, validateMealWrite, validateWorkoutWrite, workoutTimeWindowKey } from "./validation";
+import {
+  assertInRange,
+  isSimilarWorkout,
+  PROFILE_WEIGHT_KG_MAX,
+  PROFILE_WEIGHT_KG_MIN,
+  timeWindowKey,
+  validateMealWrite,
+  validateWorkoutWrite,
+  workoutTimeWindowKey,
+} from "./validation";
 import { assertNoNearDuplicateWorkout } from "./workouts";
 
 const validMeal = {
@@ -68,6 +77,17 @@ describe("validateWorkoutWrite", () => {
 
   test("rejects parse-error workouts", () => {
     expect(() => validateWorkoutWrite({ ...validWorkout, parseError: "unparseable" })).toThrow(/could not be parsed/i);
+  });
+
+  test("rejects out-of-range provenance calories and enforces profile weight bounds", () => {
+    expect(() => validateMealWrite({ ...validMeal, reportedCalories: 5001 })).toThrow(/between 0 and 5000/);
+    expect(() => validateMealWrite({ ...validMeal, estimatedCalories: 5001 })).toThrow(/between 0 and 5000/);
+    expect(() => validateWorkoutWrite({ ...validWorkout, reportedCalories: 3001 })).toThrow(/between 0 and 3000/);
+    expect(() => validateWorkoutWrite({ ...validWorkout, estimatedCalories: 3001 })).toThrow(/between 0 and 3000/);
+
+    expect(() => assertInRange("weight", 0, PROFILE_WEIGHT_KG_MIN, PROFILE_WEIGHT_KG_MAX)).toThrow(/between 20 and 400/);
+    expect(() => assertInRange("weight", 500, PROFILE_WEIGHT_KG_MIN, PROFILE_WEIGHT_KG_MAX)).toThrow(/between 20 and 400/);
+    expect(assertInRange("weight", 70, PROFILE_WEIGHT_KG_MIN, PROFILE_WEIGHT_KG_MAX)).toBe(70);
   });
 });
 

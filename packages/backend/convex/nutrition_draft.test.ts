@@ -72,6 +72,8 @@ test("reported and estimated calories stay separate", () => {
   expect(draft).toMatchObject({ calories: 450, reportedCalories: 450, estimatedCalories: 300, calorieSource: "reported" });
   const estimated = buildMealDraft({ ...base, ingredients: [{ foodText: "meal", quantity: 1, unit: "serving", nutrition: macros, source: "database" }] });
   expect(estimated).toMatchObject({ calories: 300, reportedCalories: undefined, estimatedCalories: 300, calorieSource: "estimated" });
+  expect(buildMealDraft({ ...base, calorieSource: "estimated" }).calorieSource).toBeUndefined();
+  expect(buildMealDraft({ ...base, calorieSource: "reported" }).calorieSource).toBeUndefined();
 });
 
 test("barcode grams, milliliters, and servings preserve original quantity and convert", () => {
@@ -96,6 +98,32 @@ test("unknown unit conversion stays unresolved in the canonical meal draft", () 
   });
   expect(draft.ingredients[0]).toMatchObject({ grams: 0, unresolved: true, kcal: 0 });
   expect(draft.unresolved).toEqual(["rice"]);
+});
+
+test("bounds ingredient calories and leaves incomplete candidate nutrition unresolved", () => {
+  expect(() => buildMealDraft({
+    ...base,
+    ingredients: [{ foodText: "meal", quantity: 1, unit: "serving", nutrition: { ...macros, kcal: 5001 }, source: "database" }],
+  })).toThrow(/ingredient\.kcal must be between 0 and 5000/);
+
+  const borderline = buildMealDraft({
+    ...base,
+    ingredients: [{ foodText: "meal", quantity: 1, unit: "serving", nutrition: { ...macros, kcal: 3501 }, source: "database" }],
+  });
+  expect(borderline.ingredients[0]).toMatchObject({ kcal: 3500, unresolved: false });
+  expect(borderline.validationFlags).toContain("ingredient.kcal_clamped");
+
+  const incompleteCandidate = buildMealDraft({
+    ...base,
+    ingredients: [{
+      foodText: "banana",
+      quantity: 1,
+      unit: "serving",
+      candidates: [{ name: "Banana", score: 0.9, source: "database", caloriesPer100g: 89 }],
+    }],
+  });
+  expect(incompleteCandidate.ingredients[0]).toMatchObject({ unresolved: true, kcal: 0, protein: 0, carbs: 0, fat: 0 });
+  expect(incompleteCandidate.unresolved).toEqual(["banana"]);
 });
 
 test("meal edits explicitly invalidate the prior ingredient detail", async () => {
