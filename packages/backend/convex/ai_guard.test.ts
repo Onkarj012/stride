@@ -6,6 +6,7 @@ import {
   AI_DAILY_BUDGET_USD,
   AI_GLOBAL_MONTHLY_BUDGET_USD,
   AI_INPUT_LIMITS,
+  AI_MONTHLY_BUDGET_USD,
   AI_RATE_LIMIT_REQUESTS,
   assertAudioBase64,
   assertHistoryEntries,
@@ -39,17 +40,33 @@ describe("AI spend guard", () => {
     ).rejects.toThrow("RATE_LIMITED:");
   });
 
-  test("trips the daily user budget before another provider call", async () => {
-    const t = convexTest(schema, modules);
-    await t.mutation(internal.ai_guard.checkAndReserve, reserveArgs("daily-user", AI_DAILY_BUDGET_USD));
+  test("encodes daily, monthly, and global budget scope in the error message", async () => {
+    const daily = convexTest(schema, modules);
+    await daily.mutation(internal.ai_guard.checkAndReserve, reserveArgs("daily-user", AI_DAILY_BUDGET_USD));
     await expect(
-      t.mutation(internal.ai_guard.checkAndReserve, reserveArgs("daily-user")),
-    ).rejects.toThrow("BUDGET_EXCEEDED:");
-  });
+      daily.mutation(internal.ai_guard.checkAndReserve, reserveArgs("daily-user")),
+    ).rejects.toThrow("BUDGET_EXCEEDED:daily");
 
-  test("trips the global monthly budget from daily global buckets", async () => {
-    const t = convexTest(schema, modules);
-    await t.run(async (ctx) => {
+    const monthly = convexTest(schema, modules);
+    await monthly.run(async (ctx) => {
+      await ctx.db.insert("ai_usage_buckets", {
+        scope: "user",
+        ownerKey: "monthly-user",
+        bucketKey: "2026-07-01",
+        requestCount: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: AI_MONTHLY_BUDGET_USD,
+        reservedCostUsd: 0,
+        rateLimitTimestamps: [],
+      });
+    });
+    await expect(
+      monthly.mutation(internal.ai_guard.checkAndReserve, reserveArgs("monthly-user")),
+    ).rejects.toThrow("BUDGET_EXCEEDED:monthly");
+
+    const global = convexTest(schema, modules);
+    await global.run(async (ctx) => {
       await ctx.db.insert("ai_usage_buckets", {
         scope: "global",
         ownerKey: "global",
@@ -63,30 +80,42 @@ describe("AI spend guard", () => {
       });
     });
     await expect(
-      t.mutation(internal.ai_guard.checkAndReserve, reserveArgs("global-user")),
-    ).rejects.toThrow("BUDGET_EXCEEDED:");
+      global.mutation(internal.ai_guard.checkAndReserve, reserveArgs("global-user")),
+    ).rejects.toThrow("BUDGET_EXCEEDED:global");
   });
 
-  test("records actual usage and clears the reservation", async () => {
+  test("settles and releases reservations idempotently by reservation id", async () => {
     const t = convexTest(schema, modules);
-    const reservation = await t.mutation(
+    const settledReservation = await t.mutation(
       internal.ai_guard.checkAndReserve,
       reserveArgs("usage-user", 0.01),
     );
-    await t.mutation(internal.ai_guard.settleUsage, {
-      userId: "usage-user",
-      model: "openai/gpt-4o-mini",
-      bucketKey: reservation.bucketKey,
-      reservedCostUsd: reservation.reservedCostUsd,
+    const settlement = {
+      reservationId: settledReservation.reservationId,
       inputTokens: 123,
       outputTokens: 45,
       actualCostUsd: 0.002,
-    });
+    };
+    await t.mutation(internal.ai_guard.settleUsage, settlement);
+    await t.mutation(internal.ai_guard.settleUsage, settlement);
+
+    const releasedReservation = await t.mutation(
+      internal.ai_guard.checkAndReserve,
+      reserveArgs("usage-user", 0.01),
+    );
+    const release = { reservationId: releasedReservation.reservationId };
+    await t.mutation(internal.ai_guard.releaseReservation, release);
+    await t.mutation(internal.ai_guard.releaseReservation, release);
+
     const row = await t.run((ctx) => ctx.db
       .query("ai_usage_buckets")
       .withIndex("by_scope_owner_bucket", (q) => q.eq("scope", "user").eq("ownerKey", "usage-user").eq("bucketKey", "2026-07-18"))
       .unique());
-    expect(row).toMatchObject({ inputTokens: 123, outputTokens: 45, costUsd: 0.002, reservedCostUsd: 0, requestCount: 1 });
+    expect(row).toMatchObject({ inputTokens: 123, outputTokens: 45, costUsd: 0.002, reservedCostUsd: 0, requestCount: 2 });
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(settledReservation.reservationId)).toMatchObject({ state: "settled" });
+      expect(await ctx.db.get(releasedReservation.reservationId)).toMatchObject({ state: "released" });
+    });
   });
 
   test("rejects oversized AI inputs at the shared boundary", () => {

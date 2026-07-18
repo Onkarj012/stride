@@ -22,8 +22,17 @@ export function getAIErrorMessage(error: unknown): string | null {
   if (text.includes("rate_limited") || text.includes("rate limited")) {
     return "You've sent a lot of AI requests — try again in a few minutes.";
   }
-  if (text.includes("budget_exceeded") || text.includes("budget exceeded")) {
+  if (text.includes("budget_exceeded:daily")) {
     return "You've hit today's AI limit — resets tomorrow.";
+  }
+  if (text.includes("budget_exceeded:monthly")) {
+    return "You've hit this month's AI limit — it resets next month. Add your own OpenRouter key in Settings to keep using AI.";
+  }
+  if (text.includes("budget_exceeded:global")) {
+    return "AI is at its shared monthly limit. Add your own OpenRouter key in Settings or try again next month.";
+  }
+  if (text.includes("budget_exceeded") || text.includes("budget exceeded")) {
+    return "AI usage is currently limited. Add your own OpenRouter key in Settings or try again later.";
   }
   return null;
 }

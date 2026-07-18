@@ -7,7 +7,11 @@ export const AI_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 export const AI_DAILY_BUDGET_USD = 0.25;
 export const AI_MONTHLY_BUDGET_USD = 3;
 export const AI_GLOBAL_MONTHLY_BUDGET_USD = 50;
-export const AI_TRANSCRIPTION_ESTIMATE_USD = 0.01;
+// Groq bills Whisper Large v3 Turbo at $0.04/hour (verified 2026-07-18).
+export const GROQ_WHISPER_USD_PER_MINUTE = 0.04 / 60;
+export const GROQ_MIN_BILLABLE_SECONDS = 10;
+// 8 kbps is a deliberately low speech-audio bitrate, so bytes overestimate duration.
+export const AI_TRANSCRIPTION_CONSERVATIVE_BITRATE_BPS = 8_000;
 
 export const AI_INPUT_LIMITS = {
   messageChars: 4_000,
@@ -18,8 +22,7 @@ export const AI_INPUT_LIMITS = {
   ingredients: 50,
 } as const;
 
-const DEFAULT_INPUT_USD_PER_MILLION = 5;
-const DEFAULT_OUTPUT_USD_PER_MILLION = 15;
+// OpenRouter list prices in USD per million tokens (verified 2026-07-18).
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "openai/gpt-4o-mini": { input: 0.15, output: 0.60 },
   "anthropic/claude-haiku-4.5": { input: 1, output: 5 },
@@ -43,10 +46,13 @@ export type TokenUsage = {
 export type AIBucketScope = "user" | "global";
 
 export function pricingForModel(model: string): { input: number; output: number } {
-  return MODEL_PRICING[model] ?? {
-    input: DEFAULT_INPUT_USD_PER_MILLION,
-    output: DEFAULT_OUTPUT_USD_PER_MILLION,
-  };
+  const pricing = MODEL_PRICING[model];
+  if (!pricing) throw new Error(`MODEL_PRICING_UNAVAILABLE:${model}`);
+  return pricing;
+}
+
+export function hasDeploymentPricing(model: string): boolean {
+  return MODEL_PRICING[model] !== undefined;
 }
 
 export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number): number {
@@ -55,6 +61,14 @@ export function estimateCostUsd(model: string, inputTokens: number, outputTokens
     Math.max(0, inputTokens) * pricing.input +
     Math.max(0, outputTokens) * pricing.output
   ) / 1_000_000;
+}
+
+export function estimateTranscriptionCostUsd(decodedAudioBytes: number): number {
+  const estimatedSeconds = Math.max(
+    GROQ_MIN_BILLABLE_SECONDS,
+    Math.ceil(Math.max(0, decodedAudioBytes) * 8 / AI_TRANSCRIPTION_CONSERVATIVE_BITRATE_BPS),
+  );
+  return estimatedSeconds / 60 * GROQ_WHISPER_USD_PER_MINUTE;
 }
 
 export function usageFromResponse(
@@ -202,7 +216,7 @@ function budgetError(scope: string, limit: number): never {
     code: "BUDGET_EXCEEDED",
     scope,
     limit,
-    message: `BUDGET_EXCEEDED: ${scope} AI budget of $${limit.toFixed(2)} has been reached`,
+    message: `BUDGET_EXCEEDED:${scope}: AI budget of $${limit.toFixed(2)} has been reached`,
   });
 }
 
@@ -248,6 +262,7 @@ async function upsertReservation(
 
 export const checkAndReserve = internalMutation({
   args: {
+    // Convex recommends tokenIdentifier, but Stride ownership is keyed by identity.subject, so guard buckets stay aligned.
     userId: v.string(),
     model: v.string(),
     estimatedInputTokens: v.number(),
@@ -289,7 +304,7 @@ export const checkAndReserve = internalMutation({
 
     const globalMonthlySpend = sumUsage(globalMonth);
     if (globalMonthlySpend.costUsd + globalMonthlySpend.reservedCostUsd + estimatedCostUsd > AI_GLOBAL_MONTHLY_BUDGET_USD) {
-      budgetError("global monthly", AI_GLOBAL_MONTHLY_BUDGET_USD);
+      budgetError("global", AI_GLOBAL_MONTHLY_BUDGET_USD);
     }
 
     const timestamps = [...(userDay?.rateLimitTimestamps ?? []), now]
@@ -312,7 +327,17 @@ export const checkAndReserve = internalMutation({
       reservationPatch(globalDay, estimatedCostUsd, globalDay?.rateLimitTimestamps ?? []),
     );
 
+    const reservationId = await ctx.db.insert("ai_usage_reservations", {
+      ownerKey: args.userId,
+      bucketKey: day,
+      model: args.model,
+      reservedCostUsd: estimatedCostUsd,
+      state: "reserved",
+      createdAt: now,
+    });
+
     return {
+      reservationId,
       reservedCostUsd: estimatedCostUsd,
       bucketKey: day,
       inputTokens: Math.max(0, Math.round(args.estimatedInputTokens)),
@@ -331,42 +356,53 @@ async function rowsForReservation(ctx: MutationCtx, userId: string, bucketKey: s
 
 export const settleUsage = internalMutation({
   args: {
-    userId: v.string(),
-    model: v.string(),
-    bucketKey: v.string(),
-    reservedCostUsd: v.number(),
+    reservationId: v.id("ai_usage_reservations"),
     inputTokens: v.number(),
     outputTokens: v.number(),
     actualCostUsd: v.number(),
   },
   handler: async (ctx, args) => {
-    const rows = await rowsForReservation(ctx, args.userId, args.bucketKey);
+    const reservation = await ctx.db.get(args.reservationId);
+    if (!reservation || reservation.state !== "reserved") return;
+
+    const inputTokens = Math.max(0, Math.round(args.inputTokens));
+    const outputTokens = Math.max(0, Math.round(args.outputTokens));
+    const actualCostUsd = Math.max(0, args.actualCostUsd);
+    const rows = await rowsForReservation(ctx, reservation.ownerKey, reservation.bucketKey);
     for (const row of rows) {
       if (!row) continue;
       await ctx.db.patch(row._id, {
-        inputTokens: row.inputTokens + Math.max(0, Math.round(args.inputTokens)),
-        outputTokens: row.outputTokens + Math.max(0, Math.round(args.outputTokens)),
-        costUsd: row.costUsd + Math.max(0, args.actualCostUsd),
-        reservedCostUsd: Math.max(0, row.reservedCostUsd - Math.max(0, args.reservedCostUsd)),
+        inputTokens: row.inputTokens + inputTokens,
+        outputTokens: row.outputTokens + outputTokens,
+        costUsd: row.costUsd + actualCostUsd,
+        reservedCostUsd: Math.max(0, row.reservedCostUsd - reservation.reservedCostUsd),
       });
     }
+    await ctx.db.patch(reservation._id, {
+      state: "settled",
+      settledInputTokens: inputTokens,
+      settledOutputTokens: outputTokens,
+      settledCostUsd: actualCostUsd,
+    });
   },
 });
 
 export const releaseReservation = internalMutation({
   args: {
-    userId: v.string(),
-    bucketKey: v.string(),
-    reservedCostUsd: v.number(),
+    reservationId: v.id("ai_usage_reservations"),
   },
   handler: async (ctx, args) => {
-    const rows = await rowsForReservation(ctx, args.userId, args.bucketKey);
+    const reservation = await ctx.db.get(args.reservationId);
+    if (!reservation || reservation.state !== "reserved") return;
+
+    const rows = await rowsForReservation(ctx, reservation.ownerKey, reservation.bucketKey);
     for (const row of rows) {
       if (row) {
         await ctx.db.patch(row._id, {
-          reservedCostUsd: Math.max(0, row.reservedCostUsd - Math.max(0, args.reservedCostUsd)),
+          reservedCostUsd: Math.max(0, row.reservedCostUsd - reservation.reservedCostUsd),
         });
       }
     }
+    await ctx.db.patch(reservation._id, { state: "released" });
   },
 });

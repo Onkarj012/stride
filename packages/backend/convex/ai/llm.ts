@@ -10,6 +10,7 @@ import type { ActionCtx } from "../_generated/server";
 import {
   estimateCostUsd,
   estimateMessageTokens,
+  hasDeploymentPricing,
   usageFromResponse,
 } from "../ai_guard";
 
@@ -43,35 +44,41 @@ export interface AIMessage {
  * uses FALLBACK_MODEL. Only transient provider failures are retried.
  */
 export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage[], maxTokens = 500, model?: string, apiKey?: string): Promise<string> {
-  const key = apiKey || process.env.OPENROUTER_API_KEY;
+  const primaryModel = model || DEFAULT_MODEL;
+  const byokKey = apiKey?.trim();
+  if (!byokKey && !hasDeploymentPricing(primaryModel)) {
+    throw new Error(`MODEL_NOT_ALLOWED_WITH_DEPLOYMENT_KEY:${primaryModel}`);
+  }
+  const key = byokKey || process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
 
-  const primaryModel = model || DEFAULT_MODEL;
   const estimatedInputTokens = estimateMessageTokens(messages);
   const estimatedOutputTokens = Math.max(1, Math.round(maxTokens));
-  // Reserve the worst case for the two primary attempts plus the fallback.
-  // Retries reuse this reservation, so they do not bypass either guard.
-  const reservedCostUsd = [primaryModel, primaryModel, FALLBACK_MODEL]
-    .reduce((sum, attemptModel) => sum + estimateCostUsd(attemptModel, estimatedInputTokens, estimatedOutputTokens), 0);
-  const reservation = await ctx.runMutation(internal.ai_guard.checkAndReserve, {
-    userId,
-    model: primaryModel,
-    estimatedInputTokens,
-    estimatedOutputTokens,
-    estimatedCostUsd: reservedCostUsd,
-  });
   let lastError: Error | null = null;
-  let settled = false;
 
-  try {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const backoffMs = 250 * 2 ** attempt;
-      const currentModel = attempt >= 2 ? FALLBACK_MODEL : primaryModel;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const backoffMs = 250 * 2 ** attempt;
+    const currentModel = attempt >= 2 ? FALLBACK_MODEL : primaryModel;
+    const estimatedCostUsd = byokKey
+      ? 0
+      : estimateCostUsd(currentModel, estimatedInputTokens, estimatedOutputTokens);
+    const reservation = await ctx.runMutation(internal.ai_guard.checkAndReserve, {
+      userId,
+      model: currentModel,
+      estimatedInputTokens,
+      estimatedOutputTokens,
+      estimatedCostUsd,
+    });
+    let providerCallStarted = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
+    try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60000);
+      timeout = setTimeout(() => controller.abort(), 60000);
       let res: Response;
 
       try {
+        providerCallStarted = true;
         res = await fetch(OPENROUTER_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
@@ -97,13 +104,11 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
           continue;
         }
         break;
-      } finally {
-        clearTimeout(timeout);
       }
 
-      if (!res!.ok) {
-        const status = res!.status;
-        const errBody = await res!.text();
+      if (!res.ok) {
+        const status = res.status;
+        const errBody = await res.text();
         if (status >= 500 || status === 429) {
           lastError = new Error(`OpenRouter error ${status}: ${errBody}`);
           if (attempt < 2) {
@@ -115,7 +120,7 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
         throw new Error(`OpenRouter error ${status}: ${errBody}`);
       }
 
-      const data = await res!.json() as any;
+      const data = await res.json() as any;
       if (data.error) throw new Error(`OpenRouter API error: ${data.error.message}`);
       const content = data.choices?.[0]?.message?.content;
       if (!content) throw new Error("OpenRouter returned empty response");
@@ -126,28 +131,26 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
         Math.min(maxTokens, Math.max(1, Math.ceil(String(content).length / 3))),
       );
       await ctx.runMutation(internal.ai_guard.settleUsage, {
-        userId,
-        model: currentModel,
-        bucketKey: reservation.bucketKey,
-        reservedCostUsd: reservation.reservedCostUsd,
+        reservationId: reservation.reservationId,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
-        actualCostUsd: estimateCostUsd(currentModel, usage.inputTokens, usage.outputTokens),
+        actualCostUsd: byokKey
+          ? 0
+          : estimateCostUsd(currentModel, usage.inputTokens, usage.outputTokens),
       });
-      settled = true;
       return content;
-    }
-
-    throw lastError || new Error("OpenRouter failed after maximum retries");
-  } finally {
-    if (!settled) {
-      await ctx.runMutation(internal.ai_guard.releaseReservation, {
-        userId,
-        bucketKey: reservation.bucketKey,
-        reservedCostUsd: reservation.reservedCostUsd,
-      });
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      // Once fetch starts, retain the reserve unless settlement succeeds: the provider may have billed us.
+      if (!providerCallStarted) {
+        await ctx.runMutation(internal.ai_guard.releaseReservation, {
+          reservationId: reservation.reservationId,
+        });
+      }
     }
   }
+
+  throw lastError || new Error("OpenRouter failed after maximum retries");
 }
 
 /** Extract and parse the first JSON object/array from LLM text, or null. */

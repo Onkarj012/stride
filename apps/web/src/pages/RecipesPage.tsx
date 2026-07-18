@@ -8,6 +8,7 @@ import { NavTrigger } from "@/components/layout/NavTrigger";
 import { Card } from "@/components/primitives/Card";
 import { type PickedFood } from "@/components/food/FoodSearch";
 import { useToast } from "@/context/ToastContext";
+import { getAIErrorMessage } from "@/lib/ai-errors";
 import { localDateTime } from "@/lib/localDateTime";
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -60,7 +61,7 @@ function AIIngredientInput({ onAdd }: { onAdd: (items: PickedFood[]) => void }) 
       if (items.length === 0) toast.error("Couldn't read that — try rephrasing");
       else { onAdd(items); setText(""); }
     } catch (e) {
-      toast.error("Couldn't reach AI", e instanceof Error ? e.message : undefined);
+      toast.error("Couldn't reach AI", getAIErrorMessage(e) ?? (e instanceof Error ? e.message : undefined));
     } finally { setBusy(false); }
   }
 
@@ -202,7 +203,7 @@ function AIStepsInput({ onAdd }: { onAdd: (steps: string[]) => void }) {
       if (steps.length === 0) toast.error("Couldn't read that — try rephrasing");
       else { onAdd(steps); setText(""); }
     } catch (e) {
-      toast.error("Couldn't reach AI", e instanceof Error ? e.message : undefined);
+      toast.error("Couldn't reach AI", getAIErrorMessage(e) ?? (e instanceof Error ? e.message : undefined));
     } finally { setBusy(false); }
   }
 

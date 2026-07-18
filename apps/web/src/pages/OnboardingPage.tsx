@@ -8,6 +8,7 @@ import { ArrowRight, Check, Loader2, Plus, X, Sparkles, Send } from "lucide-reac
 import { PixelAgent } from "@/components/primitives/PixelAgent";
 import { MacroDonut } from "@/components/charts/MacroDonut";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { getAIErrorMessage } from "@/lib/ai-errors";
 import { cn } from "@/lib/utils";
 
 type Phase = "name" | "stats" | "goal" | "work" | "lifestyle" | "training" | "diet" | "style" | "plan";
@@ -38,28 +39,35 @@ function FreeText({ field, placeholder, onParsed }: {
   const parse = useAction(api.ai.parseOnboarding);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   async function submit() {
     if (!text.trim() || busy) return;
     setBusy(true);
+    setError(null);
     try {
       const data = await parse({ field, text: text.trim() });
       if (Object.keys(data).length > 0) {
         onParsed(data);
         setText("");
       }
-    } catch { /* keep text; widgets still work */ }
+    } catch (err) {
+      setError(getAIErrorMessage(err) ?? "Couldn't understand that right now. Try again, or use the choices below.");
+    }
     finally { setBusy(false); }
   }
   return (
-    <div className="flex items-center gap-2 rounded-2xl border border-border bg-card-elev px-3 py-2">
-      <Sparkles className="h-4 w-4 text-lavender shrink-0" strokeWidth={2} />
-      <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-        placeholder={placeholder} aria-label="Describe in your own words"
-        className="flex-1 min-w-0 bg-transparent outline-none text-[14px] text-text placeholder:text-text-subtle" />
-      <button type="button" onClick={submit} disabled={busy || !text.trim()} aria-label="Send"
-        className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:opacity-40">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-3.5 w-3.5" strokeWidth={2.5} />}
-      </button>
+    <div>
+      <div className="flex items-center gap-2 rounded-2xl border border-border bg-card-elev px-3 py-2">
+        <Sparkles className="h-4 w-4 text-lavender shrink-0" strokeWidth={2} />
+        <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          placeholder={placeholder} aria-label="Describe in your own words"
+          className="flex-1 min-w-0 bg-transparent outline-none text-[14px] text-text placeholder:text-text-subtle" />
+        <button type="button" onClick={submit} disabled={busy || !text.trim()} aria-label="Send"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-ink text-text-on-ink disabled:opacity-40">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-3.5 w-3.5" strokeWidth={2.5} />}
+        </button>
+      </div>
+      {error && <p role="alert" className="mt-1.5 px-2 text-[12px] text-bubblegum">{error}</p>}
     </div>
   );
 }

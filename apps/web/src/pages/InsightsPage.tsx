@@ -21,6 +21,7 @@ import { useToast } from "@/context/ToastContext";
 import { useLogs } from "@/hooks/useLogs";
 import { localDateStr } from "@/lib/utils";
 import { localDateTime } from "@/lib/localDateTime";
+import { getAIErrorMessage } from "@/lib/ai-errors";
 import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 function periodDays(period: Period): number {
@@ -234,7 +235,7 @@ export function TodaysInsightsCard({ date }: { date: string }) {
       await generate({ date });
       toast.success("Insights refreshed");
     } catch (err) {
-      toast.error("Couldn't refresh", err instanceof Error ? err.message : "Try again");
+      toast.error("Couldn't refresh", getAIErrorMessage(err) ?? (err instanceof Error ? err.message : "Try again"));
     } finally {
       setGenerating(false);
     }
@@ -307,7 +308,7 @@ function TodaysInsightsMini({ date }: { date: string }) {
     try {
       await generate({ date });
     } catch (err) {
-      toast.error("Couldn't refresh", err instanceof Error ? err.message : "Try again");
+      toast.error("Couldn't refresh", getAIErrorMessage(err) ?? (err instanceof Error ? err.message : "Try again"));
     } finally {
       setGenerating(false);
     }

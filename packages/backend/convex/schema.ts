@@ -14,6 +14,18 @@ export default defineSchema({
     rateLimitTimestamps: v.array(v.number()),
   }).index("by_scope_owner_bucket", ["scope", "ownerKey", "bucketKey"]),
 
+  ai_usage_reservations: defineTable({
+    ownerKey: v.string(),
+    bucketKey: v.string(),
+    model: v.string(),
+    reservedCostUsd: v.number(),
+    state: v.union(v.literal("reserved"), v.literal("settled"), v.literal("released")),
+    createdAt: v.number(),
+    settledInputTokens: v.optional(v.number()),
+    settledOutputTokens: v.optional(v.number()),
+    settledCostUsd: v.optional(v.number()),
+  }),
+
   users: defineTable({
     clerkId: v.string(),
     email: v.string(),

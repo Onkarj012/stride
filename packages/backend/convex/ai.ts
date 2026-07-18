@@ -33,12 +33,12 @@ import {
 } from "./ai/llm";
 import {
   AI_INPUT_LIMITS,
-  AI_TRANSCRIPTION_ESTIMATE_USD,
   assertAudioBase64,
   assertHistoryEntries,
   assertImageDataUrl,
   assertIngredients,
   assertMaxChars,
+  estimateTranscriptionCostUsd,
 } from "./ai_guard";
 import {
   looksLikeLog, looksLikeFoodEstimate, extractUserMacros, applyUserMacros,
@@ -2192,7 +2192,13 @@ export const generateDailyInsights = action({
 
 export const generateDailyInsightsForUser = internalAction({
   args: { userId: v.string(), date: v.string() },
-  handler: async (ctx, { userId, date }) => runDailyInsights(ctx, userId, date),
+  handler: async (ctx, { userId, date }) => {
+    if (process.env.AI_CRONS_ENABLED !== "true") {
+      console.log(JSON.stringify({ event: "ai_cron_worker_skipped", cron: "daily_insights", userId, reason: "AI_CRONS_ENABLED_not_true" }));
+      return { skipped: true };
+    }
+    return runDailyInsights(ctx, userId, date);
+  },
 });
 
 const AI_CRON_BATCH_SIZE = 25;
@@ -2283,7 +2289,13 @@ export const generateWeeklySummary = action({
 
 export const generateWeeklySummaryForUser = internalAction({
   args: { userId: v.string() },
-  handler: async (ctx, { userId }) => runWeeklySummary(ctx, userId),
+  handler: async (ctx, { userId }) => {
+    if (process.env.AI_CRONS_ENABLED !== "true") {
+      console.log(JSON.stringify({ event: "ai_cron_worker_skipped", cron: "weekly_summary", userId, reason: "AI_CRONS_ENABLED_not_true" }));
+      return { skipped: true };
+    }
+    return runWeeklySummary(ctx, userId);
+  },
 });
 
 /** Cron: fan out weekly summaries to each active user via the scheduler. */
@@ -2672,6 +2684,7 @@ export const transcribe = action({
     const binary = atob(audio);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const transcriptionCostUsd = estimateTranscriptionCostUsd(bytes.byteLength);
     const formData = new FormData();
     formData.append("file", new Blob([bytes], { type: mime }), `audio.${ext}`);
     formData.append("model", "whisper-large-v3-turbo");
@@ -2681,12 +2694,11 @@ export const transcribe = action({
       model: "groq/whisper-large-v3-turbo",
       estimatedInputTokens: 0,
       estimatedOutputTokens: 0,
-      estimatedCostUsd: AI_TRANSCRIPTION_ESTIMATE_USD,
+      estimatedCostUsd: transcriptionCostUsd,
     });
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-    let settled = false;
     try {
       const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
         method: "POST",
@@ -2702,28 +2714,18 @@ export const transcribe = action({
         throw new Error(data.error ? `Groq error: ${data.error.message}` : "Groq returned empty transcription");
       }
       await ctx.runMutation(internal.ai_guard.settleUsage, {
-        userId,
-        model: "groq/whisper-large-v3-turbo",
-        bucketKey: reservation.bucketKey,
-        reservedCostUsd: reservation.reservedCostUsd,
+        reservationId: reservation.reservationId,
         inputTokens: 0,
         outputTokens: 0,
-        actualCostUsd: AI_TRANSCRIPTION_ESTIMATE_USD,
+        actualCostUsd: transcriptionCostUsd,
       });
-      settled = true;
       return { transcript: data.text.trim() };
     } catch (err) {
       if ((err as Error).name === "AbortError") throw new Error("Groq transcription timed out after 30s");
       throw err;
     } finally {
       clearTimeout(timeout);
-      if (!settled) {
-        await ctx.runMutation(internal.ai_guard.releaseReservation, {
-          userId,
-          bucketKey: reservation.bucketKey,
-          reservedCostUsd: reservation.reservedCostUsd,
-        });
-      }
+      // Fetch may have reached Groq even when its response or settlement failed; retain the reserve.
     }
   },
 });
