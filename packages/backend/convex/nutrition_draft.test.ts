@@ -98,6 +98,32 @@ test("unknown unit conversion stays unresolved in the canonical meal draft", () 
   expect(draft.unresolved).toEqual(["rice"]);
 });
 
+test("bounds ingredient calories and leaves incomplete candidate nutrition unresolved", () => {
+  expect(() => buildMealDraft({
+    ...base,
+    ingredients: [{ foodText: "meal", quantity: 1, unit: "serving", nutrition: { ...macros, kcal: 5001 }, source: "database" }],
+  })).toThrow(/ingredient\.kcal must be between 0 and 5000/);
+
+  const borderline = buildMealDraft({
+    ...base,
+    ingredients: [{ foodText: "meal", quantity: 1, unit: "serving", nutrition: { ...macros, kcal: 3501 }, source: "database" }],
+  });
+  expect(borderline.ingredients[0]).toMatchObject({ kcal: 3500, unresolved: false });
+  expect(borderline.validationFlags).toContain("ingredient.kcal_clamped");
+
+  const incompleteCandidate = buildMealDraft({
+    ...base,
+    ingredients: [{
+      foodText: "banana",
+      quantity: 1,
+      unit: "serving",
+      candidates: [{ name: "Banana", score: 0.9, source: "database", caloriesPer100g: 89 }],
+    }],
+  });
+  expect(incompleteCandidate.ingredients[0]).toMatchObject({ unresolved: true, kcal: 0, protein: 0, carbs: 0, fat: 0 });
+  expect(incompleteCandidate.unresolved).toEqual(["banana"]);
+});
+
 test("meal edits explicitly invalidate the prior ingredient detail", async () => {
   const t = convexTest(schema, modules);
   const user = t.withIdentity({ subject: "edit-user" });

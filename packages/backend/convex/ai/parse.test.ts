@@ -103,6 +103,50 @@ walking: 5 min, 11 incline, then 5min of normal walking`, testCtx, testUserId);
     expect(result.calorieResult).toBeNull();
   });
 
+  test("keeps a single-exercise calorie result unresolved without profile weight", async () => {
+    mockedCallAI.mockResolvedValue(JSON.stringify({
+      name: "Bench Press",
+      duration: "30 min",
+      intensity: "MEDIUM",
+      caloriesBurned: 0,
+      rationale: "",
+      exercises: [{
+        name: "bench press",
+        muscle_group: "chest",
+        weight_unit: "kg",
+        sets: [{ weight: "60", reps: "10" }],
+      }],
+    }));
+
+    const result = await parseWorkoutDescription("bench press: 60kg for 10 reps", testCtx, testUserId);
+
+    expect(result.parseError).toBeUndefined();
+    expect(result.exercises).toHaveLength(1);
+    expect(result.calorieResult).toBeNull();
+    expect(result.caloriesBurned).toBe(0);
+    expect(result.calorieResult).not.toEqual(expect.objectContaining({ total_kcal: expect.any(Number) }));
+  });
+
+  test("marks an empty workout parse as an error without inventing exercise or duration", async () => {
+    mockedCallAI.mockResolvedValue(JSON.stringify({
+      name: "Workout",
+      exercises: [],
+      duration: "30 min",
+      intensity: "",
+      caloriesBurned: 0,
+      rationale: "",
+      restClues: "",
+    }));
+
+    const result = await parseWorkoutDescription("I worked out", testCtx, testUserId);
+
+    expect(result.parseError).toMatch(/identify an exercise/i);
+    expect(result.exercises).toBeNull();
+    expect(result.sets).toBe("–");
+    expect(result.duration).toBeUndefined();
+    expect(result.calorieResult).toBeNull();
+  });
+
   test("preserves an explicitly stated calorie burn over the engine estimate", async () => {
     mockedCallAI.mockResolvedValue(JSON.stringify({
       name: "Lift",

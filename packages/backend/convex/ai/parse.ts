@@ -322,7 +322,7 @@ Return ONLY valid JSON:
   const parsedDurationMin = parseDurationMinutes(result.duration || duration);
   const roughDuration = userProvidedDurationMin <= 0;
   const durationMin = parsedDurationMin > 0 ? parsedDurationMin : undefined;
-  const durationLabel = durationMin != null ? (result.duration || duration || `${durationMin} min`) : undefined;
+  const durationLabel = durationMin != null && !parseError ? (result.duration || duration || `${durationMin} min`) : undefined;
   const roughCalorieEstimate = roughDuration || !intensity || !!parseError;
 
   // Deterministic calorie calculation. Use a conservative default weight when
