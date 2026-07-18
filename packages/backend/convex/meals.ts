@@ -8,6 +8,7 @@ import { recordFoodMemoryRow } from "./food_memory";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
 import { finalizeActionGroupAfterWrite } from "./actions_group";
 import { tombstoneActionOwnedRow } from "./actions_undo";
+import { logBackgroundFailure } from "./observability";
 import { findBestMatch } from "./food_memory_match";
 import {
   buildDirectMealDraft,
@@ -133,7 +134,7 @@ export async function writeMealDomain(
       date,
       source: "learned",
       sourceActionId: options.sourceActionId,
-    }).catch(() => {});
+    }).catch((error) => logBackgroundFailure("food_memory_write_failed", canonical.userId, error));
   }
   if (options.recomputeDerived !== false) {
     await recomputeForAction(ctx, { userId: canonical.userId, actionType: "meal", date });
@@ -263,7 +264,7 @@ export const updateMeal = mutation({
         carbs: fields.carbs,
         fat: fields.fat,
         date: meal.date ?? today,
-      }).catch(() => {});
+      }).catch((error: unknown) => logBackgroundFailure("food_memory_correction_failed", userId, error));
     } else {
       // Meal not memory-linked: still learn the corrected values by name
       ctx.scheduler.runAfter(0, internal.food_memory.recordFromMeal, {
@@ -276,7 +277,7 @@ export const updateMeal = mutation({
         components: fields.components ?? meal.components ?? undefined,
         date: meal.date ?? today,
         source: "corrected",
-      }).catch(() => {});
+      }).catch((error: unknown) => logBackgroundFailure("food_memory_correction_write_failed", userId, error));
     }
     await recomputeForAction(ctx, { userId, actionType: "meal", date: meal.date });
   },

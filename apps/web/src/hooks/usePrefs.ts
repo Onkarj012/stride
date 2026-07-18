@@ -10,11 +10,14 @@ import { useCallback, useEffect, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { type Preferences, readPrefs, writePrefs } from "@/lib/storage";
+import { useToast } from "@/context/ToastContext";
+import { reportException } from "@/lib/observability";
 
 export function usePrefs() {
   const [prefs, setPrefs] = useState<Preferences>(() => readPrefs());
   const server = useQuery(api.profile.getSettings, {});
   const upsert = useMutation(api.profile.upsertSettings);
+  const toast = useToast();
 
   // Hydrate from server once it loads; write-through to localStorage cache.
   useEffect(() => {
@@ -30,7 +33,10 @@ export function usePrefs() {
     // Sync browser timezone offset so nudge dispatch uses local time.
     const offset = new Date().getTimezoneOffset();
     if (server.timezoneOffsetMinutes !== offset) {
-      void upsert({ timezoneOffsetMinutes: offset }).catch(() => {});
+      void upsert({ timezoneOffsetMinutes: offset }).catch((error) => {
+        reportException(error, "prefs_timezone_sync_failed");
+        toast.error("Couldn't sync preferences", "Your settings are saved on this device.");
+      });
     }
   }, [server]);
 
@@ -49,11 +55,12 @@ export function usePrefs() {
       const next = { ...readPrefs(), ...patch };
       writePrefs(next); // instant local + cross-tab
       setPrefs(next);
-      void upsert(patch).catch(() => {
-        /* offline: localStorage already holds the value */
+      void upsert(patch).catch((error) => {
+        reportException(error, "prefs_server_persistence_failed");
+        toast.error("Couldn't sync preferences", "Your change is saved on this device.");
       });
     },
-    [upsert],
+    [toast, upsert],
   );
 
   return { prefs, update };

@@ -23,6 +23,7 @@ import { usePrefs } from "@/hooks/usePrefs";
 import { useLogs } from "@/hooks/useLogs";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
+import { reportException } from "@/lib/observability";
 
 const TABS = [
   { id: "overview", label: "Overview", icon: UserIcon },
@@ -676,6 +677,35 @@ function SettingsTab() {
   const clearAllData = useMutation(api.users.clearAllData);
   const exportData = useQuery(api.users.exportAllData);
   const upsertProfile = useMutation(api.profile.upsertProfile);
+  const toast = useToast();
+  const [clearing, setClearing] = useState(false);
+  const [replaying, setReplaying] = useState(false);
+
+  async function handleClearAllData() {
+    setClearing(true);
+    try {
+      await clearAllData();
+      toast.success("Data cleared", "All of your entries were removed.");
+    } catch (error) {
+      reportException(error, "clear_all_data_failed");
+      toast.error("Couldn't clear data", error instanceof Error ? error.message : "Try again");
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  async function handleReplayOnboarding() {
+    setReplaying(true);
+    try {
+      await upsertProfile({ onboardingComplete: false });
+      navigate("/onboarding");
+    } catch (error) {
+      reportException(error, "replay_onboarding_failed");
+      toast.error("Couldn't restart onboarding", error instanceof Error ? error.message : "Try again");
+    } finally {
+      setReplaying(false);
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -758,19 +788,18 @@ function SettingsTab() {
             a.click();
           }} />
         <ListDivider />
-        <ListRow icon={<Trash2 />} title="Clear all entries" meta="Permanently remove every log"
-          onClick={() => { if (confirm("Delete all your data? This cannot be undone.")) clearAllData(); }} />
+        <ListRow icon={<Trash2 />} title="Clear all entries" meta={clearing ? "Clearing…" : "Permanently remove every log"}
+          trailing={clearing ? <Loader2 className="h-5 w-5 animate-spin" /> : undefined}
+          onClick={() => { if (!clearing && confirm("Delete all your data? This cannot be undone.")) void handleClearAllData(); }} />
       </Card>
 
       <Card tone="card" radius="lg" padding="none" className="overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
           <h3 className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Onboarding</h3>
         </div>
-        <ListRow icon={<RotateCcw />} title="Replay onboarding" meta="Redo your profile setup and recalculate your plan"
-          onClick={async () => {
-            await upsertProfile({ onboardingComplete: false });
-            navigate("/onboarding");
-          }} />
+        <ListRow icon={<RotateCcw />} title="Replay onboarding" meta={replaying ? "Opening setup…" : "Redo your profile setup and recalculate your plan"}
+          trailing={replaying ? <Loader2 className="h-5 w-5 animate-spin" /> : undefined}
+          onClick={() => { if (!replaying) void handleReplayOnboarding(); }} />
       </Card>
 
       <Card tone="card" radius="lg" padding="none" className="overflow-hidden">

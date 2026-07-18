@@ -1,3 +1,4 @@
+import { createElement, type ReactNode } from "react";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -10,6 +11,9 @@ vi.mock("convex/react", () => ({
 }));
 
 import { usePrefs } from "@/hooks/usePrefs";
+import { ToastProvider } from "@/context/ToastContext";
+
+const wrapper = ({ children }: { children: ReactNode }) => createElement(ToastProvider, null, children);
 
 describe("usePrefs", () => {
   beforeEach(() => {
@@ -19,21 +23,21 @@ describe("usePrefs", () => {
   });
 
   it("falls back to local defaults when server has not loaded", () => {
-    const { result } = renderHook(() => usePrefs());
+    const { result } = renderHook(() => usePrefs(), { wrapper });
     expect(result.current.prefs.units).toBe("metric");
     expect(result.current.prefs.coachingStyle).toBe("gentle");
   });
 
   it("reflects server value once it loads", async () => {
     serverValue = { units: "imperial", notifications: false, coachingStyle: "analytical", reduceMotion: true };
-    const { result } = renderHook(() => usePrefs());
+    const { result } = renderHook(() => usePrefs(), { wrapper });
     await waitFor(() => expect(result.current.prefs.units).toBe("imperial"));
     expect(result.current.prefs.coachingStyle).toBe("analytical");
     expect(result.current.prefs.reduceMotion).toBe(true);
   });
 
   it("update writes through to server and localStorage", async () => {
-    const { result } = renderHook(() => usePrefs());
+    const { result } = renderHook(() => usePrefs(), { wrapper });
     act(() => result.current.update({ coachingStyle: "motivating" }));
     expect(result.current.prefs.coachingStyle).toBe("motivating");
     expect(JSON.parse(localStorage.getItem("stride.prefs.v1")!).coachingStyle).toBe("motivating");

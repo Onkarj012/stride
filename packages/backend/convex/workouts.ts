@@ -18,6 +18,7 @@ import {
 } from "./validation";
 import { resolveTargetDateTime } from "./time_resolve";
 import { tombstoneActionOwnedRow } from "./actions_undo";
+import { logBackgroundFailure } from "./observability";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -179,7 +180,7 @@ export async function writeWorkoutDomain(
     intensity: validated.intensity || undefined,
     caloriesBurned: validated.caloriesBurned,
     sourceActionId: options.sourceActionId,
-  }).catch(() => {});
+  }).catch((error: unknown) => logBackgroundFailure("workout_memory_write_failed", args.userId, error));
   if (options.recomputeDerived !== false) {
     await recomputeForAction(ctx, { userId: args.userId, actionType: "workout", date });
   }
@@ -341,7 +342,7 @@ export const updateWorkout = mutation({
       intensity: draft.intensity,
       caloriesBurned: validated.caloriesBurned,
       date: workout.date,
-    }).catch(() => {});
+    }).catch((error: unknown) => logBackgroundFailure("workout_memory_correction_failed", userId, error));
     await recomputeForAction(ctx, { userId, actionType: "workout", date: workout.date });
   },
 });

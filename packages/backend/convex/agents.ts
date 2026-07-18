@@ -10,6 +10,7 @@
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { logBackgroundFailure } from "./observability";
 import { callAI } from "./ai/llm";
 // user_ingredients module is accessed via internal.user_ingredients (Convex codegen)
 
@@ -115,7 +116,7 @@ Return ONLY a JSON array, or [] if nothing applies.`;
           fatPer100g: p.fat ?? undefined,
           notes: fact.notes ?? undefined,
           date: agentCtx.today,
-        }).catch(() => {});
+        }).catch((error: unknown) => logBackgroundFailure("ingredient_memory_write_failed", agentCtx.userId, error));
       }
 
       if (fact.kind === "meal_fact" && fact.kcal != null && fact.protein != null && fact.carbs != null && fact.fat != null) {
@@ -128,10 +129,12 @@ Return ONLY a JSON array, or [] if nothing applies.`;
           fat: fact.fat,
           date: agentCtx.today,
           source: "corrected",
-        }).catch(() => {});
+        }).catch((error: unknown) => logBackgroundFailure("food_memory_agent_write_failed", agentCtx.userId, error));
       }
     }
-  } catch { /* fire-and-forget */ }
+  } catch (error) {
+    logBackgroundFailure("memory_agent_failed", agentCtx.userId, error);
+  }
 }
 
 // ─── Convex action: runMemoryAgentAction ─────────────────────────────────────
