@@ -20,7 +20,12 @@ function todayDate(): string {
 }
 
 export function requireMealNutrition(meal: LogEntry["meal"]): NonNullable<LogEntry["meal"]> {
-  if (!meal || [meal.kcal, meal.protein, meal.carbs, meal.fat].some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+  if (
+    !meal
+    || [meal.kcal, meal.protein, meal.carbs, meal.fat].some((value) => typeof value !== "number" || !Number.isFinite(value))
+    || meal.kcal <= 0
+    || [meal.protein, meal.carbs, meal.fat].some((value) => value < 0)
+  ) {
     throw new Error("Meal nutrition is required before logging");
   }
   return meal;

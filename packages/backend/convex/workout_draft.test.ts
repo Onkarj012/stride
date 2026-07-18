@@ -93,6 +93,8 @@ test("sets and cardio fields remain typed and duration-normalized", () => {
 test("reported and estimated calories remain separate", () => {
   const draft = workoutDraft({ reportedCalories: 450, estimatedCalories: 300, calorieSource: "reported" });
   expect(draft).toMatchObject({ calories: 450, reportedCalories: 450, estimatedCalories: 300, calorieSource: "reported" });
+  expect(() => workoutDraft({ reportedCalories: -1 })).toThrow(/non-negative/);
+  expect(() => workoutDraft({ estimatedCalories: -1 })).toThrow(/non-negative/);
 });
 
 test("missing profile produces no demographic-default estimate", () => {

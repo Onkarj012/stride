@@ -72,6 +72,8 @@ test("reported and estimated calories stay separate", () => {
   expect(draft).toMatchObject({ calories: 450, reportedCalories: 450, estimatedCalories: 300, calorieSource: "reported" });
   const estimated = buildMealDraft({ ...base, ingredients: [{ foodText: "meal", quantity: 1, unit: "serving", nutrition: macros, source: "database" }] });
   expect(estimated).toMatchObject({ calories: 300, reportedCalories: undefined, estimatedCalories: 300, calorieSource: "estimated" });
+  expect(buildMealDraft({ ...base, calorieSource: "estimated" }).calorieSource).toBeUndefined();
+  expect(buildMealDraft({ ...base, calorieSource: "reported" }).calorieSource).toBeUndefined();
 });
 
 test("barcode grams, milliliters, and servings preserve original quantity and convert", () => {

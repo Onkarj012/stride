@@ -319,10 +319,11 @@ Return ONLY valid JSON:
   const totalSets = exercises.reduce((sum: number, ex: any) => sum + ex.sets.length, 0);
   const setsVal = exercises.length > 0 ? `${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} · ${totalSets} sets` : "–";
   const userProvidedDurationMin = parseDurationMinutes(duration);
-  const parsedDurationMin = parseDurationMinutes(result.duration || duration);
+  const durationText = duration || result.duration;
+  const parsedDurationMin = parseDurationMinutes(durationText);
   const roughDuration = userProvidedDurationMin <= 0;
   const durationMin = parsedDurationMin > 0 ? parsedDurationMin : undefined;
-  const durationLabel = durationMin != null && !parseError ? (result.duration || duration || `${durationMin} min`) : undefined;
+  const durationLabel = durationMin != null && !parseError ? (durationText || `${durationMin} min`) : undefined;
   const roughCalorieEstimate = roughDuration || !intensity || !!parseError;
 
   // Deterministic calorie calculation. Use a conservative default weight when

@@ -182,4 +182,22 @@ walking: 5 min, 11 incline, then 5min of normal walking`, testCtx, testUserId);
     expect(result.caloriesBurned).toBe(75);
     expect(result.calorieResult?.total_kcal).toBeGreaterThan(75);
   });
+
+  test("uses the user-provided duration for the calorie calculation", async () => {
+    const aiResult = JSON.stringify({
+      name: "Bench Press",
+      duration: "60 min",
+      intensity: "MEDIUM",
+      caloriesBurned: 0,
+      rationale: "",
+      exercises: [{ name: "bench press", muscle_group: "chest", weight_unit: "kg", sets: [{ weight: "60", reps: "10" }] }],
+    });
+    mockedCallAI.mockResolvedValue(aiResult);
+
+    const result = await parseWorkoutDescription("bench press", testCtx, testUserId, "30 min", undefined, undefined, undefined, { weight: 80, age: 30, sex: "male" });
+
+    expect(result.duration).toBe("30 min");
+    expect(result.calorieResult).toEqual(expect.objectContaining({ total_kcal: expect.any(Number) }));
+    expect(result.calorieResult?.total_kcal).toBeLessThan(200);
+  });
 });

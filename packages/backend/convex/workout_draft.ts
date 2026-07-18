@@ -152,6 +152,12 @@ function nonNegative(value: unknown): number | undefined {
   return number == null ? undefined : Math.max(0, number);
 }
 
+function calorieValue(value: unknown, field: string): number | undefined {
+  const number = finiteNumber(value);
+  if (number != null && number < 0) throw new Error(`${field} must be non-negative`);
+  return number;
+}
+
 const FIELD_LIMITS = {
   reps: [100, 1_000],
   load: [500, 2_000],
@@ -399,8 +405,8 @@ export function buildWorkoutDraft(input: WorkoutDraftInput): WorkoutDraft {
   const durationMin = parseDuration(input, exercises, validationFlags);
   const intensity = (input.intensity ?? "MEDIUM").toUpperCase();
   const estimate = estimateCalories(durationMin, exercises, intensity, input.profile);
-  const reportedCalories = nonNegative(input.reportedCalories);
-  const suppliedEstimatedCalories = nonNegative(input.estimatedCalories);
+  const reportedCalories = calorieValue(input.reportedCalories, "reportedCalories");
+  const suppliedEstimatedCalories = calorieValue(input.estimatedCalories, "estimatedCalories");
   const estimatedCalories = estimate.estimatedCalories ?? suppliedEstimatedCalories;
   const hasInternalEstimate = estimate.estimatedCalories != null;
   const hasCalorieValue = estimatedCalories != null || reportedCalories != null;

@@ -317,9 +317,15 @@ export function buildMealDraft(input: MealDraftInput): MealDraft {
   if (input.rawTotals != null && !hasRawTotals) unresolved.push("meal nutrition");
   const hasResolvedNutrition = hasRawTotals || (rawIngredients.length > 0 && unresolved.length === 0) || reportedCalories != null;
   const estimatedCalories = hasResolvedNutrition ? Math.round(totals.kcal) : undefined;
-  const calorieSource: CalorieSource | undefined = input.calorieSource === "reported" && reportedCalories == null
-    ? "estimated"
-    : input.calorieSource ?? (reportedCalories != null ? "reported" : estimatedCalories != null ? "estimated" : undefined);
+  const calorieSource: CalorieSource | undefined = input.calorieSource === "reported" && reportedCalories != null
+    ? "reported"
+    : input.calorieSource === "estimated" && estimatedCalories != null
+      ? "estimated"
+      : reportedCalories != null
+        ? "reported"
+        : estimatedCalories != null
+          ? "estimated"
+          : undefined;
   const draft: MealDraft = {
     kind: "meal",
     name: input.name,
