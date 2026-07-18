@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Trash2, Barcode, ImagePlus, X, RotateCcw } from "lucide-react";
+import { Plus, Trash2, Barcode, ImagePlus, Paperclip, X, RotateCcw } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import type { FunctionArgs } from "convex/server";
 import { api } from "@convex/_generated/api";
@@ -11,6 +11,7 @@ import { ConfirmationCard, type ConfirmationDecision, type ConfirmationPayload, 
 import { AgentBadge } from "@/components/ui-kit/AgentBadge";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { CoachBubble, InputBar } from "@/components/ui-kit";
 import type { AgentType, AttachItem, InputMode, Modality } from "@/components/ui-kit";
 import { usePrefs } from "@/hooks/usePrefs";
@@ -21,7 +22,7 @@ import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
 import { cn, localDateStr } from "@/lib/utils";
 import { getAIErrorMessage } from "@/lib/ai-errors";
 import { reportException } from "@/lib/observability";
-import { MobileIcon, StatusBar } from "@/components/mobile/MobileKit";
+import { MobileIcon } from "@/components/mobile/MobileKit";
 import type { Agent, CoachingStyle } from "@/lib/storage";
 
 const COACH_SUGGESTIONS = [
@@ -99,7 +100,8 @@ export function CoachPage() {
   const style = prefs.coachingStyle;
   const reduceMotion = useReducedMotion();
 
-  const sessions = (useQuery(api.chat.getSessions) ?? []) as ChatSessionSummary[];
+  const sessionsResult = useQuery(api.chat.getSessions);
+  const sessions = (sessionsResult ?? []) as ChatSessionSummary[];
   const createSession = useMutation(api.chat.createSession);
   const deleteSession = useMutation(api.chat.deleteSession);
   const addMeal = useMutation(api.meals.addMeal);
@@ -130,6 +132,7 @@ export function CoachPage() {
   });
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [kbPad, setKbPad] = useState(0);
   const [pendingUndoIds, setPendingUndoIds] = useState<Set<string>>(() => new Set());
@@ -144,6 +147,7 @@ export function CoachPage() {
   const sendingRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const docRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   function resetClarificationState() {
@@ -156,6 +160,35 @@ export function CoachPage() {
     setInput((prev) => (prev ? `${prev} ${t}` : t).trim());
   }, []);
   const voice = useAudioRecorder(onTranscript);
+
+  const onPickFile = useCallback((file: File) => {
+    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+      toast.error("PDF not supported", "Attach a .md or .txt file instead");
+      return;
+    }
+    const allowed = ["text/markdown", "text/plain", "text/x-markdown"];
+    const byExt = file.name.endsWith(".md") || file.name.endsWith(".txt");
+    if (!allowed.includes(file.type) && !byExt) {
+      toast.error("Unsupported file", "Attach a .md or .txt file");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setAttachedFile({ name: file.name, content: String(reader.result ?? "").slice(0, 8000) });
+    reader.readAsText(file);
+  }, [toast]);
+
+  const requestedMode = searchParams.get("mode");
+  useEffect(() => {
+    if (!requestedMode) return;
+    if (requestedMode === "barcode") setBarcodeOpen(true);
+    if (requestedMode === "photo") setTimeout(() => fileRef.current?.click(), 0);
+    if (requestedMode === "ocr") setTimeout(() => docRef.current?.click(), 0);
+    if (requestedMode === "voice") void voice.start();
+    setSearchParams((current) => {
+      current.delete("mode");
+      return current;
+    }, { replace: true });
+  }, [requestedMode, setSearchParams, voice.start]);
 
   useEffect(() => {
     try { localStorage.setItem(CHAT_RAIL_STORAGE_KEY, String(panelOpen)); } catch {}
@@ -432,33 +465,37 @@ export function CoachPage() {
   const orderedSuggestions = useMemo(() => orderSuggestions(COACH_SUGGESTIONS), []);
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
-  const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : "type";
+  const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : attachedFile ? "ocr" : "type";
 
   const send = useCallback(async (text: string, image?: string) => {
     if (sendingRef.current) return;
     sendingRef.current = true;
     const v = text.trim();
-    if (!v && !image) { sendingRef.current = false; return; }
+    if (!v && !image && !attachedFile) { sendingRef.current = false; return; }
+    const messageText = attachedFile ? `[File: ${attachedFile.name}]\n${attachedFile.content}\n\n${v}`.trim() : v;
     const userMeta = image
       ? { modality: "photo" as const, chip: "Attached image" }
       : activeMode === "voice"
       ? { modality: "voice" as const, chip: "Voice note" }
+      : attachedFile
+      ? { modality: "ocr" as const, chip: "Nutrition label" }
       : undefined;
     setInput("");
     setAttachedImage(null);
-    setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || "Photo of meal", ...userMeta }]);
+    setAttachedFile(null);
+    setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || (image ? "Photo of meal" : "Nutrition label"), ...userMeta }]);
     scroll();
 
     setThinking(true);
     try {
       let sessionId = activeSessionId;
       if (!sessionId) {
-        const result = await createSession({ title: v.slice(0, 40) || "Image chat" });
+        const result = await createSession({ title: messageText.slice(0, 40) || "Image chat" });
         sessionId = result.id;
         setActiveSessionId(sessionId);
       }
       const result = await sendToAI({
-        message: v,
+        message: messageText,
         image,
         sessionId,
         coachType: "auto",
@@ -558,11 +595,12 @@ export function CoachPage() {
       sendingRef.current = false;
       setThinking(false);
     }
-  }, [activeMode, activeSessionId, activeClarificationGroupId, createSession, sendToAI, scroll, toast]);
+  }, [activeMode, activeSessionId, activeClarificationGroupId, attachedFile, createSession, sendToAI, scroll, toast]);
 
   const attachItems: AttachItem[] = [
     { key: "photo", label: "Photo of meal", mode: "photo", icon: <ImagePlus className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => fileRef.current?.click() },
     { key: "barcode", label: "Scan barcode", mode: "barcode", icon: <Barcode className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => setBarcodeOpen(true) },
+    { key: "ocr", label: "Nutrition label", mode: "ocr", icon: <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => docRef.current?.click() },
   ];
   const coachPresenceType: AgentType =
     style === "analytical" ? "overall" :
@@ -575,6 +613,8 @@ export function CoachPage() {
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
+      <input ref={docRef} type="file" accept=".md,.txt,text/markdown,text/plain" className="hidden"
+        onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickFile(file); e.target.value = ""; }} />
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} date={localDateStr()} />
 
       {/* ── Mobile header ─────────────────────────────────────────── */}
@@ -606,7 +646,6 @@ export function CoachPage() {
               initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }}
               transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 36 }}
             >
-              <StatusBar />
               <div className="flex items-center justify-between px-5 pt-1 pb-4">
                 <h2 className="text-[18px] font-extrabold text-ink dark:text-surface tracking-[-0.5px]">Chats</h2>
                 <button onClick={() => setMobileHistoryOpen(false)} aria-label="Close history" className="w-9 h-9 rounded-full bg-white dark:bg-[#1a1e2e] shadow-[0_4px_14px_rgba(13,16,27,0.08)] flex items-center justify-center text-ink/55 dark:text-white/55 active:scale-90 transition-transform">
@@ -618,8 +657,9 @@ export function CoachPage() {
                   <Plus className="h-4 w-4" strokeWidth={2.4} />
                   New chat
                 </button>
-                {sessions.length === 0 && <p className="text-[13px] text-ink/45 dark:text-white/40 py-4 text-center">No previous chats yet.</p>}
-                {sessions.map((s) => (
+                {sessionsResult === undefined ? (
+                  <div className="space-y-2 py-3"><Skeleton className="h-10 w-full rounded-[10px]" /><Skeleton className="h-10 w-full rounded-[10px]" /></div>
+                ) : sessions.length === 0 ? <p className="text-[13px] text-ink/45 dark:text-white/40 py-4 text-center">No previous chats yet.</p> : sessions.map((s) => (
                   <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeSessionId ? "bg-lavender/20 text-ink dark:text-lavender" : "text-ink/55 dark:text-white/55 active:bg-ink/5 dark:active:bg-white/5")}>
                     <button type="button" onClick={() => { loadSession(s.id); setMobileHistoryOpen(false); }} className="flex-1 text-left px-3 py-3 min-w-0">
                       <div className="text-[13px] font-bold truncate">{s.title}</div>
@@ -881,8 +921,8 @@ export function CoachPage() {
               voiceState={voice.transcribing ? "transcribing" : voice.recording ? "recording" : "idle"}
               busy={thinking}
               disabled={voice.transcribing}
-              submitEnabled={!!input.trim() || !!attachedImage}
-              placeholder={voice.recording ? "Listening..." : voice.transcribing ? "Transcribing..." : "Message Stry — what did you eat or train?"}
+              submitEnabled={!!input.trim() || !!attachedImage || !!attachedFile}
+              placeholder={voice.recording ? "Listening..." : voice.transcribing ? "Transcribing..." : attachedFile ? "Add a note (optional)..." : "Message Stry — what did you eat or train?"}
               ariaLabel="Message Stry"
             />
             {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{getAIErrorMessage(voice.error) ?? voice.error}</p>}
@@ -918,8 +958,9 @@ export function CoachPage() {
                 <Plus className="h-4 w-4" strokeWidth={2.4} />
                 New chat
               </button>
-              {sessions.length === 0 && <p className="text-[13px] text-ink/45 dark:text-white/40 py-4 text-center">No previous chats yet.</p>}
-              {sessions.map((s) => (
+              {sessionsResult === undefined ? (
+                <div className="space-y-2 py-3"><Skeleton className="h-10 w-full rounded-[10px]" /><Skeleton className="h-10 w-full rounded-[10px]" /></div>
+              ) : sessions.length === 0 ? <p className="text-[13px] text-ink/45 dark:text-white/40 py-4 text-center">No previous chats yet.</p> : sessions.map((s) => (
                 <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeSessionId ? "bg-lavender/20 text-ink dark:text-lavender" : "text-ink/55 dark:text-white/50 hover:bg-ink/5 dark:hover:bg-white/5")}>
                   <button type="button" onClick={() => loadSession(s.id)} className="flex-1 text-left rounded-[10px] px-3 py-2.5 min-w-0">
                     <div className="flex items-center gap-1.5">

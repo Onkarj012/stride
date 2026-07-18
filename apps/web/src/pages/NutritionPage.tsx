@@ -63,7 +63,7 @@ const MODALITIES = [
   { id: "ocr", label: "Nutrition label", icon: <path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M7 12h10" /> },
 ];
 
-function AddSheet({ onClose, onPick }: { onClose: () => void; onPick: () => void }) {
+function AddSheet({ onClose, onPick }: { onClose: () => void; onPick: (modality: string) => void }) {
   return (
     <motion.div className="fixed inset-0 z-50 flex items-end lg:hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <button className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]" onClick={onClose} aria-label="Close" />
@@ -76,7 +76,7 @@ function AddSheet({ onClose, onPick }: { onClose: () => void; onPick: () => void
         <p className="text-[13px] font-medium text-ink/45 dark:text-white/45 mb-5">Stry parses it into a meal automatically</p>
         <div className="grid grid-cols-1 gap-2">
           {MODALITIES.map((m) => (
-            <button key={m.id} onClick={onPick} className="flex items-center gap-3 rounded-[14px] bg-white dark:bg-[#1a1e2e] px-4 py-3.5 text-left active:scale-[0.98] transition-transform shadow-[0_4px_14px_rgba(13,16,27,0.05)]">
+            <button key={m.id} onClick={() => onPick(m.id)} className="flex items-center gap-3 rounded-[14px] bg-white dark:bg-[#1a1e2e] px-4 py-3.5 text-left active:scale-[0.98] transition-transform shadow-[0_4px_14px_rgba(13,16,27,0.05)]">
               <span className="w-10 h-10 rounded-full bg-lavender/15 flex items-center justify-center text-lavender shrink-0"><MobileIcon size={20}>{m.icon}</MobileIcon></span>
               <span className="text-[15px] font-bold text-ink dark:text-surface">{m.label}</span>
               <span className="ml-auto text-ink/25 dark:text-white/25"><MobileIcon size={18}><path d="M9 6l6 6-6 6" /></MobileIcon></span>
@@ -91,7 +91,8 @@ function AddSheet({ onClose, onPick }: { onClose: () => void; onPick: () => void
 export function NutritionPage() {
   const navigate = useNavigate();
   const today = localDateStr();
-  const meals = (useQuery(api.meals.getMeals, { date: today }) ?? []) as any[];
+  const mealsResult = useQuery(api.meals.getMeals, { date: today });
+  const meals = (mealsResult ?? []) as any[];
   const brief = useQuery(api.insights.getTodayBrief, { today });
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const toast = useToast();
@@ -127,7 +128,7 @@ export function NutritionPage() {
     }
   }
 
-  if (brief === undefined) {
+  if (brief === undefined || mealsResult === undefined) {
     return (
       <div className="flex items-center justify-center min-h-dvh px-5">
         <div className="space-y-3 w-full max-w-xs">
@@ -163,7 +164,7 @@ export function NutritionPage() {
       )}
 
       <AnimatePresence>
-        {adding && <AddSheet onClose={() => setAdding(false)} onPick={() => { setAdding(false); navigate("/coach"); }} />}
+        {adding && <AddSheet onClose={() => setAdding(false)} onPick={(modality) => { setAdding(false); navigate(`/coach?mode=${modality}`); }} />}
       </AnimatePresence>
 
       <div className="lg:hidden px-5 pt-4 pb-6 relative">

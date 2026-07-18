@@ -7,6 +7,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { Pill } from "@/components/primitives/Pill";
 import { MacroCard, MilestoneCard, NarrativeCard, StatChip, StreakCard } from "@/components/ui-kit";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -377,7 +378,8 @@ export function InsightsPage() {
 
   // Convex progress data (7 or 30 days)
   const brief = useQuery(api.insights.getTodayBrief, { today });
-  const progressRows = (useQuery(api.progress.getProgress, { days, today }) ?? []) as Array<{
+  const progressRowsResult = useQuery(api.progress.getProgress, { days, today });
+  const progressRows = (progressRowsResult ?? []) as Array<{
     date: string;
     calories: number;
     protein: number;
@@ -422,6 +424,16 @@ export function InsightsPage() {
 
   const weeklySummary = useQuery(api.insights.getWeeklySummary);
   const profile = useQuery(api.profile.getProfile);
+
+  if (progressRowsResult === undefined || brief === undefined) {
+    return (
+      <div className="space-y-3 px-5 py-6 lg:mx-auto lg:max-w-6xl lg:px-0">
+        <Skeleton className="h-8 w-40 rounded-[14px]" />
+        <Skeleton className="h-40 w-full rounded-[20px]" />
+        <Skeleton className="h-28 w-full rounded-[20px]" />
+      </div>
+    );
+  }
 
   // Wait for real targets so milestone thresholds do not flash from fallback values.
   const profileLoaded = profile !== undefined;

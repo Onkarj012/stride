@@ -13,24 +13,6 @@ export function MobileIcon({ children, size = 22, sw = 2 }: { children: React.Re
   );
 }
 
-export function StatusBar() {
-  return (
-    <div className="relative h-12 shrink-0 flex items-end justify-between px-7 pb-1 text-ink dark:text-surface">
-      <span className="text-[15px] font-extrabold tracking-tight tabular-nums">9:41</span>
-      <div className="absolute left-1/2 -translate-x-1/2 top-2 w-[105px] h-[30px] rounded-full bg-ink dark:bg-black" />
-      <div className="flex items-center gap-1.5">
-        <MobileIcon size={16} sw={2.4}><path d="M2 20h.01M6 20v-4M10 20v-8M14 20v-12M18 20V6" /></MobileIcon>
-        <MobileIcon size={16} sw={2.4}><path d="M5 13a10 10 0 0 1 14 0M8.5 16.5a5 5 0 0 1 7 0M12 20h.01" /></MobileIcon>
-        <svg width="26" height="14" viewBox="0 0 26 14" fill="none" className="text-ink dark:text-surface">
-          <rect x="1" y="2" width="20" height="10" rx="3" stroke="currentColor" strokeWidth="1.5" opacity="0.4" />
-          <rect x="3" y="4" width="15" height="6" rx="1.5" fill="currentColor" />
-          <rect x="23" y="5" width="2" height="4" rx="1" fill="currentColor" opacity="0.5" />
-        </svg>
-      </div>
-    </div>
-  );
-}
-
 export function Eyebrow({ children }: { children: React.ReactNode }) {
   return <p className="text-[11px] font-extrabold tracking-[2px] uppercase text-ink/35 dark:text-white/35 mb-3">{children}</p>;
 }

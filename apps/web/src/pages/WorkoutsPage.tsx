@@ -9,6 +9,7 @@ import { NavTrigger } from "@/components/layout/NavTrigger";
 import { EditLogModal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { Card } from "@/components/primitives/Card";
 import { Button } from "@/components/primitives/Button";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { StatChip, WorkoutSessionCard } from "@/components/ui-kit";
 import { ScreenHeader } from "@/components/mobile/MobileKit";
 import { useToast } from "@/context/ToastContext";
@@ -93,7 +94,8 @@ function formatWorkoutSet(set: StoredWorkoutSet, unit?: string) {
 export function WorkoutsPage() {
   const navigate = useNavigate();
   const today = localDateStr();
-  const workouts = (useQuery(api.workouts.getWorkouts, { date: today }) ?? []) as WorkoutRow[];
+  const workoutsResult = useQuery(api.workouts.getWorkouts, { date: today });
+  const workouts = (workoutsResult ?? []) as WorkoutRow[];
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
   const toast = useToast();
 
@@ -122,6 +124,16 @@ export function WorkoutsPage() {
     } finally {
       setConfirmDelete(null);
     }
+  }
+
+  if (workoutsResult === undefined) {
+    return (
+      <div className="space-y-3 px-5 py-6 lg:mx-auto lg:max-w-6xl lg:px-0">
+        <Skeleton className="h-8 w-40 rounded-[14px]" />
+        <Skeleton className="h-24 w-full rounded-[20px]" />
+        <Skeleton className="h-32 w-full rounded-[20px]" />
+      </div>
+    );
   }
 
   return (

@@ -5,6 +5,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { OverlayHeader } from "@/components/mobile/MobileKit";
@@ -113,18 +114,18 @@ type Tab = "meals" | "workouts";
 
 function RecoveryMeta({ state, sleep }: { state: any; sleep: any }) {
   if (!state) return null;
-  const source = sleep?.source ?? "unknown source";
+  const source = sleep?.source;
   const confidence = sleep?.confidence != null ? `confidence ${Math.round(sleep.confidence * 100)}%` : state.confidence;
   return (
     <div className="rounded-[14px] border border-border/60 bg-card px-4 py-3 text-[11px] text-text-muted">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-semibold text-text">Recovery record</span>
-        <span>source: {source}</span>
-        <span>{confidence}</span>
-        <span>state: {state.state}</span>
+        {source && <span>Sleep source: {source}</span>}
+        {confidence && <span>{confidence}</span>}
+        {state.state && state.state !== "unknown" && <span>Recovery status: {state.state}</span>}
       </div>
-      {state.missingInputs?.length > 0 && (
-        <div className="mt-1">unresolved: {state.missingInputs.join(", ")}</div>
+      {(!source || state.state === "unknown" || state.missingInputs?.length > 0) && (
+        <div className="mt-1">Recovery data appears as you log sleep, water, mood, and steps</div>
       )}
     </div>
   );
@@ -276,6 +277,15 @@ function DayDetail({ date, onDeleteMeal, onDeleteWorkout }: {
   const [editWorkout, setEditWorkout] = useState<EditableWorkout | null>(null);
   const [relogging, setRelogging] = useState<string | null>(null);
 
+  if (data === undefined) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-8 w-48 rounded-[14px]" />
+        <Skeleton className="h-32 w-full rounded-[20px]" />
+      </div>
+    );
+  }
+
   async function handleRelogMeal(id: Id<"meals">, name: string) {
     if (relogging) return;
     setRelogging(id);
@@ -414,14 +424,16 @@ export function HistoryPage() {
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
 
   const now = new Date();
-  const calendarData = useQuery(api.history.getCalendar, { year: now.getFullYear(), month: now.getMonth() + 1 }) ?? {};
+  const calendarDataResult = useQuery(api.history.getCalendar, { year: now.getFullYear(), month: now.getMonth() + 1 });
 
   // Day summary from calendar data
   const dateStr = toDateStr(selected);
   const data = useQuery(api.history.getDayHistory, { date: dateStr }) as { meals?: any[]; workouts?: any[] } | undefined;
-  const waterLogs = (useQuery(api.wellness.getWater, { date: dateStr }) ?? []) as any[];
+  const waterLogsResult = useQuery(api.wellness.getWater, { date: dateStr });
+  const waterLogs = (waterLogsResult ?? []) as any[];
   const sleepLog = useQuery(api.wellness.getSleep, { date: dateStr });
   const recoveryState = useQuery(api.wellness.getRecoveryState, { date: dateStr });
+  const calendarData = calendarDataResult ?? {};
   const meals = data?.meals ?? [];
   const workouts = data?.workouts ?? [];
 
@@ -431,6 +443,16 @@ export function HistoryPage() {
   ), [meals]);
 
   const workoutMin = useMemo(() => workouts.reduce((s, w) => s + (w.duration ? parseInt(w.duration, 10) || 0 : 0), 0), [workouts]);
+
+  if (calendarDataResult === undefined || data === undefined || waterLogsResult === undefined || recoveryState === undefined) {
+    return (
+      <div className="space-y-3 px-5 py-6 lg:mx-auto lg:max-w-6xl lg:px-0">
+        <Skeleton className="h-8 w-40 rounded-[14px]" />
+        <Skeleton className="h-64 w-full rounded-[20px]" />
+        <Skeleton className="h-32 w-full rounded-[20px]" />
+      </div>
+    );
+  }
 
   const statCards = [
     { label: "Calories", value: Math.round(macros.kcal), unit: "", sub: `${Math.round(macros.protein)}p · ${Math.round(macros.carbs)}c · ${Math.round(macros.fat)}f`, tone: "bg-peach" },
@@ -492,14 +514,15 @@ export function HistoryPage() {
           </Card>
         </div>
 
-        <RecoveryMeta state={recoveryState} sleep={sleepLog} />
-
-        {/* RIGHT COLUMN: tab nav + detail list */}
-        <DayDetail
-          date={selected}
-          onDeleteMeal={(id) => deleteMeal({ id })}
-          onDeleteWorkout={(id) => deleteWorkout({ id })}
-        />
+        <div className="space-y-3">
+          <RecoveryMeta state={recoveryState} sleep={sleepLog} />
+          {/* RIGHT COLUMN: tab nav + detail list */}
+          <DayDetail
+            date={selected}
+            onDeleteMeal={(id) => deleteMeal({ id })}
+            onDeleteWorkout={(id) => deleteWorkout({ id })}
+          />
+        </div>
       </div>
     </div>
     </>

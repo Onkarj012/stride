@@ -26,7 +26,12 @@ export const getProfile = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
     if (!p) return null;
+    const account = await ctx.db
+      .query("users")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", userId))
+      .first();
     return {
+      name: account?.name ?? null,
       weight: p.weight ?? null,
       height: p.height ?? null,
       age: p.age ?? null,

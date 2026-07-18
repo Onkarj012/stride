@@ -2,14 +2,15 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { useUser } from "@clerk/react";
-import { useMutation, useQuery, useAction } from "convex/react";
+import { useConvex, useMutation, useAction } from "convex/react";
 import { api } from "@convex/_generated/api";
-import { ArrowRight, Check, Loader2, Plus, X, Sparkles, Send } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Loader2, Plus, X, Sparkles, Send } from "lucide-react";
 import { PixelAgent } from "@/components/primitives/PixelAgent";
 import { MacroDonut } from "@/components/charts/MacroDonut";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { getAIErrorMessage } from "@/lib/ai-errors";
 import { cn } from "@/lib/utils";
+import { clearOnboardingDraft, readOnboardingDraft, saveOnboardingDraft } from "@/lib/onboardingPersistence";
 
 type Phase = "name" | "stats" | "goal" | "work" | "lifestyle" | "training" | "diet" | "style" | "plan";
 
@@ -32,6 +33,20 @@ type State = {
 };
 
 type Msg = { id: number; role: "bot" | "user"; node: ReactNode };
+
+const PHASES: readonly Phase[] = ["name", "stats", "goal", "work", "lifestyle", "training", "diet", "style", "plan"];
+const PREVIOUS_PHASE: Partial<Record<Phase, Phase>> = {
+  stats: "name", goal: "stats", work: "goal", lifestyle: "work", training: "lifestyle", diet: "training", style: "diet", plan: "style",
+};
+
+type NutritionPlan = {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  percentages: { protein: number; carbs: number; fat: number };
+  breakdown: { bmr: number; neatJob: number; neatLifestyle: number; eat: number; tef: number; finalTDEE: number; goalAdjustment: number };
+};
 
 function FreeText({ field, placeholder, onParsed }: {
   field: string; placeholder: string; onParsed: (data: Record<string, unknown>) => void;
@@ -153,21 +168,29 @@ export function OnboardingPage() {
   const { user } = useUser();
   const navigate = useNavigate();
   const reduce = useReducedMotion();
+  const convex = useConvex();
   const upsertPlan = useMutation(api.profile.upsertPlanFromOnboarding);
   const upsertSettings = useMutation(api.profile.upsertSettings);
 
-  const [phase, setPhase] = useState<Phase>("name");
-  const [state, setState] = useState<State>({
+  const defaultState: State = {
     firstName: user?.firstName ?? "", age: "", sex: "", weight: "", height: "", bodyFat: "",
     goal: "", occupationType: "", workHoursPerDay: "8", lifestyleActivity: "", weeklyWorkouts: [],
     dietaryPreference: "", allergies: "", coachingStyle: "gentle",
-  });
+  };
+  const defaultDraft = { phase: "name" as const, state: defaultState };
+  const [draft] = useState(() => readOnboardingDraft(window.sessionStorage, PHASES, defaultDraft));
+  const [phase, setPhase] = useState<Phase>(draft.phase);
+  const [state, setState] = useState<State>(draft.state);
   const set = <K extends keyof State>(k: K, v: State[K]) => setState((s) => ({ ...s, [k]: v }));
 
   const [thread, setThread] = useState<Msg[]>([]);
   const [typing, setTyping] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<NutritionPlan | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planRetry, setPlanRetry] = useState(0);
   const idRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const started = useRef(false);
@@ -194,11 +217,22 @@ export function OnboardingPage() {
     if (next !== "plan") botSay(QUESTIONS[next](state)); // plan is its own page
   }
 
+  function goBack() {
+    const previous = PREVIOUS_PHASE[phase];
+    if (!previous) return;
+    setPhase(previous);
+    if (previous !== "plan") botSay(QUESTIONS[previous](state));
+  }
+
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    botSay(QUESTIONS.name(state));
+    if (phase !== "plan") botSay(QUESTIONS[phase](state));
   }, []);
+
+  useEffect(() => {
+    saveOnboardingDraft(window.sessionStorage, { phase, state });
+  }, [phase, state]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: reduce ? "auto" : "smooth" });
@@ -217,8 +251,33 @@ export function OnboardingPage() {
     occupationType: state.occupationType || undefined, workHoursPerDay: state.workHoursPerDay ? parseFloat(state.workHoursPerDay) : undefined,
     lifestyleActivity: state.lifestyleActivity || undefined, weeklyWorkouts: state.weeklyWorkouts.length ? state.weeklyWorkouts : undefined,
     goal: state.goal || undefined,
-  } : "skip";
-  const plan = useQuery(api.profile.calculateNutritionPlan, planArgs as any) as any;
+  } : null;
+  const planKey = planArgs ? JSON.stringify(planArgs) : "";
+
+  useEffect(() => {
+    if (!planArgs) {
+      setPlan(null);
+      setPlanError(null);
+      setPlanLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPlan(null);
+    setPlanError(null);
+    setPlanLoading(true);
+    void convex.query(api.profile.calculateNutritionPlan, planArgs)
+      .then((result) => {
+        if (cancelled) return;
+        setPlan(result as NutritionPlan);
+      })
+      .catch(() => {
+        if (!cancelled) setPlanError("We couldn't calculate your plan. Check your connection and try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setPlanLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [convex, planKey, planRetry]);
 
   async function finish() {
     setSubmitting(true);
@@ -235,6 +294,7 @@ export function OnboardingPage() {
         } as any);
       }
       await upsertSettings({ coachingStyle: state.coachingStyle });
+      clearOnboardingDraft(window.sessionStorage);
       navigate("/");
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Something went wrong. Tap to retry.");
@@ -265,9 +325,14 @@ export function OnboardingPage() {
             <h1 className="text-h1 text-text">Your plan, {state.firstName || "friend"}</h1>
             <p className="text-[14px] text-text-muted mt-1">Built from your inputs — fully transparent.</p>
           </div>
-          {!plan ? (
+          {planLoading ? (
             <div className="py-10 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-text-muted" /></div>
-          ) : (
+          ) : planError ? (
+            <div role="alert" className="rounded-2xl border border-bubblegum/40 bg-bubblegum/10 px-4 py-4 text-left">
+              <p className="text-[13px] font-semibold text-text">{planError}</p>
+              <button type="button" onClick={() => setPlanRetry((r) => r + 1)} className="mt-2 text-[13px] font-bold text-text underline underline-offset-2">Try again</button>
+            </div>
+          ) : plan ? (
             <motion.div
               initial={reduce ? false : { opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: reduce ? 0 : 0.15, duration: 0.4 }}
@@ -297,11 +362,16 @@ export function OnboardingPage() {
                 </div>
               </details>
             </motion.div>
-          )}
-          <button type="button" onClick={finish} disabled={submitting || !plan}
-            className="w-full inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-3.5 text-[15px] font-semibold disabled:opacity-50">
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Start using Stride <ArrowRight className="h-4 w-4" strokeWidth={2} /></>}
-          </button>
+          ) : null}
+          <div className="flex gap-2">
+            <button type="button" onClick={goBack} className="inline-flex items-center justify-center gap-1.5 rounded-full border border-border px-4 py-3.5 text-[14px] font-semibold text-text-muted hover:text-text">
+              <ArrowLeft className="h-4 w-4" strokeWidth={2} /> Back
+            </button>
+            <button type="button" onClick={finish} disabled={submitting || !plan}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink px-5 py-3.5 text-[15px] font-semibold disabled:opacity-50">
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Start using Stride <ArrowRight className="h-4 w-4" strokeWidth={2} /></>}
+            </button>
+          </div>
           {saveError && (
             <p className="text-[13px] text-bubblegum text-center">{saveError}</p>
           )}
@@ -349,6 +419,11 @@ export function OnboardingPage() {
         {!typing && (
           <motion.div initial={reduce ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
             className="pl-10 pt-1 space-y-3">
+            {phase !== "name" && (
+              <button type="button" onClick={goBack} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-text-muted hover:text-text">
+                <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} /> Back
+              </button>
+            )}
             {phase === "name" && (
               <div className="flex items-center gap-2">
                 <input autoFocus value={state.firstName} onChange={(e) => set("firstName", e.target.value)}
@@ -365,7 +440,7 @@ export function OnboardingPage() {
                   <FieldInput label="Age" value={state.age} onChange={(v) => set("age", v)} placeholder="28" />
                   <FieldInput label="Weight (kg)" value={state.weight} onChange={(v) => set("weight", v)} placeholder="65" />
                   <FieldInput label="Height (cm)" value={state.height} onChange={(v) => set("height", v)} placeholder="170" />
-                  <FieldInput label="Body fat % (opt)" value={state.bodyFat} onChange={(v) => set("bodyFat", v)} placeholder="18" />
+                  <FieldInput label="Body fat % (optional)" value={state.bodyFat} onChange={(v) => set("bodyFat", v)} placeholder="18" />
                 </div>
                 <Choices options={[{ value: "female", label: "Female" }, { value: "male", label: "Male" }]} value={state.sex} onPick={(v) => set("sex", v)} />
                 <FreeText field="stats" placeholder="…or: 28yo male, 80kg, 178cm" onParsed={(d) => {
@@ -396,7 +471,7 @@ export function OnboardingPage() {
                   { value: "desk", label: "Desk", sub: "Mostly seated" }, { value: "mixed", label: "Mixed", sub: "Sit + move" },
                   { value: "standing", label: "Standing", sub: "On feet" }, { value: "physical", label: "Physical", sub: "Manual labor" },
                 ]} value={state.occupationType} onPick={(v) => set("occupationType", v)} />
-                <div className="w-32"><FieldInput label="Work hrs/day" value={state.workHoursPerDay} onChange={(v) => set("workHoursPerDay", v)} placeholder="8" /></div>
+                <div className="w-32"><FieldInput label="Work hours per day" value={state.workHoursPerDay} onChange={(v) => set("workHoursPerDay", v)} placeholder="8" /></div>
                 <FreeText field="work" placeholder="…or: desk job, about 9 hours" onParsed={(d) => {
                   if (d.occupationType) set("occupationType", d.occupationType as State["occupationType"]);
                   if (d.workHoursPerDay != null) set("workHoursPerDay", String(d.workHoursPerDay));
@@ -436,7 +511,7 @@ export function OnboardingPage() {
             {phase === "diet" && (
               <>
                 <Choices cols={3} options={[
-                  { value: "none", label: "No pref" }, { value: "vegetarian", label: "Vegetarian" }, { value: "vegan", label: "Vegan" },
+                  { value: "none", label: "No preference" }, { value: "vegetarian", label: "Vegetarian" }, { value: "vegan", label: "Vegan" },
                   { value: "pescatarian", label: "Pescatarian" }, { value: "keto", label: "Keto" },
                 ]} value={state.dietaryPreference} onPick={(v) => set("dietaryPreference", v)} />
                 <input value={state.allergies} onChange={(e) => set("allergies", e.target.value)} placeholder="Allergies / avoid (optional)"

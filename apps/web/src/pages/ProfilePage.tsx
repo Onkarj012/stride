@@ -812,7 +812,6 @@ function SettingsTab() {
           onClick={() => signOut()} />
       </Card>
 
-      <p className="text-center text-[12px] text-text-subtle">Stry · v0.3 · made with care</p>
     </div>
   );
 }
@@ -823,9 +822,26 @@ function MobileAccountLayout({ title }: { title: string }) {
   const profile = useQuery(api.profile.getProfile);
   const { theme, toggle } = useTheme();
   const { prefs, update } = usePrefs();
+  const { signOut } = useClerk();
+  const clearAllData = useMutation(api.users.clearAllData);
+  const toast = useToast();
+  const [clearing, setClearing] = useState(false);
   const name = user?.fullName ?? user?.username ?? "User";
   const email = user?.primaryEmailAddress?.emailAddress ?? "";
   const initial = [user?.firstName?.[0], user?.lastName?.[0]].filter(Boolean).join("").toUpperCase() || user?.username?.[0]?.toUpperCase() || "?";
+
+  async function handleClearAllData() {
+    setClearing(true);
+    try {
+      await clearAllData();
+      toast.success("Data cleared", "All of your entries were removed.");
+    } catch (error) {
+      reportException(error, "clear_all_data_failed");
+      toast.error("Couldn't clear data", error instanceof Error ? error.message : "Try again");
+    } finally {
+      setClearing(false);
+    }
+  }
 
   return (
     <div className="lg:hidden px-5 pt-2 pb-6">
@@ -867,6 +883,19 @@ function MobileAccountLayout({ title }: { title: string }) {
 
       <div className="mt-6">
         <CheckInTemplatesCard compact />
+      </div>
+
+      {/* TODO: Add full mobile settings parity per plans/005-beta-release.md. */}
+      <div className="mt-6 rounded-[20px] bg-white dark:bg-[#1a1e2e] px-5 py-1 shadow-[0_10px_30px_rgba(13,16,27,0.07)]">
+        <button type="button" disabled={clearing} onClick={() => { if (!clearing && confirm("Delete all your data? This cannot be undone.")) void handleClearAllData(); }}
+          className="w-full flex items-center justify-between py-3 border-b border-ink/8 dark:border-white/8 text-left disabled:opacity-50">
+          <span className="text-[14px] font-medium text-ink/70 dark:text-white/70">Clear all entries</span>
+          {clearing ? <Loader2 className="h-4 w-4 animate-spin text-ink/50 dark:text-white/50" /> : <Trash2 className="h-4 w-4 text-ink/40 dark:text-white/40" />}
+        </button>
+        <button type="button" onClick={() => signOut()} className="w-full flex items-center justify-between py-3 text-left">
+          <span className="text-[14px] font-medium text-ink/70 dark:text-white/70">Sign out</span>
+          <LogOut className="h-4 w-4 text-ink/40 dark:text-white/40" />
+        </button>
       </div>
     </div>
   );
