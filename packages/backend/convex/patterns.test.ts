@@ -1,5 +1,12 @@
+import { convexTest } from "convex-test";
 import { describe, test, expect } from "vitest";
 import { derivePatterns } from "./patterns";
+import { api, internal } from "./_generated/api";
+import schema from "./schema";
+
+const modules = (import.meta as ImportMeta & {
+  glob: (pattern: string) => Record<string, () => Promise<any>>;
+}).glob("./**/*.*s");
 
 const empty = { meals: [], workouts: [], sleep: [], water: [], proteinTarget: 150, waterTarget: 2000 };
 
@@ -29,5 +36,56 @@ describe("derivePatterns", () => {
     }));
     const patterns = derivePatterns({ ...empty, water });
     expect(patterns.some((p) => p.includes("hydration"))).toBe(true);
+  });
+
+  test("pattern context excludes tombstoned meals, workouts, and water", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      for (let day = 1; day <= 14; day++) {
+        const date = `2026-07-${String(day).padStart(2, "0")}`;
+        const isWednesday = new Date(`${date}T00:00:00`).getDay() === 3;
+        await ctx.db.insert("meals", {
+          userId: "patterns-user",
+          date,
+          name: "Deleted meal",
+          calories: 400,
+          protein: isWednesday ? 20 : 160,
+          carbs: 40,
+          fat: 10,
+          time: "12:00",
+          undoneAt: Date.now(),
+        });
+      }
+      for (const date of ["2026-07-01", "2026-07-02", "2026-07-10"]) {
+        await ctx.db.insert("workouts", {
+          userId: "patterns-user",
+          date,
+          name: "Deleted workout",
+          sets: "1",
+          duration: "30",
+          intensity: "MODERATE",
+          timestamp: "09:00",
+          undoneAt: Date.now(),
+        });
+      }
+      for (let day = 1; day <= 7; day++) {
+        await ctx.db.insert("water_logs", {
+          userId: "patterns-user",
+          date: `2026-07-${String(day).padStart(2, "0")}`,
+          ml: 250,
+          time: "08:00",
+          undoneAt: Date.now(),
+        });
+      }
+    });
+
+    const expected: string[] = [];
+    expect(await t.withIdentity({ subject: "patterns-user" }).query(api.patterns.getPatterns, {
+      days: 3650,
+    })).toEqual(expected);
+    expect(await t.query((internal as any).patterns.getPatternsForContext, {
+      userId: "patterns-user",
+      days: 3650,
+    })).toEqual(expected);
   });
 });

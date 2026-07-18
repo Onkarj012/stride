@@ -139,6 +139,7 @@ export default defineSchema({
   user_profiles: defineTable({
     userId: v.string(),
     weight: v.optional(v.number()),
+    weightUpdatedByActionId: v.optional(v.string()),
     height: v.optional(v.number()),
     age: v.optional(v.number()),
     sex: v.optional(v.string()),

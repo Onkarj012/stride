@@ -184,7 +184,8 @@ export async function tombstoneActionOwnedRow(ctx: MutationCtx, input: {
   userId: string;
   table: DomainTable;
   row: { _id: string; date: string; userId: string; sourceActionId?: string; undoneAt?: number };
-}): Promise<boolean> {
+}): Promise<"tombstoned" | "already_tombstoned" | "not_action_owned"> {
+  if (input.row.undoneAt) return "already_tombstoned";
   let action: Doc<"actions"> | null = null;
   if (input.row.sourceActionId) {
     action = await ctx.db.get(input.row.sourceActionId as any) as Doc<"actions"> | null;
@@ -198,23 +199,30 @@ export async function tombstoneActionOwnedRow(ctx: MutationCtx, input: {
       candidate.committedRowRef?.table === input.table && candidate.committedRowRef.id === input.row._id,
     ) ?? null;
   }
+  if (!action) {
+    if (input.row.sourceActionId) throw new Error("Action-owned row has no matching action");
+    return "not_action_owned";
+  }
   if (
-    !action
-    || action.userId !== input.userId
+    action.userId !== input.userId
     || action.committedRowRef?.table !== input.table
     || action.committedRowRef.id !== input.row._id
-    || action.status !== "committed"
-  ) return false;
+  ) throw new Error("Action-owned row does not match its action");
+  if (action.status !== "committed" && action.status !== "undone") {
+    throw new Error(`Action-owned row cannot be deleted while its action is ${action.status}`);
+  }
 
   const undoneAt = Date.now();
   if (!input.row.undoneAt) await ctx.db.patch(input.row._id as any, { undoneAt });
-  assertTransition(action.status, "undone");
-  await ctx.db.patch(action._id, { status: "undone", undoneAt });
+  if (action.status === "committed") {
+    assertTransition(action.status, "undone");
+    await ctx.db.patch(action._id, { status: "undone", undoneAt });
+  }
   if (input.table === "meals" || input.table === "workouts") {
     await compensateInferredMemory(ctx, action, input.table);
   }
   await recordBehaviorRow(ctx, input.userId, "undo", action.actionType, action._id, input.row.date);
-  return true;
+  return "tombstoned";
 }
 
 async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">): Promise<UndoResult & { date?: string; actionType?: DerivedActionType }> {
@@ -263,13 +271,14 @@ async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">):
       .query("user_profiles")
       .withIndex("by_user", (q) => q.eq("userId", action.userId))
       .first();
-    if (profile && profile.weight === row.weightKg) {
+    if (profile?.weightUpdatedByActionId === expectedSourceActionId) {
       const previousProfile = action.payload.previousProfile;
-      if (previousProfile === null) {
-        await ctx.db.delete(profile._id);
-      } else if (previousProfile && typeof previousProfile === "object") {
-        await ctx.db.replace(profile._id, previousProfile);
-      }
+      await ctx.db.patch(profile._id, {
+        weight: previousProfile && typeof previousProfile === "object" ? previousProfile.weight : undefined,
+        weightUpdatedByActionId: previousProfile && typeof previousProfile === "object"
+          ? previousProfile.weightUpdatedByActionId
+          : undefined,
+      });
     }
   }
 

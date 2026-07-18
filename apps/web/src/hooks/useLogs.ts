@@ -6,8 +6,9 @@
  *   - remove(id) — deletes by id (auto-detects table)
  *   - clear() — deletes all of today's entries
  */
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
+import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import type { LogCategory, LogEntry } from "@/lib/storage";
@@ -17,6 +18,36 @@ import { getAIErrorMessage } from "@/lib/ai-errors";
 
 function todayDate(): string {
   return localDateStr();
+}
+
+type WaterMutationArgs = {
+  ml: number;
+  date?: string;
+  time?: string;
+  idempotencyToken: string;
+  allowDuplicate?: boolean;
+};
+
+function getNearDuplicateData(error: unknown): { message?: string } | null {
+  if (!(error instanceof ConvexError)) return null;
+  const data = error.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const payload = data as { code?: string; message?: string };
+  return payload.code === "NEAR_DUPLICATE" ? payload : null;
+}
+
+export async function submitWaterIntent(
+  addWater: (args: WaterMutationArgs) => Promise<unknown>,
+  args: WaterMutationArgs,
+): Promise<unknown> {
+  try {
+    return await addWater(args);
+  } catch (error) {
+    const duplicate = getNearDuplicateData(error);
+    if (!duplicate) throw error;
+    if (!window.confirm(duplicate.message ?? "Looks like you already logged this — log anyway?")) return null;
+    return addWater({ ...args, allowDuplicate: true });
+  }
 }
 
 export function requireMealNutrition(meal: LogEntry["meal"]): NonNullable<LogEntry["meal"]> {
@@ -50,6 +81,7 @@ export function useLogs(date?: string) {
   const addMeal = useMutation(api.meals.addMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
   const addWater = useMutation(api.wellness.addWater);
+  const waterIntentToken = useRef<string | null>(null);
   const upsertSleep = useMutation(api.wellness.upsertSleep);
   const addMood = useMutation(api.wellness.addMood);
   const upsertSteps = useMutation(api.wellness.upsertSteps);
@@ -162,7 +194,13 @@ export function useLogs(date?: string) {
         });
         } else if (category === "water") {
         const ml = requireWaterAmount(extra?.water);
-        await addWater({ ml, date: targetDate, time, idempotencyToken: crypto.randomUUID() });
+        const token = waterIntentToken.current ?? crypto.randomUUID();
+        waterIntentToken.current = token;
+        try {
+          await submitWaterIntent(addWater, { ml, date: targetDate, time, idempotencyToken: token });
+        } finally {
+          if (waterIntentToken.current === token) waterIntentToken.current = null;
+        }
         } else if (category === "sleep") {
         const s = extra?.sleep;
         if (!s) return null;

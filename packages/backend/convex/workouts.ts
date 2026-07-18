@@ -352,7 +352,9 @@ export const deleteWorkout = mutation({
     const userId = await requireUserId(ctx);
     const workout = await ctx.db.get(id);
     if (!workout || workout.userId !== userId) throw new Error("Not found");
-    if (!(await tombstoneActionOwnedRow(ctx, { userId, table: "workouts", row: workout }))) await ctx.db.delete(id);
+    const deletion = await tombstoneActionOwnedRow(ctx, { userId, table: "workouts", row: workout });
+    if (deletion === "already_tombstoned") return;
+    if (deletion === "not_action_owned") await ctx.db.delete(id);
     await recomputeForAction(ctx, { userId, actionType: "workout", date: workout.date });
   },
 });

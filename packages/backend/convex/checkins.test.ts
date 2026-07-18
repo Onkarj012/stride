@@ -278,6 +278,29 @@ describe("check-in selection", () => {
     expect(await t.run((ctx) => ctx.db.query("weight_logs").first())).toMatchObject({ weightKg: 75, undoneAt: expect.any(Number) });
   });
 
+  test("manual weight update after a check-in survives undoing the check-in", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    await asUser.mutation(api.profile.upsertProfile, { weight: 80, activityLevel: "moderate" });
+
+    await asUser.mutation(api.checkins.submitAnswer, {
+      questionId: "template_daily_weigh_in",
+      date: "2026-07-08",
+      window: "morning",
+      source: "template",
+      answerType: "number",
+      value: "75",
+      numericValue: 75,
+      templateId: "daily_weigh_in",
+    });
+    const action = await t.run((ctx) => ctx.db.query("actions").first());
+
+    await asUser.mutation(api.profile.upsertProfile, { weight: 78 });
+    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
+
+    expect((await asUser.query(api.profile.getProfile, {}))?.weight).toBe(78);
+  });
+
   test("editing same-day water and mood check-ins patches existing logs", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });

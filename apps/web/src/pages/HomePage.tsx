@@ -10,6 +10,7 @@ import { AgentBadge, NarrativeCard, StatChip, StreakCard, StrideMark, WaterTrack
 import { Skeleton } from "@/components/primitives/Skeleton";
 import { useShortcut } from "@/hooks/useShortcut";
 import { useDailyWindow } from "@/hooks/useDailyWindow";
+import { submitWaterIntent } from "@/hooks/useLogs";
 import { localDateStr } from "@/lib/utils";
 
 const LOG_PROMPTS: Record<string, string> = {
@@ -149,8 +150,8 @@ export function HomePage() {
     ? waterLogs.reduce((sum: number, row: Doc<"water_logs">) => sum + row.ml, 0)
     : (stats?.waterMl ?? 0);
 
-  async function handleAddWater(ml: number) {
-    await addWater({ ml, date: today, idempotencyToken: crypto.randomUUID() });
+  async function handleAddWater(ml: number, idempotencyToken: string) {
+    await submitWaterIntent(addWater, { ml, date: today, idempotencyToken });
   }
 
   async function handleRemoveWater() {

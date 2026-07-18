@@ -66,17 +66,51 @@ describe("audited action undo", () => {
     expect(repeated).toMatchObject({ actionId: action._id, status: "already_undone" });
   });
 
-  test("deleting a canonical meal tombstones its row and synchronizes the action", async () => {
+  test("re-deleting a canonical meal is a no-op that preserves its tombstoned row", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "undo-user" });
     const mealId = await writeMeal(t, "delete-canonical-meal");
     const action = (await t.run((ctx) => ctx.db.query("actions").collect()))[0];
 
     await asUser.mutation(api.meals.deleteMeal, { id: mealId });
+    await asUser.mutation(api.meals.deleteMeal, { id: mealId });
 
     expect(await t.run((ctx) => ctx.db.get(mealId))).toMatchObject({ undoneAt: expect.any(Number) });
     expect(await t.run((ctx) => ctx.db.get(action._id))).toMatchObject({ status: "undone", undoneAt: expect.any(Number) });
     expect(await asUser.mutation(undoApi.undoAction, { actionId: action._id })).toMatchObject({ status: "already_undone" });
+  });
+
+  test("weight undo only restores the weight owned by that action", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    await t.run((ctx) => ctx.db.insert("user_profiles", {
+      userId: "undo-user",
+      activityLevel: "moderate",
+      weight: 80,
+      goal: "maintain",
+    }));
+    await t.mutation(writerApi.writeRecoveryAction, {
+      group: group("weight-first"),
+      member: member({ kind: "weight", weightKg: 75, date: "2026-07-16" }, "weight-first-member"),
+    });
+    const firstAction = (await t.run((ctx) => ctx.db.query("actions").collect()))
+      .find((action) => action.memberIdempotencyKey === "weight-first-member")!;
+    await t.mutation(writerApi.writeRecoveryAction, {
+      group: group("weight-second"),
+      member: member({ kind: "weight", weightKg: 75, date: "2026-07-17" }, "weight-second-member"),
+    });
+    const secondAction = (await t.run((ctx) => ctx.db.query("actions").collect()))
+      .find((action) => action.memberIdempotencyKey === "weight-second-member")!;
+    const profileId = (await t.run((ctx) => ctx.db.query("user_profiles").first()))!._id;
+    await t.run((ctx) => ctx.db.patch(profileId, { goal: "muscle_gain" }));
+
+    await asUser.mutation(undoApi.undoAction, { actionId: firstAction._id });
+
+    expect(await t.run((ctx) => ctx.db.get(profileId))).toMatchObject({
+      weight: 75,
+      goal: "muscle_gain",
+      weightUpdatedByActionId: String(secondAction._id),
+    });
   });
 
   test("group undo reverses committed members and skips failed and undone members", async () => {

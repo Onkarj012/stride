@@ -126,19 +126,26 @@ describe("canonical action writers", () => {
     expect(moodRows).toHaveLength(2);
   });
 
-  test("public water retries with the same client token commit one row and one action", async () => {
+  test("public water dedupes one intent and allows a confirmed identical second intent", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "writer-user" });
     const args = { ml: 500, date: "2026-07-16", time: "12:00", idempotencyToken: "water-tap-1" };
     const first = await asUser.mutation(api.wellness.addWater, args);
     const second = await asUser.mutation(api.wellness.addWater, args);
+    const duplicateArgs = { ...args, date: "2026-07-17", time: "00:00", idempotencyToken: "water-tap-2" };
+
+    await expect(asUser.mutation(api.wellness.addWater, duplicateArgs)).rejects.toMatchObject({
+      data: { code: "NEAR_DUPLICATE" },
+    });
+    const confirmed = await asUser.mutation(api.wellness.addWater, { ...duplicateArgs, allowDuplicate: true });
     const rows = await t.run((ctx) => ctx.db.query("water_logs").collect());
     const actions = await t.run((ctx) => ctx.db.query("actions").collect());
 
     expect(first).toBe(second);
-    expect(rows).toHaveLength(1);
+    expect(confirmed).not.toBe(first);
+    expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ ml: 500, sourceActionId: String(actions[0]._id) });
-    expect(actions).toHaveLength(1);
+    expect(actions).toHaveLength(2);
   });
 
   test("water upsert from check-in replaces the active row and records a previous", async () => {

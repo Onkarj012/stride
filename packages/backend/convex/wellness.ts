@@ -50,9 +50,14 @@ export async function writeRecoveryDomain(ctx: MutationCtx, args: any, options: 
         ? (await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect())
           .find((row: any) => !row.undoneAt) ?? null
         : null;
-      if (args.source === "direct_ui" && args.mode !== "upsert") {
-        const duplicate = (await ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", date)).collect())
-          .find((row: any) => !row.undoneAt && row.ml === draft.waterMl && row.time === time);
+      if (args.source === "direct_ui" && args.mode !== "upsert" && args.mode !== "allow_duplicate") {
+        const now = Date.now();
+        const previousDate = new Date(new Date(`${date}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
+        const candidateRows = (await Promise.all([date, previousDate].map((candidateDate) =>
+          ctx.db.query("water_logs").withIndex("by_user_date", (q: any) => q.eq("userId", args.userId).eq("date", candidateDate)).collect(),
+        ))).flat();
+        const duplicate = candidateRows
+          .find((row: any) => !row.undoneAt && row.ml === draft.waterMl && now - row._creationTime <= 10_000);
         if (duplicate) {
           throw new ConvexError({
             code: "NEAR_DUPLICATE",
@@ -175,9 +180,14 @@ export async function writeWeightDomain(ctx: MutationCtx, args: {
     .first();
   const previousProfile = beforeImage(profile);
   if (profile) {
-    await ctx.db.patch(profile._id, { weight: args.weightKg });
+    await ctx.db.patch(profile._id, { weight: args.weightKg, weightUpdatedByActionId: args.sourceActionId });
   } else {
-    await ctx.db.insert("user_profiles", { userId: args.userId, weight: args.weightKg, activityLevel: "moderate" });
+    await ctx.db.insert("user_profiles", {
+      userId: args.userId,
+      weight: args.weightKg,
+      weightUpdatedByActionId: args.sourceActionId,
+      activityLevel: "moderate",
+    });
   }
 
   const existingWeight = (await ctx.db
@@ -225,8 +235,9 @@ export const addWater = mutation({
     date: v.optional(v.string()),
     time: v.optional(v.string()),
     idempotencyToken: v.optional(v.string()),
+    allowDuplicate: v.optional(v.boolean()),
   },
-  handler: async (ctx, { ml, date, time, idempotencyToken }): Promise<any> => {
+  handler: async (ctx, { ml, date, time, idempotencyToken, allowDuplicate }): Promise<any> => {
     const userId = await requireUserId(ctx);
     const targetDate = date ?? todayDate();
     const rawInput = JSON.stringify({ kind: "water", ml, date: targetDate, time: time ?? null });
@@ -235,7 +246,14 @@ export const addWater = mutation({
       group: { userId, groupIdempotencyKey: groupKey, sourceSurface: "direct_ui", rawInput },
       member: {
         memberIdempotencyKey: deriveMemberKey({ groupKey, actionType: "recovery", payloadFingerprint: rawInput, ordinal: 0 }),
-        payload: { kind: "water", ml, date: targetDate, time, source: "direct_ui" },
+        payload: {
+          kind: "water",
+          ml,
+          date: targetDate,
+          time,
+          source: "direct_ui",
+          ...(allowDuplicate ? { allowDuplicate: true, mode: "allow_duplicate" } : {}),
+        },
         provenance: "user_reported",
         validation: { status: "valid", messages: [] },
         reversible: true,
@@ -254,7 +272,9 @@ export const deleteWater = mutation({
     const userId = await requireUserId(ctx);
     const row = await ctx.db.get(id);
     if (!row || row.userId !== userId) throw new Error("Not found");
-    if (!(await tombstoneActionOwnedRow(ctx, { userId, table: "water_logs", row }))) await ctx.db.delete(id);
+    const deletion = await tombstoneActionOwnedRow(ctx, { userId, table: "water_logs", row });
+    if (deletion === "already_tombstoned") return;
+    if (deletion === "not_action_owned") await ctx.db.delete(id);
     await recomputeForAction(ctx, { userId, actionType: "recovery", date: row.date });
   },
 });
