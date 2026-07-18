@@ -20,7 +20,7 @@ describe("parseWorkoutDescription", () => {
     mockedCallAI.mockReset();
   });
 
-  test("calculates a nonzero burn for detailed workouts without profile weight", async () => {
+  test("leaves calorie burn unavailable for detailed workouts without profile weight", async () => {
     mockedCallAI.mockResolvedValue(JSON.stringify({
       name: "Push Day",
       duration: "60 min",
@@ -99,9 +99,8 @@ walking: 5 min, 11 incline, then 5min of normal walking`, testCtx, testUserId);
 
     expect(result.exercises).toHaveLength(6);
     expect(result.sets).toBe("6 exercises · 17 sets");
-    expect(result.caloriesBurned).toBeGreaterThan(0);
-    expect(result.calorieResult?.total_kcal).toBe(result.caloriesBurned);
-    expect(result.calorieResult?.confidence).toBeLessThan(0.9);
+    expect(result.caloriesBurned).toBe(0);
+    expect(result.calorieResult).toBeNull();
   });
 
   test("preserves an explicitly stated calorie burn over the engine estimate", async () => {

@@ -13,6 +13,7 @@ import {
   parseDurationMinutes,
 } from "./calorie_engine";
 import { listExercises, type ExerciseMeta } from "./exercise_db";
+import { assertInRange } from "./validation";
 
 export const WORKOUT_QUALITY_THRESHOLD = 0.7;
 export const WORKOUT_RUNNER_UP_MARGIN = 0.15;
@@ -100,6 +101,7 @@ export type WorkoutDraft = {
   confidence: number;
   rawInput?: string;
   rationale?: string;
+  validationFlags: string[];
 };
 
 export type WorkoutDraftExerciseInput = {
@@ -148,6 +150,27 @@ function finiteNumber(value: unknown): number | undefined {
 function nonNegative(value: unknown): number | undefined {
   const number = finiteNumber(value);
   return number == null ? undefined : Math.max(0, number);
+}
+
+const FIELD_LIMITS = {
+  reps: [100, 1_000],
+  load: [500, 2_000],
+  distance: [100, 1_000],
+  duration: [300, 1_440],
+  incline: [30, 60],
+  caloriesPerHour: [1_500, 3_000],
+} as const;
+
+function bounded(field: keyof typeof FIELD_LIMITS, value: unknown, flags: string[]): number | undefined {
+  const number = nonNegative(value);
+  if (number == null) return undefined;
+  const [borderline, reject] = FIELD_LIMITS[field];
+  assertInRange(field, number, 0, reject);
+  if (number > borderline) {
+    flags.push(`${field}_clamped`);
+    return borderline;
+  }
+  return number;
 }
 
 function round(value: number, digits = 0): number {
@@ -208,9 +231,9 @@ function normalizeUnit(value: unknown): string | undefined {
   return unit;
 }
 
-function normalizeSet(raw: Record<string, unknown>, defaultUnit?: string): WorkoutSet {
-  const reps = nonNegative(raw.reps);
-  const load = nonNegative(raw.load ?? raw.weight);
+function normalizeSet(raw: Record<string, unknown>, defaultUnit: string | undefined, flags: string[]): WorkoutSet {
+  const reps = bounded("reps", raw.reps, flags);
+  const load = bounded("load", raw.load ?? raw.weight, flags);
   const unilateral = typeof raw.unilateral === "boolean"
     ? raw.unilateral
     : typeof raw.side === "string" || typeof raw.sides === "string";
@@ -226,16 +249,16 @@ function normalizeSet(raw: Record<string, unknown>, defaultUnit?: string): Worko
   };
 }
 
-function normalizeCardio(raw: Record<string, unknown>, fallbackDuration?: number): WorkoutCardio | undefined {
-  const durationMin = nonNegative(raw.durationMin ?? raw.duration_min) ?? fallbackDuration;
-  const distance = nonNegative(raw.distance ?? raw.distance_km ?? raw.distance_miles);
+function normalizeCardio(raw: Record<string, unknown>, fallbackDuration: number | undefined, flags: string[]): WorkoutCardio | undefined {
+  const durationMin = bounded("duration", raw.durationMin ?? raw.duration_min, flags) ?? fallbackDuration;
+  const distance = bounded("distance", raw.distance ?? raw.distance_km ?? raw.distance_miles, flags);
   const distanceUnit = typeof raw.distanceUnit === "string"
     ? raw.distanceUnit
     : raw.distance_miles != null ? "mi" : raw.distance_km != null ? "km" : undefined;
   const paceValue = finiteNumber(raw.pace);
   const pace = paceValue ?? (typeof raw.pace === "string" ? raw.pace.trim() || undefined : undefined);
-  const incline = nonNegative(raw.incline);
-  const caloriesPerHour = nonNegative(raw.caloriesPerHour ?? raw.calories_per_hr);
+  const incline = bounded("incline", raw.incline, flags);
+  const caloriesPerHour = bounded("caloriesPerHour", raw.caloriesPerHour ?? raw.calories_per_hr, flags);
   if ([durationMin, distance, pace, incline, caloriesPerHour].every((value) => value == null)) return undefined;
   return { durationMin, distance, distanceUnit, pace, incline, caloriesPerHour };
 }
@@ -248,13 +271,13 @@ function asExerciseInputs(value: unknown): WorkoutDraftExerciseInput[] {
   return [];
 }
 
-function parseDuration(input: WorkoutDraftInput, exercises: WorkoutDraftExercise[]): number | undefined {
-  const direct = nonNegative(input.durationMin);
+function parseDuration(input: WorkoutDraftInput, exercises: WorkoutDraftExercise[], flags: string[]): number | undefined {
+  const direct = bounded("duration", input.durationMin, flags);
   if (direct != null && direct > 0) return round(direct, 2);
-  if (typeof input.duration === "number" && input.duration > 0) return round(input.duration, 2);
+  if (typeof input.duration === "number" && input.duration > 0) return bounded("duration", input.duration, flags);
   if (typeof input.duration === "string") {
     const parsed = parseDurationMinutes(input.duration);
-    if (parsed > 0) return round(parsed, 2);
+    if (parsed > 0) return bounded("duration", parsed, flags);
   }
   const cardioMinutes = exercises.reduce((total, exercise) => total + (exercise.cardio?.durationMin ?? 0), 0);
   return cardioMinutes > 0 ? round(cardioMinutes, 2) : undefined;
@@ -341,6 +364,7 @@ function estimateCalories(
 
 /** Build the one canonical workout draft used by every workout source. */
 export function buildWorkoutDraft(input: WorkoutDraftInput): WorkoutDraft {
+  const validationFlags: string[] = [];
   const rawExercises = asExerciseInputs(input.exercises);
   const exercises = rawExercises.map((raw): WorkoutDraftExercise => {
     const rawName = (raw.rawName ?? raw.name ?? "").trim() || "Unknown exercise";
@@ -353,9 +377,9 @@ export function buildWorkoutDraft(input: WorkoutDraftInput): WorkoutDraft {
     const accepted = selected && Math.min(selected.score, inputConfidence) >= WORKOUT_QUALITY_THRESHOLD;
     const firstSet = raw.sets?.[0];
     const sourceCardio = raw.cardio ?? (firstSet && typeof firstSet === "object" ? firstSet : undefined);
-    const cardio = normalizeCardio(sourceCardio ?? {}, undefined);
+    const cardio = normalizeCardio(sourceCardio ?? {}, undefined, validationFlags);
     const category = selected?.category;
-    const sets = (raw.sets ?? []).map((set) => normalizeSet(set, raw.weight_unit));
+    const sets = (raw.sets ?? []).map((set) => normalizeSet(set, raw.weight_unit, validationFlags));
     const normalizedName = accepted ? selected.canonicalName : raw.normalizedName?.trim() || rawName;
     return {
       rawName,
@@ -372,7 +396,7 @@ export function buildWorkoutDraft(input: WorkoutDraftInput): WorkoutDraft {
     };
   });
 
-  const durationMin = parseDuration(input, exercises);
+  const durationMin = parseDuration(input, exercises, validationFlags);
   const intensity = (input.intensity ?? "MEDIUM").toUpperCase();
   const estimate = estimateCalories(durationMin, exercises, intensity, input.profile);
   const reportedCalories = nonNegative(input.reportedCalories);
@@ -383,7 +407,11 @@ export function buildWorkoutDraft(input: WorkoutDraftInput): WorkoutDraft {
   const calorieSource = input.calorieSource ?? (reportedCalories != null ? "reported" : estimatedCalories != null ? "estimated" : undefined);
   const calories = calorieSource === "reported" ? reportedCalories : calorieSource === "estimated" ? estimatedCalories : undefined;
   const unresolved = exercises.filter((exercise) => exercise.normalizationState === "unknown-explicit").map((exercise) => exercise.rawName);
-  const confidence = exercises.length === 0 ? 0.1 : round(exercises.reduce((sum, exercise) => sum + exercise.normalizationConfidence, 0) / exercises.length, 2);
+  const confidence = validationFlags.length
+    ? 0.35
+    : exercises.length === 0
+      ? 0.1
+      : round(exercises.reduce((sum, exercise) => sum + exercise.normalizationConfidence, 0) / exercises.length, 2);
   const suppliedBreakdown = typeof input.calorieBreakdown === "string"
     ? (() => { try { return JSON.parse(input.calorieBreakdown) as Record<string, unknown>; } catch { return undefined; } })()
     : input.calorieBreakdown;
@@ -414,6 +442,7 @@ export function buildWorkoutDraft(input: WorkoutDraftInput): WorkoutDraft {
     confidence,
     rawInput: input.rawInput,
     rationale: input.rationale,
+    validationFlags,
   };
 }
 

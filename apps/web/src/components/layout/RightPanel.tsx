@@ -9,6 +9,13 @@ import { useSnapshot } from "@/context/SnapshotContext";
 
 const SPRING = { type: "spring", stiffness: 260, damping: 30 } as const;
 
+type WeeklyProgressDay = {
+  date: string;
+  dayLabel: string;
+  calories: number;
+  workouts: number;
+};
+
 function PulseBar({ pct, color }: { pct: number; color: string }) {
   return (
     <div className="h-1 rounded-full bg-input overflow-hidden mt-1">
@@ -22,8 +29,10 @@ export function RightPanel() {
   const reduceMotion = useReducedMotion();
   const profile = useQuery(api.profile.getProfile);
   const brief = useQuery(api.insights.getTodayBrief, {});
-  const { logs } = useLogs(localDateStr());
-  const streakInfo = useQuery(api.history.getStreak, { today: new Date().toISOString().split("T")[0] });
+  const today = localDateStr();
+  const { logs } = useLogs(today);
+  const weeklyProgress = useQuery(api.progress.getProgress, { days: 7, today }) as WeeklyProgressDay[] | undefined;
+  const streakInfo = useQuery(api.history.getStreak, { today });
 
   const kcal = Math.round(logs.reduce((s, l) => s + (l.meal?.kcal ?? 0), 0));
   const protein = Math.round(logs.reduce((s, l) => s + (l.meal?.protein ?? 0), 0));
@@ -44,8 +53,7 @@ export function RightPanel() {
   const goalWeight = (profile as any)?.goalWeightKg;
   const currentWeight = (profile as any)?.weight;
 
-  const adherenceBars = [70, 92, 34, 80, 64, 88, 42];
-  const days = ["M", "T", "W", "T", "F", "S", "S"];
+  const loggedDays = weeklyProgress?.filter((day) => day.calories > 0 || day.workouts > 0).length ?? 0;
 
   return (
     <motion.aside
@@ -128,27 +136,33 @@ export function RightPanel() {
               </div>
             </div>
 
-            {/* Weekly adherence */}
+            {/* Weekly activity */}
             <div className="rounded-[15px] bg-bg p-3.5">
               <div className="flex justify-between items-baseline mb-2.5">
-                <span className="text-[12px] font-bold text-text">Weekly adherence</span>
-                <span className="text-[13.5px] font-extrabold text-text">72%</span>
+                <span className="text-[12px] font-bold text-text">Weekly activity</span>
+                <span className="text-[11px] font-semibold text-text-muted">
+                  {weeklyProgress === undefined
+                    ? "—"
+                    : loggedDays > 0
+                      ? `${loggedDays} of ${weeklyProgress.length} days logged`
+                      : "Not enough data yet"}
+                </span>
               </div>
               <div className="flex items-end gap-1.5 h-10">
-                {adherenceBars.map((h, i) => (
+                {(weeklyProgress ?? []).map((day) => (
                   <div
-                    key={i}
+                    key={day.date}
                     className="flex-1 rounded-[5px_5px_3px_3px]"
                     style={{
-                      height: `${h}%`,
-                      background: h > 60 ? "var(--color-lavender)" : "color-mix(in srgb, var(--color-lavender) 30%, transparent)",
+                      height: day.calories > 0 || day.workouts > 0 ? "100%" : "0%",
+                      background: "var(--color-lavender)",
                     }}
                   />
                 ))}
               </div>
               <div className="flex gap-1.5 mt-1">
-                {days.map((d, i) => (
-                  <span key={i} className="flex-1 text-center text-[9px] font-bold text-text-muted">{d}</span>
+                {(weeklyProgress ?? []).map((day) => (
+                  <span key={day.date} className="flex-1 text-center text-[9px] font-bold text-text-muted">{day.dayLabel.slice(0, 1)}</span>
                 ))}
               </div>
             </div>

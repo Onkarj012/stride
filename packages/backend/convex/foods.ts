@@ -86,12 +86,12 @@ interface NormalizedFood {
 
 function normalizeOFFProduct(product: any): NormalizedFood | null {
   const n = product.nutriments || {};
-  const cal = n["energy-kcal_100g"] ?? (n["energy_100g"] ? n["energy_100g"] / 4.184 : 0);
-  const protein = n["proteins_100g"] ?? 0;
-  const carbs = n["carbohydrates_100g"] ?? 0;
-  const fat = n["fat_100g"] ?? 0;
+  const cal = n["energy-kcal_100g"] ?? (typeof n["energy_100g"] === "number" ? n["energy_100g"] / 4.184 : undefined);
+  const protein = n["proteins_100g"];
+  const carbs = n["carbohydrates_100g"];
+  const fat = n["fat_100g"];
   const name = (product.product_name || product.product_name_en || "").trim();
-  if (!name || cal < 0) return null;
+  if (!name || [cal, protein, carbs, fat].some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0)) return null;
 
   return {
     name,
@@ -112,18 +112,21 @@ function normalizeOFFProduct(product: any): NormalizedFood | null {
 
 function normalizeUSDAFood(food: any): NormalizedFood | null {
   const nutrients: any[] = food.foodNutrients || [];
-  const get = (id: number) => nutrients.find((n: any) => n.nutrientId === id)?.value ?? 0;
+  const get = (id: number) => nutrients.find((n: any) => n.nutrientId === id)?.value;
   const cal = get(1008);
+  const protein = get(1003);
+  const carbs = get(1005);
+  const fat = get(1004);
   const name = (food.description || "").trim();
-  if (!name) return null;
+  if (!name || [cal, protein, carbs, fat].some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0)) return null;
 
   return {
     name: name.charAt(0).toUpperCase() + name.slice(1).toLowerCase(),
     brand: food.brandName || food.brandOwner || undefined,
     caloriesPer100g: Math.round(cal),
-    proteinPer100g: Math.round(get(1003) * 10) / 10,
-    carbsPer100g: Math.round(get(1005) * 10) / 10,
-    fatPer100g: Math.round(get(1004) * 10) / 10,
+    proteinPer100g: Math.round(protein * 10) / 10,
+    carbsPer100g: Math.round(carbs * 10) / 10,
+    fatPer100g: Math.round(fat * 10) / 10,
     source: "usda",
     verified: true,
     fdcId: String(food.fdcId),

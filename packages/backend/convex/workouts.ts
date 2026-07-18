@@ -147,14 +147,14 @@ export async function writeWorkoutDomain(
     exercises: draft.exercises,
     rationale: draft.rationale,
     caloriesBurned: validated.caloriesBurned,
+    reportedCalories: validated.reportedCalories,
+    estimatedCalories: validated.estimatedCalories,
     calorieConfidence: validated.calorieConfidence,
     calorieRangeLow: validated.calorieRangeLow,
     calorieRangeHigh: validated.calorieRangeHigh,
     calorieEstimateRough: draft.calorieEstimateRough,
     calorieBreakdown: draft.calorieBreakdown ? JSON.stringify(draft.calorieBreakdown) : undefined,
     calculationVersion: args.calculationVersion ?? (draft.estimatedCalories != null ? 1 : undefined),
-    reportedCalories: draft.reportedCalories,
-    estimatedCalories: draft.estimatedCalories,
     calorieSource: draft.calorieSource,
     calorieEstimateProvenance: draft.calorieEstimateProvenance,
     structuredSets: JSON.stringify(draft.exercises),
@@ -320,8 +320,8 @@ export const updateWorkout = mutation({
       workoutDraft: JSON.stringify(draft),
     };
     if (calorieWasEdited || workout.caloriesBurned !== undefined) patch.caloriesBurned = calorieWasEdited ? validated.caloriesBurned : workout.caloriesBurned;
-    if (calorieWasEdited || workout.reportedCalories !== undefined) patch.reportedCalories = draft.reportedCalories;
-    if (calorieWasEdited || workout.estimatedCalories !== undefined) patch.estimatedCalories = draft.estimatedCalories;
+    if (calorieWasEdited || workout.reportedCalories !== undefined) patch.reportedCalories = validated.reportedCalories;
+    if (calorieWasEdited || workout.estimatedCalories !== undefined) patch.estimatedCalories = validated.estimatedCalories;
     if (calorieWasEdited || workout.calorieSource !== undefined) patch.calorieSource = draft.calorieSource;
     if (fields.calorieConfidence !== undefined || workout.calorieConfidence !== undefined) patch.calorieConfidence = validated.calorieConfidence;
     if (fields.calorieRangeLow !== undefined || workout.calorieRangeLow !== undefined) patch.calorieRangeLow = validated.calorieRangeLow;
