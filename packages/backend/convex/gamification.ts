@@ -345,7 +345,7 @@ export const recordActivity = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) return null;
+    if (!identity) throw new Error("Unauthenticated");
     return recordActivityForUser(ctx, identity.subject, args);
   },
 });

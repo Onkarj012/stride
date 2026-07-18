@@ -29,8 +29,17 @@ import { mapAIIntensity, inferDensity, countCompoundRatio } from "./workout_scor
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 import {
   callAI, parseJSON, type AIMessage,
-  DEFAULT_MODEL, CHAT_MODEL, VISION_MODELS, OPENROUTER_URL,
+  DEFAULT_MODEL, CHAT_MODEL, VISION_MODELS,
 } from "./ai/llm";
+import {
+  AI_INPUT_LIMITS,
+  assertAudioBase64,
+  assertHistoryEntries,
+  assertImageDataUrl,
+  assertIngredients,
+  assertMaxChars,
+  estimateTranscriptionCostUsd,
+} from "./ai_guard";
 import {
   looksLikeLog, looksLikeFoodEstimate, extractUserMacros, applyUserMacros,
   classifyHomepageIntent, isNegatedLogItem,
@@ -44,6 +53,18 @@ import {
 // callAI, parseJSON, AIMessage, model constants → ./ai/llm
 // intent helpers (looksLikeLog, etc.) → ./ai/intent
 // meal/workout parsing + nutrition engine → ./ai/parse
+
+function finiteNonNegativeNumber(field: string, value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new Error(`${field} must be a finite non-negative number`);
+  }
+  return numeric;
+}
+
+function optionalFiniteNonNegativeNumber(field: string, value: unknown): number | undefined {
+  return value == null ? undefined : finiteNonNegativeNumber(field, value);
+}
 
 function getConvexErrorCode(err: unknown): string | undefined {
   if (!(err instanceof ConvexError)) return undefined;
@@ -873,6 +894,7 @@ export const parseOnboarding = action({
   handler: async (ctx, { field, text }): Promise<Record<string, unknown>> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(text, AI_INPUT_LIMITS.textChars, "onboarding text");
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
 
     const SCHEMAS: Record<string, string> = {
@@ -888,6 +910,8 @@ export const parseOnboarding = action({
 
     const prompt = `Extract structured data from the user's message. Return ONLY a JSON object matching this schema, no prose:\n${schema}\n\nUser message: "${text}"\n\nUse null for anything not mentioned. Return only valid JSON.`;
     const content = await callAI(
+      ctx,
+      identity.subject,
       [{ role: "user", content: prompt }],
       300,
       settings?.openRouterModel ?? undefined,
@@ -910,9 +934,13 @@ export const recipeInsight = action({
   handler: async (ctx, { name, perServing, ingredients }): Promise<string> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(name, AI_INPUT_LIMITS.textChars, "recipe name");
+    assertIngredients(ingredients);
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
     const prompt = `You are a friendly nutrition coach. In 1-2 short sentences, give one specific, encouraging insight about this recipe — name a nutritional strength and (optionally) one small tweak. No preamble.\nRecipe: ${name}\nPer serving: ${perServing.kcal} kcal, ${perServing.p}g protein, ${perServing.c}g carbs, ${perServing.f}g fat\nIngredients: ${ingredients.join(", ")}`;
     return callAI(
+      ctx,
+      identity.subject,
       [{ role: "user", content: prompt }],
       140,
       settings?.openRouterModel ?? undefined,
@@ -929,9 +957,12 @@ export const parseIngredients = action({
   handler: async (ctx, { text }): Promise<Array<{ name: string; grams: number; caloriesPer100g: number; proteinPer100g: number; carbsPer100g: number; fatPer100g: number; source: string }>> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(text, AI_INPUT_LIMITS.textChars, "ingredient text");
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
     const prompt = `You are a nutrition database. Parse this ingredient list (natural language, any units or portions) into structured JSON. For EACH ingredient: estimate the realistic edible weight in grams of the stated portion (e.g. "1 large banana"≈120, "1 tbsp olive oil"≈14, "2 eggs"≈100, "a handful of almonds"≈30, "1 cup cooked rice"≈195), and give standard per-100g macros. Return ONLY a JSON array, no prose:\n[{"name": string, "grams": number, "caloriesPer100g": number, "proteinPer100g": number, "carbsPer100g": number, "fatPer100g": number}]\n\nIngredients: "${text}"`;
     const content = await callAI(
+      ctx,
+      identity.subject,
       [{ role: "user", content: prompt }],
       700,
       settings?.openRouterModel ?? undefined,
@@ -944,11 +975,11 @@ export const parseIngredients = action({
         .filter((r) => r && typeof r.name === "string" && r.name.trim())
         .map((r) => ({
           name: String(r.name).trim(),
-          grams: Math.max(0, Number(r.grams) || 0),
-          caloriesPer100g: Math.max(0, Number(r.caloriesPer100g) || 0),
-          proteinPer100g: Math.max(0, Number(r.proteinPer100g) || 0),
-          carbsPer100g: Math.max(0, Number(r.carbsPer100g) || 0),
-          fatPer100g: Math.max(0, Number(r.fatPer100g) || 0),
+          grams: finiteNonNegativeNumber("ingredient grams", r.grams),
+          caloriesPer100g: finiteNonNegativeNumber("ingredient caloriesPer100g", r.caloriesPer100g),
+          proteinPer100g: finiteNonNegativeNumber("ingredient proteinPer100g", r.proteinPer100g),
+          carbsPer100g: finiteNonNegativeNumber("ingredient carbsPer100g", r.carbsPer100g),
+          fatPer100g: finiteNonNegativeNumber("ingredient fatPer100g", r.fatPer100g),
           source: "ai",
         }));
     } catch (err) {
@@ -965,9 +996,12 @@ export const parseSteps = action({
   handler: async (ctx, { text }): Promise<string[]> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(text, AI_INPUT_LIMITS.textChars, "cooking method");
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
     const prompt = `Turn this cooking method into clear, concise, ordered recipe steps. One action per step, imperative voice, no numbering or prose. Return ONLY a JSON array of strings.\n\nMethod: "${text}"`;
     const content = await callAI(
+      ctx,
+      identity.subject,
       [{ role: "user", content: prompt }],
       500,
       settings?.openRouterModel ?? undefined,
@@ -989,20 +1023,20 @@ export const estimateMeal = action({
   args: { mealName: v.string() },
   handler: async (ctx, { mealName }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(mealName, AI_INPUT_LIMITS.textChars, "meal name");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
     const prompt = `Estimate the nutritional values for this meal: "${mealName}".
 
 ${NUTRITION_ACCURACY_RULES}
 
 Return ONLY a JSON object with keys: calories (number), protein (number in grams), carbs (number in grams), fat (number in grams). No explanation.`;
-    const content = await callAI([{ role: "user", content: prompt }], 200, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 200, model, apiKey);
     const result = parseJSON<any>(content, { calories: 0, protein: 0, carbs: 0, fat: 0 });
     return { calories: result.calories || 0, protein: result.protein || 0, carbs: result.carbs || 0, fat: result.fat || 0 };
   },
@@ -1016,15 +1050,15 @@ export const parseMeal = action({
   },
   handler: async (ctx, { description, mealType, time }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(description, AI_INPUT_LIMITS.textChars, "meal description");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
-    const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
+    const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", ctx, userId, model, apiKey);
 
     // Run deterministic nutrition calculation
     const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsedMeal, date: new Date().toISOString().split("T")[0] }, { userId, useMemory: true }));
@@ -1050,30 +1084,30 @@ export const parseWorkout = action({
   },
   handler: async (ctx, { description, duration, intensity }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(description, AI_INPUT_LIMITS.textChars, "workout description");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
     let userPhysique: UserPhysique | undefined;
-    if (userId) {
-      const [settings, profile, metabolicProfile] = await Promise.all([
-        ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
-        ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-        ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
-      ]);
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-      if (profile) {
-        userPhysique = {
-          weight: profile.weight,
-          height: profile.height,
-          age: profile.age,
-          sex: profile.sex,
-          fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
-          metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
-        };
-      }
+    const [settings, profile, metabolicProfile] = await Promise.all([
+      ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
+      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+      ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
+    ]);
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
+    if (profile) {
+      userPhysique = {
+        weight: profile.weight,
+        height: profile.height,
+        age: profile.age,
+        sex: profile.sex,
+        fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
+        metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
+      };
     }
-    const result = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
+    const result = await parseWorkoutDescription(description, ctx, userId, duration, intensity, model, apiKey, userPhysique);
     return result;
   },
 });
@@ -1109,7 +1143,7 @@ export const logMeal = action({
         missing_fields: parsedData.missing_fields || [],
       };
     } else if (description) {
-      parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey);
+      parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", ctx, userId, model, apiKey);
     } else {
       throw new Error("description or parsedData required");
     }
@@ -1233,7 +1267,7 @@ export const logWorkout = action({
         });
       data = { _id: id, ...parsedData };
     } else if (description) {
-      const parsed = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique);
+      const parsed = await parseWorkoutDescription(description, ctx, userId, duration, intensity, model, apiKey, userPhysique);
       if (parsed.parseError) throw new Error("Workout could not be parsed. Edit it before saving.");
       const calorieFields = parsed.calorieResult ? {
         calorieConfidence: parsed.calorieResult.confidence,
@@ -1281,6 +1315,8 @@ export const chat = action({
   handler: async (ctx, { message, sessionId, coachType, today: todayArg, image, clarificationGroupId, clientSubmissionId }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(message, AI_INPUT_LIMITS.messageChars, "chat message");
+    if (image) assertImageDataUrl(image, "chat image");
     const userId = identity.subject;
     const userName = identity.name ?? "Athlete";
     const today = assertValidDate(todayArg ?? new Date().toISOString().split("T")[0]);
@@ -1382,6 +1418,7 @@ Rules:
       ]);
       history = msgs;
       isFirstMessage = count === 0;
+      assertHistoryEntries(history);
     }
 
     // Save user message
@@ -1506,7 +1543,7 @@ Rules:
     // inside callAI); the chat reply users read gets the upgraded CHAT_MODEL.
     const parseModel = settingsModel;
     const replyModel = settingsModel ?? CHAT_MODEL; // Sonnet handles text + vision
-    const reply = await callAI(messages, 800, replyModel, apiKey);
+    const reply = await callAI(ctx, userId, messages, 800, replyModel, apiKey);
 
     // Parse log blocks — support multiple items and new types
     let cleanReply = reply;
@@ -1615,7 +1652,7 @@ Rules:
         const logData = JSON.parse(mealMatch[1].trim());
         retryDescription = logData.description || message;
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
-        const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", parseModel, apiKey);
+        const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", ctx, userId, parseModel, apiKey);
         if (parsed.parseError) {
           logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
           continue;
@@ -1702,7 +1739,7 @@ Rules:
           fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
           metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
         } : undefined;
-        const parsed = await parseWorkoutDescription(logData.description || message, undefined, undefined, parseModel, apiKey, userPhysique);
+        const parsed = await parseWorkoutDescription(logData.description || message, ctx, userId, undefined, undefined, parseModel, apiKey, userPhysique);
         if (parsed.parseError) {
           logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
           continue;
@@ -2132,6 +2169,8 @@ Rules:
       if (isFirstMessage) {
         try {
           const title = await callAI(
+            ctx,
+            userId,
             [
               { role: "system", content: "Generate a short, descriptive title (max 6 words, 40 characters) for a fitness coaching conversation based on the user's first message. Return ONLY the title, no quotes, no punctuation." },
               { role: "user", content: message },
@@ -2165,20 +2204,40 @@ export const generateDailyInsights = action({
 
 export const generateDailyInsightsForUser = internalAction({
   args: { userId: v.string(), date: v.string() },
-  handler: async (ctx, { userId, date }) => runDailyInsights(ctx, userId, date),
+  handler: async (ctx, { userId, date }) => {
+    if (process.env.AI_CRONS_ENABLED !== "true") {
+      console.log(JSON.stringify({ event: "ai_cron_worker_skipped", cron: "daily_insights", userId, reason: "AI_CRONS_ENABLED_not_true" }));
+      return { skipped: true };
+    }
+    return runDailyInsights(ctx, userId, date);
+  },
 });
 
+const AI_CRON_BATCH_SIZE = 25;
+const AI_CRON_BATCH_DELAY_MS = 60_000;
+
+// TODO(beta P1): replace this delayed fan-out with a bounded, cursor-driven dispatcher
+// before enabling AI_CRONS_ENABLED. See plans/005-beta-release.md, P1 priority.
 /** Cron: fan out daily insights to each active user via the scheduler. */
 export const cronDailyInsights = internalAction({
   args: {},
   handler: async (ctx) => {
+    if (process.env.AI_CRONS_ENABLED !== "true") {
+      console.log(JSON.stringify({ event: "ai_cron_skipped", cron: "daily_insights", reason: "AI_CRONS_ENABLED_not_true" }));
+      return { users: 0 };
+    }
+
     const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 3 })) as string[];
-    for (const userId of users) {
-      // Derive the user's local date from their stored timezone offset.
-      const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
-      const offsetMin: number = settings?.timezoneOffsetMinutes ?? 0;
-      const localDate = new Date(Date.now() - offsetMin * 60_000).toISOString().slice(0, 10);
-      await ctx.scheduler.runAfter(0, internal.ai.generateDailyInsightsForUser, { userId, date: localDate });
+    for (let batchStart = 0; batchStart < users.length; batchStart += AI_CRON_BATCH_SIZE) {
+      const batch = users.slice(batchStart, batchStart + AI_CRON_BATCH_SIZE);
+      const delayMs = (batchStart / AI_CRON_BATCH_SIZE) * AI_CRON_BATCH_DELAY_MS;
+      for (const userId of batch) {
+        // Derive the user's local date from their stored timezone offset.
+        const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
+        const offsetMin: number = settings?.timezoneOffsetMinutes ?? 0;
+        const localDate = new Date(Date.now() - offsetMin * 60_000).toISOString().slice(0, 10);
+        await ctx.scheduler.runAfter(delayMs, internal.ai.generateDailyInsightsForUser, { userId, date: localDate });
+      }
     }
     return { users: users.length };
   },
@@ -2219,7 +2278,7 @@ Give 3 short, punchy insights (one sentence each) about their day. Tailor advice
 
     const model = settings?.openRouterModel ?? undefined;
     const apiKey = settings?.openRouterKey ?? undefined;
-    const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model, apiKey);
     let insights: string[] = [];
     try {
       const match = content.match(/\[[\s\S]*\]/);
@@ -2244,16 +2303,31 @@ export const generateWeeklySummary = action({
 
 export const generateWeeklySummaryForUser = internalAction({
   args: { userId: v.string() },
-  handler: async (ctx, { userId }) => runWeeklySummary(ctx, userId),
+  handler: async (ctx, { userId }) => {
+    if (process.env.AI_CRONS_ENABLED !== "true") {
+      console.log(JSON.stringify({ event: "ai_cron_worker_skipped", cron: "weekly_summary", userId, reason: "AI_CRONS_ENABLED_not_true" }));
+      return { skipped: true };
+    }
+    return runWeeklySummary(ctx, userId);
+  },
 });
 
 /** Cron: fan out weekly summaries to each active user via the scheduler. */
 export const cronWeeklySummary = internalAction({
   args: {},
   handler: async (ctx) => {
+    if (process.env.AI_CRONS_ENABLED !== "true") {
+      console.log(JSON.stringify({ event: "ai_cron_skipped", cron: "weekly_summary", reason: "AI_CRONS_ENABLED_not_true" }));
+      return { users: 0 };
+    }
+
     const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 7 })) as string[];
-    for (const userId of users) {
-      await ctx.scheduler.runAfter(0, internal.ai.generateWeeklySummaryForUser, { userId });
+    for (let batchStart = 0; batchStart < users.length; batchStart += AI_CRON_BATCH_SIZE) {
+      const batch = users.slice(batchStart, batchStart + AI_CRON_BATCH_SIZE);
+      const delayMs = (batchStart / AI_CRON_BATCH_SIZE) * AI_CRON_BATCH_DELAY_MS;
+      for (const userId of batch) {
+        await ctx.scheduler.runAfter(delayMs, internal.ai.generateWeeklySummaryForUser, { userId });
+      }
     }
     return { users: users.length };
   },
@@ -2305,7 +2379,7 @@ async function runWeeklySummary(ctx: any, userId: string) {
 Give a brief (2-3 sentences) weekly summary and recommendation tailored to their goal (${profile?.goal || "general fitness"}). Be direct and actionable.`;
     const model = settings?.openRouterModel ?? undefined;
     const apiKey = settings?.openRouterKey ?? undefined;
-    const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model, apiKey);
     await ctx.runMutation(internal.insights.saveWeeklySummary, { userId, weekStart, content });
     return { content };
 }
@@ -2354,7 +2428,7 @@ Return ONLY a valid JSON object (no markdown, no explanation):
 Include 3-6 exercises with 3-4 sets each. For cardio, use duration as reps field and omit weight. Be specific with exercise names. Do NOT include caloriesBurned — calories are calculated separately.`;
     const model = settings?.openRouterModel ?? undefined;
     const apiKey = settings?.openRouterKey ?? undefined;
-    const content = await callAI([{ role: "user", content: prompt }], 800, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 800, model, apiKey);
     const result = parseJSON<any>(content, {});
 
     // Deterministic calorie calculation
@@ -2417,18 +2491,16 @@ export const parseNutritionImage = action({
   },
   handler: async (ctx, { imageDataUrl, userDescription }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+    assertImageDataUrl(imageDataUrl, "image data URL");
+    if (userDescription) assertMaxChars(userDescription, AI_INPUT_LIMITS.textChars, "image description");
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
     const visionModel = model && VISION_MODELS.has(model) ? model : DEFAULT_MODEL;
-
-    const key = apiKey || process.env.OPENROUTER_API_KEY;
-    if (!key) throw new Error("OPENROUTER_API_KEY is not set");
 
     const portionClause = userDescription
       ? ` The user says they have: "${userDescription}". If possible, estimate userPortionGrams for this description.`
@@ -2441,48 +2513,26 @@ ${NUTRITION_ACCURACY_RULES}
 Extract nutritional values per 100g. If the label is per serving, convert using the serving size; if serving size is unclear, keep servingSize null and avoid guessing userPortionGrams. Return ONLY a JSON object, no markdown:
 {"name":"product name","caloriesPer100g":number,"proteinPer100g":number,"carbsPer100g":number,"fatPer100g":number,"servingSize":number_or_null,"servingUnit":"g","userPortionGrams":number_or_null}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
-    try {
-      const res = await fetch(OPENROUTER_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-        body: JSON.stringify({
-          model: visionModel,
-          messages: [{
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: imageDataUrl } },
-            ],
-          }],
-          max_tokens: 400,
-        }),
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`Vision API error ${res.status}: ${await res.text()}`);
-      const data = await res.json() as any;
-      const content = data.choices?.[0]?.message?.content;
-      if (!content) throw new Error("Empty vision response");
-      const result = parseJSON<any>(content, null);
-      if (!result) throw new Error("Could not parse nutrition from image");
-      return {
-        name: result.name || "Scanned Product",
-        caloriesPer100g: Number(result.caloriesPer100g) || 0,
-        proteinPer100g: Number(result.proteinPer100g) || 0,
-        carbsPer100g: Number(result.carbsPer100g) || 0,
-        fatPer100g: Number(result.fatPer100g) || 0,
-        servingSize: result.servingSize ? Number(result.servingSize) : undefined,
-        servingUnit: result.servingUnit || "g",
-        userPortionGrams: result.userPortionGrams ? Number(result.userPortionGrams) : undefined,
-        source: "scan" as const,
-      };
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") throw new Error("Vision request timed out");
-      throw err;
-    } finally {
-      clearTimeout(timeout);
-    }
+    const content = await callAI(ctx, userId, [{
+      role: "user",
+      content: [
+        { type: "text", text: prompt },
+        { type: "image_url", image_url: { url: imageDataUrl } },
+      ],
+    }], 400, visionModel, apiKey);
+    const result = parseJSON<any>(content, null);
+    if (!result) throw new Error("Could not parse nutrition from image");
+    return {
+      name: result.name || "Scanned Product",
+      caloriesPer100g: finiteNonNegativeNumber("caloriesPer100g", result.caloriesPer100g),
+      proteinPer100g: finiteNonNegativeNumber("proteinPer100g", result.proteinPer100g),
+      carbsPer100g: finiteNonNegativeNumber("carbsPer100g", result.carbsPer100g),
+      fatPer100g: finiteNonNegativeNumber("fatPer100g", result.fatPer100g),
+      servingSize: optionalFiniteNonNegativeNumber("servingSize", result.servingSize),
+      servingUnit: result.servingUnit || "g",
+      userPortionGrams: optionalFiniteNonNegativeNumber("userPortionGrams", result.userPortionGrams),
+      source: "scan" as const,
+    };
   },
 });
 
@@ -2499,14 +2549,15 @@ export const estimatePortion = action({
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+    assertMaxChars(args.baseName, AI_INPUT_LIMITS.textChars, "food name");
+    assertMaxChars(args.portionDescription, AI_INPUT_LIMITS.textChars, "portion description");
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
 
     const servingClause = args.servingSize
       ? `Serving size: ${args.servingSize}${args.servingUnit || "g"}.`
@@ -2520,7 +2571,7 @@ User portion description: "${args.portionDescription}"
 Estimate the total grams the user consumed based on their description, then calculate exact macros from the per-100g data. Return ONLY a JSON object (no markdown, no explanation):
 {"grams":number,"calories":number,"protein":number,"carbs":number,"fat":number}`;
 
-    const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model, apiKey);
     const result = parseJSON<any>(content, {});
     const ratio = (result.grams || 0) / 100;
     return {
@@ -2542,14 +2593,13 @@ export const calculateProfileMacros = action({
   },
   handler: async (ctx, { weight, height, age, activityLevel }) => {
     const identity = await ctx.auth.getUserIdentity();
-    const userId = identity?.subject;
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
     let model: string | undefined;
     let apiKey: string | undefined;
-    if (userId) {
-      const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-      model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
-    }
+    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
+    model = settings?.openRouterModel ?? undefined;
+    apiKey = settings?.openRouterKey ?? undefined;
 
     const prompt = `Calculate optimal daily macronutrient targets for:
 - Weight: ${weight}kg
@@ -2564,7 +2614,7 @@ Return ONLY a JSON object with these keys (numbers only, no text):
 - fat: grams of fat
 - explanation: one sentence explaining the reasoning (max 15 words)`;
 
-    const content = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model, apiKey);
     const result = parseJSON<any>(content, {});
     if (!result.calories) {
       const bmr = 10 * weight + 6.25 * height - 5 * age + 5;
@@ -2595,6 +2645,8 @@ export const regenerateSuggestion = action({
       throw new Error("Authentication required to use AI features.");
     }
     const userId = identity.subject;
+    assertMaxChars(args.mealName, AI_INPUT_LIMITS.textChars, "meal name");
+    if (args.mealComponents) assertMaxChars(args.mealComponents, AI_INPUT_LIMITS.textChars, "meal components");
     let model: string | undefined;
     let apiKey: string | undefined;
     if (userId) {
@@ -2615,12 +2667,13 @@ Macros: ${args.mealCalories} kcal, ${args.mealProtein}g protein, ${args.mealCarb
 
 Return ONLY a short JSON object: {"suggestion":"one forward-looking next-meal tip (max 25 words)"}`;
 
-    const content = await callAI([{ role: "user", content: prompt }], 400, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 400, model, apiKey);
     const result = parseJSON<any>(content, { suggestion: "" });
     return { suggestion: result.suggestion || "" };
   },
 });
 
+// Deliberately public: this read-only static coach catalog is safe to expose.
 export const getCoaches = query({
   args: {},
   handler: async () => {
@@ -2631,7 +2684,11 @@ export const getCoaches = query({
 
 export const transcribe = action({
   args: { audio: v.string(), mimeType: v.optional(v.string()) },
-  handler: async (_ctx, { audio, mimeType }) => {
+  handler: async (ctx, { audio, mimeType }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+    assertAudioBase64(audio);
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("GROQ_API_KEY is not set in Convex environment");
 
@@ -2641,33 +2698,49 @@ export const transcribe = action({
     const binary = atob(audio);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const transcriptionCostUsd = estimateTranscriptionCostUsd(bytes.byteLength);
     const formData = new FormData();
     formData.append("file", new Blob([bytes], { type: mime }), `audio.${ext}`);
     formData.append("model", "whisper-large-v3-turbo");
 
+    const reservation = await ctx.runMutation(internal.ai_guard.checkAndReserve, {
+      userId,
+      model: "groq/whisper-large-v3-turbo",
+      estimatedInputTokens: 0,
+      estimatedOutputTokens: 0,
+      estimatedCostUsd: transcriptionCostUsd,
+    });
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
-
-    let res: Response;
     try {
-      res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}` },
         body: formData,
         signal: controller.signal,
       });
+      if (!res.ok) {
+        throw new Error(`Groq transcription error ${res.status}: ${await res.text()}`);
+      }
+      const data = await res.json() as { text?: string; error?: { message?: string } };
+      if (data.error || !data.text) {
+        throw new Error(data.error ? `Groq error: ${data.error.message}` : "Groq returned empty transcription");
+      }
+      await ctx.runMutation(internal.ai_guard.settleUsage, {
+        reservationId: reservation.reservationId,
+        inputTokens: 0,
+        outputTokens: 0,
+        actualCostUsd: transcriptionCostUsd,
+      });
+      return { transcript: data.text.trim() };
     } catch (err) {
-      clearTimeout(timeout);
       if ((err as Error).name === "AbortError") throw new Error("Groq transcription timed out after 30s");
       throw err;
+    } finally {
+      clearTimeout(timeout);
+      // Fetch may have reached Groq even when its response or settlement failed; retain the reserve.
     }
-    clearTimeout(timeout);
-
-    if (!res.ok) throw new Error(`Groq transcription error ${res.status}: ${await res.text()}`);
-    const data = await res.json() as { text?: string; error?: { message?: string } };
-    if (data.error) throw new Error(`Groq error: ${data.error.message}`);
-    if (!data.text) throw new Error("Groq returned empty transcription");
-    return { transcript: data.text.trim() };
   },
 });
 
@@ -2712,6 +2785,8 @@ export const homepageInput = action({
   }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
+    assertMaxChars(message, AI_INPUT_LIMITS.messageChars, "homepage message");
+    if (image) assertImageDataUrl(image, "homepage image");
     const userId = identity.subject;
     const today = todayArg ?? new Date().toISOString().split("T")[0];
     const restrictedGuidance = hasRestrictedRecoverySignal(message);
@@ -2818,7 +2893,7 @@ Return ONLY valid JSON, no markdown.`;
         : { role: "user", content: message },
     ];
 
-    const extractRaw = await callAI(extractMessages, 400, intentModel, apiKey);
+    const extractRaw = await callAI(ctx, userId, extractMessages, 400, intentModel, apiKey);
     let extracted = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
       extractRaw,
       { isQuestion: true, items: [] },
@@ -2838,7 +2913,7 @@ ${message}
 
 Return ONLY:
 {"isQuestion": false, "items": [{"type":"meal|workout|sleep|water|mood|steps","description":"...","date":"YYYY-MM-DD"}]}`;
-      const forcedRaw = await callAI([{ role: "user", content: forcePrompt }], 300, intentModel, apiKey).catch(() => "");
+      const forcedRaw = await callAI(ctx, userId, [{ role: "user", content: forcePrompt }], 300, intentModel, apiKey).catch(() => "");
       if (forcedRaw) {
         const forced = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
           forcedRaw,
@@ -2886,6 +2961,7 @@ Return ONLY:
         ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
         ctx.runQuery(internal.checkins.getAnswerContextForContext, { userId, date: today }),
       ]);
+      assertHistoryEntries(history as { content: string }[]);
       const userName = identity.name ?? "Athlete";
       let context = `USER: ${userName}\n`;
       if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
@@ -2943,7 +3019,7 @@ Return ONLY:
       ];
       // Upgraded chat reply (CHAT_MODEL) for text; image stays on the vision model.
       // Parsing/extraction elsewhere in this action stays on the cheap settingsModel/DEFAULT.
-      const reply = await callAI(replyMessages, 250, image ? visionModel : (settingsModel ?? CHAT_MODEL), apiKey);
+      const reply = await callAI(ctx, userId, replyMessages, 250, image ? visionModel : (settingsModel ?? CHAT_MODEL), apiKey);
 
       // Persist AI reply
       const messageId = await ctx.runMutation(internal.chat.addMessage, {
@@ -2973,10 +3049,11 @@ Return ONLY:
 
     for (const item of extracted.items) {
       try {
+        assertMaxChars(item.description, AI_INPUT_LIMITS.textChars, "log item description");
         if (item.type === "meal") {
           let desc = item.description;
           if (image && !desc.trim()) {
-            const d = await callAI([{ role: "user", content: [{ type: "text", text: "Describe this food briefly." }, { type: "image_url", image_url: { url: image } }] }], 150, visionModel, apiKey);
+            const d = await callAI(ctx, userId, [{ role: "user", content: [{ type: "text", text: "Describe this food briefly." }, { type: "image_url", image_url: { url: image } }] }], 150, visionModel, apiKey);
             desc = d;
           }
 
@@ -3015,7 +3092,7 @@ Return ONLY:
           }
           // ── End memory match — fall through to LLM parse ──────────────────
 
-          const parsed = await parseMealDescription(desc, "unspecified", "", settingsModel, apiKey, userIngredients as any[]);
+          const parsed = await parseMealDescription(desc, "unspecified", "", ctx, userId, settingsModel, apiKey, userIngredients as any[]);
           const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsed, date: item.date, description: desc }, { userId, useMemory: true }));
           const canonicalDraft = nutrition.ingredientBreakdown as MealDraft;
           const baseDraft = {
@@ -3045,7 +3122,7 @@ Return ONLY:
           summaryParts.push(`${parsed.name || "Meal"} (~${macroDecision.draft.kcal} kcal)`);
 
         } else if (item.type === "workout") {
-          const parsed = await parseWorkoutDescription(item.description, undefined, undefined, settingsModel, apiKey, userPhysique);
+          const parsed = await parseWorkoutDescription(item.description, ctx, userId, undefined, undefined, settingsModel, apiKey, userPhysique);
           if (parsed.parseError) {
             summaryParts.push("Workout needs details before it can be logged");
             continue;
@@ -3085,7 +3162,7 @@ Return JSON: {"hours": number, "quality": "poor"|"ok"|"good"|"great"}
 Examples: "slept 6.5 hours" → {"hours":6.5,"quality":"ok"}, "slept 8h, felt great" → {"hours":8,"quality":"great"}
 If hours can't be determined from a time range, calculate: e.g. "12:30am to 7am" = 6.5 hours.
 Return ONLY JSON.`;
-          const sleepRaw = await callAI([{ role: "user", content: sleepParsePrompt }], 80, settingsModel, apiKey);
+          const sleepRaw = await callAI(ctx, userId, [{ role: "user", content: sleepParsePrompt }], 80, settingsModel, apiKey);
           const sleepData = parseJSON<{ hours?: number; band?: string; quality?: string }>(sleepRaw, {});
           const hours = typeof sleepData.hours === "number" && Number.isFinite(sleepData.hours) ? sleepData.hours : undefined;
           const band = ["under_6", "six_to_eight", "eight_plus"].includes(sleepData.band ?? "") ? sleepData.band : undefined;
@@ -3099,7 +3176,7 @@ Return ONLY JSON.`;
           const waterParsePrompt = `Extract water amount in ml from: "${item.description}"
 Common conversions: 1 glass = 250ml, 1L = 1000ml, 1 bottle = 500ml.
 Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml" → 500`;
-          const mlRaw = await callAI([{ role: "user", content: waterParsePrompt }], 20, settingsModel, apiKey);
+          const mlRaw = await callAI(ctx, userId, [{ role: "user", content: waterParsePrompt }], 20, settingsModel, apiKey);
           const parsedMl = parseInt(mlRaw.replace(/[^0-9]/g, ""), 10);
           const ml = Number.isFinite(parsedMl) ? parsedMl : undefined;
           const waterDraft = buildRecoveryDraft({ kind: "water", date: item.date ?? today, ml, source: "ai_extracted" });
@@ -3109,7 +3186,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
         } else if (item.type === "mood") {
           const moodParsePrompt = `Extract mood rating 1-5 from: "${item.description}"
 1=very bad, 2=bad, 3=ok, 4=good, 5=great. Return ONLY a number 1-5.`;
-          const ratingRaw = await callAI([{ role: "user", content: moodParsePrompt }], 10, settingsModel, apiKey);
+          const ratingRaw = await callAI(ctx, userId, [{ role: "user", content: moodParsePrompt }], 10, settingsModel, apiKey);
           const parsedRating = parseInt(ratingRaw.replace(/[^0-9]/g, ""), 10);
           const rating = Number.isFinite(parsedRating) ? parsedRating : undefined;
           const moodDraft = buildRecoveryDraft({ kind: "mood", date: item.date ?? today, rating, source: "ai_extracted" });
@@ -3118,7 +3195,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
 
         } else if (item.type === "steps") {
           const stepsParsePrompt = `Extract step count from: "${item.description}". Return ONLY a number.`;
-          const stepsRaw = await callAI([{ role: "user", content: stepsParsePrompt }], 15, settingsModel, apiKey);
+          const stepsRaw = await callAI(ctx, userId, [{ role: "user", content: stepsParsePrompt }], 15, settingsModel, apiKey);
           const parsedCount = parseInt(stepsRaw.replace(/[^0-9]/g, ""), 10);
           const count = Number.isFinite(parsedCount) ? parsedCount : undefined;
           const stepsDraft = buildRecoveryDraft({ kind: "steps", date: item.date ?? today, count, source: "ai_extracted" });
@@ -3144,7 +3221,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
 
     // Tier 2: brief analysis of the combined log
     const tier2Prompt = `Give a brief, encouraging analysis (2-3 sentences) of what the user just logged: ${summaryParts.join(", ")}. Be specific and actionable.`;
-    const tier2Detail = await callAI([{ role: "user", content: tier2Prompt }], 150, settingsModel, apiKey).catch(() => "");
+    const tier2Detail = await callAI(ctx, userId, [{ role: "user", content: tier2Prompt }], 150, settingsModel, apiKey).catch(() => "");
 
     // Persist the assistant's response (tier1 + tier2) so the chat thread stays meaningful
     const persistedReply = tier2Detail ? `${tier1Summary}\n\n${tier2Detail}` : tier1Summary;

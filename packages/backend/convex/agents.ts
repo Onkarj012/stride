@@ -6,7 +6,7 @@
  * fire-and-forget from homepageInput via runMemoryAgentAction.
  */
 
-import { internalAction } from "./_generated/server";
+import { internalAction, type ActionCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { callAI } from "./ai/llm";
@@ -47,7 +47,7 @@ export interface MemoryFact {
 export async function runMemoryAgent(
   ctx: any,
   agentCtx: AgentContext,
-  callAI: (messages: any[], maxTokens?: number, model?: string, apiKey?: string) => Promise<string>,
+  callAI: (ctx: ActionCtx, userId: string, messages: any[], maxTokens?: number, model?: string, apiKey?: string) => Promise<string>,
   model?: string,
   apiKey?: string,
 ): Promise<void> {
@@ -80,7 +80,7 @@ Examples:
 Return ONLY a JSON array, or [] if nothing applies.`;
 
   try {
-    const raw = await callAI([{ role: "user", content: prompt }], 300, model, apiKey);
+    const raw = await callAI(ctx, agentCtx.userId, [{ role: "user", content: prompt }], 300, model, apiKey);
     const match = raw.match(/\[[\s\S]*\]/);
     if (!match) return;
     const facts = JSON.parse(match[0]) as Array<{

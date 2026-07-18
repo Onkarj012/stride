@@ -18,6 +18,7 @@ import { useBehavior } from "@/hooks/useBehavior";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useToast } from "@/context/ToastContext";
 import { localDateStr } from "@/lib/utils";
+import { getAIErrorMessage } from "@/lib/ai-errors";
 import { FADE_FAST } from "@/lib/motion";
 import {
   normalizeDraft,
@@ -512,7 +513,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : "";
-      const msg = raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")
+      const msg = getAIErrorMessage(err)
+        ?? (raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")
         ? "AI is not configured — contact the app owner to set up the API key."
         : raw.includes("429") || raw.toLowerCase().includes("rate limit") || raw.toLowerCase().includes("quota")
         ? "Stry is busy — try again in a moment."
@@ -520,7 +522,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         ? "Request timed out — check your connection."
         : raw.includes("Unauthenticated")
         ? "Session expired — please sign in again."
-        : "Something went wrong. Try again.";
+        : "Something went wrong. Try again.");
       toast.error("Couldn't reach Stry", msg);
     } finally {
       inFlightRequestsRef.current = Math.max(0, inFlightRequestsRef.current - 1);
@@ -858,7 +860,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                 Clear chat
               </button>
             )}
-            {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{voice.error}</p>}
+            {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{getAIErrorMessage(voice.error) ?? voice.error}</p>}
           </div>
         </div>
       </div>

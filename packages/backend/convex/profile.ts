@@ -148,7 +148,9 @@ export const calculateTDEE = action({
     goal: v.optional(v.string()),
     trainingStyle: v.optional(v.string()),
   },
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const { weight, height, age, sex, bodyFat, leanMass, dailySteps, trainingDays, cardioMinutes, jobType, goal, trainingStyle } = args;
 
     // Step A: Calculate RMR

@@ -1159,6 +1159,8 @@ ${JSON.stringify(daily)}`;
 
     try {
       const content = await callAI(
+        ctx,
+        userId,
         [{ role: "user", content: prompt }],
         500,
         settings?.openRouterModel ?? undefined,

@@ -42,3 +42,21 @@ test("dispatchWindowNudges creates for active users, dedupes, skips fatigued", a
   const u2Nudges = await u2.query(api.nudges.getActiveNudges, {});
   expect(u2Nudges).toHaveLength(0);
 });
+
+test("queued AI cron workers re-check the kill switch", async () => {
+  const previous = process.env.AI_CRONS_ENABLED;
+  process.env.AI_CRONS_ENABLED = "false";
+  try {
+    const t = convexTest(schema, modules);
+    await expect(t.action(internal.ai.generateDailyInsightsForUser, {
+      userId: "cron-user",
+      date: today,
+    })).resolves.toEqual({ skipped: true });
+    await expect(t.action(internal.ai.generateWeeklySummaryForUser, {
+      userId: "cron-user",
+    })).resolves.toEqual({ skipped: true });
+  } finally {
+    if (previous === undefined) delete process.env.AI_CRONS_ENABLED;
+    else process.env.AI_CRONS_ENABLED = previous;
+  }
+});

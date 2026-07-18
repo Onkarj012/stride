@@ -1,22 +1,29 @@
 import { action, internalAction, internalMutation, internalQuery, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { fetchJsonWithTimeout } from "./lib/fetch_timeout";
 
 const OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl";
 const OFF_PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product";
 const USDA_SEARCH_URL = "https://api.nal.usda.gov/fdc/v1/foods/search";
 
 const OFF_FIELDS = "product_name,brands,nutriments,code,image_front_small_url,serving_quantity,serving_quantity_unit,ingredients_text_en,completeness";
-const LIVE_LOOKUP_TIMEOUT_MS = 2500;
-let warnedAboutUsdaDemoKey = false;
+const FOOD_LOOKUP_TIMEOUT_MS = 10_000;
+let warnedAboutMissingUsdaKey = false;
 
-function getUsdaApiKey(): string {
-  const apiKey = process.env.USDA_API_KEY;
-  if (!apiKey && !warnedAboutUsdaDemoKey) {
-    console.warn("USDA_API_KEY is not set; falling back to DEMO_KEY.");
-    warnedAboutUsdaDemoKey = true;
+function getUsdaApiKey(): string | null {
+  const apiKey = process.env.USDA_API_KEY?.trim();
+  if (!apiKey) {
+    if (!warnedAboutMissingUsdaKey) {
+      console.warn(JSON.stringify({
+        event: "usda_lookup_disabled",
+        reason: "USDA_API_KEY_missing",
+      }));
+      warnedAboutMissingUsdaKey = true;
+    }
+    return null;
   }
-  return apiKey || "DEMO_KEY";
+  return apiKey;
 }
 
 const FOOD_QUERY_SYNONYMS: Record<string, string> = {
@@ -184,20 +191,6 @@ export const bumpSearchCount = internalMutation({
   },
 });
 
-async function fetchJsonWithTimeout(url: string, init?: RequestInit): Promise<any | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LIVE_LOOKUP_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function cacheFoods(ctx: any, foods: NormalizedFood[]) {
   const cached: Array<NormalizedFood & { _id?: string }> = [];
   for (const food of foods) {
@@ -234,11 +227,23 @@ export const searchFoodsLive = internalAction({
 
     const offUrl = `${OFF_SEARCH_URL}?search_terms=${encodeURIComponent(trimmed)}&search_simple=1&action=process&json=1&page_size=${Math.min(limit, 8)}&fields=${OFF_FIELDS}`;
     const usdaKey = getUsdaApiKey();
-    const usdaUrl = `${USDA_SEARCH_URL}?query=${encodeURIComponent(trimmed)}&pageSize=${Math.min(limit, 6)}&api_key=${usdaKey}`;
+    const usdaUrl = usdaKey
+      ? `${USDA_SEARCH_URL}?query=${encodeURIComponent(trimmed)}&pageSize=${Math.min(limit, 6)}&api_key=${usdaKey}`
+      : null;
 
     const [offData, usdaData] = await Promise.all([
-      fetchJsonWithTimeout(offUrl, { headers: { "User-Agent": "Stride Fitness App" } }),
-      fetchJsonWithTimeout(usdaUrl),
+      fetchJsonWithTimeout<any>(offUrl, { headers: { "User-Agent": "Stride Fitness App" } }, {
+        timeoutMs: FOOD_LOOKUP_TIMEOUT_MS,
+        provider: "openfoodfacts",
+        operation: "searchFoodsLive",
+      }),
+      usdaUrl
+        ? fetchJsonWithTimeout<any>(usdaUrl, {}, {
+          timeoutMs: FOOD_LOOKUP_TIMEOUT_MS,
+          provider: "usda",
+          operation: "searchFoodsLive",
+        })
+        : Promise.resolve(null),
     ]);
 
     const foods: NormalizedFood[] = [];
@@ -275,6 +280,8 @@ export const getRecentFoods = query({
 export const searchFoods = action({
   args: { query: v.string() },
   handler: async (ctx, { query: q }): Promise<NormalizedFood[]> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     const trimmed = normalizeFoodQuery(q);
     if (!trimmed) return [];
 
@@ -305,32 +312,32 @@ export const searchFoods = action({
 
     // 2. Query Open Food Facts
     const offResults: NormalizedFood[] = [];
-    try {
-      const url = `${OFF_SEARCH_URL}?search_terms=${encodeURIComponent(trimmed)}&search_simple=1&action=process&json=1&page_size=8&fields=${OFF_FIELDS}`;
-      const res = await fetch(url, { headers: { "User-Agent": "Stride Fitness App" } });
-      if (res.ok) {
-        const data = await res.json() as any;
-        for (const p of (data.products || [])) {
-          const norm = normalizeOFFProduct(p);
-          if (norm) offResults.push(norm);
-        }
-      }
-    } catch { /* ignore */ }
+    const offUrl = `${OFF_SEARCH_URL}?search_terms=${encodeURIComponent(trimmed)}&search_simple=1&action=process&json=1&page_size=8&fields=${OFF_FIELDS}`;
+    const offData = await fetchJsonWithTimeout<any>(offUrl, { headers: { "User-Agent": "Stride Fitness App" } }, {
+      timeoutMs: FOOD_LOOKUP_TIMEOUT_MS,
+      provider: "openfoodfacts",
+      operation: "searchFoods",
+    });
+    for (const p of (offData?.products || [])) {
+      const norm = normalizeOFFProduct(p);
+      if (norm) offResults.push(norm);
+    }
 
-    // 3. Query USDA for generic/raw foods
+    // 3. Query USDA for generic/raw foods when a private API key is configured.
     const usdaResults: NormalizedFood[] = [];
-    try {
-      const apiKey = getUsdaApiKey();
+    const apiKey = getUsdaApiKey();
+    if (apiKey) {
       const url = `${USDA_SEARCH_URL}?query=${encodeURIComponent(trimmed)}&pageSize=6&api_key=${apiKey}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json() as any;
-        for (const f of (data.foods || []).slice(0, 6)) {
-          const norm = normalizeUSDAFood(f);
-          if (norm) usdaResults.push(norm);
-        }
+      const usdaData = await fetchJsonWithTimeout<any>(url, {}, {
+        timeoutMs: FOOD_LOOKUP_TIMEOUT_MS,
+        provider: "usda",
+        operation: "searchFoods",
+      });
+      for (const f of (usdaData?.foods || []).slice(0, 6)) {
+        const norm = normalizeUSDAFood(f);
+        if (norm) usdaResults.push(norm);
       }
-    } catch { /* ignore */ }
+    }
 
     // 4. Cache new results asynchronously
     const newFoods = [...offResults, ...usdaResults];
@@ -380,6 +387,8 @@ export const searchFoods = action({
 export const lookupBarcode = action({
   args: { barcode: v.string() },
   handler: async (ctx, { barcode }): Promise<NormalizedFood | null> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
     // 1. Check local cache
     const cached = await ctx.runQuery(internal.foods.getFoodByBarcode, { barcode }) as any;
     if (cached) {
@@ -401,30 +410,29 @@ export const lookupBarcode = action({
     }
 
     // 2. Query Open Food Facts
-    try {
-      const url = `${OFF_PRODUCT_URL}/${barcode}.json?fields=${OFF_FIELDS}`;
-      const res = await fetch(url, { headers: { "User-Agent": "Stride Fitness App" } });
-      if (res.ok) {
-        const data = await res.json() as any;
-        if (data.status === 1 && data.product) {
-          const norm = normalizeOFFProduct(data.product);
-          if (norm) {
-            norm.barcode = barcode;
-            await ctx.runMutation(internal.foods.cacheFood, {
-              ...norm,
-              brand: norm.brand,
-              barcode: norm.barcode,
-              servingSize: norm.servingSize,
-              servingUnit: norm.servingUnit,
-              ingredients: norm.ingredients,
-              imageUrl: norm.imageUrl,
-              verified: norm.verified,
-            });
-            return norm;
-          }
-        }
+    const url = `${OFF_PRODUCT_URL}/${barcode}.json?fields=${OFF_FIELDS}`;
+    const data = await fetchJsonWithTimeout<any>(url, { headers: { "User-Agent": "Stride Fitness App" } }, {
+      timeoutMs: FOOD_LOOKUP_TIMEOUT_MS,
+      provider: "openfoodfacts",
+      operation: "lookupBarcode",
+    });
+    if (data?.status === 1 && data.product) {
+      const norm = normalizeOFFProduct(data.product);
+      if (norm) {
+        norm.barcode = barcode;
+        await ctx.runMutation(internal.foods.cacheFood, {
+          ...norm,
+          brand: norm.brand,
+          barcode: norm.barcode,
+          servingSize: norm.servingSize,
+          servingUnit: norm.servingUnit,
+          ingredients: norm.ingredients,
+          imageUrl: norm.imageUrl,
+          verified: norm.verified,
+        });
+        return norm;
       }
-    } catch { /* ignore */ }
+    }
 
     // 3. Not found anywhere — return null to trigger manual entry
     return null;

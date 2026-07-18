@@ -53,7 +53,7 @@ function promptText(messages: any[]): string {
 }
 
 function mockChatReply(reply: string) {
-  mockedCallAI.mockImplementation(async (messages) => {
+  mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
     const prompt = promptText(messages);
     if (prompt.includes("Generate a short, descriptive title")) return "E2E chat";
     if (prompt.includes("You are a professional nutritionist")) {
