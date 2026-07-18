@@ -2195,17 +2195,29 @@ export const generateDailyInsightsForUser = internalAction({
   handler: async (ctx, { userId, date }) => runDailyInsights(ctx, userId, date),
 });
 
+const AI_CRON_BATCH_SIZE = 25;
+const AI_CRON_BATCH_DELAY_MS = 60_000;
+
 /** Cron: fan out daily insights to each active user via the scheduler. */
 export const cronDailyInsights = internalAction({
   args: {},
   handler: async (ctx) => {
+    if (process.env.AI_CRONS_ENABLED !== "true") {
+      console.log(JSON.stringify({ event: "ai_cron_skipped", cron: "daily_insights", reason: "AI_CRONS_ENABLED_not_true" }));
+      return { users: 0 };
+    }
+
     const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 3 })) as string[];
-    for (const userId of users) {
-      // Derive the user's local date from their stored timezone offset.
-      const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
-      const offsetMin: number = settings?.timezoneOffsetMinutes ?? 0;
-      const localDate = new Date(Date.now() - offsetMin * 60_000).toISOString().slice(0, 10);
-      await ctx.scheduler.runAfter(0, internal.ai.generateDailyInsightsForUser, { userId, date: localDate });
+    for (let batchStart = 0; batchStart < users.length; batchStart += AI_CRON_BATCH_SIZE) {
+      const batch = users.slice(batchStart, batchStart + AI_CRON_BATCH_SIZE);
+      const delayMs = (batchStart / AI_CRON_BATCH_SIZE) * AI_CRON_BATCH_DELAY_MS;
+      for (const userId of batch) {
+        // Derive the user's local date from their stored timezone offset.
+        const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
+        const offsetMin: number = settings?.timezoneOffsetMinutes ?? 0;
+        const localDate = new Date(Date.now() - offsetMin * 60_000).toISOString().slice(0, 10);
+        await ctx.scheduler.runAfter(delayMs, internal.ai.generateDailyInsightsForUser, { userId, date: localDate });
+      }
     }
     return { users: users.length };
   },
@@ -2278,9 +2290,18 @@ export const generateWeeklySummaryForUser = internalAction({
 export const cronWeeklySummary = internalAction({
   args: {},
   handler: async (ctx) => {
+    if (process.env.AI_CRONS_ENABLED !== "true") {
+      console.log(JSON.stringify({ event: "ai_cron_skipped", cron: "weekly_summary", reason: "AI_CRONS_ENABLED_not_true" }));
+      return { users: 0 };
+    }
+
     const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 7 })) as string[];
-    for (const userId of users) {
-      await ctx.scheduler.runAfter(0, internal.ai.generateWeeklySummaryForUser, { userId });
+    for (let batchStart = 0; batchStart < users.length; batchStart += AI_CRON_BATCH_SIZE) {
+      const batch = users.slice(batchStart, batchStart + AI_CRON_BATCH_SIZE);
+      const delayMs = (batchStart / AI_CRON_BATCH_SIZE) * AI_CRON_BATCH_DELAY_MS;
+      for (const userId of batch) {
+        await ctx.scheduler.runAfter(delayMs, internal.ai.generateWeeklySummaryForUser, { userId });
+      }
     }
     return { users: users.length };
   },
