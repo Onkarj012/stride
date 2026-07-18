@@ -24,6 +24,7 @@ import { useLogs } from "@/hooks/useLogs";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 import { reportException } from "@/lib/observability";
+import { clearOnboardingDraft } from "@/lib/onboardingPersistence";
 
 const TABS = [
   { id: "overview", label: "Overview", icon: UserIcon },
@@ -698,6 +699,7 @@ function SettingsTab() {
     setReplaying(true);
     try {
       await upsertProfile({ onboardingComplete: false });
+      clearOnboardingDraft(window.sessionStorage);
       navigate("/onboarding");
     } catch (error) {
       reportException(error, "replay_onboarding_failed");

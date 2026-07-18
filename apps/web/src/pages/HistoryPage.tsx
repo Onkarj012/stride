@@ -444,7 +444,7 @@ export function HistoryPage() {
 
   const workoutMin = useMemo(() => workouts.reduce((s, w) => s + (w.duration ? parseInt(w.duration, 10) || 0 : 0), 0), [workouts]);
 
-  if (calendarDataResult === undefined || data === undefined || waterLogsResult === undefined || recoveryState === undefined) {
+  if (calendarDataResult === undefined || data === undefined || waterLogsResult === undefined || sleepLog === undefined || recoveryState === undefined) {
     return (
       <div className="space-y-3 px-5 py-6 lg:mx-auto lg:max-w-6xl lg:px-0">
         <Skeleton className="h-8 w-40 rounded-[14px]" />

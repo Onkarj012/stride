@@ -113,6 +113,7 @@ export function CoachPage() {
   const approveWorkoutMemory = useMutation((api as any).workout_memory.approveMemory);
   const rejectWorkoutMemory = useMutation((api as any).workout_memory.rejectMemory);
   const sendToAI = useAction(api.ai.chat);
+  const parseNutritionImage = useAction(api.ai.parseNutritionImage);
   const confirmGroup = useAction((api as any).ai.confirmGroup);
   const resolveClarification = useAction(api.ai.resolveClarification);
   const toast = useToast();
@@ -132,8 +133,10 @@ export function CoachPage() {
   });
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
-  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null);
+  const [attachedLabel, setAttachedLabel] = useState<{ name: string; content: string } | null>(null);
+  const [labelParsing, setLabelParsing] = useState(false);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
+  const [pendingPickerMode, setPendingPickerMode] = useState<"photo" | "ocr" | null>(null);
   const [kbPad, setKbPad] = useState(0);
   const [pendingUndoIds, setPendingUndoIds] = useState<Set<string>>(() => new Set());
   const [pendingRetryIds, setPendingRetryIds] = useState<Set<string>>(() => new Set());
@@ -147,7 +150,7 @@ export function CoachPage() {
   const sendingRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const docRef = useRef<HTMLInputElement>(null);
+  const labelFileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   function resetClarificationState() {
@@ -161,28 +164,11 @@ export function CoachPage() {
   }, []);
   const voice = useAudioRecorder(onTranscript);
 
-  const onPickFile = useCallback((file: File) => {
-    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      toast.error("PDF not supported", "Attach a .md or .txt file instead");
-      return;
-    }
-    const allowed = ["text/markdown", "text/plain", "text/x-markdown"];
-    const byExt = file.name.endsWith(".md") || file.name.endsWith(".txt");
-    if (!allowed.includes(file.type) && !byExt) {
-      toast.error("Unsupported file", "Attach a .md or .txt file");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => setAttachedFile({ name: file.name, content: String(reader.result ?? "").slice(0, 8000) });
-    reader.readAsText(file);
-  }, [toast]);
-
   const requestedMode = searchParams.get("mode");
   useEffect(() => {
     if (!requestedMode) return;
     if (requestedMode === "barcode") setBarcodeOpen(true);
-    if (requestedMode === "photo") setTimeout(() => fileRef.current?.click(), 0);
-    if (requestedMode === "ocr") setTimeout(() => docRef.current?.click(), 0);
+    if (requestedMode === "photo" || requestedMode === "ocr") setPendingPickerMode(requestedMode);
     if (requestedMode === "voice") void voice.start();
     setSearchParams((current) => {
       current.delete("mode");
@@ -200,6 +186,45 @@ export function CoachPage() {
     reader.onload = () => setAttachedImage(reader.result as string);
     reader.readAsDataURL(file);
   }, [toast]);
+
+  const onPickNutritionLabel = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Not an image", "Choose a photo of the nutrition label");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const imageDataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!imageDataUrl) {
+        toast.error("Couldn't read image", "Please choose another photo");
+        return;
+      }
+      setLabelParsing(true);
+      void parseNutritionImage({ imageDataUrl, userDescription: input.trim() || undefined })
+        .then((result) => {
+          const label = result as {
+            name: string;
+            caloriesPer100g: number;
+            proteinPer100g: number;
+            carbsPer100g: number;
+            fatPer100g: number;
+            servingSize?: number;
+            servingUnit?: string;
+            userPortionGrams?: number;
+          };
+          const serving = label.servingSize != null ? `Serving size: ${label.servingSize}${label.servingUnit ?? "g"}.\n` : "";
+          const portion = label.userPortionGrams != null ? `Estimated portion: ${label.userPortionGrams}g.\n` : "";
+          setAttachedLabel({
+            name: label.name || "Nutrition label",
+            content: `${label.name || "Nutrition label"}\n${serving}${portion}Per 100g: ${label.caloriesPer100g} kcal, ${label.proteinPer100g}g protein, ${label.carbsPer100g}g carbs, ${label.fatPer100g}g fat.`,
+          });
+          toast.success("Label read", "Review the details, then send to log it.");
+        })
+        .catch((error) => toast.error("Couldn't read label", getAIErrorMessage(error) ?? "Choose a clearer photo and try again."))
+        .finally(() => setLabelParsing(false));
+    };
+    reader.readAsDataURL(file);
+  }, [input, parseNutritionImage, toast]);
 
   // Pin composer above keyboard on mobile via visualViewport
   useEffect(() => {
@@ -465,24 +490,24 @@ export function CoachPage() {
   const orderedSuggestions = useMemo(() => orderSuggestions(COACH_SUGGESTIONS), []);
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
-  const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : attachedFile ? "ocr" : "type";
+  const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : attachedLabel ? "ocr" : "type";
 
   const send = useCallback(async (text: string, image?: string) => {
     if (sendingRef.current) return;
     sendingRef.current = true;
     const v = text.trim();
-    if (!v && !image && !attachedFile) { sendingRef.current = false; return; }
-    const messageText = attachedFile ? `[File: ${attachedFile.name}]\n${attachedFile.content}\n\n${v}`.trim() : v;
+    if (!v && !image && !attachedLabel) { sendingRef.current = false; return; }
+    const messageText = attachedLabel ? `[Nutrition label: ${attachedLabel.name}]\n${attachedLabel.content}\n\n${v}`.trim() : v;
     const userMeta = image
       ? { modality: "photo" as const, chip: "Attached image" }
       : activeMode === "voice"
       ? { modality: "voice" as const, chip: "Voice note" }
-      : attachedFile
+      : attachedLabel
       ? { modality: "ocr" as const, chip: "Nutrition label" }
       : undefined;
     setInput("");
     setAttachedImage(null);
-    setAttachedFile(null);
+    setAttachedLabel(null);
     setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || (image ? "Photo of meal" : "Nutrition label"), ...userMeta }]);
     scroll();
 
@@ -595,12 +620,12 @@ export function CoachPage() {
       sendingRef.current = false;
       setThinking(false);
     }
-  }, [activeMode, activeSessionId, activeClarificationGroupId, attachedFile, createSession, sendToAI, scroll, toast]);
+  }, [activeMode, activeSessionId, activeClarificationGroupId, attachedLabel, createSession, sendToAI, scroll, toast]);
 
   const attachItems: AttachItem[] = [
     { key: "photo", label: "Photo of meal", mode: "photo", icon: <ImagePlus className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => fileRef.current?.click() },
     { key: "barcode", label: "Scan barcode", mode: "barcode", icon: <Barcode className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => setBarcodeOpen(true) },
-    { key: "ocr", label: "Nutrition label", mode: "ocr", icon: <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => docRef.current?.click() },
+    { key: "ocr", label: "Nutrition label", mode: "ocr", icon: <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => labelFileRef.current?.click() },
   ];
   const coachPresenceType: AgentType =
     style === "analytical" ? "overall" :
@@ -613,9 +638,23 @@ export function CoachPage() {
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
-      <input ref={docRef} type="file" accept=".md,.txt,text/markdown,text/plain" className="hidden"
-        onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickFile(file); e.target.value = ""; }} />
+      <input ref={labelFileRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickNutritionLabel(file); e.target.value = ""; }} />
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} date={localDateStr()} />
+
+      {pendingPickerMode && (
+        <div className="mx-3 mt-3 flex items-center justify-between gap-3 rounded-2xl border border-lavender/25 bg-lavender/10 px-4 py-3 text-[13px] text-text" role="status">
+          <span>{pendingPickerMode === "ocr" ? "Ready to read a nutrition label?" : "Ready to attach a meal photo?"}</span>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => {
+              const mode = pendingPickerMode;
+              setPendingPickerMode(null);
+              (mode === "ocr" ? labelFileRef : fileRef).current?.click();
+            }} className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-text-on-ink">Choose photo</button>
+            <button type="button" onClick={() => setPendingPickerMode(null)} className="rounded-full px-2 py-1.5 text-xs font-semibold text-text-muted">Not now</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Mobile header ─────────────────────────────────────────── */}
       <div className="lg:hidden px-4 pt-1 pb-3 shrink-0 flex items-center gap-2.5 border-b border-ink/6 dark:border-white/6">
@@ -906,6 +945,24 @@ export function CoachPage() {
               </div>
             </motion.div>
           )}
+          {attachedLabel && (
+            <motion.div
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.18 }}
+              className="shrink-0 max-w-[720px] mx-auto w-full px-3 pb-2"
+            >
+              <div className="relative rounded-xl border border-lavender/20 bg-lavender/10 px-3 py-2 pr-8 text-[12px] text-text">
+                <p className="font-semibold">{attachedLabel.name}</p>
+                <p className="mt-0.5 text-text-muted">{attachedLabel.content.split("\n").at(-1)}</p>
+                <button type="button" onClick={() => setAttachedLabel(null)} aria-label="Remove nutrition label"
+                  className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-ink text-white dark:bg-lavender dark:text-ink">
+                  <X className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
 
         <div className="shrink-0" style={{ paddingBottom: kbPad > 0 ? `${kbPad}px` : "max(env(safe-area-inset-bottom), 0.75rem)" }}>
@@ -919,10 +976,10 @@ export function CoachPage() {
               attachItems={attachItems}
               onVoice={() => voice.recording ? voice.stop() : voice.start()}
               voiceState={voice.transcribing ? "transcribing" : voice.recording ? "recording" : "idle"}
-              busy={thinking}
-              disabled={voice.transcribing}
-              submitEnabled={!!input.trim() || !!attachedImage || !!attachedFile}
-              placeholder={voice.recording ? "Listening..." : voice.transcribing ? "Transcribing..." : attachedFile ? "Add a note (optional)..." : "Message Stry — what did you eat or train?"}
+              busy={thinking || labelParsing}
+              disabled={voice.transcribing || labelParsing}
+              submitEnabled={!!input.trim() || !!attachedImage || !!attachedLabel}
+              placeholder={voice.recording ? "Listening..." : voice.transcribing ? "Transcribing..." : labelParsing ? "Reading nutrition label..." : attachedLabel ? "Add a note (optional)..." : "Message Stry — what did you eat or train?"}
               ariaLabel="Message Stry"
             />
             {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{getAIErrorMessage(voice.error) ?? voice.error}</p>}

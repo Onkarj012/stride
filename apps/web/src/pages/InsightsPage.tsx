@@ -38,6 +38,15 @@ function TodaysMealsCard({ date }: { date: string }) {
   const toast = useToast();
   const [editing, setEditing] = useState<EditableMeal | null>(null);
 
+  if (data === undefined) {
+    return (
+      <Card tone="card" radius="lg" padding="lg" className="space-y-3">
+        <Skeleton className="h-5 w-36 rounded" />
+        <Skeleton className="h-16 w-full rounded" />
+      </Card>
+    );
+  }
+
   async function handleRelog(id: Id<"meals">, name: string) {
     try {
       const { date, time } = localDateTime();
@@ -394,6 +403,13 @@ export function InsightsPage() {
 
   // Today's logs (used for "today" macros and milestones)
   const { logs } = useLogs();
+  const mealsResult = useQuery(api.meals.getMeals, { date: today });
+  const workoutsResult = useQuery(api.workouts.getWorkouts, { date: today });
+  const waterResult = useQuery(api.wellness.getWater, { date: today });
+  const sleepResult = useQuery(api.wellness.getSleep, { date: today });
+  const moodResult = useQuery(api.wellness.getMood, { date: today });
+  const stepsResult = useQuery(api.wellness.getSteps, { date: today });
+  const logsLoading = [mealsResult, workoutsResult, waterResult, sleepResult, moodResult, stepsResult].some((result) => result === undefined);
 
   // Aggregate from progress rows
   const totalKcal = progressRows.reduce((s, r) => s + r.calories, 0);
@@ -425,7 +441,7 @@ export function InsightsPage() {
   const weeklySummary = useQuery(api.insights.getWeeklySummary);
   const profile = useQuery(api.profile.getProfile);
 
-  if (progressRowsResult === undefined || brief === undefined) {
+  if (progressRowsResult === undefined || brief === undefined || logsLoading) {
     return (
       <div className="space-y-3 px-5 py-6 lg:mx-auto lg:max-w-6xl lg:px-0">
         <Skeleton className="h-8 w-40 rounded-[14px]" />
