@@ -11,6 +11,15 @@ type OnboardingDraftInput<Phase extends string, State> = Omit<OnboardingDraft<Ph
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
+function getSessionStorage(): StorageLike | undefined {
+  try {
+    return typeof window === "undefined" ? undefined : window.sessionStorage;
+  } catch {
+    // Privacy modes can throw while reading the sessionStorage property itself.
+    return undefined;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -38,13 +47,12 @@ function mergeAcceptedState<State>(candidate: unknown, fallback: State): State |
 }
 
 export function readOnboardingDraft<Phase extends string, State>(
-  storage: StorageLike | undefined,
   phases: readonly Phase[],
   fallback: OnboardingDraftInput<Phase, State>,
 ): OnboardingDraft<Phase, State> {
   const fallbackDraft: OnboardingDraft<Phase, State> = { ...fallback, version: ONBOARDING_DRAFT_VERSION };
   try {
-    const raw = storage?.getItem(ONBOARDING_STORAGE_KEY);
+    const raw = getSessionStorage()?.getItem(ONBOARDING_STORAGE_KEY);
     if (!raw) return fallbackDraft;
     const parsed: unknown = JSON.parse(raw);
     if (!isRecord(parsed) || parsed.version !== ONBOARDING_DRAFT_VERSION) return fallbackDraft;
@@ -59,19 +67,18 @@ export function readOnboardingDraft<Phase extends string, State>(
 }
 
 export function saveOnboardingDraft<Phase extends string, State>(
-  storage: StorageLike | undefined,
   draft: OnboardingDraftInput<Phase, State>,
 ) {
   try {
-    storage?.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({ ...draft, version: ONBOARDING_DRAFT_VERSION }));
+    getSessionStorage()?.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify({ ...draft, version: ONBOARDING_DRAFT_VERSION }));
   } catch {
     // Storage can be unavailable or full. The in-memory flow still works.
   }
 }
 
-export function clearOnboardingDraft(storage: StorageLike | undefined) {
+export function clearOnboardingDraft() {
   try {
-    storage?.removeItem(ONBOARDING_STORAGE_KEY);
+    getSessionStorage()?.removeItem(ONBOARDING_STORAGE_KEY);
   } catch {
     // Ignore unavailable storage during completion.
   }

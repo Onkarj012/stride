@@ -130,13 +130,30 @@ export function NutritionPage() {
 
   if (brief === undefined || mealsResult === undefined) {
     return (
-      <div className="flex items-center justify-center min-h-dvh px-5">
-        <div className="space-y-3 w-full max-w-xs">
-          <Skeleton className="h-8 w-3/4 rounded-[14px]" />
-          <Skeleton className="h-40 w-full rounded-[20px]" />
-          <Skeleton className="h-24 w-full rounded-[20px]" />
+      <>
+        <div className="lg:hidden px-5 pt-4 pb-6 relative">
+          <ScreenHeader title="Nutrition" sub="Today's meals & recipes" />
+          <div className="space-y-3">
+            <Skeleton className="h-40 w-full rounded-[20px]" />
+            <Skeleton className="h-24 w-full rounded-[20px]" />
+          </div>
         </div>
-      </div>
+        <div className="hidden lg:block page-container">
+          <PageHeader
+            left={
+              <div>
+                <h1 className="text-[22px] font-extrabold tracking-tight text-text">Nutrition</h1>
+                <p className="text-[11.5px] text-text-muted mt-0.5">{todayLabel}</p>
+              </div>
+            }
+            right={<NavTrigger className="lg:hidden" />}
+          />
+          <div className="space-y-3">
+            <Skeleton className="h-40 w-full rounded-[20px]" />
+            <Skeleton className="h-24 w-full rounded-[20px]" />
+          </div>
+        </div>
+      </>
     );
   }
 

@@ -145,6 +145,15 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
   const toast = useToast();
   const [editing, setEditing] = useState<EditableWorkout | null>(null);
 
+  if (data === undefined) {
+    return (
+      <Card tone="card" radius="lg" padding="lg" className="space-y-3">
+        <Skeleton className="h-5 w-40 rounded" />
+        <Skeleton className="h-16 w-full rounded" />
+      </Card>
+    );
+  }
+
   async function handleRelog(id: Id<"workouts">, name: string) {
     try {
       const { date, time } = localDateTime();
@@ -443,11 +452,30 @@ export function InsightsPage() {
 
   if (progressRowsResult === undefined || brief === undefined || logsLoading) {
     return (
-      <div className="space-y-3 px-5 py-6 lg:mx-auto lg:max-w-6xl lg:px-0">
-        <Skeleton className="h-8 w-40 rounded-[14px]" />
-        <Skeleton className="h-40 w-full rounded-[20px]" />
-        <Skeleton className="h-28 w-full rounded-[20px]" />
-      </div>
+      <>
+        <div className="lg:hidden px-5 pt-4 pb-6">
+          <ScreenHeader title="Insights" sub="What's working, what to watch" />
+          <div className="space-y-3">
+            <Skeleton className="h-40 w-full rounded-[20px]" />
+            <Skeleton className="h-28 w-full rounded-[20px]" />
+          </div>
+        </div>
+        <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
+          <PageHeader
+            center={
+              <div className="flex flex-col items-center -space-y-0.5">
+                <span className="text-h2 text-text">Insights</span>
+                <span className="text-caption text-text-muted">Your day so far</span>
+              </div>
+            }
+            right={<NavTrigger className="lg:hidden" />}
+          />
+          <div className="space-y-3">
+            <Skeleton className="h-40 w-full rounded-[20px]" />
+            <Skeleton className="h-28 w-full rounded-[20px]" />
+          </div>
+        </div>
+      </>
     );
   }
 

@@ -699,7 +699,7 @@ function SettingsTab() {
     setReplaying(true);
     try {
       await upsertProfile({ onboardingComplete: false });
-      clearOnboardingDraft(window.sessionStorage);
+      clearOnboardingDraft();
       navigate("/onboarding");
     } catch (error) {
       reportException(error, "replay_onboarding_failed");

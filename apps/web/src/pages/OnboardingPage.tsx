@@ -178,7 +178,7 @@ export function OnboardingPage() {
     dietaryPreference: "", allergies: "", coachingStyle: "gentle",
   };
   const defaultDraft = { phase: "name" as const, state: defaultState };
-  const [draft] = useState(() => readOnboardingDraft(window.sessionStorage, PHASES, defaultDraft));
+  const [draft] = useState(() => readOnboardingDraft(PHASES, defaultDraft));
   const [phase, setPhase] = useState<Phase>(draft.phase);
   const [state, setState] = useState<State>(draft.state);
   const set = <K extends keyof State>(k: K, v: State[K]) => setState((s) => ({ ...s, [k]: v }));
@@ -231,7 +231,7 @@ export function OnboardingPage() {
   }, []);
 
   useEffect(() => {
-    saveOnboardingDraft(window.sessionStorage, { phase, state });
+    saveOnboardingDraft({ phase, state });
   }, [phase, state]);
 
   useEffect(() => {
@@ -294,7 +294,7 @@ export function OnboardingPage() {
         } as any);
       }
       await upsertSettings({ coachingStyle: state.coachingStyle });
-      clearOnboardingDraft(window.sessionStorage);
+      clearOnboardingDraft();
       navigate("/");
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Something went wrong. Tap to retry.");

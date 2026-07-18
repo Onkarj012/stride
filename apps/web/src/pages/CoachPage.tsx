@@ -94,6 +94,76 @@ const GREETING: Record<CoachingStyle, string> = {
   analytical: "Hi, I'm Stry. I'll help you track patterns. What would you like to log?",
 };
 
+const MAX_IMAGE_EDGE = 1600;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function dataUrlBytes(dataUrl: string): number {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  return Math.ceil(base64.length * 3 / 4);
+}
+
+async function decodeImage(file: File): Promise<{ source: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file);
+      return { source: bitmap, width: bitmap.width, height: bitmap.height, cleanup: () => bitmap.close() };
+    } catch {
+      // Fall back to an object URL for browsers with partial ImageBitmap support.
+    }
+  }
+
+  const sourceUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("Couldn't decode image"));
+      element.src = sourceUrl;
+    });
+    return {
+      source: image,
+      width: image.naturalWidth || image.width,
+      height: image.naturalHeight || image.height,
+      cleanup: () => URL.revokeObjectURL(sourceUrl),
+    };
+  } catch (error) {
+    URL.revokeObjectURL(sourceUrl);
+    throw error;
+  }
+}
+
+async function resizeImageForUpload(file: File): Promise<string> {
+  const decoded = await decodeImage(file);
+  const { source, width: sourceWidth, height: sourceHeight } = decoded;
+  try {
+    if (!sourceWidth || !sourceHeight) throw new Error("Image has no dimensions");
+    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(sourceWidth, sourceHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Couldn't prepare image");
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+    let quality = 0.8;
+    let output = canvas.toDataURL("image/jpeg", quality);
+    while (dataUrlBytes(output) > MAX_IMAGE_BYTES && quality > 0.4) {
+      quality -= 0.1;
+      output = canvas.toDataURL("image/jpeg", quality);
+    }
+    while (dataUrlBytes(output) > MAX_IMAGE_BYTES && Math.max(canvas.width, canvas.height) > 640) {
+      canvas.width = Math.max(1, Math.round(canvas.width * 0.8));
+      canvas.height = Math.max(1, Math.round(canvas.height * 0.8));
+      context.drawImage(source, 0, 0, canvas.width, canvas.height);
+      output = canvas.toDataURL("image/jpeg", quality);
+    }
+    if (dataUrlBytes(output) > MAX_IMAGE_BYTES) throw new Error("Image is too large after resizing");
+    return output;
+  } finally {
+    decoded.cleanup();
+  }
+}
+
 export function CoachPage() {
   const navigate = useNavigate();
   const { prefs } = usePrefs();
@@ -182,9 +252,9 @@ export function CoachPage() {
 
   const onPickImage = useCallback((file: File) => {
     if (!file.type.startsWith("image/")) { toast.error("Not an image", "Please choose an image file"); return; }
-    const reader = new FileReader();
-    reader.onload = () => setAttachedImage(reader.result as string);
-    reader.readAsDataURL(file);
+    void resizeImageForUpload(file)
+      .then((imageDataUrl) => setAttachedImage(imageDataUrl))
+      .catch(() => toast.error("Couldn't read image", "Please choose another photo"));
   }, [toast]);
 
   const onPickNutritionLabel = useCallback((file: File) => {
@@ -192,38 +262,32 @@ export function CoachPage() {
       toast.error("Not an image", "Choose a photo of the nutrition label");
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const imageDataUrl = typeof reader.result === "string" ? reader.result : "";
-      if (!imageDataUrl) {
-        toast.error("Couldn't read image", "Please choose another photo");
-        return;
-      }
-      setLabelParsing(true);
-      void parseNutritionImage({ imageDataUrl, userDescription: input.trim() || undefined })
-        .then((result) => {
-          const label = result as {
-            name: string;
-            caloriesPer100g: number;
-            proteinPer100g: number;
-            carbsPer100g: number;
-            fatPer100g: number;
-            servingSize?: number;
-            servingUnit?: string;
-            userPortionGrams?: number;
-          };
-          const serving = label.servingSize != null ? `Serving size: ${label.servingSize}${label.servingUnit ?? "g"}.\n` : "";
-          const portion = label.userPortionGrams != null ? `Estimated portion: ${label.userPortionGrams}g.\n` : "";
-          setAttachedLabel({
-            name: label.name || "Nutrition label",
-            content: `${label.name || "Nutrition label"}\n${serving}${portion}Per 100g: ${label.caloriesPer100g} kcal, ${label.proteinPer100g}g protein, ${label.carbsPer100g}g carbs, ${label.fatPer100g}g fat.`,
-          });
-          toast.success("Label read", "Review the details, then send to log it.");
-        })
-        .catch((error) => toast.error("Couldn't read label", getAIErrorMessage(error) ?? "Choose a clearer photo and try again."))
-        .finally(() => setLabelParsing(false));
-    };
-    reader.readAsDataURL(file);
+    void resizeImageForUpload(file)
+      .then((imageDataUrl) => {
+        setLabelParsing(true);
+        return parseNutritionImage({ imageDataUrl, userDescription: input.trim() || undefined })
+          .then((result) => {
+            const label = result as {
+              name: string;
+              caloriesPer100g: number;
+              proteinPer100g: number;
+              carbsPer100g: number;
+              fatPer100g: number;
+              servingSize?: number;
+              servingUnit?: string;
+              userPortionGrams?: number;
+            };
+            const serving = label.servingSize != null ? `Serving size: ${label.servingSize}${label.servingUnit ?? "g"}.\n` : "";
+            const portion = label.userPortionGrams != null ? `Estimated portion: ${label.userPortionGrams}g.\n` : "";
+            setAttachedLabel({
+              name: label.name || "Nutrition label",
+              content: `${label.name || "Nutrition label"}\n${serving}${portion}Per 100g: ${label.caloriesPer100g} kcal, ${label.proteinPer100g}g protein, ${label.carbsPer100g}g carbs, ${label.fatPer100g}g fat.`,
+            });
+            toast.success("Label read", "Review the details, then send to log it.");
+          })
+      })
+      .catch((error) => toast.error("Couldn't read label", getAIErrorMessage(error) ?? "Choose a clearer photo and try again."))
+      .finally(() => setLabelParsing(false));
   }, [input, parseNutritionImage, toast]);
 
   // Pin composer above keyboard on mobile via visualViewport
@@ -497,17 +561,17 @@ export function CoachPage() {
     sendingRef.current = true;
     const v = text.trim();
     if (!v && !image && !attachedLabel) { sendingRef.current = false; return; }
-    const messageText = attachedLabel ? `[Nutrition label: ${attachedLabel.name}]\n${attachedLabel.content}\n\n${v}`.trim() : v;
+    const labelForSend = attachedLabel;
+    const messageText = labelForSend ? `[Nutrition label: ${labelForSend.name}]\n${labelForSend.content}\n\n${v}`.trim() : v;
     const userMeta = image
       ? { modality: "photo" as const, chip: "Attached image" }
       : activeMode === "voice"
       ? { modality: "voice" as const, chip: "Voice note" }
-      : attachedLabel
+      : labelForSend
       ? { modality: "ocr" as const, chip: "Nutrition label" }
       : undefined;
     setInput("");
     setAttachedImage(null);
-    setAttachedLabel(null);
     setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || (image ? "Photo of meal" : "Nutrition label"), ...userMeta }]);
     scroll();
 
@@ -604,7 +668,9 @@ export function CoachPage() {
           scroll();
         }
       }
+      if (labelForSend) setAttachedLabel(null);
     } catch (err) {
+      if (labelForSend) setAttachedLabel(labelForSend);
       const raw = err instanceof Error ? err.message : "";
       const userMsg = getAIErrorMessage(err)
         ?? (raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")

@@ -446,11 +446,22 @@ export function HistoryPage() {
 
   if (calendarDataResult === undefined || data === undefined || waterLogsResult === undefined || sleepLog === undefined || recoveryState === undefined) {
     return (
-      <div className="space-y-3 px-5 py-6 lg:mx-auto lg:max-w-6xl lg:px-0">
-        <Skeleton className="h-8 w-40 rounded-[14px]" />
-        <Skeleton className="h-64 w-full rounded-[20px]" />
-        <Skeleton className="h-32 w-full rounded-[20px]" />
-      </div>
+      <>
+        <div className="lg:hidden px-5 pt-2 pb-6">
+          <OverlayHeader title="History" back={() => navigate(-1)} />
+          <div className="space-y-3">
+            <Skeleton className="h-64 w-full rounded-[20px]" />
+            <Skeleton className="h-32 w-full rounded-[20px]" />
+          </div>
+        </div>
+        <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
+          <PageHeader center="History" right={<NavTrigger className="lg:hidden" />} />
+          <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 items-start">
+            <Skeleton className="h-64 w-full rounded-[20px]" />
+            <Skeleton className="h-32 w-full rounded-[20px]" />
+          </div>
+        </div>
+      </>
     );
   }
 

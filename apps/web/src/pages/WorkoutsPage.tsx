@@ -128,11 +128,30 @@ export function WorkoutsPage() {
 
   if (workoutsResult === undefined) {
     return (
-      <div className="space-y-3 px-5 py-6 lg:mx-auto lg:max-w-6xl lg:px-0">
-        <Skeleton className="h-8 w-40 rounded-[14px]" />
-        <Skeleton className="h-24 w-full rounded-[20px]" />
-        <Skeleton className="h-32 w-full rounded-[20px]" />
-      </div>
+      <>
+        <div className="lg:hidden px-5 pt-4 pb-6">
+          <ScreenHeader title="Workouts" sub="Today's session" />
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full rounded-[20px]" />
+            <Skeleton className="h-32 w-full rounded-[20px]" />
+          </div>
+        </div>
+        <div className="hidden lg:block page-container">
+          <PageHeader
+            left={
+              <div>
+                <h1 className="text-[22px] font-extrabold tracking-tight text-text">Workouts</h1>
+                <p className="text-[11.5px] text-text-muted mt-0.5">{todayLabel}</p>
+              </div>
+            }
+            right={<NavTrigger className="lg:hidden" />}
+          />
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full rounded-[20px]" />
+            <Skeleton className="h-32 w-full rounded-[20px]" />
+          </div>
+        </div>
+      </>
     );
   }
 
