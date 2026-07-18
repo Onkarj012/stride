@@ -65,6 +65,22 @@ describe("canonical action writers", () => {
     expect(actions[0]).toMatchObject({ actionType: "workout", status: "committed", committedRowRef: { table: "workouts" } });
   });
 
+  test("rejects malformed weight actions before writing domain rows", async () => {
+    const t = convexTest(schema, modules);
+
+    await expect(t.mutation(writer("writeRecoveryAction"), {
+      group: group("invalid weight", "invalid-weight-range-group"),
+      member: member({ kind: "weight", weightKg: 401, date: "2026-07-16" }, "invalid-weight-range-member"),
+    })).rejects.toThrow(/weightKg/);
+    await expect(t.mutation(writer("writeRecoveryAction"), {
+      group: group("missing weight date", "missing-weight-date-group"),
+      member: member({ kind: "weight", weightKg: 80 }, "missing-weight-date-member"),
+    })).rejects.toThrow(/weight date/);
+
+    expect(await t.run((ctx) => ctx.db.query("user_profiles").collect())).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("weight_logs").collect())).toHaveLength(0);
+  });
+
   test("routes recovery kinds through one writer and preserves upsert results", async () => {
     const t = convexTest(schema, modules);
     const base = { group: group("writer recovery", "writer-recovery-group") };

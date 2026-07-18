@@ -6,7 +6,7 @@
  *   - remove(id) — deletes by id (auto-detects table)
  *   - clear() — deletes all of today's entries
  */
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
@@ -81,7 +81,6 @@ export function useLogs(date?: string) {
   const addMeal = useMutation(api.meals.addMeal);
   const addWorkout = useMutation(api.workouts.addWorkout);
   const addWater = useMutation(api.wellness.addWater);
-  const waterIntentToken = useRef<string | null>(null);
   const upsertSleep = useMutation(api.wellness.upsertSleep);
   const addMood = useMutation(api.wellness.addMood);
   const upsertSteps = useMutation(api.wellness.upsertSteps);
@@ -194,13 +193,8 @@ export function useLogs(date?: string) {
         });
         } else if (category === "water") {
         const ml = requireWaterAmount(extra?.water);
-        const token = waterIntentToken.current ?? crypto.randomUUID();
-        waterIntentToken.current = token;
-        try {
-          await submitWaterIntent(addWater, { ml, date: targetDate, time, idempotencyToken: token });
-        } finally {
-          if (waterIntentToken.current === token) waterIntentToken.current = null;
-        }
+        const token = crypto.randomUUID();
+        await submitWaterIntent(addWater, { ml, date: targetDate, time, idempotencyToken: token });
         } else if (category === "sleep") {
         const s = extra?.sleep;
         if (!s) return null;

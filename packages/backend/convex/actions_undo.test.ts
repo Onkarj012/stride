@@ -80,6 +80,19 @@ describe("audited action undo", () => {
     expect(await asUser.mutation(undoApi.undoAction, { actionId: action._id })).toMatchObject({ status: "already_undone" });
   });
 
+  test("legacy action-owned delete resolves its owner by indexed row reference", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    const mealId = await writeMeal(t, "legacy-indexed-delete");
+    const action = (await t.run((ctx) => ctx.db.query("actions").first()))!;
+
+    await t.run((ctx) => ctx.db.patch(mealId, { sourceActionId: undefined }));
+    await asUser.mutation(api.meals.deleteMeal, { id: mealId });
+
+    expect(await t.run((ctx) => ctx.db.get(mealId))).toMatchObject({ undoneAt: expect.any(Number) });
+    expect(await t.run((ctx) => ctx.db.get(action._id))).toMatchObject({ status: "undone" });
+  });
+
   test("weight undo only restores the weight owned by that action", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "undo-user" });
@@ -111,6 +124,21 @@ describe("audited action undo", () => {
       goal: "muscle_gain",
       weightUpdatedByActionId: String(secondAction._id),
     });
+  });
+
+  test("undo removes a synthetic profile created by a weight action", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "undo-user" });
+    await t.mutation(writerApi.writeRecoveryAction, {
+      group: group("weight-synthetic-profile"),
+      member: member({ kind: "weight", weightKg: 75, date: "2026-07-16" }, "weight-synthetic-profile-member"),
+    });
+    const action = (await t.run((ctx) => ctx.db.query("actions").collect()))[0];
+
+    await asUser.mutation(undoApi.undoAction, { actionId: action._id });
+
+    expect(await t.run((ctx) => ctx.db.query("user_profiles").first())).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query("weight_logs").first())).toMatchObject({ undoneAt: expect.any(Number) });
   });
 
   test("group undo reverses committed members and skips failed and undone members", async () => {

@@ -193,11 +193,12 @@ export async function tombstoneActionOwnedRow(ctx: MutationCtx, input: {
   if (!action) {
     const committed = await ctx.db
       .query("actions")
-      .withIndex("by_user_status", (q) => q.eq("userId", input.userId).eq("status", "committed"))
-      .collect();
-    action = committed.find((candidate) =>
-      candidate.committedRowRef?.table === input.table && candidate.committedRowRef.id === input.row._id,
-    ) ?? null;
+      .withIndex("by_user_committed_row", (q) =>
+        q.eq("userId", input.userId).eq("committedRowTable", input.table).eq("committedRowId", input.row._id),
+      )
+      .filter((q) => q.eq(q.field("status"), "committed"))
+      .first();
+    action = committed;
   }
   if (!action) {
     if (input.row.sourceActionId) throw new Error("Action-owned row has no matching action");
@@ -273,12 +274,27 @@ async function reverseCommittedAction(ctx: MutationCtx, action: Doc<"actions">):
       .first();
     if (profile?.weightUpdatedByActionId === expectedSourceActionId) {
       const previousProfile = action.payload.previousProfile;
-      await ctx.db.patch(profile._id, {
-        weight: previousProfile && typeof previousProfile === "object" ? previousProfile.weight : undefined,
-        weightUpdatedByActionId: previousProfile && typeof previousProfile === "object"
-          ? previousProfile.weightUpdatedByActionId
-          : undefined,
-      });
+      const profileFields = Object.keys(profile);
+      const isSyntheticProfile = previousProfile == null
+        && profile.activityLevel === "moderate"
+        && profileFields.every((field) =>
+          field === "_id"
+          || field === "_creationTime"
+          || field === "userId"
+          || field === "weight"
+          || field === "weightUpdatedByActionId"
+          || field === "activityLevel",
+        );
+      if (isSyntheticProfile) {
+        await ctx.db.delete(profile._id);
+      } else {
+        await ctx.db.patch(profile._id, {
+          weight: previousProfile && typeof previousProfile === "object" ? previousProfile.weight : undefined,
+          weightUpdatedByActionId: previousProfile && typeof previousProfile === "object"
+            ? previousProfile.weightUpdatedByActionId
+            : undefined,
+        });
+      }
     }
   }
 
@@ -376,10 +392,12 @@ export const undoGroup = mutation({
 export const getCommittedActionForRow = internalQuery({
   args: { userId: v.string(), table: v.string(), rowId: v.string() },
   handler: async (ctx, { userId, table, rowId }) => {
-    const actions = await ctx.db
+    return ctx.db
       .query("actions")
-      .withIndex("by_user_status", (q) => q.eq("userId", userId).eq("status", "committed"))
-      .collect();
-    return actions.find((action) => action.committedRowRef?.table === table && action.committedRowRef.id === rowId) ?? null;
+      .withIndex("by_user_committed_row", (q) =>
+        q.eq("userId", userId).eq("committedRowTable", table).eq("committedRowId", rowId),
+      )
+      .filter((q) => q.eq(q.field("status"), "committed"))
+      .first();
   },
 });
