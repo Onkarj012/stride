@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import { useQuery } from "convex/react";
+import { useUser } from "@clerk/react";
 import { api } from "@convex/_generated/api";
 import { useLogs } from "@/hooks/useLogs";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
@@ -28,6 +29,7 @@ export function RightPanel() {
   const { expanded, toggle } = useSnapshot();
   const reduceMotion = useReducedMotion();
   const profile = useQuery(api.profile.getProfile);
+  const { user } = useUser();
   const brief = useQuery(api.insights.getTodayBrief, {});
   const today = localDateStr();
   const { logs } = useLogs(today);
@@ -49,7 +51,7 @@ export function RightPanel() {
   const proteinPct = proteinTarget > 0 ? (protein / proteinTarget) * 100 : 0;
   const waterPct = (waterMl / waterTarget) * 100;
 
-  const firstName = profile?.name?.split(" ")[0] ?? "You";
+  const firstName = profile?.name?.split(" ")[0] ?? user?.firstName ?? user?.username ?? "You";
   const goalWeight = (profile as any)?.goalWeightKg;
   const currentWeight = (profile as any)?.weight;
 

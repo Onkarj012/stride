@@ -9,6 +9,7 @@ import { NavTrigger } from "@/components/layout/NavTrigger";
 import { EditLogModal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { Card } from "@/components/primitives/Card";
 import { Button } from "@/components/primitives/Button";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { StatChip, WorkoutSessionCard } from "@/components/ui-kit";
 import { ScreenHeader } from "@/components/mobile/MobileKit";
 import { useToast } from "@/context/ToastContext";
@@ -93,7 +94,8 @@ function formatWorkoutSet(set: StoredWorkoutSet, unit?: string) {
 export function WorkoutsPage() {
   const navigate = useNavigate();
   const today = localDateStr();
-  const workouts = (useQuery(api.workouts.getWorkouts, { date: today }) ?? []) as WorkoutRow[];
+  const workoutsResult = useQuery(api.workouts.getWorkouts, { date: today });
+  const workouts = (workoutsResult ?? []) as WorkoutRow[];
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
   const toast = useToast();
 
@@ -122,6 +124,35 @@ export function WorkoutsPage() {
     } finally {
       setConfirmDelete(null);
     }
+  }
+
+  if (workoutsResult === undefined) {
+    return (
+      <>
+        <div className="lg:hidden px-5 pt-4 pb-6">
+          <ScreenHeader title="Workouts" sub="Today's session" />
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full rounded-[20px]" />
+            <Skeleton className="h-32 w-full rounded-[20px]" />
+          </div>
+        </div>
+        <div className="hidden lg:block page-container">
+          <PageHeader
+            left={
+              <div>
+                <h1 className="text-[22px] font-extrabold tracking-tight text-text">Workouts</h1>
+                <p className="text-[11.5px] text-text-muted mt-0.5">{todayLabel}</p>
+              </div>
+            }
+            right={<NavTrigger className="lg:hidden" />}
+          />
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full rounded-[20px]" />
+            <Skeleton className="h-32 w-full rounded-[20px]" />
+          </div>
+        </div>
+      </>
+    );
   }
 
   return (

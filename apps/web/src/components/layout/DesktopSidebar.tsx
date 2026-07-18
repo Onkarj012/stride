@@ -177,13 +177,13 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
         </AnimatePresence>
       </div>
 
-      {/* Ask Stride CTA */}
+      {/* Ask Stry CTA */}
       <div className={cn("shrink-0 mb-3", collapsed ? "px-2" : "px-4")}>
         <button
           type="button"
           onClick={() => navigate("/coach")}
-          aria-label="Ask Stride"
-          title={collapsed ? "Ask Stride" : undefined}
+          aria-label="Ask Stry"
+          title={collapsed ? "Ask Stry" : undefined}
           className={cn(
             "flex items-center justify-center rounded-full bg-lavender text-ink",
             "transition-[transform,box-shadow] duration-150 hover:brightness-105 active:scale-[0.98]",
@@ -194,7 +194,7 @@ export function DesktopSidebar(_props: { onAskStride?: () => void }) {
           <MessageSquare className="h-4 w-4 shrink-0" strokeWidth={2} />
           {!collapsed && (
             <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={FADE}>
-              Ask Stride
+              Ask Stry
             </motion.span>
           )}
         </button>

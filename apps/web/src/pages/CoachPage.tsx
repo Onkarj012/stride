@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Trash2, Barcode, ImagePlus, X, RotateCcw } from "lucide-react";
+import { Plus, Trash2, Barcode, ImagePlus, Paperclip, X, RotateCcw } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import type { FunctionArgs } from "convex/server";
 import { api } from "@convex/_generated/api";
@@ -11,6 +11,7 @@ import { ConfirmationCard, type ConfirmationDecision, type ConfirmationPayload, 
 import { AgentBadge } from "@/components/ui-kit/AgentBadge";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { CoachBubble, InputBar } from "@/components/ui-kit";
 import type { AgentType, AttachItem, InputMode, Modality } from "@/components/ui-kit";
 import { usePrefs } from "@/hooks/usePrefs";
@@ -21,7 +22,7 @@ import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
 import { cn, localDateStr } from "@/lib/utils";
 import { getAIErrorMessage } from "@/lib/ai-errors";
 import { reportException } from "@/lib/observability";
-import { MobileIcon, StatusBar } from "@/components/mobile/MobileKit";
+import { MobileIcon } from "@/components/mobile/MobileKit";
 import type { Agent, CoachingStyle } from "@/lib/storage";
 
 const COACH_SUGGESTIONS = [
@@ -93,13 +94,84 @@ const GREETING: Record<CoachingStyle, string> = {
   analytical: "Hi, I'm Stry. I'll help you track patterns. What would you like to log?",
 };
 
+const MAX_IMAGE_EDGE = 1600;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function dataUrlBytes(dataUrl: string): number {
+  const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  return Math.ceil(base64.length * 3 / 4);
+}
+
+async function decodeImage(file: File): Promise<{ source: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(file);
+      return { source: bitmap, width: bitmap.width, height: bitmap.height, cleanup: () => bitmap.close() };
+    } catch {
+      // Fall back to an object URL for browsers with partial ImageBitmap support.
+    }
+  }
+
+  const sourceUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("Couldn't decode image"));
+      element.src = sourceUrl;
+    });
+    return {
+      source: image,
+      width: image.naturalWidth || image.width,
+      height: image.naturalHeight || image.height,
+      cleanup: () => URL.revokeObjectURL(sourceUrl),
+    };
+  } catch (error) {
+    URL.revokeObjectURL(sourceUrl);
+    throw error;
+  }
+}
+
+async function resizeImageForUpload(file: File): Promise<string> {
+  const decoded = await decodeImage(file);
+  const { source, width: sourceWidth, height: sourceHeight } = decoded;
+  try {
+    if (!sourceWidth || !sourceHeight) throw new Error("Image has no dimensions");
+    const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(sourceWidth, sourceHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Couldn't prepare image");
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+    let quality = 0.8;
+    let output = canvas.toDataURL("image/jpeg", quality);
+    while (dataUrlBytes(output) > MAX_IMAGE_BYTES && quality > 0.4) {
+      quality -= 0.1;
+      output = canvas.toDataURL("image/jpeg", quality);
+    }
+    while (dataUrlBytes(output) > MAX_IMAGE_BYTES && Math.max(canvas.width, canvas.height) > 640) {
+      canvas.width = Math.max(1, Math.round(canvas.width * 0.8));
+      canvas.height = Math.max(1, Math.round(canvas.height * 0.8));
+      context.drawImage(source, 0, 0, canvas.width, canvas.height);
+      output = canvas.toDataURL("image/jpeg", quality);
+    }
+    if (dataUrlBytes(output) > MAX_IMAGE_BYTES) throw new Error("Image is too large after resizing");
+    return output;
+  } finally {
+    decoded.cleanup();
+  }
+}
+
 export function CoachPage() {
   const navigate = useNavigate();
   const { prefs } = usePrefs();
   const style = prefs.coachingStyle;
   const reduceMotion = useReducedMotion();
 
-  const sessions = (useQuery(api.chat.getSessions) ?? []) as ChatSessionSummary[];
+  const sessionsResult = useQuery(api.chat.getSessions);
+  const sessions = (sessionsResult ?? []) as ChatSessionSummary[];
   const createSession = useMutation(api.chat.createSession);
   const deleteSession = useMutation(api.chat.deleteSession);
   const addMeal = useMutation(api.meals.addMeal);
@@ -111,6 +183,7 @@ export function CoachPage() {
   const approveWorkoutMemory = useMutation((api as any).workout_memory.approveMemory);
   const rejectWorkoutMemory = useMutation((api as any).workout_memory.rejectMemory);
   const sendToAI = useAction(api.ai.chat);
+  const parseNutritionImage = useAction(api.ai.parseNutritionImage);
   const confirmGroup = useAction((api as any).ai.confirmGroup);
   const resolveClarification = useAction(api.ai.resolveClarification);
   const toast = useToast();
@@ -130,7 +203,10 @@ export function CoachPage() {
   });
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [attachedLabel, setAttachedLabel] = useState<{ name: string; content: string } | null>(null);
+  const [labelParsing, setLabelParsing] = useState(false);
   const [barcodeOpen, setBarcodeOpen] = useState(false);
+  const [pendingPickerMode, setPendingPickerMode] = useState<"photo" | "ocr" | null>(null);
   const [kbPad, setKbPad] = useState(0);
   const [pendingUndoIds, setPendingUndoIds] = useState<Set<string>>(() => new Set());
   const [pendingRetryIds, setPendingRetryIds] = useState<Set<string>>(() => new Set());
@@ -144,6 +220,7 @@ export function CoachPage() {
   const sendingRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const labelFileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   function resetClarificationState() {
@@ -157,16 +234,61 @@ export function CoachPage() {
   }, []);
   const voice = useAudioRecorder(onTranscript);
 
+  const requestedMode = searchParams.get("mode");
+  useEffect(() => {
+    if (!requestedMode) return;
+    if (requestedMode === "barcode") setBarcodeOpen(true);
+    if (requestedMode === "photo" || requestedMode === "ocr") setPendingPickerMode(requestedMode);
+    if (requestedMode === "voice") void voice.start();
+    setSearchParams((current) => {
+      current.delete("mode");
+      return current;
+    }, { replace: true });
+  }, [requestedMode, setSearchParams, voice.start]);
+
   useEffect(() => {
     try { localStorage.setItem(CHAT_RAIL_STORAGE_KEY, String(panelOpen)); } catch {}
   }, [panelOpen]);
 
   const onPickImage = useCallback((file: File) => {
     if (!file.type.startsWith("image/")) { toast.error("Not an image", "Please choose an image file"); return; }
-    const reader = new FileReader();
-    reader.onload = () => setAttachedImage(reader.result as string);
-    reader.readAsDataURL(file);
+    void resizeImageForUpload(file)
+      .then((imageDataUrl) => setAttachedImage(imageDataUrl))
+      .catch(() => toast.error("Couldn't read image", "Please choose another photo"));
   }, [toast]);
+
+  const onPickNutritionLabel = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Not an image", "Choose a photo of the nutrition label");
+      return;
+    }
+    void resizeImageForUpload(file)
+      .then((imageDataUrl) => {
+        setLabelParsing(true);
+        return parseNutritionImage({ imageDataUrl, userDescription: input.trim() || undefined })
+          .then((result) => {
+            const label = result as {
+              name: string;
+              caloriesPer100g: number;
+              proteinPer100g: number;
+              carbsPer100g: number;
+              fatPer100g: number;
+              servingSize?: number;
+              servingUnit?: string;
+              userPortionGrams?: number;
+            };
+            const serving = label.servingSize != null ? `Serving size: ${label.servingSize}${label.servingUnit ?? "g"}.\n` : "";
+            const portion = label.userPortionGrams != null ? `Estimated portion: ${label.userPortionGrams}g.\n` : "";
+            setAttachedLabel({
+              name: label.name || "Nutrition label",
+              content: `${label.name || "Nutrition label"}\n${serving}${portion}Per 100g: ${label.caloriesPer100g} kcal, ${label.proteinPer100g}g protein, ${label.carbsPer100g}g carbs, ${label.fatPer100g}g fat.`,
+            });
+            toast.success("Label read", "Review the details, then send to log it.");
+          })
+      })
+      .catch((error) => toast.error("Couldn't read label", getAIErrorMessage(error) ?? "Choose a clearer photo and try again."))
+      .finally(() => setLabelParsing(false));
+  }, [input, parseNutritionImage, toast]);
 
   // Pin composer above keyboard on mobile via visualViewport
   useEffect(() => {
@@ -432,33 +554,37 @@ export function CoachPage() {
   const orderedSuggestions = useMemo(() => orderSuggestions(COACH_SUGGESTIONS), []);
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
-  const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : "type";
+  const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : attachedLabel ? "ocr" : "type";
 
   const send = useCallback(async (text: string, image?: string) => {
     if (sendingRef.current) return;
     sendingRef.current = true;
     const v = text.trim();
-    if (!v && !image) { sendingRef.current = false; return; }
+    if (!v && !image && !attachedLabel) { sendingRef.current = false; return; }
+    const labelForSend = attachedLabel;
+    const messageText = labelForSend ? `[Nutrition label: ${labelForSend.name}]\n${labelForSend.content}\n\n${v}`.trim() : v;
     const userMeta = image
       ? { modality: "photo" as const, chip: "Attached image" }
       : activeMode === "voice"
       ? { modality: "voice" as const, chip: "Voice note" }
+      : labelForSend
+      ? { modality: "ocr" as const, chip: "Nutrition label" }
       : undefined;
     setInput("");
     setAttachedImage(null);
-    setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || "Photo of meal", ...userMeta }]);
+    setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || (image ? "Photo of meal" : "Nutrition label"), ...userMeta }]);
     scroll();
 
     setThinking(true);
     try {
       let sessionId = activeSessionId;
       if (!sessionId) {
-        const result = await createSession({ title: v.slice(0, 40) || "Image chat" });
+        const result = await createSession({ title: messageText.slice(0, 40) || "Image chat" });
         sessionId = result.id;
         setActiveSessionId(sessionId);
       }
       const result = await sendToAI({
-        message: v,
+        message: messageText,
         image,
         sessionId,
         coachType: "auto",
@@ -542,7 +668,9 @@ export function CoachPage() {
           scroll();
         }
       }
+      if (labelForSend) setAttachedLabel(null);
     } catch (err) {
+      if (labelForSend) setAttachedLabel(labelForSend);
       const raw = err instanceof Error ? err.message : "";
       const userMsg = getAIErrorMessage(err)
         ?? (raw.toLowerCase().includes("api_key") || raw.toLowerCase().includes("api key") || raw.includes("not set")
@@ -558,11 +686,12 @@ export function CoachPage() {
       sendingRef.current = false;
       setThinking(false);
     }
-  }, [activeMode, activeSessionId, activeClarificationGroupId, createSession, sendToAI, scroll, toast]);
+  }, [activeMode, activeSessionId, activeClarificationGroupId, attachedLabel, createSession, sendToAI, scroll, toast]);
 
   const attachItems: AttachItem[] = [
     { key: "photo", label: "Photo of meal", mode: "photo", icon: <ImagePlus className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => fileRef.current?.click() },
     { key: "barcode", label: "Scan barcode", mode: "barcode", icon: <Barcode className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => setBarcodeOpen(true) },
+    { key: "ocr", label: "Nutrition label", mode: "ocr", icon: <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => labelFileRef.current?.click() },
   ];
   const coachPresenceType: AgentType =
     style === "analytical" ? "overall" :
@@ -575,7 +704,23 @@ export function CoachPage() {
 
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickImage(file); e.target.value = ""; }} />
+      <input ref={labelFileRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => { const file = e.target.files?.[0]; if (file) onPickNutritionLabel(file); e.target.value = ""; }} />
       <BarcodeModal open={barcodeOpen} onClose={() => setBarcodeOpen(false)} date={localDateStr()} />
+
+      {pendingPickerMode && (
+        <div className="mx-3 mt-3 flex items-center justify-between gap-3 rounded-2xl border border-lavender/25 bg-lavender/10 px-4 py-3 text-[13px] text-text" role="status">
+          <span>{pendingPickerMode === "ocr" ? "Ready to read a nutrition label?" : "Ready to attach a meal photo?"}</span>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => {
+              const mode = pendingPickerMode;
+              setPendingPickerMode(null);
+              (mode === "ocr" ? labelFileRef : fileRef).current?.click();
+            }} className="rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-text-on-ink">Choose photo</button>
+            <button type="button" onClick={() => setPendingPickerMode(null)} className="rounded-full px-2 py-1.5 text-xs font-semibold text-text-muted">Not now</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Mobile header ─────────────────────────────────────────── */}
       <div className="lg:hidden px-4 pt-1 pb-3 shrink-0 flex items-center gap-2.5 border-b border-ink/6 dark:border-white/6">
@@ -606,7 +751,6 @@ export function CoachPage() {
               initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }}
               transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 36 }}
             >
-              <StatusBar />
               <div className="flex items-center justify-between px-5 pt-1 pb-4">
                 <h2 className="text-[18px] font-extrabold text-ink dark:text-surface tracking-[-0.5px]">Chats</h2>
                 <button onClick={() => setMobileHistoryOpen(false)} aria-label="Close history" className="w-9 h-9 rounded-full bg-white dark:bg-[#1a1e2e] shadow-[0_4px_14px_rgba(13,16,27,0.08)] flex items-center justify-center text-ink/55 dark:text-white/55 active:scale-90 transition-transform">
@@ -618,8 +762,9 @@ export function CoachPage() {
                   <Plus className="h-4 w-4" strokeWidth={2.4} />
                   New chat
                 </button>
-                {sessions.length === 0 && <p className="text-[13px] text-ink/45 dark:text-white/40 py-4 text-center">No previous chats yet.</p>}
-                {sessions.map((s) => (
+                {sessionsResult === undefined ? (
+                  <div className="space-y-2 py-3"><Skeleton className="h-10 w-full rounded-[10px]" /><Skeleton className="h-10 w-full rounded-[10px]" /></div>
+                ) : sessions.length === 0 ? <p className="text-[13px] text-ink/45 dark:text-white/40 py-4 text-center">No previous chats yet.</p> : sessions.map((s) => (
                   <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeSessionId ? "bg-lavender/20 text-ink dark:text-lavender" : "text-ink/55 dark:text-white/55 active:bg-ink/5 dark:active:bg-white/5")}>
                     <button type="button" onClick={() => { loadSession(s.id); setMobileHistoryOpen(false); }} className="flex-1 text-left px-3 py-3 min-w-0">
                       <div className="text-[13px] font-bold truncate">{s.title}</div>
@@ -866,6 +1011,24 @@ export function CoachPage() {
               </div>
             </motion.div>
           )}
+          {attachedLabel && (
+            <motion.div
+              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.18 }}
+              className="shrink-0 max-w-[720px] mx-auto w-full px-3 pb-2"
+            >
+              <div className="relative rounded-xl border border-lavender/20 bg-lavender/10 px-3 py-2 pr-8 text-[12px] text-text">
+                <p className="font-semibold">{attachedLabel.name}</p>
+                <p className="mt-0.5 text-text-muted">{attachedLabel.content.split("\n").at(-1)}</p>
+                <button type="button" onClick={() => setAttachedLabel(null)} aria-label="Remove nutrition label"
+                  className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-ink text-white dark:bg-lavender dark:text-ink">
+                  <X className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
 
         <div className="shrink-0" style={{ paddingBottom: kbPad > 0 ? `${kbPad}px` : "max(env(safe-area-inset-bottom), 0.75rem)" }}>
@@ -879,10 +1042,10 @@ export function CoachPage() {
               attachItems={attachItems}
               onVoice={() => voice.recording ? voice.stop() : voice.start()}
               voiceState={voice.transcribing ? "transcribing" : voice.recording ? "recording" : "idle"}
-              busy={thinking}
-              disabled={voice.transcribing}
-              submitEnabled={!!input.trim() || !!attachedImage}
-              placeholder={voice.recording ? "Listening..." : voice.transcribing ? "Transcribing..." : "Message Stry — what did you eat or train?"}
+              busy={thinking || labelParsing}
+              disabled={voice.transcribing || labelParsing}
+              submitEnabled={!!input.trim() || !!attachedImage || !!attachedLabel}
+              placeholder={voice.recording ? "Listening..." : voice.transcribing ? "Transcribing..." : labelParsing ? "Reading nutrition label..." : attachedLabel ? "Add a note (optional)..." : "Message Stry — what did you eat or train?"}
               ariaLabel="Message Stry"
             />
             {voice.error && <p className="text-[11px] text-bubblegum mt-1.5">{getAIErrorMessage(voice.error) ?? voice.error}</p>}
@@ -918,8 +1081,9 @@ export function CoachPage() {
                 <Plus className="h-4 w-4" strokeWidth={2.4} />
                 New chat
               </button>
-              {sessions.length === 0 && <p className="text-[13px] text-ink/45 dark:text-white/40 py-4 text-center">No previous chats yet.</p>}
-              {sessions.map((s) => (
+              {sessionsResult === undefined ? (
+                <div className="space-y-2 py-3"><Skeleton className="h-10 w-full rounded-[10px]" /><Skeleton className="h-10 w-full rounded-[10px]" /></div>
+              ) : sessions.length === 0 ? <p className="text-[13px] text-ink/45 dark:text-white/40 py-4 text-center">No previous chats yet.</p> : sessions.map((s) => (
                 <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeSessionId ? "bg-lavender/20 text-ink dark:text-lavender" : "text-ink/55 dark:text-white/50 hover:bg-ink/5 dark:hover:bg-white/5")}>
                   <button type="button" onClick={() => loadSession(s.id)} className="flex-1 text-left rounded-[10px] px-3 py-2.5 min-w-0">
                     <div className="flex items-center gap-1.5">

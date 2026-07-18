@@ -16,7 +16,10 @@ export const ensureUser = mutation({
       .withIndex("by_clerk_id", (q) => q.eq("clerkId", clerkId))
       .first();
 
-    if (existing) return existing._id;
+    if (existing) {
+      if (existing.name !== name) await ctx.db.patch(existing._id, { name });
+      return existing._id;
+    }
 
     return ctx.db.insert("users", { clerkId, name, email });
   },

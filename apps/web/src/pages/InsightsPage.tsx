@@ -7,6 +7,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
+import { Skeleton } from "@/components/primitives/Skeleton";
 import { Pill } from "@/components/primitives/Pill";
 import { MacroCard, MilestoneCard, NarrativeCard, StatChip, StreakCard } from "@/components/ui-kit";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -36,6 +37,15 @@ function TodaysMealsCard({ date }: { date: string }) {
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const toast = useToast();
   const [editing, setEditing] = useState<EditableMeal | null>(null);
+
+  if (data === undefined) {
+    return (
+      <Card tone="card" radius="lg" padding="lg" className="space-y-3">
+        <Skeleton className="h-5 w-36 rounded" />
+        <Skeleton className="h-16 w-full rounded" />
+      </Card>
+    );
+  }
 
   async function handleRelog(id: Id<"meals">, name: string) {
     try {
@@ -134,6 +144,15 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
   const deleteWorkout = useMutation(api.workouts.deleteWorkout);
   const toast = useToast();
   const [editing, setEditing] = useState<EditableWorkout | null>(null);
+
+  if (data === undefined) {
+    return (
+      <Card tone="card" radius="lg" padding="lg" className="space-y-3">
+        <Skeleton className="h-5 w-40 rounded" />
+        <Skeleton className="h-16 w-full rounded" />
+      </Card>
+    );
+  }
 
   async function handleRelog(id: Id<"workouts">, name: string) {
     try {
@@ -377,7 +396,8 @@ export function InsightsPage() {
 
   // Convex progress data (7 or 30 days)
   const brief = useQuery(api.insights.getTodayBrief, { today });
-  const progressRows = (useQuery(api.progress.getProgress, { days, today }) ?? []) as Array<{
+  const progressRowsResult = useQuery(api.progress.getProgress, { days, today });
+  const progressRows = (progressRowsResult ?? []) as Array<{
     date: string;
     calories: number;
     protein: number;
@@ -392,6 +412,13 @@ export function InsightsPage() {
 
   // Today's logs (used for "today" macros and milestones)
   const { logs } = useLogs();
+  const mealsResult = useQuery(api.meals.getMeals, { date: today });
+  const workoutsResult = useQuery(api.workouts.getWorkouts, { date: today });
+  const waterResult = useQuery(api.wellness.getWater, { date: today });
+  const sleepResult = useQuery(api.wellness.getSleep, { date: today });
+  const moodResult = useQuery(api.wellness.getMood, { date: today });
+  const stepsResult = useQuery(api.wellness.getSteps, { date: today });
+  const logsLoading = [mealsResult, workoutsResult, waterResult, sleepResult, moodResult, stepsResult].some((result) => result === undefined);
 
   // Aggregate from progress rows
   const totalKcal = progressRows.reduce((s, r) => s + r.calories, 0);
@@ -422,6 +449,35 @@ export function InsightsPage() {
 
   const weeklySummary = useQuery(api.insights.getWeeklySummary);
   const profile = useQuery(api.profile.getProfile);
+
+  if (progressRowsResult === undefined || brief === undefined || logsLoading) {
+    return (
+      <>
+        <div className="lg:hidden px-5 pt-4 pb-6">
+          <ScreenHeader title="Insights" sub="What's working, what to watch" />
+          <div className="space-y-3">
+            <Skeleton className="h-40 w-full rounded-[20px]" />
+            <Skeleton className="h-28 w-full rounded-[20px]" />
+          </div>
+        </div>
+        <div className="hidden lg:block space-y-6 max-w-6xl mx-auto">
+          <PageHeader
+            center={
+              <div className="flex flex-col items-center -space-y-0.5">
+                <span className="text-h2 text-text">Insights</span>
+                <span className="text-caption text-text-muted">Your day so far</span>
+              </div>
+            }
+            right={<NavTrigger className="lg:hidden" />}
+          />
+          <div className="space-y-3">
+            <Skeleton className="h-40 w-full rounded-[20px]" />
+            <Skeleton className="h-28 w-full rounded-[20px]" />
+          </div>
+        </div>
+      </>
+    );
+  }
 
   // Wait for real targets so milestone thresholds do not flash from fallback values.
   const profileLoaded = profile !== undefined;

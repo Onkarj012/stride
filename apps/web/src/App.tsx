@@ -11,7 +11,7 @@ import { NavSheetProvider } from "@/context/NavSheetContext";
 import { SnapshotProvider } from "@/context/SnapshotContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
-import { MobileTabBar, StatusBar } from "@/components/mobile/MobileKit";
+import { MobileTabBar } from "@/components/mobile/MobileKit";
 import { HomePage } from "@/pages/HomePage";
 import { InsightsPage } from "@/pages/InsightsPage";
 import { HistoryPage } from "@/pages/HistoryPage";
@@ -25,6 +25,7 @@ import { OnboardingPage } from "@/pages/OnboardingPage";
 import { LandingPage } from "@/pages/LandingPage";
 import { FADE_FAST } from "@/lib/motion";
 import { reportException } from "@/lib/observability";
+import { Loader2 } from "lucide-react";
 
 const pageVariants = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, transition: { duration: 0.1 } } };
 const pageTransition = FADE_FAST;
@@ -84,7 +85,16 @@ function EnsureUser() {
 function OnboardingGuard({ children }: { children: React.ReactNode }) {
   const profile = useQuery(api.profile.getProfile);
   // profile === undefined = loading; null = no profile yet
-  if (profile === undefined) return null;
+  if (profile === undefined) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center bg-bg px-5">
+        <div className="flex items-center gap-2.5 text-sm font-semibold text-text-muted" role="status" aria-label="Loading your Stride space">
+          <Loader2 className="h-4 w-4 animate-spin text-lavender" />
+          Loading your Stride space…
+        </div>
+      </div>
+    );
+  }
   if (profile !== null && !profile.onboardingComplete) return <Navigate to="/onboarding" replace />;
   if (profile === null) return <Navigate to="/onboarding" replace />;
   return <>{children}</>;
@@ -136,8 +146,8 @@ function MobileOverlayWrapper({ children, slideUp = false }: { children: React.R
       exit={exit}
       transition={transition}
       className="absolute inset-0 z-40 bg-surface dark:bg-[#090b12] flex flex-col overflow-hidden"
+      style={{ paddingTop: "env(safe-area-inset-top)" }}
     >
-      <StatusBar />
       <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
         {children}
       </div>
@@ -195,7 +205,6 @@ function MainAppRoutes() {
   return (
     <>
       <div className="lg:hidden relative h-dvh min-h-dvh flex flex-col overflow-hidden bg-surface dark:bg-[#090b12] transition-colors duration-300" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        <StatusBar />
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
           <MobileTabRoutes />
         </div>

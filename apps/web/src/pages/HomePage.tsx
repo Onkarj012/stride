@@ -164,13 +164,41 @@ export function HomePage() {
 
   if (brief === undefined) {
     return (
-      <div className="flex items-center justify-center min-h-dvh px-5">
-        <div className="space-y-3 w-full max-w-xs">
-          <Skeleton className="h-8 w-3/4 rounded-[14px]" />
-          <Skeleton className="h-40 w-full rounded-[20px]" />
-          <Skeleton className="h-24 w-full rounded-[20px]" />
+      <>
+        <div className="lg:hidden px-5 pt-4 pb-6">
+          <ScreenHeader
+            title={`Hi, ${firstName}.`}
+            sub={todayLabel}
+            right={
+              <div className="flex items-center gap-2 pt-1">
+                <button onClick={() => navigate("/history")} aria-label="History" className="w-10 h-10 rounded-full bg-white dark:bg-[#1a1e2e] shadow-[0_6px_18px_rgba(13,16,27,0.08)] flex items-center justify-center text-ink/60 dark:text-white/60 active:scale-95 transition-transform">
+                  <MobileIcon size={18}><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /></MobileIcon>
+                </button>
+                <button onClick={() => navigate("/settings")} aria-label="Account" className="w-10 h-10 rounded-full bg-lavender flex items-center justify-center text-[16px] font-extrabold text-ink active:scale-95 transition-transform">{initial}</button>
+              </div>
+            }
+          />
+          <div className="space-y-3">
+            <Skeleton className="h-40 w-full rounded-[20px]" />
+            <Skeleton className="h-24 w-full rounded-[20px]" />
+          </div>
         </div>
-      </div>
+        <div className="hidden lg:flex lg:-mx-10 lg:-mt-10 lg:-mb-12 lg:h-dvh lg:flex-col">
+          <div className="px-6 pt-5 pb-3 shrink-0">
+            <div className="flex items-center gap-2">
+              <h1 className="text-[22px] font-extrabold text-ink dark:text-surface tracking-[-0.5px]">Today</h1>
+              <AgentBadge type="overall" />
+            </div>
+            <p className="text-[13px] font-medium text-ink/45 dark:text-white/45 mt-0.5">{todayLabel} · your day, in conversation</p>
+          </div>
+          <div className="flex-1 min-w-0 flex flex-col min-h-0 px-6 pt-4">
+            <div className="space-y-3 w-full max-w-3xl">
+              <Skeleton className="h-40 w-full rounded-[20px]" />
+              <Skeleton className="h-24 w-full rounded-[20px]" />
+            </div>
+          </div>
+        </div>
+      </>
     );
   }
 
