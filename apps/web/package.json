@@ -7,7 +7,7 @@
   "scripts": {
     "predev": "pnpm -w run build:tokens",
     "dev": "vite",
-    "prebuild": "pnpm -w run build:tokens",
+    "prebuild": "pnpm -w run build:tokens && node scripts/check-env.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
@@ -15,6 +15,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@sentry/react": "^10.20.0",
     "@clerk/react": "^6.7.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

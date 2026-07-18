@@ -1,12 +1,12 @@
 import { Routes, Route, useLocation, Navigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { Show, useUser, ClerkLoaded, ClerkLoading, AuthenticateWithRedirectCallback } from "@clerk/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { SidebarProvider } from "@/context/SidebarContext";
-import { ToastProvider } from "@/context/ToastContext";
+import { ToastProvider, useToast } from "@/context/ToastContext";
 import { NavSheetProvider } from "@/context/NavSheetContext";
 import { SnapshotProvider } from "@/context/SnapshotContext";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -24,6 +24,7 @@ import { SignInPage, SignUpPage } from "@/pages/AuthPages";
 import { OnboardingPage } from "@/pages/OnboardingPage";
 import { LandingPage } from "@/pages/LandingPage";
 import { FADE_FAST } from "@/lib/motion";
+import { reportException } from "@/lib/observability";
 
 const pageVariants = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, transition: { duration: 0.1 } } };
 const pageTransition = FADE_FAST;
@@ -44,12 +45,39 @@ function PageWrapper({ children }: { children: React.ReactNode }) {
 function EnsureUser() {
   const { user } = useUser();
   const ensureUser = useMutation(api.users.ensureUser);
-  useEffect(() => {
+  const toast = useToast();
+  const [error, setError] = useState<Error | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  const syncUser = useCallback(async () => {
     if (!user) return;
-    ensureUser({ name: user.fullName ?? user.username ?? "User", email: user.primaryEmailAddress?.emailAddress ?? "" })
-      .catch((err) => console.error("ensureUser failed:", err));
-  }, [user, ensureUser]);
-  return null;
+    setRetrying(true);
+    try {
+      await ensureUser({ name: user.fullName ?? user.username ?? "User", email: user.primaryEmailAddress?.emailAddress ?? "" });
+      setError(null);
+    } catch (err) {
+      reportException(err, "ensure_user_failed");
+      console.error("ensureUser failed:", err);
+      setError(err instanceof Error ? err : new Error("Could not sync your account"));
+      toast.error("Couldn't sync your account", "Check your connection and try again.");
+    } finally {
+      setRetrying(false);
+    }
+  }, [ensureUser, toast, user]);
+
+  useEffect(() => {
+    void syncUser();
+  }, [syncUser]);
+
+  if (!error) return null;
+  return (
+    <div role="alert" className="fixed inset-x-4 top-4 z-[70] mx-auto flex max-w-lg items-center gap-3 rounded-2xl border border-bubblegum bg-bubblegum px-4 py-3 text-ink shadow-[var(--shadow-elev)]">
+      <p className="min-w-0 flex-1 text-[13px] font-semibold">We couldn't finish setting up your account.</p>
+      <button type="button" onClick={() => void syncUser()} disabled={retrying} className="shrink-0 rounded-full bg-ink px-3 py-1.5 text-xs font-semibold text-text-on-ink disabled:opacity-50">
+        {retrying ? "Retrying…" : "Retry"}
+      </button>
+    </div>
+  );
 }
 
 /** Redirects new users (no profile) to onboarding. */

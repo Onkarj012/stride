@@ -20,6 +20,7 @@ import { useToast } from "@/context/ToastContext";
 import { recordSuggestion, orderSuggestions } from "@/lib/behavior";
 import { cn, localDateStr } from "@/lib/utils";
 import { getAIErrorMessage } from "@/lib/ai-errors";
+import { reportException } from "@/lib/observability";
 import { MobileIcon, StatusBar } from "@/components/mobile/MobileKit";
 import type { Agent, CoachingStyle } from "@/lib/storage";
 
@@ -135,6 +136,7 @@ export function CoachPage() {
   const [pendingRetryIds, setPendingRetryIds] = useState<Set<string>>(() => new Set());
   const [activeClarificationGroupId, setActiveClarificationGroupId] = useState<Id<"actionGroups"> | null>(null);
   const [pendingConfirmIds, setPendingConfirmIds] = useState<Set<string>>(() => new Set());
+  const [deletingSessionId, setDeletingSessionId] = useState<Id<"chat_sessions"> | null>(null);
   const [clarifyDates, setClarifyDates] = useState<Record<string, string>>({});
   const pendingUndoIdsRef = useRef<Set<string>>(new Set());
   const pendingRetryIdsRef = useRef<Set<string>>(new Set());
@@ -414,6 +416,19 @@ export function CoachPage() {
     setMessages([{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
   }, [style]);
 
+  const removeSession = useCallback(async (id: Id<"chat_sessions">) => {
+    setDeletingSessionId(id);
+    try {
+      await deleteSession({ id });
+      toast.success("Chat deleted");
+    } catch (error) {
+      reportException(error, "chat_session_delete_failed");
+      toast.error("Couldn't delete chat", error instanceof Error ? error.message : "Try again");
+    } finally {
+      setDeletingSessionId(null);
+    }
+  }, [deleteSession, toast]);
+
   const orderedSuggestions = useMemo(() => orderSuggestions(COACH_SUGGESTIONS), []);
   const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
   const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
@@ -610,7 +625,7 @@ export function CoachPage() {
                       <div className="text-[13px] font-bold truncate">{s.title}</div>
                       <div className="text-[10px] opacity-70">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
                     </button>
-                    <button type="button" onClick={() => { if (s.id === activeSessionId) newChat(); void deleteSession({ id: s.id }); }} aria-label="Delete"
+                    <button type="button" disabled={deletingSessionId === s.id} onClick={() => { if (s.id === activeSessionId) newChat(); void removeSession(s.id); }} aria-label="Delete"
                       className="mr-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-ink/35 dark:text-white/35 hover:text-bubblegum transition-colors">
                       <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                     </button>
@@ -917,7 +932,8 @@ export function CoachPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { if (s.id === activeSessionId) newChat(); void deleteSession({ id: s.id }); }}
+                    disabled={deletingSessionId === s.id}
+                    onClick={() => { if (s.id === activeSessionId) newChat(); void removeSession(s.id); }}
                     aria-label="Delete"
                     className="opacity-0 group-hover:opacity-100 mr-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-ink/35 dark:text-white/35 hover:text-bubblegum transition-colors"
                   >
