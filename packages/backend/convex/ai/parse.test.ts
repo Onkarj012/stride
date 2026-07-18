@@ -1,4 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from "vitest";
+import type { ActionCtx } from "../_generated/server";
 import { callAI } from "./llm";
 import { parseWorkoutDescription } from "./parse";
 
@@ -11,6 +12,8 @@ vi.mock("./llm", async () => {
 });
 
 const mockedCallAI = vi.mocked(callAI);
+const testCtx = {} as ActionCtx;
+const testUserId = "test-user";
 
 describe("parseWorkoutDescription", () => {
   beforeEach(() => {
@@ -92,7 +95,7 @@ inclined press: 12.5, 12.5, 15 kg dumbbells per hand: 15 reps each
 pec fly: 90, 90, 100 lbs: 15 reps
 tricep rod pushdown: 15, 15, 17.5kg: 15 reps
 tricep rope pushdown: 12.5, 12.5, 15kg: 15, 15, 12 reps
-walking: 5 min, 11 incline, then 5min of normal walking`);
+walking: 5 min, 11 incline, then 5min of normal walking`, testCtx, testUserId);
 
     expect(result.exercises).toHaveLength(6);
     expect(result.sets).toBe("6 exercises · 17 sets");
@@ -124,6 +127,8 @@ walking: 5 min, 11 incline, then 5min of normal walking`);
 
     const result = await parseWorkoutDescription(
       "bench press 3 sets of 10, 75 kcal burned",
+      testCtx,
+      testUserId,
       undefined,
       undefined,
       undefined,

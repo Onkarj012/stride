@@ -54,6 +54,18 @@ import {
 // intent helpers (looksLikeLog, etc.) → ./ai/intent
 // meal/workout parsing + nutrition engine → ./ai/parse
 
+function finiteNonNegativeNumber(field: string, value: unknown): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new Error(`${field} must be a finite non-negative number`);
+  }
+  return numeric;
+}
+
+function optionalFiniteNonNegativeNumber(field: string, value: unknown): number | undefined {
+  return value == null ? undefined : finiteNonNegativeNumber(field, value);
+}
+
 function getConvexErrorCode(err: unknown): string | undefined {
   if (!(err instanceof ConvexError)) return undefined;
   const data = err.data;
@@ -963,11 +975,11 @@ export const parseIngredients = action({
         .filter((r) => r && typeof r.name === "string" && r.name.trim())
         .map((r) => ({
           name: String(r.name).trim(),
-          grams: Math.max(0, Number(r.grams) || 0),
-          caloriesPer100g: Math.max(0, Number(r.caloriesPer100g) || 0),
-          proteinPer100g: Math.max(0, Number(r.proteinPer100g) || 0),
-          carbsPer100g: Math.max(0, Number(r.carbsPer100g) || 0),
-          fatPer100g: Math.max(0, Number(r.fatPer100g) || 0),
+          grams: finiteNonNegativeNumber("ingredient grams", r.grams),
+          caloriesPer100g: finiteNonNegativeNumber("ingredient caloriesPer100g", r.caloriesPer100g),
+          proteinPer100g: finiteNonNegativeNumber("ingredient proteinPer100g", r.proteinPer100g),
+          carbsPer100g: finiteNonNegativeNumber("ingredient carbsPer100g", r.carbsPer100g),
+          fatPer100g: finiteNonNegativeNumber("ingredient fatPer100g", r.fatPer100g),
           source: "ai",
         }));
     } catch (err) {
@@ -1046,7 +1058,7 @@ export const parseMeal = action({
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     model = settings?.openRouterModel ?? undefined;
     apiKey = settings?.openRouterKey ?? undefined;
-    const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey, undefined, ctx, userId);
+    const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", ctx, userId, model, apiKey);
 
     // Run deterministic nutrition calculation
     const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsedMeal, date: new Date().toISOString().split("T")[0] }, { userId, useMemory: true }));
@@ -1095,7 +1107,7 @@ export const parseWorkout = action({
         metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
       };
     }
-    const result = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique, ctx, userId);
+    const result = await parseWorkoutDescription(description, ctx, userId, duration, intensity, model, apiKey, userPhysique);
     return result;
   },
 });
@@ -1131,7 +1143,7 @@ export const logMeal = action({
         missing_fields: parsedData.missing_fields || [],
       };
     } else if (description) {
-      parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", model, apiKey, undefined, ctx, userId);
+      parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", ctx, userId, model, apiKey);
     } else {
       throw new Error("description or parsedData required");
     }
@@ -1255,7 +1267,7 @@ export const logWorkout = action({
         });
       data = { _id: id, ...parsedData };
     } else if (description) {
-      const parsed = await parseWorkoutDescription(description, duration, intensity, model, apiKey, userPhysique, ctx, userId);
+      const parsed = await parseWorkoutDescription(description, ctx, userId, duration, intensity, model, apiKey, userPhysique);
       if (parsed.parseError) throw new Error("Workout could not be parsed. Edit it before saving.");
       const calorieFields = parsed.calorieResult ? {
         calorieConfidence: parsed.calorieResult.confidence,
@@ -1640,7 +1652,7 @@ Rules:
         const logData = JSON.parse(mealMatch[1].trim());
         retryDescription = logData.description || message;
         const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
-        const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", parseModel, apiKey, undefined, ctx, userId);
+        const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", ctx, userId, parseModel, apiKey);
         if (parsed.parseError) {
           logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
           continue;
@@ -1727,7 +1739,7 @@ Rules:
           fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
           metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
         } : undefined;
-        const parsed = await parseWorkoutDescription(logData.description || message, undefined, undefined, parseModel, apiKey, userPhysique, ctx, userId);
+        const parsed = await parseWorkoutDescription(logData.description || message, ctx, userId, undefined, undefined, parseModel, apiKey, userPhysique);
         if (parsed.parseError) {
           logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
           continue;
@@ -2204,6 +2216,8 @@ export const generateDailyInsightsForUser = internalAction({
 const AI_CRON_BATCH_SIZE = 25;
 const AI_CRON_BATCH_DELAY_MS = 60_000;
 
+// TODO(beta P1): replace this delayed fan-out with a bounded, cursor-driven dispatcher
+// before enabling AI_CRONS_ENABLED. See plans/005-beta-release.md, P1 priority.
 /** Cron: fan out daily insights to each active user via the scheduler. */
 export const cronDailyInsights = internalAction({
   args: {},
@@ -2510,13 +2524,13 @@ Extract nutritional values per 100g. If the label is per serving, convert using 
     if (!result) throw new Error("Could not parse nutrition from image");
     return {
       name: result.name || "Scanned Product",
-      caloriesPer100g: Number(result.caloriesPer100g) || 0,
-      proteinPer100g: Number(result.proteinPer100g) || 0,
-      carbsPer100g: Number(result.carbsPer100g) || 0,
-      fatPer100g: Number(result.fatPer100g) || 0,
-      servingSize: result.servingSize ? Number(result.servingSize) : undefined,
+      caloriesPer100g: finiteNonNegativeNumber("caloriesPer100g", result.caloriesPer100g),
+      proteinPer100g: finiteNonNegativeNumber("proteinPer100g", result.proteinPer100g),
+      carbsPer100g: finiteNonNegativeNumber("carbsPer100g", result.carbsPer100g),
+      fatPer100g: finiteNonNegativeNumber("fatPer100g", result.fatPer100g),
+      servingSize: optionalFiniteNonNegativeNumber("servingSize", result.servingSize),
       servingUnit: result.servingUnit || "g",
-      userPortionGrams: result.userPortionGrams ? Number(result.userPortionGrams) : undefined,
+      userPortionGrams: optionalFiniteNonNegativeNumber("userPortionGrams", result.userPortionGrams),
       source: "scan" as const,
     };
   },
@@ -3078,7 +3092,7 @@ Return ONLY:
           }
           // ── End memory match — fall through to LLM parse ──────────────────
 
-          const parsed = await parseMealDescription(desc, "unspecified", "", settingsModel, apiKey, userIngredients as any[], ctx, userId);
+          const parsed = await parseMealDescription(desc, "unspecified", "", ctx, userId, settingsModel, apiKey, userIngredients as any[]);
           const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsed, date: item.date, description: desc }, { userId, useMemory: true }));
           const canonicalDraft = nutrition.ingredientBreakdown as MealDraft;
           const baseDraft = {
@@ -3108,7 +3122,7 @@ Return ONLY:
           summaryParts.push(`${parsed.name || "Meal"} (~${macroDecision.draft.kcal} kcal)`);
 
         } else if (item.type === "workout") {
-          const parsed = await parseWorkoutDescription(item.description, undefined, undefined, settingsModel, apiKey, userPhysique, ctx, userId);
+          const parsed = await parseWorkoutDescription(item.description, ctx, userId, undefined, undefined, settingsModel, apiKey, userPhysique);
           if (parsed.parseError) {
             summaryParts.push("Workout needs details before it can be logged");
             continue;

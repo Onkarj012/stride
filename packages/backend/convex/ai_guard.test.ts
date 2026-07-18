@@ -123,7 +123,13 @@ describe("AI spend guard", () => {
       .toThrow("INPUT_TOO_LARGE:");
     expect(() => assertHistoryEntries([{ content: "x".repeat(AI_INPUT_LIMITS.historyEntryChars + 1) }]))
       .toThrow("INPUT_TOO_LARGE:");
+    expect(() => assertHistoryEntries(Array.from({ length: AI_INPUT_LIMITS.historyEntries + 1 }, () => ({ content: "ok" }))))
+      .toThrow("INPUT_TOO_LARGE:");
+    expect(() => assertHistoryEntries(Array.from({ length: 9 }, () => ({ content: "x".repeat(4_000) }))))
+      .toThrow("INPUT_TOO_LARGE:");
     expect(() => assertIngredients(Array.from({ length: AI_INPUT_LIMITS.ingredients + 1 }, () => "food")))
+      .toThrow("INPUT_TOO_LARGE:");
+    expect(() => assertIngredients([{ name: "x".repeat(AI_INPUT_LIMITS.ingredientStringChars + 1) }]))
       .toThrow("INPUT_TOO_LARGE:");
     expect(() => assertImageDataUrl(`data:image/png;base64,${"A".repeat(AI_INPUT_LIMITS.imageBytes * 2)}`))
       .toThrow("INPUT_TOO_LARGE:");

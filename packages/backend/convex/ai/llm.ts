@@ -70,6 +70,9 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
       estimatedCostUsd,
     });
     let providerCallStarted = false;
+    let providerResponseReceived = false;
+    let responseAccepted = false;
+    let releaseCurrentReservation = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
     try {
@@ -85,6 +88,7 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
           body: JSON.stringify({ model: currentModel, messages, max_tokens: maxTokens }),
           signal: controller.signal,
         });
+        providerResponseReceived = true;
       } catch (err) {
         const error = err as Error;
         const errorMessage = error.message.toLowerCase();
@@ -109,6 +113,9 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
       if (!res.ok) {
         const status = res.status;
         const errBody = await res.text();
+        // A provider response is definitive: this attempt cannot complete, so
+        // its reserve must not survive into a retry or a future bucket.
+        releaseCurrentReservation = true;
         if (status >= 500 || status === 429) {
           lastError = new Error(`OpenRouter error ${status}: ${errBody}`);
           if (attempt < 2) {
@@ -121,9 +128,16 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
       }
 
       const data = await res.json() as any;
-      if (data.error) throw new Error(`OpenRouter API error: ${data.error.message}`);
+      if (data.error) {
+        releaseCurrentReservation = true;
+        throw new Error(`OpenRouter API error: ${data.error.message}`);
+      }
       const content = data.choices?.[0]?.message?.content;
-      if (!content) throw new Error("OpenRouter returned empty response");
+      if (!content) {
+        releaseCurrentReservation = true;
+        throw new Error("OpenRouter returned empty response");
+      }
+      responseAccepted = true;
 
       const usage = usageFromResponse(
         data.usage,
@@ -142,7 +156,11 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
       // Once fetch starts, retain the reserve unless settlement succeeds: the provider may have billed us.
-      if (!providerCallStarted) {
+      if (
+        !providerCallStarted ||
+        releaseCurrentReservation ||
+        (providerResponseReceived && !responseAccepted)
+      ) {
         await ctx.runMutation(internal.ai_guard.releaseReservation, {
           reservationId: reservation.reservationId,
         });

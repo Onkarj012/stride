@@ -92,4 +92,62 @@ describe("model config", () => {
     expect(mutationArgs).toHaveLength(2);
     expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1" });
   });
+
+  test("releases a reservation for a definitive provider error", async () => {
+    const mutationArgs: unknown[] = [];
+    const ctx = {
+      runMutation: async (_reference: unknown, args: unknown) => {
+        mutationArgs.push(args);
+        if (mutationArgs.length === 1) {
+          return { reservationId: "reservation-1", reservedCostUsd: 0, bucketKey: "2026-07-18" };
+        }
+        return undefined;
+      },
+    } as unknown as ActionCtx;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("bad request", { status: 400 })));
+
+    await expect(callAI(
+      ctx,
+      "user-1",
+      [{ role: "user", content: "hello" }],
+      10,
+      DEFAULT_MODEL,
+      "user-supplied-key",
+    )).rejects.toThrow("OpenRouter error 400");
+    expect(mutationArgs).toHaveLength(2);
+    expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1" });
+  });
+
+  test("releases a retryable failed attempt before reserving the next attempt", async () => {
+    const mutationArgs: unknown[] = [];
+    let reserveCount = 0;
+    const ctx = {
+      runMutation: async (_reference: unknown, args: any) => {
+        mutationArgs.push(args);
+        if (args?.estimatedCostUsd != null) {
+          reserveCount += 1;
+          const reservationId = `reservation-${reserveCount}`;
+          return { reservationId, reservedCostUsd: 0, bucketKey: "2026-07-18" };
+        }
+        return undefined;
+      },
+    } as unknown as ActionCtx;
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response("temporary failure", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: "done" } }],
+        usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(callAI(
+      ctx,
+      "user-1",
+      [{ role: "user", content: "hello" }],
+      10,
+      DEFAULT_MODEL,
+      "user-supplied-key",
+    )).resolves.toBe("done");
+    expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1" });
+    expect(mutationArgs[2]).toMatchObject({ estimatedCostUsd: 0 });
+  });
 });

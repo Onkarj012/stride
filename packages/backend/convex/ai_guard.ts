@@ -16,10 +16,13 @@ export const AI_TRANSCRIPTION_CONSERVATIVE_BITRATE_BPS = 8_000;
 export const AI_INPUT_LIMITS = {
   messageChars: 4_000,
   historyEntryChars: 4_000,
+  historyEntries: 40,
+  historyChars: 32_000,
   textChars: 2_000,
   imageBytes: 5 * 1024 * 1024,
   audioBytes: 10 * 1024 * 1024,
   ingredients: 50,
+  ingredientStringChars: 500,
 } as const;
 
 // OpenRouter list prices in USD per million tokens (verified 2026-07-18).
@@ -115,15 +118,39 @@ export function assertHistoryEntries(
   history: Array<{ content: string }>,
   limit = AI_INPUT_LIMITS.historyEntryChars,
 ): void {
+  if (history.length > AI_INPUT_LIMITS.historyEntries) {
+    inputTooLarge("history entries", AI_INPUT_LIMITS.historyEntries);
+  }
+
+  let totalChars = 0;
   for (const entry of history) {
     if (entry.content.length > limit) inputTooLarge("history entry", limit);
+    totalChars += entry.content.length;
+  }
+  if (totalChars > AI_INPUT_LIMITS.historyChars) {
+    inputTooLarge("history", AI_INPUT_LIMITS.historyChars);
   }
 }
 
 export function assertIngredients(value: unknown, field = "ingredients"): void {
-  if (Array.isArray(value) && value.length > AI_INPUT_LIMITS.ingredients) {
+  if (!Array.isArray(value)) return;
+  if (value.length > AI_INPUT_LIMITS.ingredients) {
     inputTooLarge(field, AI_INPUT_LIMITS.ingredients);
   }
+  value.forEach((ingredient, index) => {
+    if (typeof ingredient === "string") {
+      if (ingredient.length > AI_INPUT_LIMITS.ingredientStringChars) {
+        inputTooLarge(`${field}[${index}]`, AI_INPUT_LIMITS.ingredientStringChars);
+      }
+      return;
+    }
+    if (!ingredient || typeof ingredient !== "object") return;
+    for (const [key, part] of Object.entries(ingredient)) {
+      if (typeof part === "string" && part.length > AI_INPUT_LIMITS.ingredientStringChars) {
+        inputTooLarge(`${field}[${index}].${key}`, AI_INPUT_LIMITS.ingredientStringChars);
+      }
+    }
+  });
 }
 
 function decodedBase64Bytes(value: string): number {
