@@ -67,6 +67,11 @@ const sendIcon = (
   </svg>
 )
 
+function resizeTextarea(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+}
+
 export function InputBar({
   placeholder = 'Message Stry — what did you eat or train?',
   activeMode = 'type',
@@ -87,7 +92,13 @@ export function InputBar({
 }: InputBarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const attachRef = useRef<HTMLDivElement>(null)
+  const internalInputRef = useRef<HTMLTextAreaElement>(null)
+  const textareaRef = inputRef ?? internalInputRef
   const canSubmit = submitEnabled ?? !!value.trim()
+
+  useEffect(() => {
+    if (textareaRef.current) resizeTextarea(textareaRef.current)
+  }, [textareaRef, value])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -98,11 +109,6 @@ export function InputBar({
     document.addEventListener('pointerdown', onPointerDown)
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [menuOpen])
-
-  function resize(el: HTMLTextAreaElement) {
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`
-  }
 
   return (
     <div
@@ -156,11 +162,11 @@ export function InputBar({
       </div>
 
       <textarea
-        ref={inputRef}
+        ref={textareaRef}
         value={value}
         onChange={e => {
           onValueChange?.(e.target.value)
-          resize(e.target)
+          resizeTextarea(e.target)
         }}
         onKeyDown={e => {
           if (e.key === 'Enter' && !e.shiftKey) {

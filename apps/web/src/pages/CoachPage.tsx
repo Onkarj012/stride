@@ -797,7 +797,7 @@ export function CoachPage() {
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar" aria-live="polite" aria-label="Chat with Stry">
           <div className="max-w-[720px] mx-auto px-4 pt-5 pb-3 space-y-4">
             {!hasUserMsg && (
-              <div style={{ zoom: 0.72 } as React.CSSProperties}>
+              <div>
                 <CoachBubble
                   agentType={coachPresenceType}
                   defaultStyle={style}
@@ -813,7 +813,7 @@ export function CoachPage() {
             {messages.map((m, i) => {
               if (m.kind === "memory-approval") {
                 return (
-                  <div key={m.id} className="max-w-[92%] rounded-[16px] border border-lavender/30 bg-lavender/10 p-3.5 space-y-2" style={{ zoom: 0.72 } as React.CSSProperties}>
+                  <div key={m.id} className="max-w-[92%] rounded-[16px] border border-lavender/30 bg-lavender/10 p-3.5 space-y-2">
                     <p className="text-[13px] font-bold text-ink dark:text-surface">Save this as a preference?</p>
                     {m.entries.map((entry) => (
                       <div key={entry.memoryId} className="flex items-center justify-between gap-2">
@@ -834,7 +834,7 @@ export function CoachPage() {
               if (m.kind === "undo") {
                 if (m.entries.length === 0) return null;
                 return (
-                  <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
+                  <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]">
                     {m.entries.length > 1 && m.groupId && (
                       <button
                         type="button"
@@ -877,7 +877,7 @@ export function CoachPage() {
               if (m.kind === "duplicate") {
                 if (m.items.length === 0) return null;
                 return (
-                  <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
+                  <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]">
                     {m.items.map((item, itemIndex) => {
                       const retryId = `${m.id}:${itemIndex}`;
                       const pending = pendingRetryIds.has(retryId);
@@ -919,19 +919,19 @@ export function CoachPage() {
                 const defaultDate = m.items[0]?.resolvedDate ?? localDateStr();
                 const dateValue = clarifyDates[m.id] ?? defaultDate;
                 return (
-                  <div key={m.id} className="max-w-[92%] rounded-[16px] border border-ink/8 dark:border-white/10 bg-white dark:bg-[#1a1e2e] shadow-[0_8px_24px_rgba(13,16,27,0.06)] p-3.5 space-y-3" style={{ zoom: 0.72 } as React.CSSProperties}>
+                  <div key={m.id} className="max-w-[92%] rounded-[16px] border border-ink/8 dark:border-white/10 bg-white dark:bg-[#1a1e2e] shadow-[0_8px_24px_rgba(13,16,27,0.06)] p-3.5 space-y-3">
                     <div className="space-y-2">
                       {m.items.map((item, index) => (
                         <div key={index} className="flex flex-col gap-0.5">
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] font-extrabold uppercase tracking-wide text-ink/45 dark:text-white/45">{item.actionType}</span>
-                            <span className="text-[12px] font-medium text-ink dark:text-surface">{item.description}</span>
+                            <span className="text-[13px] font-medium text-ink dark:text-surface">{item.description}</span>
                           </div>
                           <p className="text-[12px] text-ink/60 dark:text-white/55 leading-snug">{item.reason}</p>
                         </div>
                       ))}
                     </div>
-                    <p className="text-[13px] font-medium text-ink dark:text-surface">{m.question}</p>
+                    <p className="text-[15px] font-medium text-ink dark:text-surface">{m.question}</p>
                     <div className="flex items-center gap-2">
                       <input
                         type="date"
@@ -945,7 +945,7 @@ export function CoachPage() {
                         disabled={pending || !dateValue}
                         onClick={() => void resolveClarificationCard(m.id, m.groupId, dateValue)}
                         className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
+                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-bold transition-colors",
                           pending || !dateValue
                             ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
                             : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",

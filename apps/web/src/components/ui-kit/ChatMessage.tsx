@@ -83,8 +83,7 @@ export function ChatMessage({
 }: ChatMessageProps) {
   const [copied, setCopied] = useState(false);
   const { displayed, done } = useTypewriter(content, 18, fresh);
-  const text = fresh ? displayed : content;
-  const showMarkdown = !fresh || done;
+  const text = fresh && !done ? displayed : content;
 
   const copyText = () => {
     navigator.clipboard.writeText(content).catch(() => {});
@@ -142,9 +141,7 @@ export function ChatMessage({
     >
       {badge && <div className="mb-0.5">{badge}</div>}
       <div className="max-w-full text-[14px] font-medium leading-relaxed text-ink dark:text-surface/90 break-words">
-        {showMarkdown
-          ? <Markdown className="text-[14px] font-medium leading-relaxed text-ink dark:text-surface/90">{text}</Markdown>
-          : <span className="whitespace-pre-wrap">{text}</span>}
+        <Markdown className="text-[14px] font-medium leading-relaxed text-ink dark:text-surface/90">{text}</Markdown>
       </div>
       <div className="flex items-center gap-2.5 ml-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
         <ActionBtn onClick={copyText}>
