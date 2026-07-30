@@ -118,7 +118,7 @@ describe("model config", () => {
     expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1" });
   });
 
-  test("rejects truncated provider content instead of returning it as complete", async () => {
+  test("rejects unusable finish reasons but accepts missing finish_reason with content", async () => {
     const mutationArgs: unknown[] = [];
     const ctx = {
       runMutation: async (_reference: unknown, args: unknown) => {
@@ -129,10 +129,19 @@ describe("model config", () => {
         return undefined;
       },
     } as unknown as ActionCtx;
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      choices: [{ message: { content: "partial response" }, finish_reason: "length" }],
-      usage: { prompt_tokens: 3, completion_tokens: 10, total_tokens: 13 },
-    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: "partial response" }, finish_reason: "length" }],
+        usage: { prompt_tokens: 3, completion_tokens: 10, total_tokens: 13 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: "complete response" }, finish_reason: null }],
+        usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: "also complete" } }],
+        usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } })));
 
     await expect(callAI(
       ctx,
@@ -142,6 +151,28 @@ describe("model config", () => {
       DEFAULT_MODEL,
       "user-supplied-key",
     )).rejects.toThrow("OpenRouter incomplete response (finish_reason: length); retry the request");
+    expect(mutationArgs).toHaveLength(2);
+
+    mutationArgs.length = 0;
+    await expect(callAI(
+      ctx,
+      "user-1",
+      [{ role: "user", content: "hello" }],
+      10,
+      DEFAULT_MODEL,
+      "user-supplied-key",
+    )).resolves.toBe("complete response");
+    expect(mutationArgs).toHaveLength(2);
+
+    mutationArgs.length = 0;
+    await expect(callAI(
+      ctx,
+      "user-1",
+      [{ role: "user", content: "hello" }],
+      10,
+      DEFAULT_MODEL,
+      "user-supplied-key",
+    )).resolves.toBe("also complete");
     expect(mutationArgs).toHaveLength(2);
   });
 

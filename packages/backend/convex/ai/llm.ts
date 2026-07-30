@@ -133,7 +133,7 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
         throw new Error(`OpenRouter API error: ${data.error.message}`);
       }
       const finishReason = data.choices?.[0]?.finish_reason;
-      if (finishReason !== "stop" && finishReason !== "end_turn") {
+      if (finishReason === "length" || finishReason === "content_filter") {
         releaseCurrentReservation = true;
         throw new Error(`OpenRouter incomplete response (finish_reason: ${finishReason ?? "missing"}); retry the request`);
       }
