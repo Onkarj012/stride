@@ -1,7 +1,7 @@
 import { convexTest } from "convex-test";
 import { expect, test } from "vitest";
 import schema from "./schema";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -66,4 +66,45 @@ test("calorie feedback requires auth and workout ownership", async () => {
     workoutId,
     feedback: "accurate",
   })).resolves.toMatchObject({ metabolicFactor: 1, totalWorkoutsTracked: 0 });
+});
+
+test("chat messages cannot be added to another user's session", async () => {
+  const t = convexTest(schema, modules);
+  const sessionId = await t.run((ctx) => ctx.db.insert("chat_sessions", {
+    userId: "owner",
+    title: "Owner chat",
+    updatedAt: Date.now(),
+  }));
+
+  await expect(t.mutation(internal.chat.addMessage, {
+    userId: "intruder",
+    sessionId,
+    role: "user",
+    content: "Injected message",
+  })).rejects.toThrow("Not found");
+  expect(await t.run((ctx) => ctx.db.query("chat_messages").collect())).toHaveLength(0);
+});
+
+test("chat sessions cannot be touched or retitled by another user", async () => {
+  const t = convexTest(schema, modules);
+  const updatedAt = Date.now() - 1000;
+  const sessionId = await t.run((ctx) => ctx.db.insert("chat_sessions", {
+    userId: "owner",
+    title: "Owner chat",
+    updatedAt,
+  }));
+
+  await expect(t.mutation(internal.chat.updateSessionTitleFromAI, {
+    userId: "intruder",
+    sessionId,
+    title: "Hijacked",
+  })).rejects.toThrow("Not found");
+  await expect(t.mutation(internal.chat.touchSession, {
+    userId: "intruder",
+    sessionId,
+  })).rejects.toThrow("Not found");
+  expect(await t.run((ctx) => ctx.db.get(sessionId))).toMatchObject({
+    title: "Owner chat",
+    updatedAt,
+  });
 });

@@ -80,6 +80,57 @@ function getConvexErrorMessage(err: unknown): string | undefined {
   return (data as { message?: string }).message;
 }
 
+type MealRetryArgs = {
+  name: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  time: string;
+  date: string;
+  aiSuggestion?: string;
+  mealType?: string;
+  components?: string;
+  confidence?: number;
+  nutritionSource?: string;
+  structuredItems?: string;
+  ingredientBreakdown?: string;
+  logSource: string;
+};
+
+type WorkoutRetryArgs = {
+  name: string;
+  sets: string;
+  duration?: string;
+  intensity: string;
+  date: string;
+  exercises?: unknown;
+  rationale?: string;
+  caloriesBurned?: number;
+  reportedCalories?: number;
+  estimatedCalories?: number;
+  calorieSource?: "reported" | "estimated";
+  calorieEstimateProvenance?: string;
+  structuredSets?: string;
+  timestamp: string;
+  logSource: string;
+  calorieConfidence?: number;
+  calorieRangeLow?: number;
+  calorieRangeHigh?: number;
+  calorieBreakdown?: string;
+  calculationVersion?: number;
+};
+
+type FailedLogItem =
+  | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs }
+  | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs }
+  | {
+      kind: "meal" | "workout" | "sleep" | "water" | "mood" | "steps";
+      code: "PARSE_FAILED";
+      description: string;
+      reason: string;
+    };
+
 function markerMember(
   groupKey: string,
   actionType: "meal" | "workout" | "recovery",
@@ -1441,7 +1492,7 @@ Rules:
           : `I couldn't save that. Please try again.`;
         await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "ai", content: resolvedReply });
         if (sessionId) {
-          await ctx.runMutation(internal.chat.touchSession, { sessionId });
+          await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
         }
         const loggedItem = resolved.loggedItems.length === 1
           ? resolved.loggedItems[0]
@@ -1550,48 +1601,6 @@ Rules:
     const loggedItems: any[] = [];
     const memoryApprovals: any[] = [];
     const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string; errorCode?: string; actionId?: string; groupId?: string }> = [];
-    type MealRetryArgs = {
-      name: string;
-      calories: number;
-      protein: number;
-      carbs: number;
-      fat: number;
-      time: string;
-      date: string;
-      aiSuggestion?: string;
-      mealType?: string;
-      components?: string;
-      confidence?: number;
-      nutritionSource?: string;
-      structuredItems?: string;
-      ingredientBreakdown?: string;
-      logSource: string;
-    };
-    type WorkoutRetryArgs = {
-      name: string;
-      sets: string;
-      duration?: string;
-      intensity: string;
-      date: string;
-      exercises?: unknown;
-      rationale?: string;
-      caloriesBurned?: number;
-      reportedCalories?: number;
-      estimatedCalories?: number;
-      calorieSource?: "reported" | "estimated";
-      calorieEstimateProvenance?: string;
-      structuredSets?: string;
-      timestamp: string;
-      logSource: string;
-      calorieConfidence?: number;
-      calorieRangeLow?: number;
-      calorieRangeHigh?: number;
-      calorieBreakdown?: string;
-      calculationVersion?: number;
-    };
-    type FailedLogItem =
-      | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs }
-      | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs };
     const failedItems: FailedLogItem[] = [];
     const submissionRawInput = image ? `${message}\n[image:${stableHash(image)}]` : message;
     const chatGroupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput: submissionRawInput, clientSubmissionId });
@@ -2180,12 +2189,12 @@ Rules:
             apiKey,
           );
           const cleanTitle = title.replace(/^["']|["']$/g, "").trim().slice(0, 60);
-          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { sessionId, title: cleanTitle || message.slice(0, 50) });
+          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { userId, sessionId, title: cleanTitle || message.slice(0, 50) });
         } catch {
-          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { sessionId, title: message.slice(0, 50) });
+          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { userId, sessionId, title: message.slice(0, 50) });
         }
       } else {
-        await ctx.runMutation(internal.chat.touchSession, { sessionId });
+        await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
       }
     }
 
@@ -2832,6 +2841,7 @@ export const homepageInput = action({
     sessionId?: any;
     messageId?: string;
     restricted?: boolean;
+    failedItems: FailedLogItem[];
   }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
@@ -3093,7 +3103,7 @@ Return ONLY valid JSON, no markdown.`;
         content: reply,
       });
 
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId, messageId, restricted: restrictedGuidance };
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId, messageId, restricted: restrictedGuidance, failedItems: [] };
     }
 
     // Step 2: Parse each item in parallel
@@ -3110,6 +3120,7 @@ Return ONLY valid JSON, no markdown.`;
 
     const drafts: any[] = [];
     const summaryParts: string[] = [];
+    const failedItems: FailedLogItem[] = [];
     let skippedPlaceholderMeals = 0;
 
     for (const item of extracted.items) {
@@ -3271,7 +3282,14 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
           drafts.push({ ...recoveryPayloadFromDraft(stepsDraft), description: item.description });
           summaryParts.push(count != null ? `Steps: ${count.toLocaleString()}` : "Steps: value needed");
         }
-      } catch { /* skip failed items */ }
+      } catch (error) {
+        failedItems.push({
+          kind: item.type as FailedLogItem["kind"],
+          code: "PARSE_FAILED",
+          description: item.description,
+          reason: getConvexErrorMessage(error) ?? (error instanceof Error ? error.message : String(error)),
+        });
+      }
     }
 
     if (drafts.length === 0) {
@@ -3282,7 +3300,7 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       const messageId = await ctx.runMutation(internal.chat.addMessage, {
         userId, sessionId: activeSessionId, role: "ai", content: reply,
       });
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId, messageId, restricted: restrictedGuidance };
+      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId, messageId, restricted: restrictedGuidance, failedItems };
     }
 
     // If any draft has a date != today, mention it in the summary
@@ -3351,6 +3369,6 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       }
     }
 
-    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId, messageId, restricted: restrictedGuidance };
+    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId, messageId, restricted: restrictedGuidance, failedItems };
   },
 });

@@ -132,6 +132,11 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
         releaseCurrentReservation = true;
         throw new Error(`OpenRouter API error: ${data.error.message}`);
       }
+      const finishReason = data.choices?.[0]?.finish_reason;
+      if (finishReason !== "stop" && finishReason !== "end_turn") {
+        releaseCurrentReservation = true;
+        throw new Error(`OpenRouter incomplete response (finish_reason: ${finishReason ?? "missing"}); retry the request`);
+      }
       const content = data.choices?.[0]?.message?.content;
       if (!content) {
         releaseCurrentReservation = true;

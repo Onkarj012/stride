@@ -77,7 +77,7 @@ describe("model config", () => {
       },
     } as unknown as ActionCtx;
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      choices: [{ message: { content: "done" } }],
+      choices: [{ message: { content: "done" }, finish_reason: "stop" }],
       usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
     }), { status: 200, headers: { "Content-Type": "application/json" } })));
 
@@ -118,6 +118,33 @@ describe("model config", () => {
     expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1" });
   });
 
+  test("rejects truncated provider content instead of returning it as complete", async () => {
+    const mutationArgs: unknown[] = [];
+    const ctx = {
+      runMutation: async (_reference: unknown, args: unknown) => {
+        mutationArgs.push(args);
+        if (mutationArgs.length === 1) {
+          return { reservationId: "reservation-1", reservedCostUsd: 0, bucketKey: "2026-07-18" };
+        }
+        return undefined;
+      },
+    } as unknown as ActionCtx;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "partial response" }, finish_reason: "length" }],
+      usage: { prompt_tokens: 3, completion_tokens: 10, total_tokens: 13 },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(callAI(
+      ctx,
+      "user-1",
+      [{ role: "user", content: "hello" }],
+      10,
+      DEFAULT_MODEL,
+      "user-supplied-key",
+    )).rejects.toThrow("OpenRouter incomplete response (finish_reason: length); retry the request");
+    expect(mutationArgs).toHaveLength(2);
+  });
+
   test("releases a retryable failed attempt before reserving the next attempt", async () => {
     const mutationArgs: unknown[] = [];
     let reserveCount = 0;
@@ -135,7 +162,7 @@ describe("model config", () => {
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response("temporary failure", { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        choices: [{ message: { content: "done" } }],
+        choices: [{ message: { content: "done" }, finish_reason: "stop" }],
         usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
       }), { status: 200, headers: { "Content-Type": "application/json" } })));
 

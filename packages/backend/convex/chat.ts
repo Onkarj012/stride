@@ -140,10 +140,11 @@ export const addMessage = internalMutation({
     content: v.string(),
   },
   handler: async (ctx, args) => {
+    const session = args.sessionId ? await ctx.db.get(args.sessionId) : null;
+    if (args.sessionId && (!session || session.userId !== args.userId)) throw new Error("Not found");
     const id = await ctx.db.insert("chat_messages", args);
     // Cache first user message as previewTitle on homepage sessions (avoids N+1 in getSessions)
     if (args.role === "user" && args.sessionId) {
-      const session = await ctx.db.get(args.sessionId);
       if (session && isHomepageTitle(session.title) && !session.previewTitle) {
         await ctx.db.patch(args.sessionId, { previewTitle: args.content.slice(0, 40).trim() });
       }
@@ -153,15 +154,19 @@ export const addMessage = internalMutation({
 });
 
 export const updateSessionTitleFromAI = internalMutation({
-  args: { sessionId: v.id("chat_sessions"), title: v.string() },
-  handler: async (ctx, { sessionId, title }) => {
+  args: { userId: v.string(), sessionId: v.id("chat_sessions"), title: v.string() },
+  handler: async (ctx, { userId, sessionId, title }) => {
+    const session = await ctx.db.get(sessionId);
+    if (!session || session.userId !== userId) throw new Error("Not found");
     await ctx.db.patch(sessionId, { title: title.slice(0, 60), updatedAt: Date.now() });
   },
 });
 
 export const touchSession = internalMutation({
-  args: { sessionId: v.id("chat_sessions") },
-  handler: async (ctx, { sessionId }) => {
+  args: { userId: v.string(), sessionId: v.id("chat_sessions") },
+  handler: async (ctx, { userId, sessionId }) => {
+    const session = await ctx.db.get(sessionId);
+    if (!session || session.userId !== userId) throw new Error("Not found");
     await ctx.db.patch(sessionId, { updatedAt: Date.now() });
   },
 });
