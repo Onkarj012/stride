@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Deck — Onboarding step · Stride T1-batch2</title>
+<!--
+  DIRECTION: STUDIO DECK. Persistent rail (fraction + index + progress %) never moves;
+  the spec panel swaps with a tool-like 150ms fade + 8px slide (opacity-only when reduced).
+  A11y (R1): focus → <h2 tabindex="-1">; ONE polite live region for validation ONLY;
+  role=progressbar + aria-current="step" in the rail index; validate-before-advance.
+  Stry's role: absent as a character. The persona line survives as a "NOTE —" annotation.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --paper:#fff; --bg:#f4f4f6;
+    --line:#e4e4e9; --muted:#6a7081; --subtle:#9099ad;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:grid;grid-template-columns:220px 1fr}
+  @media (max-width:760px){ body{grid-template-columns:1fr} .rail{border-right:none!important;border-bottom:1px solid var(--line);flex-direction:row!important;justify-content:space-between;align-items:center;gap:14px} .rail .idx,.rail .est{display:none} }
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  button{font:inherit}
+
+  .rail{border-right:1px solid var(--line);padding:26px 22px;display:flex;flex-direction:column;gap:26px}
+  .brand{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:16px;letter-spacing:-.3px}
+  .brand span{color:var(--muted);font-weight:500}
+  .fraction{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:44px;line-height:1;letter-spacing:-1px}
+  .fraction small{font-size:15px;color:var(--subtle);font-weight:500}
+  .fraclab{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.6px;color:var(--subtle);text-transform:uppercase;margin-top:6px}
+  .meter{margin-top:12px;height:3px;background:var(--line);position:relative}
+  .meter .fill{position:absolute;inset:0 auto 0 0;background:var(--ink);transition:width .2s var(--ease)}
+  .pct{font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--muted);margin-top:6px;letter-spacing:1px}
+  .idx{list-style:none;display:grid;gap:9px;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1px;color:var(--subtle);text-transform:uppercase}
+  .idx li{display:flex;gap:8px;align-items:center}
+  .idx li::before{content:"";width:6px;height:6px;background:var(--line)}
+  .idx li.done{color:var(--muted)}
+  .idx li.done::before{background:var(--ink)}
+  .idx li.on{color:var(--ink);font-weight:700}
+  .idx li.on::before{background:var(--lav)}
+  .est{margin-top:auto;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.4px;color:var(--subtle);text-transform:uppercase}
+
+  main{display:flex;align-items:center;justify-content:center;padding:28px 24px 50px}
+  .panel{width:100%;max-width:560px}
+
+  .step{transition:opacity .15s var(--ease),transform .15s var(--ease)}
+  .step.pre-fwd{opacity:0;transform:translateX(8px)}
+  .step.pre-back{opacity:0;transform:translateX(-8px)}
+  .step.gone{opacity:0}
+
+  .note{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);letter-spacing:.4px;border-left:2px solid var(--lav);padding-left:10px;line-height:1.5}
+  h2{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:31px;letter-spacing:-.8px;line-height:1.12;margin-top:14px;outline:none}
+
+  .options{margin-top:24px;border-top:1px solid var(--ink)}
+  .opt{display:grid;grid-template-columns:44px 1fr auto 14px;align-items:center;gap:12px;width:100%;text-align:left;background:transparent;border:none;border-bottom:1px solid var(--line);padding:14px 4px;cursor:pointer;transition:background .1s,color .1s}
+  .opt:hover{background:var(--ink);color:#fff}
+  .opt:hover .sub{color:rgba(255,255,255,.6)}
+  .opt:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
+  .opt .idxno{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--subtle)}
+  .opt:hover .idxno{color:rgba(255,255,255,.6)}
+  .opt .name{font-weight:700;font-size:15px;font-family:"Space Grotesk",sans-serif;letter-spacing:-.2px}
+  .opt .sub{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--muted);letter-spacing:.5px}
+  .opt .mark{width:9px;height:9px;border:1px solid currentColor;opacity:.4}
+  .opt[aria-pressed="true"]{background:var(--ink);color:#fff}
+  .opt[aria-pressed="true"] .sub,.opt[aria-pressed="true"] .idxno{color:rgba(255,255,255,.6)}
+  .opt[aria-pressed="true"] .mark{background:var(--lav);border-color:var(--lav);opacity:1}
+
+  .err{font-family:"JetBrains Mono",monospace;font-size:11px;color:#b3261e;margin-top:12px}
+  .actions{display:flex;justify-content:space-between;align-items:center;margin-top:24px}
+  .back{background:none;border:none;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--subtle);cursor:pointer;padding:8px 0}
+  .back:hover{color:var(--ink)}
+  .continue{background:var(--ink);color:#fff;border:none;border-radius:5px;padding:14px 26px;font:600 11px "JetBrains Mono",monospace;letter-spacing:2px;text-transform:uppercase;cursor:pointer}
+  .continue[aria-disabled="true"]{opacity:.3;cursor:not-allowed}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--ink)}
+  @media (prefers-reduced-motion: reduce){
+    .step{transition:opacity .1s linear}
+    .step.pre-fwd,.step.pre-back{transform:none}
+    .meter .fill{transition:none}
+  }
+</style>
+</head>
+<body>
+  <aside class="rail">
+    <div class="brand">STRIDE<span> / intake deck</span></div>
+    <div>
+      <div class="fraction" id="fraction">03<small> / 08</small></div>
+      <div class="fraclab" id="fraclab">Section — Goal</div>
+      <div class="meter" role="progressbar" aria-label="Intake progress" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3" id="meter">
+        <div class="fill" id="fill" style="width:37.5%"></div>
+      </div>
+      <div class="pct" id="pct">37% measured</div>
+    </div>
+    <ul class="idx" id="idx"></ul>
+    <div class="est">Est. 90 sec remaining</div>
+  </aside>
+
+  <main>
+    <div class="panel">
+      <div class="step" id="step">
+        <p class="note" id="persona"></p>
+        <h2 tabindex="-1" id="q"></h2>
+        <div class="options" id="options" role="group" aria-labelledby="q"></div>
+        <p class="err" id="err" hidden>ERR — selection required before advance.</p>
+        <div class="actions">
+          <button class="back" id="back" type="button">← Prev section</button>
+          <button class="continue" id="continue" type="button" aria-disabled="true">Advance</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="../index.html">← all directions</a></p>
+
+<script>
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const SECTIONS = ["Identity","Body","Goal","Work","Day","Training","Diet","Voice"];
+const STEPS = [
+  { now: 3, sec: "Goal", q: "What is the target condition?",
+    persona: "NOTE — the target sets the energy offset. It is re-editable at any check-in.",
+    options: [
+      { v:"aggressive_loss", name:"Lose fat fast", sub:"OFFSET −25%" },
+      { v:"moderate_loss",  name:"Lose fat",      sub:"OFFSET −18%" },
+      { v:"maintain",       name:"Maintain",      sub:"OFFSET ±0%" },
+      { v:"recomp",         name:"Recomp",        sub:"FAT − / MUSCLE +" },
+      { v:"lean_gain",      name:"Lean gain",     sub:"OFFSET +10%" },
+      { v:"muscle_gain",    name:"Build muscle",  sub:"OFFSET +18%" } ] },
+  { now: 4, sec: "Work", q: "Describe the daily work posture.",
+    persona: "NOTE — work posture feeds the NEAT estimate: calories burned outside training.",
+    options: [
+      { v:"desk",     name:"Desk",     sub:"SEATED ≥80%" },
+      { v:"mixed",    name:"Mixed",    sub:"SIT / MOVE" },
+      { v:"standing", name:"Standing", sub:"ON FEET" },
+      { v:"physical", name:"Physical", sub:"MANUAL LOAD" } ] },
+  { now: 5, sec: "Day", q: "Baseline movement outside work and training.",
+    persona: "NOTE — accuracy here outranks optimism. Three sections remain.",
+    options: [
+      { v:"sedentary", name:"Sedentary", sub:"LOW" },
+      { v:"light",     name:"Light",     sub:"SOME WALKING" },
+      { v:"moderate",  name:"Moderate",  sub:"REGULAR" },
+      { v:"active",    name:"Active",    sub:"HIGH" } ] }
+];
+let i = 0, picked = null;
+const $ = (id) => document.getElementById(id);
+
+function paintIdx(now) {
+  const ul = $("idx"); ul.innerHTML = "";
+  SECTIONS.forEach((name, idx) => {
+    const li = document.createElement("li");
+    const no = idx + 1;
+    li.className = no < now ? "done" : no === now ? "on" : "";
+    if (no === now) li.setAttribute("aria-current", "step");
+    li.textContent = `${String(no).padStart(2, "0")} — ${name}`;
+    ul.appendChild(li);
+  });
+}
+
+function render(dir) {
+  const s = STEPS[i], el = $("step");
+  const paint = () => {
+    $("fraction").innerHTML = `${String(s.now).padStart(2, "0")}<small> / 08</small>`;
+    $("fraclab").textContent = `Section — ${s.sec}`;
+    $("fill").style.width = (s.now / 8 * 100) + "%";
+    $("meter").setAttribute("aria-valuenow", s.now);
+    $("pct").textContent = `${Math.round(s.now / 8 * 100)}% measured`;
+    paintIdx(s.now);
+    $("q").textContent = s.q;
+    $("persona").textContent = s.persona;
+    $("options").innerHTML = "";
+    s.options.forEach((o, n) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "opt"; b.setAttribute("aria-pressed", "false");
+      b.innerHTML = `<span class="idxno">${s.now}.${n + 1}</span>
+        <span class="name">${o.name}</span><span class="sub">${o.sub}</span>
+        <span class="mark" aria-hidden="true"></span>`;
+      b.addEventListener("click", () => select(o.v, b));
+      $("options").appendChild(b);
+    });
+    picked = null; $("continue").setAttribute("aria-disabled", "true");
+    $("err").hidden = true;
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    el.classList.remove("pre-fwd", "pre-back", "gone");
+    $("q").focus({ preventScroll: true });
+  };
+  if (dir) {
+    el.classList.add("gone");
+    setTimeout(() => { el.classList.add(dir === 1 ? "pre-fwd" : "pre-back"); paint(); }, REDUCED ? 50 : 110);
+  } else paint();
+}
+
+function select(v, btn) {
+  picked = v;
+  document.querySelectorAll(".opt").forEach(o => o.setAttribute("aria-pressed", o === btn ? "true" : "false"));
+  $("continue").setAttribute("aria-disabled", "false");
+  $("err").hidden = true;
+  clearTimeout(select._t);
+  select._t = setTimeout(() => advance(1), 220);
+}
+
+function advance(dir) {
+  const next = i + dir;
+  if (dir > 0 && !picked) {
+    $("err").hidden = false;
+    $("live").textContent = "Selection required before advance.";
+    return;
+  }
+  if (next < 0 || next >= STEPS.length) {
+    if (next >= STEPS.length) location.href = "plan-reveal.html";
+    return;
+  }
+  i = next; render(dir);
+}
+
+$("continue").addEventListener("click", () => advance(1));
+$("back").addEventListener("click", () => advance(-1));
+render(0);
+</script>
+</body>
+</html>

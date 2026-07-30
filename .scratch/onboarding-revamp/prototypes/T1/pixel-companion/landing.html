@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stride — Pixel Companion (Landing)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap');
+
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --sky:#a0c6ff; --peach:#fdb572; --mint:#b8e5c0; --bubblegum:#f4b5d6; --sunshine:#ffc93b;
+    --bg:#0c0e16; --card:#161927; --card-elev:#1f2233; --input:#1c1f2d;
+    --text:#ECEAF5; --text-muted:#8b91a6; --text-subtle:#5b6178; --text-on-ink:#0d101b;
+    --border:#21243a; --border-strong:#2c3045;
+    --font:"Manrope",system-ui,sans-serif; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --radius-lg:20px; --radius-xl:24px; --radius-full:9999px;
+    --dur-fast:150ms; --dur-base:250ms; --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:28px;-webkit-font-smoothing:antialiased}
+  a,button{font-family:inherit}
+
+  .console{
+    width:min(1040px,100%);
+    background:linear-gradient(155deg,#14172a,var(--ink) 60%);
+    border-radius:32px;
+    padding:14px;
+    box-shadow:0 30px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);
+    position:relative;
+  }
+  .console::before{ /* screws */
+    content:""; position:absolute; inset:14px; border-radius:24px; pointer-events:none;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);
+  }
+  .screw{position:absolute;width:8px;height:8px;border-radius:50%;background:#0a0c14;box-shadow:inset 0 1px 1px rgba(255,255,255,.08), 0 1px 0 rgba(255,255,255,.03)}
+  .screw.tl{top:22px;left:22px}.screw.tr{top:22px;right:22px}.screw.bl{bottom:22px;left:22px}.screw.br{bottom:22px;right:22px}
+
+  .screen{
+    background:radial-gradient(120% 140% at 30% 0%, #1a1e33, var(--card) 55%, #12141f 100%);
+    border-radius:22px;
+    padding:44px 40px 36px;
+    min-height:560px;
+    display:flex; flex-direction:column;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.03), inset 0 2px 24px rgba(0,0,0,.4);
+  }
+
+  .cartridge{display:flex;align-items:center;justify-content:space-between;padding-bottom:28px;border-bottom:1px dashed var(--border)}
+  .brand{display:flex;align-items:center;gap:10px}
+  .brand .s{width:22px;height:22px;border-radius:6px;background:var(--lavender);display:grid;place-items:center;font-weight:800;color:var(--ink);font-size:13px}
+  .brand span{font-weight:800;letter-spacing:.5px;font-size:15px}
+  .cartlabel{font-family:var(--mono);font-size:11px;letter-spacing:1.5px;color:var(--text-subtle);text-transform:uppercase}
+
+  .hero{flex:1;display:grid;grid-template-columns:1fr auto;gap:36px;align-items:center;padding-top:44px}
+  .hero h1{font-size:clamp(34px,4.6vw,54px);font-weight:800;line-height:1.05;letter-spacing:-1.2px}
+  .hero h1 .hl{color:var(--lavender)}
+  .hero p{margin-top:16px;color:var(--text-muted);font-size:16px;line-height:1.6;max-width:420px}
+  .cta-row{display:flex;gap:10px;margin-top:28px}
+  .btn{border-radius:var(--radius-full);padding:13px 26px;font-weight:800;font-size:14px;border:none;cursor:pointer;transition:transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease)}
+  .btn:focus-visible{outline:2px solid var(--lavender);outline-offset:3px}
+  .btn.primary{background:var(--lavender);color:var(--ink)}
+  .btn.primary:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(179,160,255,.25)}
+  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--border-strong)}
+
+  .stry-wrap{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px}
+  .pixel-avatar{width:176px;height:176px;image-rendering:pixelated;filter:drop-shadow(0 12px 30px rgba(179,160,255,.18))}
+  .stry-bob{animation:bob 3.4s ease-in-out infinite}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+  .speech{font-family:var(--mono);font-size:11px;color:var(--sunshine);letter-spacing:.5px;text-align:center}
+
+  .hud{display:flex;align-items:center;gap:18px;margin-top:auto;padding-top:32px;border-top:1px dashed var(--border);font-family:var(--mono);font-size:11px;color:var(--text-subtle);letter-spacing:.5px}
+  .hud .notches{display:flex;gap:3px}
+  .notch{width:9px;height:9px;background:var(--border-strong)}
+  .notch.on{background:var(--lavender)}
+
+  .caption{margin-top:22px;text-align:center;color:var(--text-subtle);font-size:12px;font-family:var(--mono)}
+
+  @media(max-width:720px){
+    .hero{grid-template-columns:1fr;text-align:center}
+    .hero p{margin-inline:auto}
+    .cta-row{justify-content:center}
+    .screen{padding:32px 22px}
+  }
+  @media(prefers-reduced-motion:reduce){ .stry-bob{animation:none} }
+</style>
+</head>
+<body>
+  <main class="console">
+    <span class="screw tl"></span><span class="screw tr"></span><span class="screw bl"></span><span class="screw br"></span>
+    <div class="screen">
+      <div class="cartridge">
+        <div class="brand"><span class="s">S</span><span>STRIDE</span></div>
+        <div class="cartlabel">CART 01 · COACH.SYS</div>
+      </div>
+
+      <div class="hero">
+        <div>
+          <h1>Level up your <span class="hl">nutrition</span>, one save file at a time.</h1>
+          <p>Stry builds a science-based plan from a few quick questions — no spreadsheets, no guesswork. Pick up right where you left off.</p>
+          <div class="cta-row">
+            <button class="btn primary">Start your file →</button>
+            <button class="btn ghost">Sign in</button>
+          </div>
+        </div>
+        <div class="stry-wrap">
+          <div class="pixel-avatar stry-bob" id="stry" role="img" aria-label="Stry, your pixel coach, idle and blinking"></div>
+          <div class="speech">"HEY — READY, PLAYER ONE?"</div>
+        </div>
+      </div>
+
+      <div class="hud">
+        <span>PLANS BUILT: 48,213</span>
+        <span class="notches" aria-hidden="true">
+          <span class="notch on"></span><span class="notch on"></span><span class="notch on"></span>
+          <span class="notch on"></span><span class="notch"></span><span class="notch"></span>
+        </span>
+        <span>UPTIME 99.98%</span>
+      </div>
+    </div>
+  </main>
+  <p class="caption">Direction A — Pixel Companion · console bezel is the shared frame across landing / auth / onboarding / plan-reveal</p>
+
+<script>
+(function(){
+  var GRID = [
+    "________________","__XX________XX__","_XXXX______XXXX_","XXPXXX____XXXPXX",
+    "XPPXXXXXXXXXXPPX","XPYXXXXXXXXXXYPX","XXXXXIWXXIWXXXXX","XXXXXIIXXIIXXXXX",
+    "XXXXXXXXXXXXXXXX","XXXXXIIIIIIXXXXX","_XXXXXXXXXXXXXX_","__XXXXXXXXXXXX__",
+    "____XXXXXXXX____","_____XXXXXX_____","______XXXX______","_______XX_______"
+  ];
+  var PALETTE = { X:"#bcb4cc", Y:"#9ea5b8", Z:"#b3a0ff", I:"#0d101b", W:"#ffffff", K:"#1a1d2c", P:"#f4b5d6" };
+  document.querySelectorAll(".pixel-avatar").forEach(function(el){
+    var svg = '<svg viewBox="0 0 128 128" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    GRID.forEach(function(row, y){
+      for (var x = 0; x < row.length; x++){
+        var c = PALETTE[row[x]];
+        if (!c) continue;
+        svg += '<rect x="'+x*8+'" y="'+y*8+'" width="8" height="8" fill="'+c+'"/>';
+      }
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+  });
+})();
+</script>
+</body>
+</html>

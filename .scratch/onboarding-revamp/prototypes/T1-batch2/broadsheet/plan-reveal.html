@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broadsheet — Plan reveal · Stride T1-batch2</title>
+<!--
+  DIRECTION: BROADSHEET. The plan reveal is the front page of a one-reader newspaper:
+  banner headline = the calorie number, box-score columns for macros, methodology footnote
+  for the transparent breakdown. Same paper/masthead language as auth + onboarding.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --lavender-deep:#3b1f8c;
+    --paper:#faf8f2; --paper-deep:#f1ede1; --rule:#ddd8ca; --muted:#6a7081; --subtle:#9099ad;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column}
+  .folio{max-width:680px;margin:0 auto;width:100%;padding:18px 24px 0}
+  .folio-row{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .folio-rule{border-top:3px solid var(--ink);border-bottom:1px solid var(--ink);height:6px;margin-top:8px}
+
+  main{flex:1;display:flex;justify-content:center;padding:30px 24px 50px}
+  .front{width:100%;max-width:600px;animation:settle .2s var(--ease) both}
+  @keyframes settle{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+
+  .dateline{text-align:center;font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  h1{font-family:"Fraunces",serif;font-weight:700;font-size:clamp(44px,9vw,72px);line-height:1;letter-spacing:-1px;text-align:center;margin-top:14px}
+  h1 .unit{display:block;font-family:"Manrope",sans-serif;font-size:12px;letter-spacing:3px;text-transform:uppercase;color:var(--muted);font-weight:700;margin-top:10px}
+  .standfirst{font-family:"Fraunces",serif;font-style:italic;font-size:15.5px;color:var(--muted);text-align:center;margin-top:14px;line-height:1.55;max-width:440px;margin-inline:auto}
+  .byline{text-align:center;font-size:10.5px;letter-spacing:1.8px;text-transform:uppercase;color:var(--subtle);margin-top:12px;font-weight:600}
+
+  .boxscore{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);margin-top:26px}
+  .boxscore > div{padding:16px 10px;text-align:center}
+  .boxscore > div + div{border-left:1px solid var(--rule)}
+  .boxscore .grams{font-family:"Fraunces",serif;font-weight:700;font-size:26px;line-height:1}
+  .boxscore .macro{font-size:10.5px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin-top:7px;font-weight:700}
+  .boxscore .pct{font-size:11px;color:var(--subtle);margin-top:3px}
+  .boxscore .swatch{display:inline-block;width:8px;height:8px;margin-right:5px;vertical-align:1px}
+
+  details{margin-top:22px;border:1px solid var(--rule);background:var(--paper-deep);padding:14px 18px}
+  summary{cursor:pointer;font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:700;color:var(--ink)}
+  .rows{margin-top:12px;display:grid;gap:7px;font-size:13px}
+  .rows div{display:flex;justify-content:space-between;border-bottom:1px dotted var(--rule);padding-bottom:6px}
+  .rows div:last-child{border-bottom:none;font-weight:800}
+  .rows span:last-child{font-variant-numeric:tabular-nums}
+
+  .actions{display:flex;gap:12px;margin-top:28px}
+  .back{flex:none;background:none;border:1px solid var(--rule);padding:14px 18px;font-size:11.5px;letter-spacing:1.8px;text-transform:uppercase;font-weight:700;color:var(--muted);cursor:pointer;border-radius:3px}
+  .cta{flex:1;background:var(--ink);color:#fff;border:none;padding:16px;font-size:12.5px;letter-spacing:2.2px;text-transform:uppercase;font-weight:700;cursor:pointer;border-radius:3px;transition:background .15s}
+  .cta:hover{background:var(--lavender-deep)}
+  .ticker{margin-top:26px;border-top:1px solid var(--rule);padding-top:12px;text-align:center;font-size:10.5px;letter-spacing:1.8px;text-transform:uppercase;color:var(--subtle)}
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--ink)}
+  @media (prefers-reduced-motion: reduce){ .front{animation:none} }
+</style>
+</head>
+<body>
+  <div class="folio">
+    <div class="folio-row"><span>Stride — Special Edition</span><span>Thursday, July 23, 2026</span></div>
+    <div class="folio-rule" aria-hidden="true"></div>
+  </div>
+
+  <main>
+    <article class="front">
+      <p class="dateline">Plan desk · Final</p>
+      <h1 tabindex="-1">2,140<span class="unit">kilocalories per day</span></h1>
+      <p class="standfirst">After eight questions, the desk delivers: a maintenance-tuned target for Onkar, built line by line from the numbers below — nothing hidden.</p>
+      <p class="byline">By Stry, wellness desk · verified by the Stride method</p>
+
+      <div class="boxscore" role="group" aria-label="Daily macro targets">
+        <div><p class="grams">145g</p><p class="macro"><span class="swatch" style="background:#b3a0ff"></span>Protein</p><p class="pct">27% of day</p></div>
+        <div><p class="grams">214g</p><p class="macro"><span class="swatch" style="background:#a0c6ff"></span>Carbs</p><p class="pct">40% of day</p></div>
+        <div><p class="grams">71g</p><p class="macro"><span class="swatch" style="background:#fdb572"></span>Fat</p><p class="pct">33% of day</p></div>
+      </div>
+
+      <details>
+        <summary>Methodology — how this number was set</summary>
+        <div class="rows">
+          <div><span>BMR (resting)</span><span>1,685</span></div>
+          <div><span>NEAT — desk job</span><span>+240</span></div>
+          <div><span>NEAT — lifestyle</span><span>+180</span></div>
+          <div><span>Training average</span><span>+210</span></div>
+          <div><span>Thermic effect of food</span><span>+165</span></div>
+          <div><span>Maintenance (TDEE)</span><span>2,480</span></div>
+          <div><span>Goal adjustment — recomp</span><span>−340</span></div>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button class="back" type="button" onclick="history.back()">← Edit answers</button>
+        <button class="cta" type="button">Start using Stride</button>
+      </div>
+      <p class="ticker">Extra · plan recalculates every check-in · extra</p>
+    </article>
+  </main>
+  <p class="proto-nav"><a href="../index.html">← all directions</a></p>
+</body>
+</html>

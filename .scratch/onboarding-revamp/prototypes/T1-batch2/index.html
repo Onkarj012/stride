@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T1 batch 2 — Entry-arc visual directions (all-new)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+  :root{ --ink:#0d101b; --lavender:#b3a0ff; --bg:#f8f8f8; --card:#fff; --border:#ebebef; --muted:#6a7081; --subtle:#9099ad; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;padding:48px 24px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:940px;margin:0 auto}
+  .badge{display:inline-block;background:var(--ink);color:#fff;font:500 10.5px "JetBrains Mono",monospace;letter-spacing:1.5px;text-transform:uppercase;padding:5px 12px;border-radius:9999px}
+  h1{font-size:28px;font-weight:800;letter-spacing:-.6px;margin-top:14px}
+  .lede{color:var(--muted);margin-top:8px;font-size:15px;max-width:680px;line-height:1.55}
+  .rejected{margin-top:18px;background:#fff7f4;border:1px solid #f3ddd2;border-radius:14px;padding:14px 18px;font-size:13px;color:#7a4a2a;line-height:1.6;max-width:680px}
+  .rejected b{color:#5c3317}
+  .dir{margin-top:32px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:26px 28px}
+  .dir .head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .dir h2{font-size:19px;font-weight:800}
+  .dir .mood{font:500 10.5px "JetBrains Mono",monospace;letter-spacing:1.2px;text-transform:uppercase;color:var(--subtle)}
+  .dir .pitch{color:var(--muted);font-size:14px;margin-top:8px;line-height:1.65;max-width:680px}
+  .dir .pitch b{color:var(--ink)}
+  .meta{margin-top:12px;display:grid;gap:5px;font-size:12.5px;color:var(--muted);max-width:680px}
+  .meta span b{color:var(--ink);font-weight:700}
+  .links{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .links a{background:#f3f1ff;color:var(--ink);text-decoration:none;font-weight:700;font-size:13px;padding:9px 14px;border-radius:9999px;border:1px solid #e4defc}
+  .links a:hover{background:var(--lavender)}
+  .constraints{margin-top:36px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:22px 28px}
+  .constraints h3{font-size:14px;font-weight:800}
+  .constraints ul{margin-top:10px;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.8}
+  footer{margin-top:36px;color:var(--subtle);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <span class="badge">T1 · batch 2 · throwaway prototypes</span>
+  <h1>Entry-arc visual directions — five new candidates</h1>
+  <p class="lede">Auth → onboarding → plan reveal, as three screens per direction. Open any screen directly in a browser — no build step. Onboarding screens are interactive: pick an answer to advance, use Back to see the reverse transition. Nothing here touches <code>apps/web</code>.</p>
+  <div class="rejected"><b>Batch 1 was rejected in full.</b> None of the five below reuse its signature devices: no console/HUD bezel, no large animated mascot, no notebook or hollow-outline numerals, no receipt ledger, and no full-bleed color-wash that changes per phase.</div>
+
+  <div class="dir">
+    <div class="head"><h2>1 — Broadsheet</h2><span class="mood">editorial · warm paper · serif</span></div>
+    <p class="pitch">The entry arc as <b>a newspaper printed for one reader</b>. Masthead + folio chrome, hairline rules, Fraunces serif headlines; each onboarding question is an "article" with a kicker and a byline, options are a ruled index list (A, B, C…). Plan reveal is the front page: the calorie figure as the banner headline, macros as box-score columns, the breakdown as a methodology footnote. Stry survives only as a <b>byline</b> ("By Stry, wellness desk") — voice, not mascot.</p>
+    <div class="meta">
+      <span><b>Layout:</b> single reading column; progress = folio "Page X of 8" + a hairline fill rule.</span>
+      <span><b>Motion:</b> article settles (rise 16px + fade, 200ms) on step change; fill-rule tweens. Opacity-only under reduced motion.</span>
+      <span><b>Tokens:</b> ink/lavender as-is; <b>extends</b> with paper #faf8f2 + Fraunces (called out in-file).</span>
+      <span><b>vs. rejected batch:</b> print-craft without the notebook's stationery devices — no hollow numerals, no margin lines, no receipt; serif editorial hierarchy instead of a mascot or color zones.</span>
+    </div>
+    <div class="links">
+      <a href="broadsheet/auth.html">Auth</a>
+      <a href="broadsheet/onboarding.html">Onboarding step (interactive)</a>
+      <a href="broadsheet/plan-reveal.html">Plan reveal</a>
+    </div>
+  </div>
+
+  <div class="dir">
+    <div class="head"><h2>2 — Darkroom</h2><span class="mood">dark-native · luminous · mono data</span></div>
+    <p class="pitch">A darkened studio where <b>only one thing is lit at a time</b>. Near-black canvas using the existing <code>.dark</code> tokens verbatim, lavender as <i>light</i> (glowing focus borders, a light-line progress bar), JetBrains Mono for labels and data. The plan reveal is a spectrometer readout: one glowing number, a single spectral macro bar, a dotted-leader ledger. Stry is reduced to a <b>6px signal dot</b> — ambience, not a character (frozen under reduced motion).</p>
+    <div class="meta">
+      <span><b>Layout:</b> centered "chamber", fixed light-line progress across the top.</span>
+      <span><b>Motion:</b> chamber relights (fade + 10px rise, 250ms); glow pulses are ambient-only and disabled under reduced motion.</span>
+      <span><b>Tokens:</b> adopts the dark token palette natively; <b>extends</b> only with JetBrains Mono + glow shadows.</span>
+      <span><b>vs. rejected batch:</b> dark without the console — zero bezel, zero pixel art, zero mascot; minimal luminous-lab craft instead of a game frame.</span>
+    </div>
+    <div class="links">
+      <a href="darkroom/auth.html">Auth</a>
+      <a href="darkroom/onboarding.html">Onboarding step (interactive)</a>
+      <a href="darkroom/plan-reveal.html">Plan reveal</a>
+    </div>
+  </div>
+
+  <div class="dir">
+    <div class="head"><h2>3 — Wayfinding</h2><span class="mood">transit signage · structured · playful</span></div>
+    <p class="pitch">The arc as <b>a metro line with named stations</b>. A route line (You → Body → Goal → … → Plan) is the shared chrome on all three screens; each question is an ink gate-sign with a lavender "STOP 3 · GOAL" chip; answers are chunky line-pills. The reveal is the arrivals board: destination, big "departure-time" calories, macro rows with status chips. Stry is <b>voice-only</b> — the PA announcer ("‣ PA: …"), which also hands the OAuth redirect a natural metaphor ("transferring lines"). Colors are constant ink/lavender — explicitly not per-phase.</p>
+    <div class="meta">
+      <span><b>Layout:</b> route-line progress with real <code>progressbar</code> semantics + <code>aria-current</code> on the current station.</span>
+      <span><b>Motion:</b> horizontal slide 24px + fade, 180ms — direction encodes advance vs. back (fits the travel metaphor). Opacity-only under reduced motion.</span>
+      <span><b>Tokens:</b> pure token palette; <b>extends</b> only with Archivo as the signage face.</span>
+      <span><b>vs. rejected batch:</b> wayfinding narrative without washing phases in color, without a mascot on screen, and without any bezel — signage panels, not a console.</span>
+    </div>
+    <div class="links">
+      <a href="wayfinding/auth.html">Auth</a>
+      <a href="wayfinding/onboarding.html">Onboarding step (interactive)</a>
+      <a href="wayfinding/plan-reveal.html">Plan reveal</a>
+    </div>
+  </div>
+
+  <div class="dir">
+    <div class="head"><h2>4 — Soft Terrain</h2><span class="mood">organic calm · warm paper · trail</span></div>
+    <p class="pitch">Onboarding as <b>a walk up a hill</b>. Warm paper with faint topographic contours (a constant texture, not a phase tint), a ridge-line trail whose fill and cairn marker advance with each answer, rounded organic option pills. The reveal is the summit: the cairn planted at trail's end, macros as a layered "geology" bar, the breakdown as a trail log. Stry is <b>reimagined as the cairn</b> — a small, static, faceless trail marker (present, but nothing like the pixel elephant).</p>
+    <div class="meta">
+      <span><b>Layout:</b> trail header (progress) + single white question card on contour paper.</span>
+      <span><b>Motion:</b> card rises 20px + fades, 220ms; cairn tween 250ms along the trail (jumps instantly under reduced motion).</span>
+      <span><b>Tokens:</b> text/border/lavender as-is; <b>extends</b> with warm paper #f7f4ee + contour line color.</span>
+      <span><b>vs. rejected batch:</b> organic/natural instead of digital HUD, notebook stationery, or color zones; mascot reimagined as an object in the world, not a character on a stage.</span>
+    </div>
+    <div class="links">
+      <a href="soft-terrain/auth.html">Auth</a>
+      <a href="soft-terrain/onboarding.html">Onboarding step (interactive)</a>
+      <a href="soft-terrain/plan-reveal.html">Plan reveal</a>
+    </div>
+  </div>
+
+  <div class="dir">
+    <div class="head"><h2>5 — Studio Deck</h2><span class="mood">instrument · Swiss grid · spec sheet</span></div>
+    <p class="pitch">The anti-mascot direction: Stride as <b>a precision measuring instrument</b>. A left meta rail carries the step fraction (03/08), a percent meter, a section index, and a time estimate; the main panel is a spec sheet — Space Grotesk questions, hover-invert option rows, dimension-line callouts. The reveal is the finished engineering sheet: measured calorie figure with tolerance, a ticked macro bar, and a signed-off calculation table. Stry is <b>absent as a character</b>; empathy survives only as small "NOTE —" annotations on sensitive steps.</p>
+    <div class="meta">
+      <span><b>Layout:</b> persistent rail + spec panel; progress = fraction + meter + index with <code>aria-current</code>.</span>
+      <span><b>Motion:</b> tool-like snap — 150ms fade + 8px slide on the panel only. Opacity-only under reduced motion.</span>
+      <span><b>Tokens:</b> ink/lavender/borders as-is; <b>extends</b> with Space Grotesk/JetBrains Mono and near-square corners.</span>
+      <span><b>vs. rejected batch:</b> trades warmth for credibility — no mascot at all, no color washes, no stationery; a utilitarian counter-proposal so the range of this batch is genuinely wide.</span>
+    </div>
+    <div class="links">
+      <a href="studio-deck/auth.html">Auth</a>
+      <a href="studio-deck/onboarding.html">Onboarding step (interactive)</a>
+      <a href="studio-deck/plan-reveal.html">Plan reveal</a>
+    </div>
+  </div>
+
+  <div class="constraints">
+    <h3>Constraints every direction respects (R1 + R2)</h3>
+    <ul>
+      <li>One focused question per step — persona line is framing only, never a chat log.</li>
+      <li>Motion on the step card only: slide+fade, 150–250ms, translate ≤24px; persistent chrome (progress, header) never animates layout.</li>
+      <li><code>prefers-reduced-motion</code>: everything collapses to a fast opacity crossfade; ambient loops (signal dot) freeze.</li>
+      <li>Focus moves to the step <code>&lt;h2 tabindex="-1"&gt;</code> on every change; a single polite live region is used for validation status only — never at the same time as the focus move.</li>
+      <li>Real progress semantics: <code>role="progressbar"</code> with <code>aria-valuenow/min/max</code> (+ <code>aria-current="step"</code> where a step list exists).</li>
+      <li>Validate-before-advance: Continue is inert until a selection; an invalid attempt announces via the live region (WCAG 4.1.3).</li>
+      <li>Auth and onboarding never share DOM (the <code>&lt;Show&gt;</code> boundary) — continuity is purely visual language: same chrome, same progress metaphor, same type system per direction.</li>
+    </ul>
+  </div>
+
+  <footer>Built for ticket T1, batch 2 (onboarding-revamp map). Throwaway props — no decision is made here; the resolution records the chosen direction.</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darkroom — Onboarding step · Stride T1-batch2</title>
+<!--
+  DIRECTION: DARKROOM. Persistent chrome: top light-line + mono step label. Only the
+  question chamber relights between steps (fade + 10px rise, 250ms; opacity-only when reduced).
+  A11y (R1): focus → <h2 tabindex="-1"> per step; ONE polite live region for validation ONLY;
+  role=progressbar with real values; validate-before-advance; visible focus rings.
+  Stry's role: the 6px signal dot — present as ambience. Reduced-motion freezes the pulse.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --bg:#0c0e16; --card:#161927; --line:#21243a; --line-strong:#2c3045;
+    --text:#eceaf5; --muted:#8b91a6; --subtle:#5b6178;
+    --lav:#b3a0ff; --lav-soft:#252240;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  button{font:inherit}
+
+  /* Light-line progress: persistent, never moves except the fill tween */
+  .lightline{position:fixed;top:0;left:0;right:0;height:2px;background:var(--line);z-index:2}
+  .lightline .fill{height:100%;width:37.5%;background:var(--lav);box-shadow:0 0 14px 2px rgba(179,160,255,.6);transition:width .25s var(--ease)}
+
+  header{max-width:560px;margin:0 auto;width:100%;padding:34px 24px 0;display:flex;justify-content:space-between;align-items:center;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;color:var(--subtle);text-transform:uppercase}
+  header .stepno{color:var(--text)}
+
+  main{flex:1;display:flex;align-items:center;justify-content:center;padding:20px 24px 60px}
+  .chamber{width:100%;max-width:520px}
+
+  .step{transition:opacity .25s var(--ease),transform .25s var(--ease)}
+  .step.pre-fwd{opacity:0;transform:translateY(10px)}
+  .step.pre-back{opacity:0;transform:translateY(-10px)}
+  .step.gone{opacity:0}
+
+  .signal{display:flex;align-items:center;gap:9px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.55);animation:pulse 3s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .persona{font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.5}
+  h2{font-size:30px;font-weight:800;letter-spacing:-.6px;line-height:1.18;margin-top:14px;outline:none}
+
+  .options{margin-top:26px;display:grid;gap:10px}
+  .opt{display:grid;grid-template-columns:44px 1fr auto;align-items:center;gap:12px;width:100%;text-align:left;background:transparent;border:1px solid var(--line-strong);border-radius:14px;padding:15px 16px;cursor:pointer;color:var(--text);transition:border-color .15s,background .15s}
+  .opt:hover{border-color:var(--muted)}
+  .opt:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  .opt .idx{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--subtle)}
+  .opt .name{font-weight:800;font-size:15px;display:block}
+  .opt .sub{font-size:12px;color:var(--muted);display:block;margin-top:2px}
+  .opt .glow{width:8px;height:8px;border-radius:50%;border:1px solid var(--subtle)}
+  .opt[aria-pressed="true"]{border-color:var(--lav);background:var(--lav-soft)}
+  .opt[aria-pressed="true"] .glow{background:var(--lav);border-color:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.6)}
+
+  .err{font-size:12.5px;color:#f27b72;margin-top:12px;font-weight:600}
+  .actions{display:flex;justify-content:space-between;align-items:center;margin-top:28px}
+  .back{background:none;border:none;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--subtle);cursor:pointer;padding:8px 0}
+  .back:hover{color:var(--text)}
+  .continue{background:var(--lav);color:#0d101b;border:none;border-radius:9999px;padding:13px 26px;font-weight:800;font-size:13.5px;cursor:pointer;box-shadow:0 0 22px -6px rgba(179,160,255,.65)}
+  .continue[aria-disabled="true"]{opacity:.3;box-shadow:none;cursor:not-allowed}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--text)}
+  @media (prefers-reduced-motion: reduce){
+    .step{transition:opacity .12s linear}
+    .step.pre-fwd,.step.pre-back{transform:none}
+    .lightline .fill{transition:none}
+    .dot{animation:none}
+  }
+</style>
+</head>
+<body>
+  <div class="lightline"><div class="fill" id="fill"
+    role="progressbar" aria-label="Onboarding progress" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3"></div></div>
+
+  <header>
+    <span class="stepno" id="stepno">STEP 03 / 08</span>
+    <span id="section">GOAL</span>
+  </header>
+
+  <main>
+    <div class="chamber">
+      <div class="step" id="step">
+        <p class="signal"><span class="dot" aria-hidden="true"></span><span id="sigLabel">Stry · listening</span></p>
+        <p class="persona" id="persona"></p>
+        <h2 tabindex="-1" id="q"></h2>
+        <div class="options" id="options" role="group" aria-labelledby="q"></div>
+        <p class="err" id="err" hidden>Choose one answer to continue.</p>
+        <div class="actions">
+          <button class="back" id="back" type="button">← back</button>
+          <button class="continue" id="continue" type="button" aria-disabled="true">Continue</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="../index.html">← all directions</a></p>
+
+<script>
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const STEPS = [
+  { now: 3, section: "GOAL", q: "What are you aiming for right now?",
+    persona: "Pick the closest fit — it sets the deficit or surplus. You can change it any week.",
+    options: [
+      { v:"aggressive_loss", name:"Lose fat fast", sub:"~25% deficit" },
+      { v:"moderate_loss",  name:"Lose fat",      sub:"~18% deficit" },
+      { v:"maintain",       name:"Maintain",      sub:"Stay here" },
+      { v:"recomp",         name:"Recomp",        sub:"Lose fat, gain muscle" },
+      { v:"lean_gain",      name:"Lean gain",     sub:"~10% surplus" },
+      { v:"muscle_gain",    name:"Build muscle",  sub:"~18% surplus" } ] },
+  { now: 4, section: "WORK", q: "What is your job like during the day?",
+    persona: "This is how the studio estimates the burn between workouts.",
+    options: [
+      { v:"desk",     name:"Desk",     sub:"Mostly seated" },
+      { v:"mixed",    name:"Mixed",    sub:"Sit + move" },
+      { v:"standing", name:"Standing", sub:"On your feet" },
+      { v:"physical", name:"Physical", sub:"Manual labor" } ] },
+  { now: 5, section: "LIFE", q: "Outside work and workouts, how much do you move?",
+    persona: "Honest beats optimistic. Two more questions after this.",
+    options: [
+      { v:"sedentary", name:"Sedentary", sub:"Mostly sitting" },
+      { v:"light",     name:"Light",     sub:"Some walking" },
+      { v:"moderate",  name:"Moderate",  sub:"On feet often" },
+      { v:"active",    name:"Active",    sub:"Always moving" } ] }
+];
+let i = 0, picked = null;
+const $ = (id) => document.getElementById(id);
+
+function render(dir) {
+  const s = STEPS[i], el = $("step");
+  const paint = () => {
+    $("stepno").textContent = `STEP 0${s.now} / 08`;
+    $("section").textContent = s.section;
+    $("q").textContent = s.q;
+    $("persona").textContent = s.persona;
+    $("fill").style.width = (s.now / 8 * 100) + "%";
+    $("fill").setAttribute("aria-valuenow", s.now);
+    $("options").innerHTML = "";
+    s.options.forEach((o, n) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "opt"; b.setAttribute("aria-pressed", "false");
+      b.innerHTML = `<span class="idx">${String(n + 1).padStart(2, "0")}</span>
+        <span><span class="name">${o.name}</span><span class="sub">${o.sub}</span></span>
+        <span class="glow" aria-hidden="true"></span>`;
+      b.addEventListener("click", () => select(o.v, b));
+      $("options").appendChild(b);
+    });
+    picked = null; $("continue").setAttribute("aria-disabled", "true");
+    $("err").hidden = true;
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    el.classList.remove("pre-fwd", "pre-back", "gone");
+    $("q").focus({ preventScroll: true });
+  };
+  if (dir) {
+    el.classList.add("gone");
+    setTimeout(() => { el.classList.add(dir === 1 ? "pre-fwd" : "pre-back"); paint(); }, REDUCED ? 60 : 160);
+  } else paint();
+}
+
+function select(v, btn) {
+  picked = v;
+  document.querySelectorAll(".opt").forEach(o => o.setAttribute("aria-pressed", o === btn ? "true" : "false"));
+  $("continue").setAttribute("aria-disabled", "false");
+  $("err").hidden = true;
+  clearTimeout(select._t);
+  select._t = setTimeout(() => advance(1), 220);
+}
+
+function advance(dir) {
+  const next = i + dir;
+  if (dir > 0 && !picked) {
+    $("err").hidden = false;
+    $("live").textContent = "Choose one answer to continue.";
+    return;
+  }
+  if (next < 0 || next >= STEPS.length) {
+    if (next >= STEPS.length) location.href = "plan-reveal.html";
+    return;
+  }
+  i = next; render(dir);
+}
+
+$("continue").addEventListener("click", () => advance(1));
+$("back").addEventListener("click", () => advance(-1));
+render(0);
+</script>
+</body>
+</html>

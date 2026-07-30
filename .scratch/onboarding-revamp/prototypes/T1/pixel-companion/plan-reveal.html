@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stride — Pixel Companion (Plan reveal)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --sunshine:#ffc93b; --mint:#b8e5c0; --peach:#fdb572; --sky:#a0c6ff; --bubblegum:#f4b5d6;
+    --bg:#0c0e16; --card:#161927; --card-elev:#1f2233; --input:#1c1f2d;
+    --text:#ECEAF5; --text-muted:#8b91a6; --text-subtle:#5b6178;
+    --border:#21243a; --border-strong:#2c3045;
+    --font:"Manrope",system-ui,sans-serif; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --dur-base:250ms; --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:28px}
+  .console{width:min(600px,100%);background:linear-gradient(155deg,#14172a,var(--ink) 60%);border-radius:32px;padding:14px;box-shadow:0 30px 80px rgba(0,0,0,.55);position:relative}
+  .screw{position:absolute;width:8px;height:8px;border-radius:50%;background:#0a0c14}
+  .screw.tl{top:22px;left:22px}.screw.tr{top:22px;right:22px}.screw.bl{bottom:22px;left:22px}.screw.br{bottom:22px;right:22px}
+  .screen{background:radial-gradient(120% 140% at 30% 0%, #1a1e33, var(--card) 55%, #12141f 100%);border-radius:22px;padding:38px 32px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.03), inset 0 2px 24px rgba(0,0,0,.4);text-align:center}
+
+  .levelup{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--sunshine);text-transform:uppercase}
+  .pixel-avatar{width:120px;height:120px;margin:14px auto;animation:bob 3.4s ease-in-out infinite}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+  h1{font-size:26px;font-weight:800;letter-spacing:-.4px}
+  .sub{color:var(--text-muted);font-size:13.5px;margin-top:4px}
+
+  .stat{margin-top:26px;background:var(--card-elev);border:1px solid var(--border);border-radius:20px;padding:24px}
+  .kcal{font-family:var(--mono);font-size:44px;font-weight:800;color:var(--lavender);letter-spacing:-1px}
+  .kcal small{font-size:14px;color:var(--text-subtle);font-weight:600;margin-left:6px}
+  .macros{display:flex;justify-content:center;gap:10px;margin-top:16px;flex-wrap:wrap}
+  .macro{font-family:var(--mono);font-size:12px;padding:8px 12px;border-radius:9999px;font-weight:700;color:var(--ink)}
+  .macro.p{background:var(--mint)} .macro.c{background:var(--sky)} .macro.f{background:var(--bubblegum)}
+
+  .hpbar{margin-top:20px;display:flex;align-items:center;gap:10px;justify-content:center}
+  .hpbar .cell{width:12px;height:12px;background:var(--sunshine)}
+  .hpbar .label{font-family:var(--mono);font-size:10.5px;color:var(--text-subtle);letter-spacing:.5px}
+
+  .btn{margin-top:26px;border-radius:9999px;padding:14px 28px;font-weight:800;font-size:14px;border:none;cursor:pointer;background:var(--lavender);color:var(--ink);width:100%;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--lavender);outline-offset:3px}
+  .caption{max-width:600px;margin:22px auto 0;text-align:center;color:var(--text-subtle);font-size:12px;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div>
+  <main class="console">
+    <span class="screw tl"></span><span class="screw tr"></span><span class="screw bl"></span><span class="screw br"></span>
+    <div class="screen">
+      <div class="levelup">★ LEVEL UP — FILE SAVED ★</div>
+      <div class="pixel-avatar" id="stry" role="img" aria-label="Stry, celebrating"></div>
+      <h1>Your plan is ready, Sandra</h1>
+      <p class="sub">Built from your inputs — fully transparent, no black box.</p>
+
+      <div class="stat">
+        <div class="kcal">2,140<small>kcal / day</small></div>
+        <div class="macros">
+          <span class="macro p">168G · P</span>
+          <span class="macro c">214G · C</span>
+          <span class="macro f">62G · F</span>
+        </div>
+        <div class="hpbar" aria-hidden="true">
+          <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+          <span class="label">XP +100 · COACH UNLOCKED</span>
+        </div>
+      </div>
+
+      <button class="btn">Start using Stride →</button>
+    </div>
+  </main>
+  <p class="caption">Same bezel + Stry motif closes the loop the console opened at landing — the "level up" framing turns the plan reveal into a payoff moment rather than a results table.</p>
+</div>
+
+<script>
+(function(){
+  var GRID = [
+    "________________","__XX________XX__","_XXXX______XXXX_","XXPXXX____XXXPXX",
+    "XPPXXXXXXXXXXPPX","XPYXXXXXXXXXXYPX","XXXXXIWXXIWXXXXX","XXXXXIIXXIIXXXXX",
+    "XXXXXXXXXXXXXXXX","XXXXXIIIIIIXXXXX","_XXXXXXXXXXXXXX_","__XXXXXXXXXXXX__",
+    "____XXXXXXXX____","_____XXXXXX_____","______XXXX______","_______XX_______"
+  ];
+  var PALETTE = { X:"#bcb4cc", Y:"#9ea5b8", Z:"#b3a0ff", I:"#0d101b", W:"#ffffff", K:"#1a1d2c", P:"#f4b5d6" };
+  document.querySelectorAll(".pixel-avatar").forEach(function(el){
+    var svg = '<svg viewBox="0 0 128 128" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    GRID.forEach(function(row, y){
+      for (var x = 0; x < row.length; x++){
+        var c = PALETTE[row[x]];
+        if (!c) continue;
+        svg += '<rect x="'+x*8+'" y="'+y*8+'" width="8" height="8" fill="'+c+'"/>';
+      }
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+  });
+})();
+</script>
+</body>
+</html>

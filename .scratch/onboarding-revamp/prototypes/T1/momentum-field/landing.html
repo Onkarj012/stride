@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stride — Momentum Field (Landing)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --sky:#a0c6ff; --peach:#fdb572; --mint:#b8e5c0; --bubblegum:#f4b5d6; --sunshine:#ffc93b;
+    --lavender-soft:#EDE8FF;
+    --card:#ffffff; --text:#0d101b; --text-muted:#565c6e;
+    --font:"Manrope",system-ui,sans-serif;
+    --radius-xl:24px; --radius-full:9999px;
+    --shadow-elev:0 20px 50px rgba(13,16,27,.10);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--lavender-soft);color:var(--text);font-family:var(--font);-webkit-font-smoothing:antialiased;min-height:100dvh}
+
+  nav{display:flex;align-items:center;justify-content:space-between;max-width:1080px;margin:0 auto;padding:28px 32px}
+  .brand{font-weight:800;font-size:18px;letter-spacing:-.3px}
+  .navlinks{display:flex;gap:10px}
+  .btn{border-radius:var(--radius-full);padding:11px 20px;font-weight:700;font-size:13.5px;border:none;cursor:pointer;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  .btn.ghost{background:transparent;color:var(--ink)}
+  .btn.primary{background:var(--ink);color:#fff}
+
+  .punch{max-width:1080px;margin:20px auto 0;padding:64px 40px;background:var(--card);border-radius:var(--radius-xl);box-shadow:var(--shadow-elev);text-align:center}
+  .eyebrow{font-size:12px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--text-muted)}
+  .word{font-size:clamp(64px,13vw,150px);font-weight:800;letter-spacing:-5px;line-height:.88;margin-top:8px}
+  .word .accent{color:var(--lavender)}
+  .lead{margin:18px auto 0;max-width:520px;color:var(--text-muted);font-size:16.5px;line-height:1.6}
+  .cta{margin-top:30px;display:flex;gap:10px;justify-content:center}
+  .btn.lg{padding:15px 30px;font-size:15px}
+
+  .team{max-width:1080px;margin:64px auto 0;padding:0 32px 80px}
+  .team-head{text-align:center;margin-bottom:26px}
+  .team-head h2{font-size:22px;font-weight:800;letter-spacing:-.4px}
+  .team-head p{color:var(--text-muted);font-size:14px;margin-top:6px}
+  .roster{display:flex;justify-content:center;gap:14px;flex-wrap:wrap}
+  .agent-chip{width:120px;background:var(--card);border-radius:18px;padding:16px 10px;text-align:center;box-shadow:0 6px 18px rgba(13,16,27,.06)}
+  .agent-chip .dot{width:46px;height:46px;border-radius:14px;margin:0 auto 10px;display:grid;place-items:center}
+  .agent-chip .dot span{width:16px;height:16px;border-radius:4px;background:var(--ink)}
+  .agent-chip b{display:block;font-size:12.5px;font-weight:800}
+  .agent-chip small{color:var(--text-muted);font-size:10.5px}
+  .a-main .dot{background:var(--lavender)}
+  .a-diet .dot{background:var(--mint)}
+  .a-workout .dot{background:var(--peach)}
+  .a-water .dot{background:var(--sky)}
+  .a-habit .dot{background:var(--bubblegum)}
+  .a-wellness .dot{background:var(--sunshine)}
+
+  .caption{max-width:1080px;margin:0 auto 40px;padding:0 32px;color:#7d81a6;font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+  <nav>
+    <span class="brand">Stride</span>
+    <div class="navlinks"><button class="btn ghost">Sign in</button><button class="btn primary">Get started</button></div>
+  </nav>
+
+  <div class="punch">
+    <div class="eyebrow">Adaptive AI wellness</div>
+    <div class="word">MEET YOUR<br><span class="accent">COACHING TEAM.</span></div>
+    <p class="lead">Answer a few questions and Stry assembles a plan with your whole team — nutrition, training, sleep, water, habits — each one an expert in their own color.</p>
+    <div class="cta"><button class="btn primary lg">Build my plan →</button><button class="btn ghost lg">See how it works</button></div>
+  </div>
+
+  <div class="team">
+    <div class="team-head"><h2>Seven specialists, one plan</h2><p>Each one will own a color throughout your onboarding — so you always know who's talking.</p></div>
+    <div class="roster">
+      <div class="agent-chip a-main"><span class="dot"><span></span></span><b>Stry</b><small>Lead coach</small></div>
+      <div class="agent-chip a-diet"><span class="dot"><span></span></span><b>Panda</b><small>Nutrition</small></div>
+      <div class="agent-chip a-workout"><span class="dot"><span></span></span><b>Tiger</b><small>Training</small></div>
+      <div class="agent-chip a-water"><span class="dot"><span></span></span><b>Dolphin</b><small>Hydration</small></div>
+      <div class="agent-chip a-habit"><span class="dot"><span></span></span><b>Ant</b><small>Habits</small></div>
+      <div class="agent-chip a-wellness"><span class="dot"><span></span></span><b>Deer</b><small>Wellness</small></div>
+    </div>
+  </div>
+  <p class="caption">Direction C — Momentum Field. Colour is deployed as a wayfinding system borrowed from Stride's existing seven-specialist palette, not decoration — the landing page introduces the team whose colors the onboarding trail will walk through.</p>
+</body>
+</html>
