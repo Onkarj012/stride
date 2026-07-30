@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rail Drift (refined) — Onboarding step · Stride T1-combined</title>
+<!--
+  RAIL DRIFT — REFINED PASS (craft pass on the locked direction; identity unchanged:
+  numeral+tick rail on the left, vertical card, coachs-notebook-derived Manrope +
+  hollow-numeral device, ink+lavender palette). See onboarding.html for the original.
+
+  What changed and why (full detail in the handoff summary):
+  1. MOTION BUG FIX — the original added/removed its "entering" transform class within
+     the same synchronous tick, so the browser never rendered the in-between frame and
+     the signature vertical drift (translateY) never actually played, only a fade did.
+     Rebuilt with a real exit state + a double-rAF-committed enter state, so the card
+     now visibly drifts up/down as advertised. Exit is also now its own faster, separate
+     transition instead of a 220ms fade getting cut off after 130ms.
+  2. Rail chrome (numeral + step-of label) now dims/settles in sync with the card
+     instead of snapping instantly — the whole frame reads as one coordinated system.
+  3. Micro selection feedback: picking an option gives a brief settle-pulse and dims its
+     siblings before auto-advancing (R1-endorsed "tactile got-it" pattern).
+  4. Option rows: added a small selected-state indicator, smoothed the selected
+     background transition, added a hover background tint (border-only hover felt flat).
+  5. Typography rhythm: more deliberate vertical spacing, slightly larger option label
+     size, explicit h2 line-height for 2-line questions, darkened the muted/subtle text
+     tier for real contrast (previous tone was ~2.4:1 on the persona line — a real
+     legibility gap, not just taste).
+  6. Copy: gate pill trimmed from "Step 3 · Goal" to "Goal" — the numeral and the
+     vertical STEP-OF label already say "step 3" twice; a third repetition read like a
+     spec sheet, not a coach. Pill now works as a topic marker instead of a duplicate.
+  7. Validation: options group now has aria-describedby/aria-invalid wired to the error
+     message, and the error gets a small entrance instead of an abrupt display snap.
+  8. Responsive: the mobile rail (numeral + ticks + step-of laid out horizontally) had a
+     real overflow risk — fixed-width ticks plus a still-76px numeral don't fit a narrow
+     phone. Ticks now flex to fill available space and the numeral shrinks on mobile.
+
+  Everything else (markup shape, palette, pixel-avatar mascot, validate-before-advance,
+  focus-to-<h2 tabindex="-1">, single polite live region, real progressbar semantics)
+  is preserved from the original.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f8f8f8; --card:#ffffff;
+    --input:#f3f3f5; --text:#0d101b; --muted:#6a7081; --subtle:#63697f;
+    --border:#ebebef; --border-strong:#d9d9e0; --error:#b3261e;
+    --dur:220ms; --dur-exit:150ms; --dur-exit-reduced:90ms;
+    --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;min-height:100dvh;-webkit-font-smoothing:antialiased}
+  button{font:inherit}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:8px;z-index:10}
+  .badge .avatar{width:34px;height:34px;border-radius:9px;background:var(--card);border:1px solid var(--border-strong);overflow:hidden;display:grid;place-items:center}
+  .pixel-avatar{width:26px;height:26px}
+  .badge span{font-size:12px;font-weight:700;color:var(--muted)}
+
+  .layout{max-width:760px;margin:0 auto;padding:110px 32px 60px;display:grid;grid-template-columns:120px 1fr;gap:32px}
+  .rail{display:flex;flex-direction:column;align-items:center;gap:14px;min-width:0}
+  .hollow{font-size:76px;font-weight:800;letter-spacing:-3px;color:transparent;-webkit-text-stroke:2px var(--ink);line-height:1;font-family:"Manrope",sans-serif;transition:opacity 160ms var(--ease)}
+  .hollow.dim,.step-of.dim{opacity:.32}
+  .ticks{display:flex;flex-direction:column;gap:6px;align-items:center}
+  .tick{width:3px;height:22px;background:var(--border-strong);border-radius:2px;transition:background var(--dur) var(--ease)}
+  .tick.on{background:var(--lav)}
+  .step-of{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--subtle);font-weight:500;letter-spacing:.5px;writing-mode:vertical-rl;text-orientation:mixed;transition:opacity 160ms var(--ease)}
+
+  .stage{position:relative;min-height:340px}
+  .step{transition:opacity var(--dur) var(--ease), transform var(--dur) var(--ease);will-change:opacity,transform}
+  .step.exit{opacity:0;transition:opacity var(--dur-exit) var(--ease-exit)}
+  .step.enter-from-below{opacity:0;transform:translateY(20px)}
+  .step.enter-from-above{opacity:0;transform:translateY(-20px)}
+
+  .persona-line{display:flex;align-items:center;gap:8px;color:var(--subtle);font-size:12.5px;font-style:italic;margin-bottom:12px}
+  .persona-line .dot{width:20px;height:20px;flex-shrink:0}
+  h2{font-size:26px;font-weight:800;letter-spacing:-.5px;line-height:1.28;outline:none;max-width:460px}
+  .gatetag{display:inline-block;background:var(--lav-soft);color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:500;letter-spacing:1px;padding:4px 10px;border-radius:9999px;text-transform:uppercase;margin-bottom:12px}
+
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px;max-width:460px}
+  @media(max-width:640px){ .choices{grid-template-columns:1fr} }
+  .choice{position:relative;background:var(--input);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:left;cursor:pointer;font-family:inherit;font-size:14.5px;font-weight:700;color:var(--text);transition:border-color .12s var(--ease),background-color .16s var(--ease),opacity .16s var(--ease)}
+  .choice:hover{border-color:var(--border-strong);background:#ececf1}
+  .choice[aria-pressed="true"]{background:rgba(179,160,255,.14);border-color:var(--lav)}
+  .choice[aria-pressed="true"]::after{content:"";position:absolute;top:12px;right:12px;width:7px;height:7px;border-radius:50%;background:var(--lav)}
+  .choice .sub{display:block;font-weight:500;color:var(--subtle);font-size:11.5px;margin-top:2px}
+  .choice:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  @keyframes choicePulse{ 0%{transform:scale(1)} 45%{transform:scale(.965)} 100%{transform:scale(1)} }
+  .choice.picked{animation:choicePulse 260ms var(--ease)}
+  .choices.deciding .choice:not([aria-pressed="true"]){opacity:.45}
+
+  .err{font-size:12.5px;color:var(--error);margin-top:14px;font-weight:600;max-width:460px}
+  @keyframes errIn{ from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+  .err.show{animation:errIn 180ms var(--ease)}
+  .nav{margin-top:30px;display:flex;justify-content:space-between;align-items:center;max-width:460px}
+  .btn{border-radius:9999px;padding:12px 22px;font-weight:700;font-size:13.5px;border:none;cursor:pointer;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--lav);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff;transition:opacity .12s var(--ease)}
+  .btn.primary[aria-disabled="true"]{opacity:.35;cursor:not-allowed}
+  .btn.text{background:transparent;color:var(--muted)}
+  .btn.text:hover{color:var(--text)}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .step,.step.exit{transition:opacity var(--dur-exit-reduced) linear}
+    .step.enter-from-below,.step.enter-from-above{transform:none}
+    .tick{transition:background var(--dur-exit-reduced) linear}
+    .hollow,.step-of{transition:opacity var(--dur-exit-reduced) linear}
+    .choice.picked{animation:none}
+    .choice{transition:border-color .12s linear,background-color .12s linear,opacity .12s linear}
+    .err.show{animation:none}
+  }
+  @media(max-width:640px){
+    .layout{grid-template-columns:1fr;padding-top:96px}
+    .rail{flex-direction:row;justify-content:flex-start;align-items:center;gap:10px}
+    .hollow{font-size:40px;letter-spacing:-1.5px;-webkit-text-stroke:1.5px var(--ink);flex:none}
+    .ticks{flex-direction:row;flex:1;min-width:0}
+    .tick{flex:1;width:auto;min-width:4px;height:3px}
+    .step-of{writing-mode:horizontal-tb;flex:none;white-space:nowrap}
+  }
+</style>
+</head>
+<body>
+  <div class="badge"><span class="avatar"><span class="pixel-avatar" id="stryBadge" role="img" aria-label="Stry"></span></span><span>Coached by Stry</span></div>
+
+  <div class="layout">
+    <div class="rail">
+      <span class="hollow" id="hollowNum">03</span>
+      <div class="ticks" id="ticks" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3" aria-label="Onboarding progress"></div>
+      <span class="step-of" id="stepOf">STEP 3 OF 8</span>
+    </div>
+
+    <div class="stage">
+      <div class="step" id="step">
+        <div class="persona-line"><span class="pixel-avatar dot" id="stryLine" role="img" aria-label=""></span><span id="persona"></span></div>
+        <span class="gatetag" id="gate"></span>
+        <h2 tabindex="-1" id="q"></h2>
+        <div class="choices" id="options" role="group" aria-labelledby="q" aria-describedby="err" aria-invalid="false"></div>
+        <p class="err" id="err" hidden>Pick one to keep going.</p>
+        <div class="nav">
+          <button class="btn text" id="back" type="button">Back</button>
+          <button class="btn primary" id="continue" type="button" aria-disabled="true">Continue</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="../index.html">← all variations</a> · <a href="auth.html">auth</a> · <a href="plan-reveal.html">plan reveal →</a></p>
+
+<script>
+(function(){
+  // Pixel-avatar renderer — reused verbatim from T1/coachs-notebook/onboarding.html
+  var GRID = [
+    "________________","__XX________XX__","_XXXX______XXXX_","XXPXXX____XXXPXX",
+    "XPPXXXXXXXXXXPPX","XPYXXXXXXXXXXYPX","XXXXXIWXXIWXXXXX","XXXXXIIXXIIXXXXX",
+    "XXXXXXXXXXXXXXXX","XXXXXIIIIIIXXXXX","_XXXXXXXXXXXXXX_","__XXXXXXXXXXXX__",
+    "____XXXXXXXX____","_____XXXXXX_____","______XXXX______","_______XX_______"
+  ];
+  var PALETTE = { X:"#bcb4cc", Y:"#9ea5b8", Z:"#b3a0ff", I:"#0d101b", W:"#ffffff", K:"#1a1d2c", P:"#f4b5d6" };
+  document.querySelectorAll(".pixel-avatar").forEach(function(el){
+    var svg = '<svg viewBox="0 0 128 128" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    GRID.forEach(function(row, y){
+      for (var x = 0; x < row.length; x++){
+        var c = PALETTE[row[x]];
+        if (!c) continue;
+        svg += '<rect x="'+x*8+'" y="'+y*8+'" width="8" height="8" fill="'+c+'"/>';
+      }
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+  });
+
+  var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var EXIT_MS = REDUCED ? 90 : 150;
+  var PICK_HOLD_MS = REDUCED ? 160 : 260;
+  var TOTAL = 8;
+  var STEPS = [
+    { now:3, gate:"Goal", q:"What are you aiming for right now?",
+      persona:"“This shapes the whole plan.”",
+      options:[
+        {v:"aggressive_loss",name:"Lose fat fast",sub:"~25% deficit"},
+        {v:"moderate_loss",name:"Lose fat",sub:"~18% deficit"},
+        {v:"maintain",name:"Maintain",sub:"Stay here"},
+        {v:"recomp",name:"Recomp",sub:"Lose fat, gain muscle"},
+        {v:"lean_gain",name:"Lean gain",sub:"~10% surplus"},
+        {v:"muscle_gain",name:"Build muscle",sub:"~18% surplus"} ] },
+    { now:4, gate:"Work", q:"What is your job like during the day?",
+      persona:"“Rough numbers are fine.”",
+      options:[
+        {v:"desk",name:"Desk",sub:"Mostly seated"},
+        {v:"mixed",name:"Mixed",sub:"Sit + move"},
+        {v:"standing",name:"Standing",sub:"On your feet"},
+        {v:"physical",name:"Physical",sub:"Manual labor"} ] },
+    { now:5, gate:"Life", q:"Outside work and workouts, how much do you move?",
+      persona:"“Honest beats optimistic. Three to go.”",
+      options:[
+        {v:"sedentary",name:"Sedentary",sub:"Mostly sitting"},
+        {v:"light",name:"Light",sub:"Some walking"},
+        {v:"moderate",name:"Moderate",sub:"On feet often"},
+        {v:"active",name:"Active",sub:"Always moving"} ] }
+  ];
+  var i = 0, picked = null;
+  var $ = function(id){ return document.getElementById(id); };
+
+  function renderTicks(now){
+    var el = $("ticks"); el.innerHTML = "";
+    for (var n = 1; n <= TOTAL; n++){
+      var t = document.createElement("span");
+      t.className = "tick" + (n <= now ? " on" : "");
+      el.appendChild(t);
+    }
+    el.setAttribute("aria-valuenow", now);
+  }
+
+  function paint(){
+    var s = STEPS[i];
+    $("hollowNum").textContent = String(s.now).padStart(2,"0");
+    $("stepOf").textContent = "STEP " + s.now + " OF " + TOTAL;
+    renderTicks(s.now);
+    $("gate").textContent = s.gate;
+    $("q").textContent = s.q;
+    $("persona").textContent = s.persona;
+    var opts = $("options"); opts.innerHTML = ""; opts.classList.remove("deciding");
+    opts.setAttribute("aria-invalid","false");
+    s.options.forEach(function(o){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "choice"; b.setAttribute("aria-pressed","false");
+      b.innerHTML = '<span>'+o.name+'</span><span class="sub">'+o.sub+'</span>';
+      b.addEventListener("click", function(){ select(o.v, b); });
+      opts.appendChild(b);
+    });
+    picked = null;
+    $("continue").setAttribute("aria-disabled","true");
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    $("q").setAttribute("tabindex","-1");
+    $("q").focus({ preventScroll:true });
+  }
+
+  // Real vertical-drift choreography: exit fades the outgoing card (its own,
+  // shorter transition), THEN the incoming state is committed across two
+  // rAFs before we release it — without that double rAF, adding and removing
+  // the "entering" class in the same tick means the browser never paints the
+  // in-between frame and the drift silently collapses into a plain fade.
+  function render(dir){
+    var el = $("step");
+    if (!dir){ paint(); return; }
+    el.classList.add("exit");
+    $("hollowNum").classList.add("dim");
+    $("stepOf").classList.add("dim");
+    setTimeout(function(){
+      el.classList.remove("exit");
+      el.classList.add(dir === 1 ? "enter-from-below" : "enter-from-above");
+      paint();
+      $("hollowNum").classList.remove("dim");
+      $("stepOf").classList.remove("dim");
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          el.classList.remove("enter-from-below","enter-from-above");
+        });
+      });
+    }, EXIT_MS);
+  }
+
+  function select(v, btn){
+    picked = v;
+    document.querySelectorAll(".choice").forEach(function(o){ o.setAttribute("aria-pressed", o === btn ? "true" : "false"); });
+    $("continue").setAttribute("aria-disabled","false");
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("options").setAttribute("aria-invalid","false");
+    $("options").classList.add("deciding");
+    if (!REDUCED){
+      btn.classList.remove("picked");
+      void btn.offsetWidth; // restart the pulse if the user reselects quickly
+      btn.classList.add("picked");
+    }
+    clearTimeout(select._t);
+    select._t = setTimeout(function(){ advance(1); }, PICK_HOLD_MS);
+  }
+
+  function advance(dir){
+    var next = i + dir;
+    if (dir > 0 && !picked){
+      $("err").hidden = false;
+      $("err").classList.remove("show"); void $("err").offsetWidth; $("err").classList.add("show");
+      $("options").setAttribute("aria-invalid","true");
+      $("live").textContent = "Pick one to keep going.";
+      return;
+    }
+    if (next < 0) return;
+    if (next >= STEPS.length){ location.href = "plan-reveal.html"; return; }
+    i = next; render(dir);
+  }
+
+  $("continue").addEventListener("click", function(){ advance(1); });
+  $("back").addEventListener("click", function(){ advance(-1); });
+  render(0);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Route Swing — Plan reveal · Stride T1-combined</title>
+<!--
+  COMBINED DIRECTION — variation "ROUTE SWING" (brisk / horizontal slide / staggered reveal).
+  Blends T1-batch2/darkroom/plan-reveal.html (mono ledger w/ dotted leaders, glow numeral)
+  with T1-batch2/soft-terrain/plan-reveal.html (summit tag, layered macro bar) — rendered
+  light, continuing the top horizontal rail this variation's onboarding used (now fully lit,
+  08/08), so the numeral+rail device reads as the same instrument across both screens.
+  MOTION SIGNATURE: the macro bar SWEEPS in left-to-right (scaleX 0→1, 220ms, transform-
+  origin left — an R1-endorsed "progress bar tween," not a step-card animation), then the
+  legend chips and ledger stagger in horizontally (28ms/item) exactly like this variation's
+  onboarding options did. No vertical cascade (that's rail-drift's signature) — everything
+  here travels left→right, matching "route swing"'s horizontal identity.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f8f8f8; --card:#ffffff;
+    --muted:#6a7081; --subtle:#9099ad; --border:#ebebef; --border-strong:#d9d9e0;
+    --sky:#a0c6ff; --peach:#fdb572;
+    --dur:220ms; --ease:cubic-bezier(.32,.72,0,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh}
+  button{font:inherit}
+
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:8px;z-index:10}
+  .badge .avatar{width:34px;height:34px;border-radius:9px;background:var(--card);border:1px solid var(--border-strong);overflow:hidden;display:grid;place-items:center}
+  .pixel-avatar{width:26px;height:26px}
+  .badge span{font-size:12px;font-weight:700;color:var(--muted)}
+
+  .toprail{max-width:680px;margin:0 auto;padding:96px 32px 0;display:flex;align-items:center;gap:14px}
+  .hollow{font-size:34px;font-weight:800;letter-spacing:-1.5px;color:transparent;-webkit-text-stroke:1.6px var(--lav);line-height:1;flex:none}
+  .ticks{flex:1;display:flex;gap:6px;align-items:center}
+  .tick{flex:1;height:3px;border-radius:2px;background:var(--lav)}
+  .step-of{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--subtle);font-weight:500;letter-spacing:.5px;flex:none;text-transform:uppercase}
+
+  main{max-width:680px;margin:0 auto;padding:30px 32px 60px}
+  .readout{max-width:480px}
+
+  .label{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.8px;color:var(--subtle);text-transform:uppercase}
+  .kcal{font-weight:800;letter-spacing:-3px;font-size:clamp(56px,13vw,80px);line-height:1;margin-top:12px;color:transparent;-webkit-text-stroke:2px var(--ink);text-shadow:0 0 34px rgba(179,160,255,.3);font-variant-numeric:tabular-nums;outline:none}
+  .kcal .unit{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;letter-spacing:2.5px;color:var(--muted);margin-top:10px;-webkit-text-stroke:0;text-shadow:none}
+  .who{font-size:13.5px;color:var(--muted);margin-top:14px;line-height:1.55;max-width:440px}
+
+  .spectrum{margin-top:26px;max-width:440px}
+  .bar{display:flex;height:12px;border-radius:9999px;overflow:hidden;background:var(--border);transform:scaleX(0);transform-origin:left;animation:sweep var(--dur) var(--ease) 80ms both}
+  @keyframes sweep{to{transform:scaleX(1)}}
+  .bar span{display:block;height:100%}
+  .bar .p{width:27%;background:var(--lav)}
+  .bar .c{width:40%;background:var(--sky)}
+  .bar .f{width:33%;background:var(--peach)}
+  .legend{display:flex;justify-content:space-between;margin-top:12px;font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--muted)}
+  .legend span{opacity:0;transform:translateY(6px);animation:in 160ms var(--ease) both}
+  .legend span:nth-child(1){animation-delay:220ms}
+  .legend span:nth-child(2){animation-delay:250ms}
+  .legend span:nth-child(3){animation-delay:280ms}
+  @keyframes in{to{opacity:1;transform:none}}
+  .legend b{color:var(--ink);font-weight:700}
+  .legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;font-style:normal}
+
+  details{margin-top:24px;border:1px solid var(--border-strong);border-radius:14px;background:var(--card);padding:16px 18px;max-width:440px;opacity:0;animation:in 200ms var(--ease) 320ms both}
+  summary{cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--ink)}
+  .rows{margin-top:14px;display:grid;gap:9px;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+  .rows div{display:flex;align-items:baseline;gap:8px}
+  .rows .dots{flex:1;border-bottom:1px dotted var(--border-strong);transform:translateY(-3px)}
+  .rows b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+  .rows .total b{color:var(--lav)}
+
+  .actions{display:flex;gap:12px;margin-top:26px;max-width:440px;opacity:0;animation:in 200ms var(--ease) 380ms both}
+  .back{flex:none;background:none;border:1px solid var(--border-strong);color:var(--muted);border-radius:9999px;padding:14px 18px;font:700 13px "Manrope",sans-serif;cursor:pointer}
+  .back:hover{color:var(--ink)}
+  .cta{flex:1;background:var(--ink);color:#fff;border:none;border-radius:9999px;padding:16px;font:800 14px "Manrope",sans-serif;cursor:pointer}
+  .back:focus-visible, .cta:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .bar{animation:none;transform:none}
+    .legend span, details, .actions{animation:none;opacity:1;transform:none}
+  }
+  @media(max-width:640px){ .toprail{padding-top:88px} }
+</style>
+</head>
+<body>
+  <div class="badge"><span class="avatar"><span class="pixel-avatar" id="stryBadge" role="img" aria-label="Stry"></span></span><span>Coached by Stry</span></div>
+
+  <div class="toprail">
+    <span class="hollow">08</span>
+    <div class="ticks" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="8" aria-label="Onboarding progress">
+      <span class="tick"></span><span class="tick"></span><span class="tick"></span><span class="tick"></span>
+      <span class="tick"></span><span class="tick"></span><span class="tick"></span><span class="tick"></span>
+    </div>
+    <span class="step-of">STEP 8 OF 8</span>
+  </div>
+
+  <main>
+    <div class="readout">
+      <p class="label">Plan for Onkar — complete</p>
+      <h1 class="kcal" tabindex="-1">2,140<span class="unit">kcal per day</span></h1>
+      <p class="who">Eight steps in. Every line of the math is below — recalculated at every check-in.</p>
+
+      <div class="spectrum" role="group" aria-label="Daily macro split">
+        <div class="bar" aria-hidden="true"><span class="p"></span><span class="c"></span><span class="f"></span></div>
+        <div class="legend">
+          <span><i style="background:#b3a0ff"></i>PROTEIN <b>145g</b></span>
+          <span><i style="background:#a0c6ff"></i>CARBS <b>214g</b></span>
+          <span><i style="background:#fdb572"></i>FAT <b>71g</b></span>
+        </div>
+      </div>
+
+      <details>
+        <summary>Development ledger</summary>
+        <div class="rows">
+          <div><span>BMR (resting)</span><span class="dots"></span><b>1,685</b></div>
+          <div><span>NEAT — desk job</span><span class="dots"></span><b>+240</b></div>
+          <div><span>NEAT — lifestyle</span><span class="dots"></span><b>+180</b></div>
+          <div><span>Training average</span><span class="dots"></span><b>+210</b></div>
+          <div><span>Thermic effect</span><span class="dots"></span><b>+165</b></div>
+          <div><span>Maintenance (TDEE)</span><span class="dots"></span><b>2,480</b></div>
+          <div class="total"><span>Goal adj. — recomp</span><span class="dots"></span><b>−340</b></div>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button class="back" type="button" onclick="history.back()">← Back</button>
+        <button class="cta" type="button">Start using Stride</button>
+      </div>
+    </div>
+  </main>
+  <p class="proto-nav"><a href="../index.html">← all variations</a> · <a href="onboarding.html">← onboarding</a></p>
+
+<script>
+(function(){
+  var GRID = [
+    "________________","__XX________XX__","_XXXX______XXXX_","XXPXXX____XXXPXX",
+    "XPPXXXXXXXXXXPPX","XPYXXXXXXXXXXYPX","XXXXXIWXXIWXXXXX","XXXXXIIXXIIXXXXX",
+    "XXXXXXXXXXXXXXXX","XXXXXIIIIIIXXXXX","_XXXXXXXXXXXXXX_","__XXXXXXXXXXXX__",
+    "____XXXXXXXX____","_____XXXXXX_____","______XXXX______","_______XX_______"
+  ];
+  var PALETTE = { X:"#bcb4cc", Y:"#9ea5b8", Z:"#b3a0ff", I:"#0d101b", W:"#ffffff", K:"#1a1d2c", P:"#f4b5d6" };
+  document.querySelectorAll(".pixel-avatar").forEach(function(el){
+    var svg = '<svg viewBox="0 0 128 128" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    GRID.forEach(function(row, y){
+      for (var x = 0; x < row.length; x++){
+        var c = PALETTE[row[x]];
+        if (!c) continue;
+        svg += '<rect x="'+x*8+'" y="'+y*8+'" width="8" height="8" fill="'+c+'"/>';
+      }
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+  });
+  document.querySelector(".kcal").focus({ preventScroll:true });
+})();
+</script>
+</body>
+</html>

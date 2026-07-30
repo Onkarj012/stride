@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Still Stage — Stride T1-final</title>
+<!--
+  Entry point for the demo. This is NOT a gallery of isolated files — it starts the real
+  linked flow at auth.html and immediately hands off. If JS is somehow unavailable the
+  <noscript> link + visible fallback link below still gets you there in one click.
+  Demo path: index → auth (sign in) → onboarding (3 steps) → plan-reveal → (loops to index).
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;600;700&display=swap');
+  :root{ --bg:#0b0d15; --text:#eceaf5; --muted:#8b91a6; --lav:#b3a0ff; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100dvh}
+  .wrap{text-align:center}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);display:inline-block;box-shadow:0 0 10px 2px rgba(179,160,255,.55);animation:pulse 3s ease-in-out infinite;margin-bottom:14px}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  p{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.6px;color:var(--muted);text-transform:uppercase}
+  a{color:var(--lav);font-weight:700;text-decoration:none;font-family:"Manrope",sans-serif;font-size:14px;display:inline-block;margin-top:10px}
+  @media (prefers-reduced-motion: reduce){ .dot{animation:none} }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="dot" aria-hidden="true"></span>
+    <p>Opening the studio…</p>
+    <noscript><a href="auth.html">Continue to sign in →</a></noscript>
+  </div>
+  <script>location.replace('auth.html');</script>
+</body>
+</html>

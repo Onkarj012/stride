@@ -1,0 +1,831 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Thread (refined) — Onboarding · Stride T1-final v2</title>
+<!--
+  T1-final variation "SIGNAL THREAD" — REFINED pass (was v2-signal-thread's 4-step
+  demo subset; this is the full real 8-phase flow, plus three fixes to the visual
+  system). Four things changed vs the original v2-signal-thread/onboarding.html:
+
+  1. ALL 8 REAL PHASES — name -> stats -> goal -> work -> lifestyle -> training ->
+     diet -> style, lifted 1:1 from apps/web/src/pages/OnboardingPage.tsx (QUESTIONS
+     copy, GOALS/work/lifestyle/diet/coachingStyle option sets, the TrainingBuilder
+     row shape, FieldInput/statsValid rules). The thread now counts all 8 real
+     steps instead of a 4-step representative sample.
+
+  2. FREE-FORM INPUT ON EVERY CHOICE-DRIVEN STEP — a visually-integrated "…or
+     describe it your own way" pill (sparkle icon + text input + send button,
+     styled after the real FreeText component) sits under the fixed choices on
+     stats/goal/work/lifestyle/training/diet/style. There's no backend here, so
+     each step ships a small local keyword/regex stub instead of a real AI parse
+     action — good enough to fill fields or pick an option and show a short "Got
+     it" acknowledgment, which is the interaction the real FreeText affordance
+     promises. (The "name" step's primary control is already a free-text input,
+     so it doesn't get a second, redundant free-text row.)
+
+  3. FIXED-SIZE CHOICE RECTANGLES — .choice is now a uniform min-height rectangle
+     (108px) with generous padding and vertically-centered content, identical
+     across every step regardless of column count (2 or 3) or label/sub length.
+     No more boxes that grow/shrink with their own text.
+
+  4. A SLOWER, NON-BOUNCY GHOST-NUMERAL BEAT — the ghost step-numeral (still
+     aria-hidden, purely decorative) now runs on its own motion budget, separate
+     from and deliberately longer than the step-card's: --ease-classy is a
+     symmetric, zero-overshoot cubic-bezier(.65,0,.35,1) — slow-fast-slow, no
+     spring/elastic, scale never exceeds 1 (.96 -> 1 on enter, 1 -> .97 on exit).
+     560ms enter / 280ms exit, vs. the step-card's 220ms/150ms — long enough to
+     read as its own considered beat, short enough to never block input. The
+     thread's segment-lighting transition got the same ease + a touch more time
+     (340ms) so it doesn't feel like an abrupt flip against the calmer numeral.
+     The step-card's own motion (opacity+translateY, <=250ms, <=24px, collapsing
+     to opacity-only under prefers-reduced-motion) is UNCHANGED — that's the R1
+     ceiling and it governs real content, not this decorative element.
+
+  NO MASCOT ART — Stry is present only as the same pulsing signal dot used on
+  auth.html, next to a short persona line. No character art, no avatar rendering.
+
+  A11Y (R1, unchanged) — one focused question per step; focus moves to the new
+  step's <h2 tabindex="-1">; a single polite live region announces "Step X of N:
+  …" sequenced after the focus move; real role="progressbar"; validate-before-
+  advance with aria-invalid/aria-describedby.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f7f6f9; --card:#ffffff;
+    --input:#f3f3f6; --text:#0d101b; --muted:#6a7081; --subtle:#5c6178;
+    --border:#ebebef; --border-strong:#d9d9e0; --error:#b3261e;
+
+    /* Step-card motion — R1 ceiling: <=250ms, translate <=24px, opacity-only
+       under reduced-motion. Unchanged from the approved v2. */
+    --dur:220ms; --dur-exit:150ms; --dur-exit-reduced:90ms;
+    --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+
+    /* Ghost-numeral motion — decorative/aria-hidden only, so it gets its own
+       longer, slower "beat" than the step card: a symmetric, zero-overshoot
+       ease (no spring/elastic/bounce) and a small scale move that never
+       exceeds 1. This is the "classy premium" transition from note 4. */
+    --ease-classy:cubic-bezier(.65,0,.35,1);
+    --dur-num-enter:560ms; --dur-num-exit:280ms;
+    --dur-num-enter-reduced:120ms; --dur-num-exit-reduced:90ms;
+
+    /* Thread segment lighting — same disciplined ease, a bit slower than the
+       old flat 220ms so it doesn't read as an abrupt flip next to the calmer
+       numeral beat. */
+    --dur-thread:340ms;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;min-height:100dvh;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  button{font:inherit}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+
+  /* Stry's presence: the same pulsing dot from auth.html, never a mascot render. */
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.5);animation:pulse 3s ease-in-out infinite;flex-shrink:0}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:9px;z-index:10;font-size:12px;font-weight:700;color:var(--muted)}
+
+  /* ── Single centered axis. No rail column, no side-by-side grid. ── */
+  .stagearea{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:96px 24px 60px}
+
+  .thread-wrap{display:flex;flex-direction:column;align-items:center;gap:9px;margin-bottom:30px;width:100%;max-width:340px}
+  .thread{display:flex;gap:5px;width:100%}
+  .thread .seg{flex:1;height:3px;border-radius:99px;background:var(--border-strong);transition:background var(--dur-thread) var(--ease-classy),box-shadow var(--dur-thread) var(--ease-classy)}
+  .thread .seg.on{background:var(--lav);box-shadow:0 0 6px 0 rgba(179,160,255,.4)}
+  .step-of{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--subtle);font-weight:500;letter-spacing:1.4px;text-transform:uppercase;transition:opacity 160ms var(--ease)}
+  .step-of.dim{opacity:.35}
+
+  .card{position:relative;overflow:hidden;width:100%;max-width:480px;min-height:440px;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:44px 40px;box-shadow:0 30px 60px -40px rgba(13,16,27,.18)}
+
+  /* ── Ghost numeral: giant hollow step-count, cropped by the card edge.
+       Same typographic slot resolves into the real kcal number on plan-reveal.
+       Motion is its own budget (--dur-num-*), longer + calmer than the card. ── */
+  .ghost-num{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:flex-end;padding:8px 4px 0 0;pointer-events:none;z-index:0;overflow:hidden}
+  .ghost-num span{font-family:"Manrope",sans-serif;font-weight:800;letter-spacing:-9px;font-size:clamp(150px,30vw,230px);line-height:.78;color:transparent;-webkit-text-stroke:2px var(--ink);opacity:.055;transform:translateY(0) scale(1);transition:opacity var(--dur-num-enter) var(--ease-classy),transform var(--dur-num-enter) var(--ease-classy);display:block}
+  .ghost-num span.exit{opacity:0;transform:translateY(8px) scale(.97);transition:opacity var(--dur-num-exit) var(--ease-classy),transform var(--dur-num-exit) var(--ease-classy)}
+  .ghost-num span.enter-from-below{opacity:0;transform:translateY(18px) scale(.96)}
+  .ghost-num span.enter-from-above{opacity:0;transform:translateY(-18px) scale(.96)}
+
+  .card-inner{position:relative;z-index:1}
+  .step{transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease);will-change:opacity,transform}
+  .step.exit{opacity:0;transition:opacity var(--dur-exit) var(--ease-exit)}
+  .step.enter-from-below{opacity:0;transform:translateY(20px)}
+  .step.enter-from-above{opacity:0;transform:translateY(-20px)}
+
+  .persona-line{display:flex;align-items:center;gap:9px;color:var(--subtle);font-size:12.5px;font-style:italic;margin-bottom:14px}
+  h2{font-size:25px;font-weight:800;letter-spacing:-.5px;line-height:1.28;outline:none;max-width:400px}
+  .gatetag{display:inline-block;background:var(--lav-soft);color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:500;letter-spacing:1px;padding:4px 10px;border-radius:9999px;text-transform:uppercase;margin-bottom:12px}
+
+  .field{margin-top:22px;max-width:400px}
+  .name-row{display:flex;gap:10px;margin-top:22px;max-width:400px}
+  .name-row input,.text-input{flex:1;min-width:0;background:var(--input);border:1px solid var(--border);border-radius:12px;padding:13px 15px;font:600 15px "Manrope",sans-serif;color:var(--text);outline:none;transition:border-color .15s}
+  .name-row input:focus,.text-input:focus{border-color:var(--lav)}
+  .name-row input:focus-visible,.text-input:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  .text-input{display:block;width:100%;max-width:400px;margin-top:16px;font-weight:500;font-size:14px;padding:12px 15px}
+
+  .field-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:22px;max-width:400px}
+  .field-grid label{display:flex;flex-direction:column;gap:5px}
+  .field-grid .flab{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.1px;color:var(--subtle);text-transform:uppercase}
+  .field-grid input{background:var(--input);border:1px solid var(--border);border-radius:10px;padding:11px 12px;font:600 14px "Manrope",sans-serif;color:var(--text);outline:none;transition:border-color .15s;width:100%}
+  .field-grid input:focus{border-color:var(--lav)}
+  .field-grid input:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  /* ── Choices: uniform, deliberately bigger rectangle. Same min-height on every
+       step, every column count (2 or 3), regardless of label/sub length. ── */
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px;max-width:400px}
+  .choices.cols3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:520px){ .choices,.choices.cols3{grid-template-columns:1fr 1fr} }
+  .choice{
+    position:relative;min-height:108px;display:flex;flex-direction:column;justify-content:center;gap:5px;
+    background:var(--input);border:1px solid var(--border);border-radius:14px;padding:20px 18px;
+    text-align:left;cursor:pointer;font-family:inherit;color:var(--text);
+    transition:border-color .12s var(--ease),background-color .16s var(--ease),opacity .16s var(--ease);
+  }
+  .choice:hover{border-color:var(--border-strong);background:#ececf1}
+  .choice[aria-pressed="true"]{background:rgba(179,160,255,.14);border-color:var(--lav)}
+  .choice[aria-pressed="true"]::after{content:"";position:absolute;top:13px;right:13px;width:7px;height:7px;border-radius:50%;background:var(--lav)}
+  .choice .label{display:block;font-size:14px;font-weight:700;line-height:1.28;color:var(--text)}
+  .choice .sub{display:block;font-weight:500;color:var(--subtle);font-size:11.5px;margin-top:1px;line-height:1.3}
+  .choice:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  @keyframes choicePulse{0%{transform:scale(1)}45%{transform:scale(.965)}100%{transform:scale(1)}}
+  .choice.picked{animation:choicePulse 260ms var(--ease)}
+  .choices.deciding .choice:not([aria-pressed="true"]){opacity:.45}
+
+  .hours{display:flex;align-items:center;gap:8px;margin-top:14px}
+  .hours label{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.2px;color:var(--subtle);text-transform:uppercase}
+  .hours input{width:56px;text-align:center;background:var(--input);border:1px solid var(--border);border-radius:10px;padding:8px 6px;font:700 13.5px "Manrope",sans-serif;color:var(--text);outline:none}
+  .hours input:focus{border-color:var(--lav)}
+  .hours span{font-size:12px;color:var(--muted)}
+
+  /* ── Training builder rows ── */
+  .train-rows{display:flex;flex-direction:column;gap:8px;margin-top:20px;max-width:400px}
+  .train-row{display:flex;align-items:center;gap:8px;background:var(--input);border:1px solid var(--border);border-radius:12px;padding:9px 8px 9px 14px}
+  .train-row select{flex:1;min-width:0;background:transparent;border:none;outline:none;font:700 13.5px "Manrope",sans-serif;color:var(--text);cursor:pointer}
+  .train-row .num{display:flex;align-items:center;gap:5px;flex-shrink:0}
+  .train-row .num input{width:42px;text-align:center;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 4px;font:700 12.5px "Manrope",sans-serif;color:var(--text);outline:none}
+  .train-row .num input:focus{border-color:var(--lav)}
+  .train-row .num span{font-size:10.5px;color:var(--muted)}
+  .train-row .rm{flex-shrink:0;width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:var(--muted);cursor:pointer}
+  .train-row .rm:hover{color:var(--error)}
+  .train-row .rm:focus-visible{outline:2px solid var(--lav);outline-offset:1px}
+  .train-add{width:100%;max-width:400px;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:7px;border:1.5px dashed var(--border-strong);border-radius:12px;padding:12px;font:700 13px "Manrope",sans-serif;color:var(--muted);background:transparent;cursor:pointer}
+  .train-add:hover{color:var(--text);border-color:var(--lav)}
+  .train-add:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  /* ── Free-form input affordance — the FreeText equivalent. Present on every
+       choice-driven step, styled after the real component: sparkle + input +
+       round send button in one pill. ── */
+  .freetext{margin-top:18px;max-width:400px}
+  .freetext-pill{display:flex;align-items:center;gap:9px;background:var(--card);border:1px solid var(--border);border-radius:9999px;padding:8px 8px 8px 15px;transition:border-color .15s var(--ease)}
+  .freetext-pill:focus-within{border-color:var(--lav)}
+  .freetext-pill .spark{color:var(--lav);flex-shrink:0;display:flex}
+  .freetext-pill input{flex:1;min-width:0;background:transparent;border:none;outline:none;font:500 13.5px "Manrope",sans-serif;color:var(--text)}
+  .freetext-pill input::placeholder{color:var(--subtle)}
+  .freetext-pill input:focus-visible{outline:none}
+  .freetext-send{flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--ink);color:#fff;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:opacity .12s var(--ease)}
+  .freetext-send:hover{opacity:.85}
+  .freetext-send:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  .ack{margin-top:8px;padding-left:5px;font-size:12px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px}
+  .ack::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--lav);flex-shrink:0}
+  @keyframes ackIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+  .ack.show{animation:ackIn 180ms var(--ease)}
+
+  .err{font-size:12.5px;color:var(--error);margin-top:14px;font-weight:600;max-width:400px}
+  @keyframes errIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+  .err.show{animation:errIn 180ms var(--ease)}
+
+  .nav{margin-top:28px;display:flex;justify-content:space-between;align-items:center;max-width:400px;gap:10px}
+  .nav-left{display:flex;align-items:center;gap:16px}
+  .btn{border-radius:9999px;padding:12px 22px;font-weight:700;font-size:13.5px;border:none;cursor:pointer;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--lav);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff;transition:opacity .12s var(--ease)}
+  .btn.primary[aria-disabled="true"]{opacity:.35;cursor:not-allowed}
+  .btn.text{background:transparent;color:var(--muted);padding:12px 0}
+  .btn.text:hover{color:var(--text)}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:5}
+  .proto-nav a{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .step,.step.exit{transition:opacity var(--dur-exit-reduced) linear !important}
+    .step.enter-from-below,.step.enter-from-above{transform:none}
+    .ghost-num span,.ghost-num span.exit{transition:opacity var(--dur-num-exit-reduced) linear !important;transform:none !important}
+    .ghost-num span.enter-from-below,.ghost-num span.enter-from-above{transform:none}
+    .thread .seg{transition:background var(--dur-exit-reduced) linear}
+    .step-of{transition:opacity var(--dur-exit-reduced) linear}
+    .choice.picked{animation:none}
+    .choice{transition:border-color .12s linear,background-color .12s linear,opacity .12s linear}
+    .err.show,.ack.show{animation:none}
+  }
+  @media(max-width:640px){
+    .card{padding:34px 24px;border-radius:20px}
+    .ghost-num span{font-size:clamp(110px,42vw,170px);letter-spacing:-6px}
+  }
+</style>
+</head>
+<body>
+  <div class="badge"><span class="dot" aria-hidden="true"></span><span>Coached by Stry</span></div>
+
+  <div class="stagearea">
+    <div class="thread-wrap">
+      <div class="thread" id="thread" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="1" aria-label="Onboarding progress"></div>
+      <span class="step-of" id="stepOf">STEP 1 OF 8</span>
+    </div>
+
+    <div class="card" id="card">
+      <div class="ghost-num" aria-hidden="true"><span id="ghostNum">01</span></div>
+      <div class="card-inner">
+        <div class="step" id="step">
+          <div class="persona-line"><span class="dot" aria-hidden="true"></span><span id="persona"></span></div>
+          <span class="gatetag" id="gate"></span>
+          <h2 tabindex="-1" id="q"></h2>
+          <div id="controls"></div>
+          <p class="err" id="err" hidden></p>
+          <div class="nav">
+            <div class="nav-left">
+              <button class="btn text" id="back" type="button">Back</button>
+              <button class="btn text" id="skip" type="button" hidden>Skip</button>
+            </div>
+            <button class="btn primary" id="continue" type="button" aria-disabled="true">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="index.html">← start</a> · <a href="auth.html">auth</a> · <a href="plan-reveal.html">plan reveal →</a></p>
+
+<script>
+(function(){
+  var REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var EXIT_MS = REDUCED ? 90 : 150;              // step-card exit (R1 ceiling)
+  var NUM_EXIT_MS = REDUCED ? 90 : 280;          // ghost-numeral exit — its own, slower beat
+  var SWAP_WAIT_MS = Math.max(EXIT_MS, NUM_EXIT_MS);
+  var PICK_HOLD_MS = REDUCED ? 160 : 260;
+  var LEAVE_MS = REDUCED ? 90 : 190;
+  var TOTAL = 8;
+  var $ = function(id){ return document.getElementById(id); };
+
+  /* ── Real option sets, lifted 1:1 from apps/web/src/pages/OnboardingPage.tsx ── */
+  var GOALS = [
+    { v:"aggressive_loss", name:"Lose fat fast", sub:"~25% deficit" },
+    { v:"moderate_loss", name:"Lose fat", sub:"~18% deficit" },
+    { v:"maintain", name:"Maintain", sub:"Stay here" },
+    { v:"recomp", name:"Recomp", sub:"Lose fat, gain muscle" },
+    { v:"lean_gain", name:"Lean gain", sub:"~10% surplus" },
+    { v:"muscle_gain", name:"Build muscle", sub:"~18% surplus" }
+  ];
+  var WORK_OPTS = [
+    { v:"desk", name:"Desk", sub:"Mostly seated" },
+    { v:"mixed", name:"Mixed", sub:"Sit + move" },
+    { v:"standing", name:"Standing", sub:"On your feet" },
+    { v:"physical", name:"Physical", sub:"Manual labor" }
+  ];
+  var LIFESTYLE_OPTS = [
+    { v:"sedentary", name:"Sedentary", sub:"Mostly sitting" },
+    { v:"light", name:"Light", sub:"Some walking" },
+    { v:"moderate", name:"Moderate", sub:"On feet often" },
+    { v:"active", name:"Active", sub:"Always moving" }
+  ];
+  var DIET_OPTS = [
+    { v:"none", name:"No preference" },
+    { v:"vegetarian", name:"Vegetarian" },
+    { v:"vegan", name:"Vegan" },
+    { v:"pescatarian", name:"Pescatarian" },
+    { v:"keto", name:"Keto" }
+  ];
+  var STYLE_OPTS = [
+    { v:"gentle", name:"Gentle", sub:"Warm" },
+    { v:"motivating", name:"Motivating", sub:"High-energy" },
+    { v:"analytical", name:"Analytical", sub:"Data-first" }
+  ];
+  var WORKOUT_TYPES = ["strength","run_slow","run_fast","cycling","hiit","yoga","swim","walk","sport"];
+  var WORKOUT_LABEL = { strength:"Strength", run_slow:"Easy run", run_fast:"Fast run", cycling:"Cycling", hiit:"HIIT", yoga:"Yoga", swim:"Swim", walk:"Walk", sport:"Sport" };
+
+  var STEPS = [
+    { key:"name", gate:"Intro",
+      personaFn:function(){ return "Hey, I'm Stry. I'll build you a science-based plan."; },
+      q:"First — what should I call you?", err:"Tell me what to call you to keep going." },
+    { key:"stats", gate:"Stats",
+      personaFn:function(s){ return "Nice to meet you, " + (s.firstName.trim() || "friend") + "!"; },
+      q:"Tell me your age, weight, height and sex.", err:"Fill in age, weight, height and sex to continue." },
+    { key:"goal", gate:"Goal",
+      personaFn:function(){ return "This shapes the whole plan."; },
+      q:"What are you aiming for right now?", err:"Pick one to keep going." },
+    { key:"work", gate:"Work",
+      personaFn:function(){ return "Rough numbers are fine."; },
+      q:"What's your job like during the day?", err:"Pick one to keep going." },
+    { key:"lifestyle", gate:"Lifestyle",
+      personaFn:function(){ return "Think beyond the workouts too."; },
+      q:"And outside of work and workouts — how active are you day-to-day?", err:"Pick one to keep going." },
+    { key:"training", gate:"Training",
+      personaFn:function(){ return "Optional — skip it if you'd rather wing it."; },
+      q:"How do you train in a normal week?", err:"" },
+    { key:"diet", gate:"Diet",
+      personaFn:function(){ return "Anything to steer clear of, I've got it."; },
+      q:"Any dietary preferences or things to avoid?", err:"Pick one to keep going." },
+    { key:"style", gate:"Style",
+      personaFn:function(){ return "Last thing."; },
+      q:"Last thing — how should I talk to you?", err:"Pick one to keep going." }
+  ];
+
+  var state = {
+    firstName:"", age:"", sex:"", weight:"", height:"", bodyFat:"",
+    goal:"", occupationType:"", workHoursPerDay:"8",
+    lifestyleActivity:"", weeklyWorkouts:[],
+    dietaryPreference:"", allergies:"",
+    coachingStyle:""
+  };
+
+  var i = 0;
+  var autoAdvanceTimer = null;
+  function scheduleAutoAdvance(){ clearTimeout(autoAdvanceTimer); autoAdvanceTimer = setTimeout(tryAdvance, PICK_HOLD_MS); }
+
+  /* ── Tiny inline icons — generic UI glyphs (sparkle / send / plus / remove),
+       not mascot art. ── */
+  function sparkSVG(){ return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.6 4.6L18 9l-4.4 1.4L12 15l-1.6-4.6L6 9l4.4-1.4L12 3z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"/></svg>'; }
+  function sendSVG(){ return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'; }
+  function plusSVG(){ return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>'; }
+  function xSVG(){ return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>'; }
+
+  function renderThread(now){
+    var el = $("thread"); el.innerHTML = "";
+    for (var n = 1; n <= TOTAL; n++){
+      var s = document.createElement("span");
+      s.className = "seg" + (n <= now ? " on" : "");
+      el.appendChild(s);
+    }
+    el.setAttribute("aria-valuenow", now);
+  }
+
+  function isValid(key){
+    switch (key){
+      case "name": return state.firstName.trim().length > 0;
+      case "stats": {
+        var age = parseFloat(state.age), w = parseFloat(state.weight), h = parseFloat(state.height);
+        return state.sex !== "" &&
+          isFinite(age) && age >= 10 && age <= 120 &&
+          isFinite(w) && w > 0 && w < 500 &&
+          isFinite(h) && h > 0 && h < 300;
+      }
+      case "goal": return state.goal !== "";
+      case "work": return state.occupationType !== "";
+      case "lifestyle": return state.lifestyleActivity !== "";
+      case "training": return true;
+      case "diet": return state.dietaryPreference !== "";
+      case "style": return state.coachingStyle !== "";
+      default: return false;
+    }
+  }
+
+  function updateContinue(){
+    $("continue").setAttribute("aria-disabled", isValid(STEPS[i].key) ? "false" : "true");
+  }
+
+  /* ── Generic helpers shared across steps ── */
+  function fieldInput(labelText, value, onChange, placeholder, id){
+    var label = document.createElement("label");
+    var lab = document.createElement("span"); lab.className = "flab"; lab.textContent = labelText;
+    var input = document.createElement("input");
+    input.type = "number"; input.id = id; input.value = value; input.placeholder = placeholder || "";
+    input.addEventListener("input", function(){ onChange(input.value); });
+    label.appendChild(lab); label.appendChild(input);
+    return label;
+  }
+
+  function makeChoiceGroup(options, cols, activeGetter, onPick){
+    var group = document.createElement("div");
+    group.className = "choices" + (cols === 3 ? " cols3" : "");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-labelledby", "q");
+    group.setAttribute("aria-describedby", "err");
+    group.setAttribute("aria-invalid", "false");
+    group.id = "options";
+    options.forEach(function(o){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "choice"; b.dataset.v = o.v;
+      b.setAttribute("aria-pressed", activeGetter() === o.v ? "true" : "false");
+      b.innerHTML = "<span class=\"label\">" + o.name + "</span>" + (o.sub ? "<span class=\"sub\">" + o.sub + "</span>" : "");
+      b.addEventListener("click", function(){
+        Array.prototype.forEach.call(group.querySelectorAll(".choice"), function(x){ x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+        $("err").hidden = true; $("err").classList.remove("show"); group.setAttribute("aria-invalid", "false");
+        if (!REDUCED){ b.classList.remove("picked"); void b.offsetWidth; b.classList.add("picked"); }
+        onPick(o.v, b);
+      });
+      group.appendChild(b);
+    });
+    return group;
+  }
+  function refreshChoiceGroup(group, activeGetter){
+    Array.prototype.forEach.call(group.querySelectorAll(".choice"), function(b){
+      b.setAttribute("aria-pressed", b.dataset.v === activeGetter() ? "true" : "false");
+    });
+  }
+
+  function buildFreeText(host, cfg){
+    var wrap = document.createElement("div"); wrap.className = "freetext";
+    var pill = document.createElement("div"); pill.className = "freetext-pill";
+    var iconSpan = document.createElement("span"); iconSpan.className = "spark"; iconSpan.innerHTML = sparkSVG();
+    var input = document.createElement("input");
+    input.type = "text"; input.placeholder = cfg.placeholder;
+    input.setAttribute("aria-label", "Describe in your own words instead");
+    var send = document.createElement("button");
+    send.type = "button"; send.className = "freetext-send"; send.setAttribute("aria-label", "Send"); send.innerHTML = sendSVG();
+    pill.appendChild(iconSpan); pill.appendChild(input); pill.appendChild(send);
+    var ack = document.createElement("p"); ack.className = "ack"; ack.setAttribute("role", "status"); ack.hidden = true;
+    wrap.appendChild(pill); wrap.appendChild(ack);
+    function submit(){
+      var text = input.value.trim(); if (!text) return;
+      var result = cfg.onParse(text) || {};
+      ack.hidden = false; ack.textContent = result.message || "Got it.";
+      if (!REDUCED){ ack.classList.remove("show"); void ack.offsetWidth; ack.classList.add("show"); }
+      if (result.clear !== false) input.value = "";
+      if (result.advance) scheduleAutoAdvance();
+    }
+    send.addEventListener("click", submit);
+    input.addEventListener("keydown", function(e){ if (e.key === "Enter"){ e.preventDefault(); submit(); } });
+    host.appendChild(wrap);
+  }
+
+  /* ── Stub "parsers" — no backend here, so these are small keyword/regex
+       heuristics standing in for the real AI parse action. Good enough to
+       demo the interaction: fill fields, pick a matching option, and
+       acknowledge — mirroring which real onParsed calls also auto-advance
+       (goal/lifestyle/style) vs. only fill fields (stats/work/diet/training). ── */
+  function parseTrainingText(text){
+    var chunks = text.split(/,| and /i), out = [];
+    chunks.forEach(function(chunk){
+      var t = chunk.toLowerCase(), type = null;
+      if (/strength|lift|weights|gym/.test(t)) type = "strength";
+      else if (/sprint|fast run/.test(t)) type = "run_fast";
+      else if (/run|jog/.test(t)) type = "run_slow";
+      else if (/cycl|bike/.test(t)) type = "cycling";
+      else if (/hiit/.test(t)) type = "hiit";
+      else if (/yoga/.test(t)) type = "yoga";
+      else if (/swim/.test(t)) type = "swim";
+      else if (/walk/.test(t)) type = "walk";
+      else if (/sport|basketball|football|tennis|soccer/.test(t)) type = "sport";
+      if (!type) return;
+      var sessM = t.match(/(\d+)\s*x/) || t.match(/(\d+)\s*(?:times|sessions)/);
+      var durM = t.match(/(\d+)\s*(?:min|minutes|h\b|hour|hr)/);
+      var dur = 60;
+      if (durM){ dur = parseInt(durM[1], 10); if (/h\b|hour|hr/.test(durM[0])) dur *= 60; }
+      var sess = sessM ? Math.max(1, parseInt(sessM[1], 10)) : 3;
+      out.push({ type:type, durationMin:dur, sessionsPerWeek:sess });
+    });
+    return out;
+  }
+
+  function buildControls(host, step){
+    host.innerHTML = "";
+    switch (step.key){
+
+      case "name": {
+        var row = document.createElement("div"); row.className = "name-row";
+        var input = document.createElement("input");
+        input.type = "text"; input.id = "nameInput"; input.placeholder = "Your name";
+        input.setAttribute("aria-label", "Your name"); input.setAttribute("aria-describedby", "err");
+        input.setAttribute("aria-invalid", "false");
+        input.value = state.firstName; input.autocomplete = "given-name";
+        input.addEventListener("input", function(){
+          state.firstName = input.value; updateContinue();
+          if (input.value.trim()) input.setAttribute("aria-invalid", "false");
+        });
+        input.addEventListener("keydown", function(e){ if (e.key === "Enter") tryAdvance(); });
+        row.appendChild(input); host.appendChild(row);
+        // Deliberately not auto-focusing this input: focus goes to the step <h2>
+        // for every step, text or choice, so the a11y contract stays uniform.
+        // Also deliberately no separate free-text row here — this whole control
+        // already IS a free-form field, so the "describe it your own way"
+        // affordance required on the choice-driven steps would be redundant.
+        break;
+      }
+
+      case "stats": {
+        var grid = document.createElement("div"); grid.className = "field-grid";
+        grid.appendChild(fieldInput("Age", state.age, function(v){ state.age = v; updateContinue(); }, "28", "ageInput"));
+        grid.appendChild(fieldInput("Weight (kg)", state.weight, function(v){ state.weight = v; updateContinue(); }, "65", "weightInput"));
+        grid.appendChild(fieldInput("Height (cm)", state.height, function(v){ state.height = v; updateContinue(); }, "170", "heightInput"));
+        grid.appendChild(fieldInput("Body fat % (optional)", state.bodyFat, function(v){ state.bodyFat = v; updateContinue(); }, "18", "bodyFatInput"));
+        host.appendChild(grid);
+
+        var sexGroup = makeChoiceGroup(
+          [{ v:"female", name:"Female" }, { v:"male", name:"Male" }], 2,
+          function(){ return state.sex; },
+          function(v){ state.sex = v; updateContinue(); }
+        );
+        sexGroup.style.marginTop = "14px";
+        host.appendChild(sexGroup);
+
+        buildFreeText(host, {
+          placeholder: "…or: 28yo male, 80kg, 178cm",
+          onParse: function(text){
+            var t = text, found = 0;
+            var ageM = t.match(/(\d{1,3})\s*(?:yo\b|y\.?o\.?\b|years?\s*old|yrs?\b)/i) || t.match(/\bage\s*(\d{1,3})/i);
+            if (ageM){ state.age = ageM[1]; $("ageInput").value = ageM[1]; found++; }
+            var wM = t.match(/(\d{2,3}(?:\.\d+)?)\s*kg/i);
+            if (wM){ state.weight = wM[1]; $("weightInput").value = wM[1]; found++; }
+            var hM = t.match(/(\d{2,3})\s*cm/i);
+            if (hM){ state.height = hM[1]; $("heightInput").value = hM[1]; found++; }
+            var bfM = t.match(/(\d{1,2})\s*%\s*(?:bf|body\s*fat)?/i);
+            if (bfM){ state.bodyFat = bfM[1]; $("bodyFatInput").value = bfM[1]; found++; }
+            var sexM = /\b(male|man|guy)\b/i.test(t) ? "male" : (/\b(female|woman|girl)\b/i.test(t) ? "female" : null);
+            if (sexM){ state.sex = sexM; refreshChoiceGroup(sexGroup, function(){ return state.sex; }); found++; }
+            updateContinue();
+            if (found > 0) return { message:"Got it — filled in what I could from that.", advance:false };
+            return { message:"Didn't catch specifics there — try the fields above or a clearer sentence.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "goal": {
+        var goalGroup = makeChoiceGroup(GOALS, 3, function(){ return state.goal; }, function(v){
+          state.goal = v; updateContinue(); scheduleAutoAdvance();
+        });
+        host.appendChild(goalGroup);
+        buildFreeText(host, {
+          placeholder: "…or describe your goal",
+          onParse: function(text){
+            var t = text.toLowerCase();
+            var match = GOALS.find(function(g){ return t.indexOf(g.name.toLowerCase()) > -1; });
+            if (!match){
+              if (/fast|quick|aggressive/.test(t) && /lose|fat|cut/.test(t)) match = GOALS.find(function(g){ return g.v === "aggressive_loss"; });
+              else if (/lose|cut|fat loss|deficit|shred/.test(t)) match = GOALS.find(function(g){ return g.v === "moderate_loss"; });
+              else if (/maintain|stay|same weight/.test(t)) match = GOALS.find(function(g){ return g.v === "maintain"; });
+              else if (/recomp|both|tone up/.test(t)) match = GOALS.find(function(g){ return g.v === "recomp"; });
+              else if (/lean gain|lean bulk|slow gain/.test(t)) match = GOALS.find(function(g){ return g.v === "lean_gain"; });
+              else if (/muscle|bulk|gain weight|build/.test(t)) match = GOALS.find(function(g){ return g.v === "muscle_gain"; });
+            }
+            if (match){
+              state.goal = match.v; refreshChoiceGroup(goalGroup, function(){ return state.goal; }); updateContinue();
+              return { message:"Got it — set to “" + match.name + ".”", advance:true };
+            }
+            return { message:"Didn't catch a goal there — try one of the options above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "work": {
+        var workGroup = makeChoiceGroup(WORK_OPTS, 2, function(){ return state.occupationType; }, function(v){
+          state.occupationType = v; updateContinue();
+        });
+        host.appendChild(workGroup);
+        var hrs = document.createElement("div"); hrs.className = "hours";
+        var lab = document.createElement("label"); lab.setAttribute("for", "hoursInput"); lab.textContent = "Work hours / day";
+        var hinp = document.createElement("input");
+        hinp.type = "number"; hinp.id = "hoursInput"; hinp.min = "1"; hinp.max = "16"; hinp.value = state.workHoursPerDay;
+        hinp.addEventListener("input", function(){ state.workHoursPerDay = hinp.value; });
+        var unit = document.createElement("span"); unit.textContent = "hrs";
+        hrs.appendChild(lab); hrs.appendChild(hinp); hrs.appendChild(unit);
+        host.appendChild(hrs);
+        buildFreeText(host, {
+          placeholder: "…or: desk job, about 9 hours",
+          onParse: function(text){
+            var t = text.toLowerCase(), found = false;
+            var opt = WORK_OPTS.find(function(o){ return t.indexOf(o.name.toLowerCase()) > -1; });
+            if (!opt){
+              if (/desk|sit|office|computer/.test(t)) opt = WORK_OPTS.find(function(o){ return o.v === "desk"; });
+              else if (/mixed|some sit|some stand/.test(t)) opt = WORK_OPTS.find(function(o){ return o.v === "mixed"; });
+              else if (/stand|retail|teach/.test(t)) opt = WORK_OPTS.find(function(o){ return o.v === "standing"; });
+              else if (/manual|labor|physical|construction|warehouse/.test(t)) opt = WORK_OPTS.find(function(o){ return o.v === "physical"; });
+            }
+            if (opt){ state.occupationType = opt.v; refreshChoiceGroup(workGroup, function(){ return state.occupationType; }); found = true; }
+            var hM = t.match(/(\d{1,2})\s*(?:hours?|hrs?|h\b)/);
+            if (hM){ state.workHoursPerDay = hM[1]; hinp.value = hM[1]; found = true; }
+            updateContinue();
+            if (found) return { message:"Got it — filled in what I could.", advance:false };
+            return { message:"Didn't catch a job type there — try the choices above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "lifestyle": {
+        var lsGroup = makeChoiceGroup(LIFESTYLE_OPTS, 2, function(){ return state.lifestyleActivity; }, function(v){
+          state.lifestyleActivity = v; updateContinue(); scheduleAutoAdvance();
+        });
+        host.appendChild(lsGroup);
+        buildFreeText(host, {
+          placeholder: "…or: pretty lazy outside the gym",
+          onParse: function(text){
+            var t = text.toLowerCase(), match = null;
+            if (/sedentary|barely move|lazy|mostly sit/.test(t)) match = LIFESTYLE_OPTS.find(function(o){ return o.v === "sedentary"; });
+            else if (/light|some walk/.test(t)) match = LIFESTYLE_OPTS.find(function(o){ return o.v === "light"; });
+            else if (/moderate|on my feet/.test(t)) match = LIFESTYLE_OPTS.find(function(o){ return o.v === "moderate"; });
+            else if (/active|always moving|very active/.test(t)) match = LIFESTYLE_OPTS.find(function(o){ return o.v === "active"; });
+            if (match){
+              state.lifestyleActivity = match.v; refreshChoiceGroup(lsGroup, function(){ return state.lifestyleActivity; }); updateContinue();
+              return { message:"Got it — set to “" + match.name + ".”", advance:true };
+            }
+            return { message:"Didn't catch that — try one of the options above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "training": {
+        var rowsWrap = document.createElement("div"); rowsWrap.className = "train-rows";
+        function renderRows(){
+          rowsWrap.innerHTML = "";
+          state.weeklyWorkouts.forEach(function(w, idx){
+            var trow = document.createElement("div"); trow.className = "train-row";
+            var sel = document.createElement("select"); sel.setAttribute("aria-label", "Workout type");
+            WORKOUT_TYPES.forEach(function(t){
+              var op = document.createElement("option"); op.value = t; op.textContent = WORKOUT_LABEL[t];
+              if (t === w.type) op.selected = true;
+              sel.appendChild(op);
+            });
+            sel.addEventListener("change", function(){ state.weeklyWorkouts[idx].type = sel.value; });
+            var numDur = document.createElement("div"); numDur.className = "num";
+            var durInput = document.createElement("input");
+            durInput.type = "number"; durInput.min = "1"; durInput.value = w.durationMin; durInput.setAttribute("aria-label", "Minutes per session");
+            durInput.addEventListener("input", function(){ state.weeklyWorkouts[idx].durationMin = Math.max(1, +durInput.value || 0); });
+            var durUnit = document.createElement("span"); durUnit.textContent = "min";
+            numDur.appendChild(durInput); numDur.appendChild(durUnit);
+            var numSess = document.createElement("div"); numSess.className = "num";
+            var sessInput = document.createElement("input");
+            sessInput.type = "number"; sessInput.min = "1"; sessInput.max = "14"; sessInput.value = w.sessionsPerWeek; sessInput.setAttribute("aria-label", "Sessions per week");
+            sessInput.addEventListener("input", function(){ state.weeklyWorkouts[idx].sessionsPerWeek = Math.max(1, +sessInput.value || 0); });
+            var sessUnit = document.createElement("span"); sessUnit.textContent = "/wk";
+            numSess.appendChild(sessInput); numSess.appendChild(sessUnit);
+            var rm = document.createElement("button"); rm.type = "button"; rm.className = "rm"; rm.setAttribute("aria-label", "Remove workout"); rm.innerHTML = xSVG();
+            rm.addEventListener("click", function(){ state.weeklyWorkouts.splice(idx, 1); renderRows(); });
+            trow.appendChild(sel); trow.appendChild(numDur); trow.appendChild(numSess); trow.appendChild(rm);
+            rowsWrap.appendChild(trow);
+          });
+        }
+        renderRows();
+        host.appendChild(rowsWrap);
+        var addBtn = document.createElement("button");
+        addBtn.type = "button"; addBtn.className = "train-add"; addBtn.innerHTML = plusSVG() + " Add a workout";
+        addBtn.addEventListener("click", function(){ state.weeklyWorkouts.push({ type:"strength", durationMin:60, sessionsPerWeek:3 }); renderRows(); });
+        host.appendChild(addBtn);
+        buildFreeText(host, {
+          placeholder: "…or: lift 4x/week ~1h, run twice 30min",
+          onParse: function(text){
+            var parsed = parseTrainingText(text);
+            if (parsed.length){
+              state.weeklyWorkouts = state.weeklyWorkouts.concat(parsed); renderRows(); updateContinue();
+              return { message:"Got it — added " + parsed.length + " workout" + (parsed.length > 1 ? "s" : "") + ".", advance:false };
+            }
+            return { message:"Didn't catch a workout there — try the builder above or a clearer sentence.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "diet": {
+        var dietGroup = makeChoiceGroup(DIET_OPTS, 3, function(){ return state.dietaryPreference; }, function(v){
+          state.dietaryPreference = v; updateContinue();
+        });
+        host.appendChild(dietGroup);
+        var allergyInput = document.createElement("input");
+        allergyInput.type = "text"; allergyInput.id = "allergyInput"; allergyInput.className = "text-input";
+        allergyInput.placeholder = "Allergies / avoid (optional)"; allergyInput.value = state.allergies;
+        allergyInput.setAttribute("aria-label", "Allergies or foods to avoid, optional");
+        allergyInput.addEventListener("input", function(){ state.allergies = allergyInput.value; });
+        host.appendChild(allergyInput);
+        buildFreeText(host, {
+          placeholder: "…or: vegetarian, allergic to peanuts",
+          onParse: function(text){
+            var t = text.toLowerCase(), found = false;
+            var opt = DIET_OPTS.find(function(o){ return t.indexOf(o.name.toLowerCase()) > -1; });
+            if (!opt && /no preference|anything|omnivore|eat everything/.test(t)) opt = DIET_OPTS.find(function(o){ return o.v === "none"; });
+            if (opt){ state.dietaryPreference = opt.v; refreshChoiceGroup(dietGroup, function(){ return state.dietaryPreference; }); found = true; }
+            var avoidM = text.match(/(?:allergic to|allergy to|avoid|no)\s+([a-zA-Z ,]+)/i);
+            if (avoidM){ state.allergies = avoidM[1].trim(); allergyInput.value = state.allergies; found = true; }
+            updateContinue();
+            if (found) return { message:"Got it — noted.", advance:false };
+            return { message:"Didn't catch a preference there — try the choices above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "style": {
+        var styleGroup = makeChoiceGroup(STYLE_OPTS, 3, function(){ return state.coachingStyle; }, function(v){
+          state.coachingStyle = v; updateContinue(); scheduleAutoAdvance();
+        });
+        host.appendChild(styleGroup);
+        buildFreeText(host, {
+          placeholder: "…or: keep it warm and simple",
+          onParse: function(text){
+            var t = text.toLowerCase(), match = null;
+            if (/gentle|warm|kind|soft/.test(t)) match = STYLE_OPTS.find(function(o){ return o.v === "gentle"; });
+            else if (/motivat|energy|hype|push|intense/.test(t)) match = STYLE_OPTS.find(function(o){ return o.v === "motivating"; });
+            else if (/analyt|data|numbers|logic/.test(t)) match = STYLE_OPTS.find(function(o){ return o.v === "analytical"; });
+            if (match){
+              state.coachingStyle = match.v; refreshChoiceGroup(styleGroup, function(){ return state.coachingStyle; }); updateContinue();
+              return { message:"Got it — set to “" + match.name + ".”", advance:true };
+            }
+            return { message:"Didn't catch a style there — try one of the options above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+    }
+  }
+
+  function paint(){
+    var step = STEPS[i], now = i + 1;
+    $("ghostNum").textContent = String(now).padStart(2, "0");
+    $("stepOf").textContent = "STEP " + now + " OF " + TOTAL;
+    renderThread(now);
+    $("gate").textContent = step.gate;
+    $("q").textContent = step.q;
+    $("persona").textContent = step.personaFn(state);
+    $("skip").hidden = step.key !== "training";
+    buildControls($("controls"), step);
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("err").textContent = step.err;
+    $("continue").setAttribute("aria-disabled", isValid(step.key) ? "false" : "true");
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    $("q").setAttribute("tabindex", "-1");
+    $("q").focus({ preventScroll:true });
+    clearTimeout(paint._live);
+    paint._live = setTimeout(function(){
+      $("live").textContent = "Step " + now + " of " + TOTAL + ": " + step.gate;
+    }, 60); // sequenced after the focus move — never announced in the same tick (R1)
+  }
+
+  // Card + ghost numeral each run their own motion budget now (see the CSS
+  // comment above --ease-classy): the card still exits/enters on its R1-
+  // bounded timing, but the numeral's exit/enter is deliberately slower and
+  // uses the non-overshooting ease, so the DOM swap waits for whichever is
+  // longer before painting new content — otherwise the numeral's exit would
+  // get cut short mid-transition.
+  function render(dir){
+    var el = $("step"), ghost = $("ghostNum");
+    clearTimeout(autoAdvanceTimer);
+    if (!dir){ paint(); return; }
+    el.classList.add("exit");
+    ghost.classList.add("exit");
+    $("stepOf").classList.add("dim");
+    setTimeout(function(){
+      el.classList.remove("exit");
+      ghost.classList.remove("exit");
+      var enterCls = dir === 1 ? "enter-from-below" : "enter-from-above";
+      el.classList.add(enterCls);
+      ghost.classList.add(enterCls);
+      paint();
+      $("stepOf").classList.remove("dim");
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          el.classList.remove("enter-from-below", "enter-from-above");
+          ghost.classList.remove("enter-from-below", "enter-from-above");
+        });
+      });
+    }, SWAP_WAIT_MS);
+  }
+
+  function tryAdvance(){
+    var step = STEPS[i];
+    if (!isValid(step.key)){
+      $("err").hidden = false;
+      $("err").classList.remove("show"); void $("err").offsetWidth; $("err").classList.add("show");
+      var group = $("options"); if (group) group.setAttribute("aria-invalid", "true");
+      var input = $("nameInput"); if (input) input.setAttribute("aria-invalid", "true");
+      $("live").textContent = step.err;
+      return;
+    }
+    if (i + 1 >= STEPS.length){
+      // Real onboarding has a hard session/route boundary between screens (R2) —
+      // nothing stays mounted, so anything worth carrying forward has to survive
+      // via persistence, not shared state. Extends the existing name-carry
+      // pattern one field further: the picked goal label.
+      try {
+        localStorage.setItem("strideProtoName", state.firstName.trim());
+        var goalOpt = GOALS.find(function(g){ return g.v === state.goal; });
+        if (goalOpt) localStorage.setItem("strideProtoGoalLabel", goalOpt.name.toLowerCase());
+      } catch (e) {}
+      leaveTo("plan-reveal.html");
+      return;
+    }
+    i++; render(1);
+  }
+
+  function goBack(){
+    if (i === 0) return;
+    i--; render(-1);
+  }
+
+  function leaveTo(url){
+    var scene = $("card"), wrap = document.querySelector(".thread-wrap"), badge = document.querySelector(".badge");
+    [scene, wrap, badge].forEach(function(el){ if (el){ el.style.transition = "opacity " + LEAVE_MS + "ms cubic-bezier(.4,0,1,1)"; el.style.opacity = "0"; } });
+    setTimeout(function(){ location.href = url; }, LEAVE_MS);
+  }
+
+  $("continue").addEventListener("click", tryAdvance);
+  $("back").addEventListener("click", goBack);
+  $("skip").addEventListener("click", tryAdvance);
+  render(0);
+})();
+</script>
+</body>
+</html>

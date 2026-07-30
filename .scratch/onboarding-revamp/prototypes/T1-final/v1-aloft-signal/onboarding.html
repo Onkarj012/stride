@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aloft Signal — Onboarding · Stride T1-final</title>
+<!--
+  VARIATION "ALOFT SIGNAL" (v1 of 3, T1-final). Composition: the old two-column
+  grid (numeral rail pinned left, ragged content beside it) is gone. This is a
+  single centered column on every viewport, no side rail on desktop or mobile.
+  The Beacon — a small floating pill (signal dot + numeral + tick readout) —
+  hovers ABOVE the card, both perfectly centered as one vertical stack. The
+  Beacon answers "does it stay put while the card transitions": yes — it does
+  NOT re-run its entrance animation on every step. Only its numeral crossfades
+  and its tick row lights up in sync with the card's exit/enter, so the whole
+  frame reads as one instrument filling up, not eight separate page loads.
+
+  The character-grid mascot is fully removed — no character art anywhere. Stry is
+  now only the same signal dot used in auth, placed inline before the persona
+  line and in the top-right presence badge. Presence = voice + motion, not art.
+
+  Motion/a11y ceiling (R1) preserved verbatim from the refined pass: real
+  vertical-drift step motion via double-rAF enter + separate faster exit,
+  translate ≤20px, ≤220ms enter / 150ms exit, opacity-only under
+  prefers-reduced-motion, ONE focused question per step, real role="progressbar",
+  focus to <h2 tabindex="-1"> per step, single polite live region (never
+  simultaneous with the focus move), validate-before-advance, aria-describedby/
+  aria-invalid wiring. Fields (goal/work/lifestyle) map to the real product's
+  OnboardingPage.tsx phases — no invented fields.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f8f8f8; --card:#ffffff;
+    --input:#f3f3f5; --text:#0d101b; --muted:#6a7081; --subtle:#63697f;
+    --border:#ebebef; --border-strong:#d9d9e0; --error:#b3261e;
+    --dur:220ms; --dur-exit:150ms; --dur-exit-reduced:90ms;
+    --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;min-height:100dvh;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  button{font:inherit}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+
+  .topline{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:22px 28px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;color:var(--subtle);text-transform:uppercase;z-index:5}
+  .topline .brand{color:var(--ink);font-weight:700}
+  .presence{display:flex;align-items:center;gap:7px;font-family:"Manrope",sans-serif;text-transform:none;letter-spacing:0;font-weight:700;color:var(--muted);font-size:12px}
+  .presence .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 8px 1px rgba(179,160,255,.5);animation:pulse 3s ease-in-out infinite;flex-shrink:0}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .arc{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:104px 24px 60px}
+
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+
+  /* ── The Beacon: persists position across steps, only its readout updates ── */
+  .beacon{display:inline-flex;align-items:center;gap:11px;padding:9px 10px 9px 16px;border-radius:9999px;background:var(--card);border:1px solid var(--border-strong);animation:rise var(--dur) var(--ease) both, bob 4.5s ease-in-out 220ms infinite}
+  .b-dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 8px 1px rgba(179,160,255,.5);animation:pulse 3s ease-in-out infinite;flex-shrink:0}
+  .b-num{font-family:"JetBrains Mono",monospace;font-size:14px;font-weight:700;color:var(--ink);letter-spacing:.5px;font-variant-numeric:tabular-nums;transition:opacity 120ms var(--ease)}
+  .b-div{width:1px;height:14px;background:var(--border-strong)}
+  .b-of{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.6px;color:var(--subtle);text-transform:uppercase;background:var(--lav-soft);padding:5px 10px;border-radius:9999px;transition:opacity 120ms var(--ease)}
+  .beacon.dim .b-num, .beacon.dim .b-of{opacity:.32}
+
+  .b-ticks{display:flex;gap:5px;animation:rise var(--dur) var(--ease) 60ms both}
+  .b-ticks .tick{width:14px;height:2.5px;border-radius:2px;background:var(--border-strong);transition:background var(--dur) var(--ease)}
+  .b-ticks .tick.on{background:var(--lav)}
+
+  .stage{position:relative;width:100%;max-width:460px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:22px;padding:32px 30px 28px;box-shadow:0 24px 60px -36px rgba(13,16,27,.18);animation:rise var(--dur) var(--ease) 110ms both}
+  .step{transition:opacity var(--dur) var(--ease), transform var(--dur) var(--ease);will-change:opacity,transform}
+  .step.exit{opacity:0;transition:opacity var(--dur-exit) var(--ease-exit)}
+  .step.enter-from-below{opacity:0;transform:translateY(20px)}
+  .step.enter-from-above{opacity:0;transform:translateY(-20px)}
+
+  .persona-line{display:flex;align-items:center;gap:9px;color:var(--subtle);font-size:12.5px;font-style:italic;margin-bottom:14px}
+  .persona-line .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 8px 1px rgba(179,160,255,.5);flex-shrink:0;animation:pulse 3s ease-in-out infinite}
+  h2{font-size:25px;font-weight:800;letter-spacing:-.5px;line-height:1.28;outline:none}
+  .gatetag{display:inline-block;background:var(--lav-soft);color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:500;letter-spacing:1px;padding:4px 10px;border-radius:9999px;text-transform:uppercase;margin-bottom:12px}
+
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px}
+  @media(max-width:520px){ .choices{grid-template-columns:1fr} }
+  .choice{position:relative;background:var(--input);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:left;cursor:pointer;font-family:inherit;font-size:14.5px;font-weight:700;color:var(--text);transition:border-color .12s var(--ease),background-color .16s var(--ease),opacity .16s var(--ease)}
+  .choice:hover{border-color:var(--border-strong);background:#ececf1}
+  .choice[aria-pressed="true"]{background:rgba(179,160,255,.14);border-color:var(--lav)}
+  .choice[aria-pressed="true"]::after{content:"";position:absolute;top:12px;right:12px;width:7px;height:7px;border-radius:50%;background:var(--lav)}
+  .choice .sub{display:block;font-weight:500;color:var(--subtle);font-size:11.5px;margin-top:2px}
+  .choice:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  @keyframes choicePulse{ 0%{transform:scale(1)} 45%{transform:scale(.965)} 100%{transform:scale(1)} }
+  .choice.picked{animation:choicePulse 260ms var(--ease)}
+  .choices.deciding .choice:not([aria-pressed="true"]){opacity:.45}
+
+  .err{font-size:12.5px;color:var(--error);margin-top:14px;font-weight:600}
+  @keyframes errIn{ from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+  .err.show{animation:errIn 180ms var(--ease)}
+  .nav{margin-top:26px;display:flex;justify-content:space-between;align-items:center}
+  .btn{border-radius:9999px;padding:12px 22px;font-weight:700;font-size:13.5px;border:none;cursor:pointer;font-family:inherit;transition:opacity .12s var(--ease),transform .1s var(--ease)}
+  .btn:active{transform:scale(.97)}
+  .btn:focus-visible{outline:2px solid var(--lav);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff}
+  .btn.primary[aria-disabled="true"]{opacity:.35;cursor:not-allowed}
+  .btn.text{background:transparent;color:var(--muted)}
+  .btn.text:hover{color:var(--text)}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:5}
+  .proto-nav a{color:var(--ink)}
+
+  body.leaving .arc{transition:opacity var(--dur-exit) var(--ease-exit),transform var(--dur-exit) var(--ease-exit);opacity:0;transform:translateY(-10px)}
+
+  @media (prefers-reduced-motion: reduce){
+    .step,.step.exit{transition:opacity var(--dur-exit-reduced) linear}
+    .step.enter-from-below,.step.enter-from-above{transform:none}
+    .beacon,.card,.b-ticks{animation:none !important;opacity:1;transform:none}
+    .b-dot,.presence .dot,.persona-line .dot{animation:none}
+    .tick{transition:background var(--dur-exit-reduced) linear}
+    .b-num,.b-of{transition:opacity var(--dur-exit-reduced) linear}
+    .choice.picked{animation:none}
+    .choice{transition:border-color .12s linear,background-color .12s linear,opacity .12s linear}
+    .err.show{animation:none}
+    body.leaving .arc{transition:opacity var(--dur-exit-reduced) linear;transform:none}
+  }
+</style>
+</head>
+<body>
+  <div class="topline">
+    <span class="brand">STRIDE</span>
+    <span class="presence"><span class="dot" aria-hidden="true"></span>Coached by Stry</span>
+  </div>
+
+  <main class="arc">
+    <div class="beacon" id="beacon" aria-hidden="true">
+      <span class="b-dot"></span>
+      <span class="b-num" id="bNum">03</span>
+      <span class="b-div"></span>
+      <span class="b-of" id="bOf">STEP 3 OF 8</span>
+    </div>
+    <div class="b-ticks" id="ticks" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3" aria-label="Onboarding progress"></div>
+
+    <div class="stage">
+      <div class="card">
+        <div class="step" id="step">
+          <div class="persona-line"><span class="dot" aria-hidden="true"></span><span id="persona"></span></div>
+          <span class="gatetag" id="gate"></span>
+          <h2 tabindex="-1" id="q"></h2>
+          <div class="choices" id="options" role="group" aria-labelledby="q" aria-describedby="err" aria-invalid="false"></div>
+          <p class="err" id="err" hidden>Pick one to keep going.</p>
+          <div class="nav">
+            <button class="btn text" id="back" type="button">Back</button>
+            <button class="btn primary" id="continue" type="button" aria-disabled="true">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="index.html">← all screens</a> · <a href="auth.html">auth</a> · <a href="plan-reveal.html">plan reveal →</a></p>
+
+<script>
+(function(){
+  var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var EXIT_MS = REDUCED ? 90 : 150;
+  var PICK_HOLD_MS = REDUCED ? 160 : 260;
+  var LEAVE_MS = REDUCED ? 0 : 190;
+  var TOTAL = 8;
+  var STEPS = [
+    { now:3, gate:"Goal", q:"What are you aiming for right now?",
+      persona:"“This shapes the whole plan.”",
+      options:[
+        {v:"aggressive_loss",name:"Lose fat fast",sub:"~25% deficit"},
+        {v:"moderate_loss",name:"Lose fat",sub:"~18% deficit"},
+        {v:"maintain",name:"Maintain",sub:"Stay here"},
+        {v:"recomp",name:"Recomp",sub:"Lose fat, gain muscle"},
+        {v:"lean_gain",name:"Lean gain",sub:"~10% surplus"},
+        {v:"muscle_gain",name:"Build muscle",sub:"~18% surplus"} ] },
+    { now:4, gate:"Work", q:"What is your job like during the day?",
+      persona:"“Rough numbers are fine.”",
+      options:[
+        {v:"desk",name:"Desk",sub:"Mostly seated"},
+        {v:"mixed",name:"Mixed",sub:"Sit + move"},
+        {v:"standing",name:"Standing",sub:"On your feet"},
+        {v:"physical",name:"Physical",sub:"Manual labor"} ] },
+    { now:5, gate:"Life", q:"Outside work and workouts, how much do you move?",
+      persona:"“Honest beats optimistic. Three to go.”",
+      options:[
+        {v:"sedentary",name:"Sedentary",sub:"Mostly sitting"},
+        {v:"light",name:"Light",sub:"Some walking"},
+        {v:"moderate",name:"Moderate",sub:"On feet often"},
+        {v:"active",name:"Active",sub:"Always moving"} ] }
+  ];
+  var i = 0, picked = null;
+  var $ = function(id){ return document.getElementById(id); };
+
+  function renderTicks(now){
+    var el = $("ticks"); el.innerHTML = "";
+    for (var n = 1; n <= TOTAL; n++){
+      var t = document.createElement("span");
+      t.className = "tick" + (n <= now ? " on" : "");
+      el.appendChild(t);
+    }
+    el.setAttribute("aria-valuenow", now);
+  }
+
+  function paint(){
+    var s = STEPS[i];
+    $("bNum").textContent = String(s.now).padStart(2,"0");
+    $("bOf").textContent = "STEP " + s.now + " OF " + TOTAL;
+    renderTicks(s.now);
+    $("gate").textContent = s.gate;
+    $("q").textContent = s.q;
+    $("persona").textContent = s.persona;
+    var opts = $("options"); opts.innerHTML = ""; opts.classList.remove("deciding");
+    opts.setAttribute("aria-invalid","false");
+    s.options.forEach(function(o){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "choice"; b.setAttribute("aria-pressed","false");
+      b.innerHTML = '<span>'+o.name+'</span><span class="sub">'+o.sub+'</span>';
+      b.addEventListener("click", function(){ select(o.v, b); });
+      opts.appendChild(b);
+    });
+    picked = null;
+    $("continue").setAttribute("aria-disabled","true");
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    $("q").setAttribute("tabindex","-1");
+    $("q").focus({ preventScroll:true });
+  }
+
+  // Beacon stays put; only its numeral/ticks dim-and-swap in sync with the
+  // card's own exit/enter. Real vertical-drift choreography on the card: exit
+  // fades (its own, shorter transition), THEN the incoming state is committed
+  // across two rAFs before release — without that double rAF, adding/removing
+  // the "entering" class in the same tick means the browser never paints the
+  // in-between frame and the drift silently collapses into a plain fade.
+  function render(dir){
+    var el = $("step");
+    if (!dir){ paint(); return; }
+    el.classList.add("exit");
+    $("beacon").classList.add("dim");
+    setTimeout(function(){
+      el.classList.remove("exit");
+      el.classList.add(dir === 1 ? "enter-from-below" : "enter-from-above");
+      paint();
+      $("beacon").classList.remove("dim");
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          el.classList.remove("enter-from-below","enter-from-above");
+        });
+      });
+    }, EXIT_MS);
+  }
+
+  function select(v, btn){
+    picked = v;
+    document.querySelectorAll(".choice").forEach(function(o){ o.setAttribute("aria-pressed", o === btn ? "true" : "false"); });
+    $("continue").setAttribute("aria-disabled","false");
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("options").setAttribute("aria-invalid","false");
+    $("options").classList.add("deciding");
+    if (!REDUCED){
+      btn.classList.remove("picked");
+      void btn.offsetWidth; // restart the pulse if the user reselects quickly
+      btn.classList.add("picked");
+    }
+    clearTimeout(select._t);
+    select._t = setTimeout(function(){ advance(1); }, PICK_HOLD_MS);
+  }
+
+  function advance(dir){
+    var next = i + dir;
+    if (dir > 0 && !picked){
+      $("err").hidden = false;
+      $("err").classList.remove("show"); void $("err").offsetWidth; $("err").classList.add("show");
+      $("options").setAttribute("aria-invalid","true");
+      $("live").textContent = "Pick one to keep going.";
+      return;
+    }
+    if (next < 0) return;
+    if (next >= STEPS.length){ leave("plan-reveal.html"); return; }
+    i = next; render(dir);
+  }
+
+  function leave(href){
+    document.body.classList.add("leaving");
+    setTimeout(function(){ location.href = href; }, LEAVE_MS);
+  }
+
+  $("continue").addEventListener("click", function(){ advance(1); });
+  $("back").addEventListener("click", function(){ advance(-1); });
+  render(0);
+})();
+</script>
+</body>
+</html>

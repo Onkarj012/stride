@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stride — Momentum Field (Sign up)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --lavender-soft:#EDE8FF;
+    --card:#ffffff; --input:#f6f4ff; --text:#0d101b; --text-muted:#565c6e; --text-subtle:#8b8fa6;
+    --border:#e4defc;
+    --font:"Manrope",system-ui,sans-serif;
+    --radius-xl:24px; --shadow-elev:0 20px 50px rgba(13,16,27,.10);
+    --dur-base:250ms; --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--lavender-soft);color:var(--text);font-family:var(--font);min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:32px;-webkit-font-smoothing:antialiased}
+
+  .field-note{position:fixed;top:24px;left:24px;font-size:12px;font-weight:700;color:#6a5fc4;display:flex;align-items:center;gap:6px}
+  .field-note .sw{width:10px;height:10px;border-radius:3px;background:var(--lavender)}
+
+  .punch{width:100%;max-width:400px;background:var(--card);border-radius:var(--radius-xl);box-shadow:var(--shadow-elev);padding:40px 34px}
+  .eyebrow{font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--text-subtle)}
+  h1{font-size:clamp(30px,5vw,40px);font-weight:800;letter-spacing:-1.6px;line-height:1;margin-top:8px}
+  .sub{margin-top:10px;color:var(--text-muted);font-size:14px}
+  .sub a{color:var(--text);font-weight:700;text-decoration:underline;text-decoration-color:var(--border)}
+
+  form{margin-top:24px;display:flex;flex-direction:column;gap:14px}
+  .lbl{font-size:11.5px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px}
+  .field{display:flex;align-items:center;gap:10px;background:var(--input);border:1px solid var(--border);border-radius:14px;padding:12px 14px;transition:border-color var(--dur-base) var(--ease)}
+  .field:focus-within{border-color:var(--lavender)}
+  .field input{flex:1;min-width:0;background:transparent;border:none;outline:none;color:var(--text);font-size:14px;font-family:inherit}
+  .field input::placeholder{color:var(--text-subtle)}
+
+  .btn{border-radius:9999px;padding:13px;font-weight:700;font-size:14px;border:none;cursor:pointer;width:100%;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff;margin-top:4px}
+  .divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--text-subtle);font-size:11px;text-transform:uppercase;font-weight:700}
+  .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--border)}
+  .btn.ghost{background:var(--card);border:1px solid var(--border);color:var(--text);display:flex;align-items:center;justify-content:center;gap:8px}
+
+  .trail-preview{margin-top:24px;display:flex;gap:5px;justify-content:center}
+  .trail-preview span{width:26px;height:6px;border-radius:4px;background:var(--lavender-soft)}
+  .trail-preview span.on{background:var(--lavender)}
+  .caption{max-width:400px;margin:20px auto 0;text-align:center;color:#7d81a6;font-size:12px}
+</style>
+</head>
+<body>
+  <div class="field-note"><span class="sw"></span> Still with Stry — the team splits up after this</div>
+
+  <div>
+  <div class="punch">
+    <div class="eyebrow">Step 0 of 5</div>
+    <h1>Create your account</h1>
+    <p class="sub"><a href="#">Sign in</a> if you already have one</p>
+    <form onsubmit="return false">
+      <label><span class="lbl">First name</span><div class="field"><input placeholder="Sandra" autocomplete="given-name"></div></label>
+      <label><span class="lbl">Email</span><div class="field"><input type="email" placeholder="you@example.com" autocomplete="email"></div></label>
+      <label><span class="lbl">Password</span><div class="field"><input type="password" placeholder="At least 8 characters" autocomplete="new-password"></div></label>
+      <div id="clerk-captcha" aria-hidden="true"></div>
+      <button class="btn primary" type="submit">Create account</button>
+    </form>
+    <div class="divider">or</div>
+    <button class="btn ghost" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+      Continue with Google
+    </button>
+    <div class="trail-preview" aria-hidden="true"><span class="on"></span><span></span><span></span><span></span><span></span></div>
+  </div>
+  <p class="caption">Same lavender field + white punch-through card as landing — held, not yet split into specialist hues, because the team hasn't been assigned to you yet. That held state IS the continuity signal across the Clerk session boundary.</p>
+  </div>
+</body>
+</html>

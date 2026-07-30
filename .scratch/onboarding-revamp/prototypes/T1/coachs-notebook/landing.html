@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stride — Coach's Notebook (Landing)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --sunshine:#ffc93b;
+    --bg:#f8f8f8; --card:#ffffff;
+    --text:#0d101b; --text-muted:#6a7081; --text-subtle:#9099ad;
+    --border:#ebebef; --border-strong:#d9d9e0;
+    --font:"Manrope",system-ui,sans-serif;
+    --radius-lg:20px; --radius-full:9999px;
+    --dur-base:250ms; --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);-webkit-font-smoothing:antialiased}
+
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:8px;z-index:10}
+  .badge .avatar{width:34px;height:34px;border-radius:9px;background:var(--card);border:1px solid var(--border-strong);overflow:hidden;display:grid;place-items:center}
+  .pixel-avatar{width:26px;height:26px}
+  .badge span{font-size:12px;font-weight:700;color:var(--text-muted)}
+
+  .rule-line{position:fixed;top:0;left:120px;width:1px;height:100%;background:var(--border);display:none}
+  @media(min-width:860px){.rule-line{display:block}}
+
+  header{max-width:1080px;margin:0 auto;padding:90px 32px 0}
+  .num-row{display:flex;align-items:flex-start;gap:28px}
+  .hollow{font-size:clamp(70px,11vw,150px);font-weight:800;letter-spacing:-4px;line-height:.85;color:transparent;-webkit-text-stroke:2px var(--ink)}
+  .headline{flex:1;padding-top:18px}
+  .headline h1{font-size:clamp(30px,4vw,46px);font-weight:800;letter-spacing:-1.4px;line-height:1.08;max-width:600px}
+  .headline p{margin-top:16px;color:var(--text-muted);font-size:16px;line-height:1.6;max-width:480px}
+  .cta-row{display:flex;gap:10px;margin-top:30px}
+  .btn{border-radius:var(--radius-full);padding:14px 28px;font-weight:700;font-size:14.5px;border:none;cursor:pointer;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--lavender);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff}
+  .btn.primary:hover{opacity:.9}
+  .btn.ghost{background:transparent;border:1px solid var(--border-strong);color:var(--text)}
+
+  .toc{max-width:1080px;margin:70px auto 0;padding:0 32px 100px}
+  .toc-title{font-size:11px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-subtle);margin-bottom:16px}
+  .toc-list{border-top:1px solid var(--border)}
+  .toc-item{display:flex;align-items:baseline;gap:16px;padding:18px 0;border-bottom:1px solid var(--border)}
+  .toc-item .n{font-weight:800;color:var(--text-subtle);font-size:14px;width:24px}
+  .toc-item .t{font-weight:700;font-size:16px}
+  .toc-item .d{color:var(--text-muted);font-size:14px;margin-left:auto;text-align:right;max-width:340px}
+
+  .caption{max-width:1080px;margin:0 auto 40px;padding:0 32px;color:var(--text-subtle);font-size:12px}
+</style>
+</head>
+<body>
+  <div class="rule-line" aria-hidden="true"></div>
+  <div class="badge"><span class="avatar"><span class="pixel-avatar" id="stry" role="img" aria-label="Stry"></span></span><span>Coached by Stry</span></div>
+
+  <header>
+    <div class="num-row">
+      <span class="hollow">01</span>
+      <div class="headline">
+        <h1>A nutrition plan built <em>with</em> you, not guessed at.</h1>
+        <p>Answer a short, structured set of questions. Stry explains the "why" before anything personal, and shows the math behind your plan — no black box.</p>
+        <div class="cta-row">
+          <button class="btn primary">Open your file →</button>
+          <button class="btn ghost">Sign in</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="toc">
+    <div class="toc-title">What we'll cover</div>
+    <div class="toc-list">
+      <div class="toc-item"><span class="n">01</span><span class="t">You</span><span class="d">Stats, goal, day-to-day activity</span></div>
+      <div class="toc-item"><span class="n">02</span><span class="t">Training</span><span class="d">What a normal week looks like</span></div>
+      <div class="toc-item"><span class="n">03</span><span class="t">Food</span><span class="d">Preferences and what to avoid</span></div>
+      <div class="toc-item"><span class="n">04</span><span class="t">Your plan</span><span class="d">Calories, macros, and the reasoning</span></div>
+    </div>
+  </section>
+  <p class="caption">Direction B — Coach's Notebook. The hollow outline numeral (Stride's own existing section-marker device) is systematized into literal step chrome that recurs through auth and onboarding.</p>
+
+<script>
+(function(){
+  var GRID = [
+    "________________","__XX________XX__","_XXXX______XXXX_","XXPXXX____XXXPXX",
+    "XPPXXXXXXXXXXPPX","XPYXXXXXXXXXXYPX","XXXXXIWXXIWXXXXX","XXXXXIIXXIIXXXXX",
+    "XXXXXXXXXXXXXXXX","XXXXXIIIIIIXXXXX","_XXXXXXXXXXXXXX_","__XXXXXXXXXXXX__",
+    "____XXXXXXXX____","_____XXXXXX_____","______XXXX______","_______XX_______"
+  ];
+  var PALETTE = { X:"#bcb4cc", Y:"#9ea5b8", Z:"#b3a0ff", I:"#0d101b", W:"#ffffff", K:"#1a1d2c", P:"#f4b5d6" };
+  document.querySelectorAll(".pixel-avatar").forEach(function(el){
+    var svg = '<svg viewBox="0 0 128 128" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    GRID.forEach(function(row, y){
+      for (var x = 0; x < row.length; x++){
+        var c = PALETTE[row[x]];
+        if (!c) continue;
+        svg += '<rect x="'+x*8+'" y="'+y*8+'" width="8" height="8" fill="'+c+'"/>';
+      }
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+  });
+})();
+</script>
+</body>
+</html>
