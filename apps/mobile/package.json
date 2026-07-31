@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@stride/shared": "workspace:*",
     "@clerk/clerk-expo": "2.19.42",
     "@expo-google-fonts/manrope": "^0.4.2",
     "@expo/metro-runtime": "~56.0.15",
