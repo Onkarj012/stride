@@ -24,6 +24,7 @@ import type * as behavior from "../behavior.js";
 import type * as calibration from "../calibration.js";
 import type * as calorie_engine from "../calorie_engine.js";
 import type * as chat from "../chat.js";
+import type * as chat_turn_test_helpers from "../chat_turn_test_helpers.js";
 import type * as checkins from "../checkins.js";
 import type * as coaches from "../coaches.js";
 import type * as crons from "../crons.js";
@@ -86,6 +87,7 @@ declare const fullApi: ApiFromModules<{
   calibration: typeof calibration;
   calorie_engine: typeof calorie_engine;
   chat: typeof chat;
+  chat_turn_test_helpers: typeof chat_turn_test_helpers;
   checkins: typeof checkins;
   coaches: typeof coaches;
   crons: typeof crons;
