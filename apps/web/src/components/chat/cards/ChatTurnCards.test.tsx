@@ -297,6 +297,19 @@ describe("chat turn cards", () => {
     expect(screen.getByRole("region", { name: "Review these actions" })).toHaveAttribute("data-card-state", "resolved");
     expect(screen.queryByRole("button", { name: /confirm/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /discard/i })).toBeNull();
+
+    rerender(
+      <ChatTurnCards
+        cards={[allCardKinds()[1]]}
+        handlers={handlers}
+        state={{ resolvedGroupIds: new Set(["group-2"]) }}
+      />,
+    );
+    const clarification = screen.getByRole("region", { name: "Needs one more detail" });
+    expect(clarification).toHaveAttribute("data-card-state", "resolved");
+    expect(within(clarification).getByText("Clarification resolved")).toBeInTheDocument();
+    expect(within(clarification).queryByText("Discarded")).toBeNull();
+    expect(within(clarification).queryByRole("button", { name: /continue/i })).toBeNull();
   });
 
   it("reconstructs cards from persisted message state after a reload", () => {
