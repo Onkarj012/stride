@@ -183,7 +183,7 @@ function ConfirmationCard({ data, handlers, state }: { data: ConfirmationCardDat
   const [drafts, setDrafts] = useState(() => data.items.map(item => ({ ordinal: item.ordinal, selected: true, date: item.date ?? '', description: item.description ?? item.title })))
   const pending = (state.pendingGroupIds ?? EMPTY_SET).has(data.groupId)
   const expired = data.expiresAt <= (state.now ?? Date.now())
-  const readOnly = expired || (state.resolvedGroupIds ?? EMPTY_SET).has(data.groupId) || !handlers.onConfirm
+  const readOnly = expired || data.state === 'resolved' || (state.resolvedGroupIds ?? EMPTY_SET).has(data.groupId) || !handlers.onConfirm
   const patch = (ordinal: number, value: Partial<(typeof drafts)[number]>) => setDrafts(current => current.map(draft => draft.ordinal === ordinal ? { ...draft, ...value } : draft))
   function submit(mode: 'all' | 'selected' | 'discard') {
     if (!handlers.onConfirm) return

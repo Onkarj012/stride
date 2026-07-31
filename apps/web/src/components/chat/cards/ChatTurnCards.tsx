@@ -223,7 +223,7 @@ function ClarificationCard({
       className={cn(CHAT_CARD_SURFACE, readOnly && "opacity-80")}
     >
       <div className="mb-3 flex items-start justify-between gap-3">
-        <p className={CHAT_CARD_TITLE}>Needs one more detail</p>
+        <p className={CHAT_CARD_TITLE}>{resolved ? "Discarded" : "Needs one more detail"}</p>
         {resolved && (
           <span className="shrink-0 rounded-full bg-ink/6 px-2.5 py-1 text-[13px] font-extrabold uppercase tracking-[0.04em] text-ink/50 dark:bg-white/8 dark:text-white/50">Resolved</span>
         )}
@@ -369,7 +369,7 @@ export function ChatTurnCardView({
         <ConfirmationCard
           data={card.data}
           pending={(state.pendingGroupIds ?? EMPTY_SET).has(card.data.groupId)}
-          resolved={(state.resolvedGroupIds ?? EMPTY_SET).has(card.data.groupId) || !handlers.onConfirm}
+          resolved={card.data.state === "resolved" || (state.resolvedGroupIds ?? EMPTY_SET).has(card.data.groupId) || !handlers.onConfirm}
           now={state.now}
           onConfirm={handlers.onConfirm}
         />

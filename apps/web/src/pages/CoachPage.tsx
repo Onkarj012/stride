@@ -216,14 +216,12 @@ export function CoachPage() {
       const cards = parseChatTurnCards(persistedMessages[index].turnCards);
       const clarification = cards.find((card) => card.kind === "clarification");
       if (clarification && clarification.kind === "clarification") {
-        return cardState.resolvedGroupIds?.has(clarification.data.groupId)
-          ? null
-          : clarification.data.groupId;
+        return clarification.data.groupId;
       }
       if (cards.length > 0) return null;
     }
     return null;
-  }, [persistedMessages, cardState.resolvedGroupIds]);
+  }, [persistedMessages]);
 
   const onTranscript = useCallback((t: string) => {
     setInput((prev) => (prev ? `${prev} ${t}` : t).trim());

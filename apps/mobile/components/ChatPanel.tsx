@@ -60,7 +60,6 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
   const [notice, setNotice] = useState<string | null>(null)
   const [pendingGroups, setPendingGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [pendingActions, setPendingActions] = useState<ReadonlySet<string>>(() => new Set())
-  const [resolvedGroups, setResolvedGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [undoneActions, setUndoneActions] = useState<ReadonlySet<string>>(() => new Set())
   const [undoneGroups, setUndoneGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [turnOverrides, setTurnOverrides] = useState<Record<string, TurnOverride>>({})
@@ -72,6 +71,7 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
   const createSession = useMutation(api.chat.createSession)
   const sendToAI = useAction(api.ai.chat)
   const confirmGroup = useAction((api as any).ai.confirmGroup)
+  const resolveClarification = useAction(api.ai.resolveClarification)
   const undoAction = useMutation((api as any).actions_undo.undoAction)
   const undoGroup = useMutation((api as any).actions_undo.undoGroup)
   const logAnywayForAction = useAction((api as any).ai.logAnywayForAction)
@@ -82,16 +82,15 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const cards = parseChatTurnCards(messages[index].turnCards)
       const clarification = cards.find(card => card.kind === 'clarification')
-      if (clarification?.kind === 'clarification') return resolvedGroups.has(clarification.data.groupId) ? null : clarification.data.groupId
+      if (clarification?.kind === 'clarification') return clarification.data.groupId
       if (cards.length > 0) return null
     }
     return null
-  }, [messages, resolvedGroups])
+  }, [messages])
 
   const cardState: ChatCardState = {
     pendingGroupIds: pendingGroups,
     pendingActionIds: pendingActions,
-    resolvedGroupIds: resolvedGroups,
     undoneActionIds: undoneActions,
     undoneGroupIds: undoneGroups,
   }
@@ -135,7 +134,6 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
         clientSubmissionId,
       })
       submissionIds.clear()
-      if (clarificationGroupId) setResolvedGroups(current => new Set(current).add(clarificationGroupId))
     } catch (error) {
       setPendingSend(null)
       setInput(text)
@@ -151,9 +149,6 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     void (async () => {
       try {
         const result = await confirmGroup({ groupId, decisions }) as { results?: Array<{ status?: string }> }
-        if (!(result.results ?? []).some(item => item.status === 'pending')) {
-          setResolvedGroups(current => new Set(current).add(groupId))
-        }
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'That action failed — please try again.')
       } finally {
@@ -165,7 +160,15 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
   function handleClarify(groupId: string, date: string) {
     if (pendingGroups.has(groupId)) return
     addPending(setPendingGroups, groupId)
-    void submit(date, groupId).finally(() => removePending(setPendingGroups, groupId))
+    void (async () => {
+      try {
+        await resolveClarification({ groupId: groupId as never, date })
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'That clarification could not be saved.')
+      } finally {
+        removePending(setPendingGroups, groupId)
+      }
+    })()
   }
 
   function handleUndoItem(groupId: string, actionId: string) {

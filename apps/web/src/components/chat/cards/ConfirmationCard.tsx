@@ -97,7 +97,7 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <p className={CHAT_CARD_TITLE}>Review these actions</p>
+          <p className={CHAT_CARD_TITLE}>{data.state === "resolved" ? "Discarded" : "Review these actions"}</p>
           <p className={cn(CHAT_CARD_META, "mt-1")}>
             {readOnly
               ? "This batch is closed — nothing here is waiting on you."

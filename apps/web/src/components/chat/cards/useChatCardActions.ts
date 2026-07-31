@@ -56,7 +56,6 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
 
   const [pendingGroupIds, setPendingGroupIds] = useState<ReadonlySet<string>>(() => new Set());
   const [pendingActionIds, setPendingActionIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [resolvedGroupIds, setResolvedGroupIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const { onConfirmResult, onSettled } = options;
 
@@ -69,8 +68,6 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     if (alreadyPending) return;
     try {
       const result = await confirmGroup({ groupId, decisions }) as ConfirmGroupResult;
-      const stillPending = (result.results ?? []).some((item) => item.status === "pending");
-      if (!stillPending) setResolvedGroupIds((current) => withId(current, groupId));
       onConfirmResult?.(result);
       if (result.status === "expired") toast.error("Confirmation expired", "This batch can no longer be saved");
       else if (result.unresolvedItems?.length) toast.error("Some items need attention", "Saved items remain available to undo");
@@ -93,7 +90,6 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     if (alreadyPending) return;
     try {
       await resolveClarification({ groupId: groupId as never, date });
-      setResolvedGroupIds((current) => withId(current, groupId));
       toast.success("Saved", date);
       onSettled?.();
     } catch (error) {
@@ -168,8 +164,8 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
   }), [onClarify, onConfirm, onLogAnyway, onUndoAll, onUndoItem]);
 
   const state = useMemo<ChatCardState>(
-    () => ({ pendingGroupIds, pendingActionIds, resolvedGroupIds }),
-    [pendingActionIds, pendingGroupIds, resolvedGroupIds],
+    () => ({ pendingGroupIds, pendingActionIds }),
+    [pendingActionIds, pendingGroupIds],
   );
 
   return { handlers, state };
