@@ -103,6 +103,10 @@ test("chat sessions cannot be touched or retitled by another user", async () => 
     userId: "intruder",
     sessionId,
   })).rejects.toThrow("Not found");
+  expect(await t.query(internal.chat.getMessageCount, {
+    userId: "intruder",
+    sessionId,
+  })).toBe(0);
   expect(await t.run((ctx) => ctx.db.get(sessionId))).toMatchObject({
     title: "Owner chat",
     updatedAt,

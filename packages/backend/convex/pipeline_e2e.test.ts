@@ -9,6 +9,11 @@ import { resolveActionDate, resolveIntervalDay } from "./time_resolve";
 import { getCoach } from "./coaches";
 import { toCanonicalPersona, toLegacyPersona } from "./personas";
 import { ensureGroup, ensureMember } from "./actions_idempotency";
+import {
+  legacyConversationText,
+  legacyMarkerValue,
+  structuredExtractionFromLegacyMarkers,
+} from "./chat_turn_test_helpers";
 
 vi.mock("./ai/llm", async () => {
   const actual = await vi.importActual<typeof import("./ai/llm")>("./ai/llm");
@@ -56,6 +61,9 @@ function mockChatReply(reply: string) {
   mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
     const prompt = promptText(messages);
     if (prompt.includes("Generate a short, descriptive title")) return "E2E chat";
+    if (prompt.includes("Extract ALL loggable items")) {
+      return structuredExtractionFromLegacyMarkers(reply) ?? reply;
+    }
     if (prompt.includes("You are a professional nutritionist")) {
       return JSON.stringify({
         name: "Oats",
@@ -79,7 +87,16 @@ function mockChatReply(reply: string) {
         rationale: "Keep it steady.",
       });
     }
-    return reply;
+    if (prompt.includes("Extract water amount in ml")) return String(legacyMarkerValue(reply, "WATER", "ml") ?? "");
+    if (prompt.includes("Extract sleep data")) {
+      return JSON.stringify({
+        hours: legacyMarkerValue(reply, "SLEEP", "hours"),
+        quality: legacyMarkerValue(reply, "SLEEP", "quality"),
+      });
+    }
+    if (prompt.includes("Extract mood rating")) return String(legacyMarkerValue(reply, "MOOD", "rating") ?? "");
+    if (prompt.includes("Extract step count")) return String(legacyMarkerValue(reply, "STEPS", "count") ?? "");
+    return legacyConversationText(reply);
   });
 }
 

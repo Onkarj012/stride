@@ -30,6 +30,34 @@ async function requireUserId(ctx: MutationCtx): Promise<string> {
   return identity.subject;
 }
 
+async function markTurnUndoState(
+  ctx: MutationCtx,
+  userId: string,
+  groupId: Doc<"actionGroups">["_id"],
+  actionIds: Set<string>,
+) {
+  const message = await ctx.db
+    .query("chat_messages")
+    .withIndex("by_action_group", (q) => q.eq("actionGroupId", groupId))
+    .first();
+  if (!message || message.userId !== userId || !message.turnCards) return;
+  const turnCards = message.turnCards.map((card: any) => {
+    if (card.kind !== "undo" || card.data?.groupId !== String(groupId) || !Array.isArray(card.data.items)) {
+      return card;
+    }
+    return {
+      ...card,
+      data: {
+        ...card.data,
+        items: card.data.items.map((item: any) =>
+          actionIds.has(String(item.actionId)) ? { ...item, state: "undone" } : item,
+        ),
+      },
+    };
+  });
+  await ctx.db.patch(message._id, { turnCards });
+}
+
 type UndoResult = {
   actionId: string;
   groupId: string;
@@ -337,6 +365,9 @@ export const undoAction = mutation({
     }
     const group = await ctx.db.get(action.groupId);
     if (group) await recordUndoTelemetry(ctx, group, action, result, derivedStateVersion);
+    if (result.status === "undone" || result.status === "already_undone") {
+      await markTurnUndoState(ctx, userId, action.groupId, new Set([String(action._id)]));
+    }
     return result;
   },
 });
@@ -384,6 +415,12 @@ export const undoGroup = mutation({
         : undefined;
       await recordUndoTelemetry(ctx, group, action, result, derived?.version);
     }
+    await markTurnUndoState(
+      ctx,
+      userId,
+      groupId,
+      new Set(results.filter((result) => result.status === "undone" || result.status === "already_undone").map((result) => result.actionId)),
+    );
     return { groupId, results };
   },
 });

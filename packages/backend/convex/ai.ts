@@ -18,6 +18,7 @@ import { toLegacyPersona } from "./personas";
 import { insertActionTelemetry } from "./telemetry";
 import { assertValidDate, assertValidTime, stableHash } from "./validation";
 import { finalizeActionGroup as finalizeActionGroupInMutation } from "./actions_group";
+import type { ChatTurnCard, ChatTurnOutcome, ResultCardItem } from "../../shared/src/chat-turn";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
   await ctx.runMutation((internal as any).telemetry.record, { input });
@@ -276,7 +277,7 @@ export const stageClarificationGroup = internalMutation({
       ordinal: v.optional(v.number()),
     })),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ groupId: Id<"actionGroups"> }> => {
     if (args.clientLocalDate) {
       assertValidDate(args.clientLocalDate);
       const serverDate = new Date().toISOString().slice(0, 10);
@@ -337,6 +338,40 @@ export const stageClarificationGroup = internalMutation({
       }
     }
     return { groupId: groupResult.group._id };
+  },
+});
+
+export const recordFailedTurnGroup = internalMutation({
+  args: {
+    userId: v.string(),
+    groupIdempotencyKey: v.string(),
+    rawInput: v.string(),
+    model: v.optional(v.string()),
+    clientLocalDate: v.optional(v.string()),
+    createdAt: v.number(),
+  },
+  handler: async (ctx, args): Promise<{ groupId: Id<"actionGroups"> }> => {
+    const result = await ensureGroup(ctx, {
+      userId: args.userId,
+      groupIdempotencyKey: args.groupIdempotencyKey,
+      sourceSurface: "chat",
+      rawInput: args.rawInput,
+      model: args.model,
+      clientLocalDate: args.clientLocalDate,
+      createdAt: args.createdAt,
+      status: "failed",
+      submissionFingerprint: deriveSubmissionFingerprint({
+        userId: args.userId,
+        sourceSurface: "chat",
+        rawInput: args.rawInput,
+        clientLocalDate: args.clientLocalDate,
+      }),
+    });
+    if (result.group.status === "pending" && result.members.length === 0) {
+      assertGroupTransition("pending", "failed");
+      await ctx.db.patch(result.group._id, { status: "failed", resolvedAt: Date.now() });
+    }
+    return { groupId: result.group._id };
   },
 });
 
@@ -628,7 +663,10 @@ function confirmationDescription(member: any): string {
 }
 
 function confirmationOrdinal(member: any): number {
-  return typeof member.payload?._confirmationOrdinal === "number" ? member.payload._confirmationOrdinal : -1;
+  if (typeof member.payload?._confirmationOrdinal === "number") return member.payload._confirmationOrdinal;
+  return typeof member.originalPayload?._confirmationOrdinal === "number"
+    ? member.originalPayload._confirmationOrdinal
+    : -1;
 }
 
 function confirmationLoggedItem(member: any, rowId: string, payload: any, actionId: string) {
@@ -645,6 +683,37 @@ function confirmationLoggedItem(member: any, rowId: string, payload: any, action
       validation: member.validation,
     },
   };
+}
+
+function resultCardItemsForActions(actions: Doc<"actions">[]): ResultCardItem[] {
+  const items: ResultCardItem[] = [];
+  for (const action of actions) {
+    const base = {
+      ordinal: confirmationOrdinal(action),
+      actionType: action.actionType as "meal" | "workout" | "recovery",
+      title: confirmationDescription(action),
+      description: confirmationDescription(action),
+      date: action.resolvedDate,
+      time: action.resolvedTime,
+    };
+    if (action.status === "committed" && action.committedRowRef) {
+      items.push({
+        ...base,
+        status: "committed",
+        actionId: String(action._id),
+        record: action.committedRowRef,
+      });
+    } else if (action.status === "failed") {
+      items.push({
+        ...base,
+        status: "failed",
+        actionId: String(action._id),
+        reason: action.validation.messages.at(-1) ?? "The item could not be saved",
+        retriable: true,
+      });
+    }
+  }
+  return items;
 }
 
 /** Confirm, discard, or edit members of a staged large batch independently. */
@@ -783,6 +852,82 @@ export const confirmGroup = action({
     }
 
     const status = await finalizeActionGroup(ctx, groupId);
+    const currentMembers: Doc<"actions">[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
+    const resultCardItems = resultCardItemsForActions(currentMembers);
+    const committedCardItems = resultCardItems.filter(
+      (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
+    );
+    const failedCardItems = resultCardItems.filter(
+      (item): item is Extract<ResultCardItem, { status: "failed" }> => item.status === "failed",
+    );
+    const pendingMembers = currentMembers.filter((member) => member.status === "pending");
+    const cards: ChatTurnCard[] = [];
+    if (pendingMembers.length > 0) {
+      cards.push({
+        version: 1,
+        kind: "confirmation",
+        data: {
+          groupId: String(groupId),
+          expiresAt: group.createdAt + CONFIRMATION_TTL_MS,
+          items: pendingMembers.map((member) => ({
+            ordinal: confirmationOrdinal(member),
+            actionType: member.actionType as "meal" | "workout" | "recovery",
+            title: confirmationDescription(member),
+            description: confirmationDescription(member),
+            date: member.resolvedDate,
+            time: member.resolvedTime,
+            actionId: String(member._id),
+            confidence: member.confidence,
+            validationMessages: member.validation.messages,
+          })),
+        },
+      });
+    }
+    if (committedCardItems.length > 0) {
+      cards.push({
+        version: 1,
+        kind: "result",
+        data: { groupId: String(groupId), items: resultCardItems },
+      });
+      cards.push({
+        version: 1,
+        kind: "undo",
+        data: {
+          groupId: String(groupId),
+          items: committedCardItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
+        },
+      });
+    } else if (resultCardItems.length > 0) {
+      cards.push({
+        version: 1,
+        kind: "failure",
+        data: {
+          groupId: String(groupId),
+          code: "CONFIRMATION_FAILED",
+          message: "No items were saved.",
+          retriable: true,
+          items: failedCardItems.map(({ status: _status, retriable: _retriable, ...item }) => item),
+        },
+      });
+    }
+    const turnOutcome: ChatTurnOutcome = pendingMembers.length > 0
+      ? "confirmation_required"
+      : committedCardItems.length > 0
+        ? "committed"
+        : "failed";
+    const content = turnOutcome === "confirmation_required"
+      ? `${pendingMembers.length} item${pendingMembers.length === 1 ? "" : "s"} still need review.`
+      : turnOutcome === "committed"
+        ? `Saved ${committedCardItems.map((item) => item.title).join(", ")}.${resultCardItems.some((item) => item.status === "failed") ? " Some items could not be saved." : ""}`
+        : "I couldn't save that. Please try again.";
+    await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
+      userId,
+      actionGroupId: groupId,
+      content,
+      turnOutcome,
+      turnCards: cards,
+      actionIds: currentMembers.map((member) => member._id),
+    });
     return { groupId, status, results, loggedItems, unresolvedItems, memoryApprovals };
   },
 });
@@ -1363,7 +1508,7 @@ export const chat = action({
     clarificationGroupId: v.optional(v.id("actionGroups")),
     clientSubmissionId: v.optional(v.string()),
   },
-  handler: async (ctx, { message, sessionId, coachType, today: todayArg, image, clarificationGroupId, clientSubmissionId }) => {
+  handler: async (ctx, { message, sessionId, coachType, today: todayArg, image, clarificationGroupId, clientSubmissionId }): Promise<any> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     assertMaxChars(message, AI_INPUT_LIMITS.messageChars, "chat message");
@@ -1436,28 +1581,9 @@ export const chat = action({
       contextBlock += `\n\nTODAY'S CHECK-IN ANSWERS:\n${checkInAnswers}\n`;
     }
 
-    const loggingPrompt = `\n\nDIRECT LOGGING CAPABILITY:
-You can log multiple items directly when the user describes them. Append log blocks at the very end of your response.
-
-Today's date is ${today}. Each log block can include an optional "date" field (YYYY-MM-DD). If the user says "yesterday", "2 days ago", or names a specific past day, set the date accordingly. Default is today.
-
-For meals: ⟦LOG_MEAL⟧{"description":"full meal description","mealType":"breakfast|lunch|dinner|snack","time":"HH:MM or empty string","date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_MEAL⟧
-For workouts: ⟦LOG_WORKOUT⟧{"description":"full workout description with exercises, sets, reps, weights","date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_WORKOUT⟧
-For sleep: ⟦LOG_SLEEP⟧{"hours":6.5,"quality":"poor|ok|good|great","date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_SLEEP⟧
-For water: ⟦LOG_WATER⟧{"ml":500,"date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_WATER⟧
-For mood: ⟦LOG_MOOD⟧{"rating":3,"note":"optional note","date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_MOOD⟧
-For steps: ⟦LOG_STEPS⟧{"count":8000,"date":"YYYY-MM-DD or UNKNOWN_VAGUE","question":"optional clarification question","validation":{"status":"valid|warning|error","messages":[]}}⟦/LOG_STEPS⟧
-
-Rules:
-- Append ALL relevant log blocks when the user reports multiple activities (e.g. meal + water → append both blocks)
-- ONLY append log blocks when the user is clearly reporting what they did/ate/slept
-- If user says "yesterday I had X" → use yesterday's date in the log block
-- Sleep descriptions ("slept X hours", "went to bed at X", "woke up at Y") → LOG_SLEEP, NOT LOG_WORKOUT
-- Your message text (before the blocks) should confirm what you logged AND mention the date if it's not today
-- YOU MUST include the markers exactly as shown.
-- Vague historical time references such as "a while ago", "last week sometime", "recently", "the other day", or "a few days ago" must NOT be resolved to a guessed date. Set the "date" field to "UNKNOWN_VAGUE" and include a brief "question" asking for the exact date (e.g. "Which date did you have this?").
-- Vague workout descriptions with no identifiable exercise must NOT invent a synthetic exercise. Set the "date" field to "UNKNOWN_VAGUE" and include a "question" asking what exercise the user did.
-- If you are uncertain about an entry, set "validation.status" to "warning" and the app will ask for confirmation before saving.`;
+    const loggingPrompt = `\n\nLOGGING STATUS:
+The app extracts and saves reported activities through a separate structured pipeline.
+Respond conversationally only. Never claim that anything was logged, saved, recorded, or added; the app will append a truthful status after persistence.`;
 
     // Load session history
     let history: { role: string; content: string }[] = [];
@@ -1465,7 +1591,7 @@ Rules:
     if (sessionId) {
       const [msgs, count] = await Promise.all([
         ctx.runQuery(internal.chat.getMessagesForContext, { userId, sessionId }),
-        ctx.runQuery(internal.chat.getMessageCount, { sessionId }),
+        ctx.runQuery(internal.chat.getMessageCount, { userId, sessionId }),
       ]);
       history = msgs;
       isFirstMessage = count === 0;
@@ -1473,7 +1599,13 @@ Rules:
     }
 
     // Save user message
-    await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "user", content: message });
+    await ctx.runMutation(internal.chat.addMessage, {
+      userId,
+      sessionId,
+      role: "user",
+      content: message,
+      clientSubmissionId,
+    });
 
     // Free-text clarification answer: if the user provided a groupId and a resolvable date,
     // write the pending group immediately without another AI round-trip.
@@ -1487,10 +1619,44 @@ Rules:
       }
       if (answerDate) {
         const resolved = await executeClarificationResolution(ctx, userId, clarificationGroupId as unknown as string, answerDate);
-        const resolvedReply = resolved.loggedItems.length > 0
-          ? `Saved ${resolved.loggedItems.map((item: any) => item.data?.name ?? item.type).join(", ")} for ${answerDate}.`
-          : `I couldn't save that. Please try again.`;
-        await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "ai", content: resolvedReply });
+        const actionRows: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, {
+          groupId: clarificationGroupId,
+        });
+        const resultItems = resultCardItemsForActions(actionRows);
+        const committedItems = resultItems.filter(
+          (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
+        );
+        const outcome: ChatTurnOutcome = committedItems.length > 0 ? "committed" : "failed";
+        const cards: ChatTurnCard[] = [{
+          version: 1,
+          kind: "result",
+          data: { groupId: String(clarificationGroupId), items: resultItems },
+        }];
+        if (committedItems.length > 0) {
+          cards.push({
+            version: 1,
+            kind: "undo",
+            data: {
+              groupId: String(clarificationGroupId),
+              items: committedItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
+            },
+          });
+        }
+        const resolvedReply = outcome === "committed"
+          ? `Saved ${committedItems.map((item) => item.title).join(", ")} for ${answerDate}.`
+          : "I couldn't save that. Please try again.";
+        await ctx.runMutation(internal.chat.addMessage, {
+          userId,
+          sessionId,
+          role: "ai",
+          content: resolvedReply,
+          clientSubmissionId,
+          turnContractVersion: 1,
+          turnOutcome: outcome,
+          turnCards: cards,
+          actionGroupId: clarificationGroupId,
+          actionIds: actionRows.map((action) => action._id),
+        });
         if (sessionId) {
           await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
         }
@@ -1499,7 +1665,16 @@ Rules:
           : resolved.loggedItems.length > 1
             ? { type: "multiple", items: resolved.loggedItems }
             : null;
-        return { reply: resolvedReply, loggedItem, memoryApprovals: resolved.memoryApprovals ?? [], failedItems: [], coachType: toLegacyPersona(coachType), restricted: restrictedGuidance };
+        return {
+          reply: resolvedReply,
+          loggedItem,
+          memoryApprovals: resolved.memoryApprovals ?? [],
+          failedItems: [],
+          coachType: toLegacyPersona(coachType),
+          restricted: restrictedGuidance,
+          outcome,
+          cards,
+        };
       }
     }
 
@@ -1596,582 +1771,77 @@ Rules:
     const replyModel = settingsModel ?? CHAT_MODEL; // Sonnet handles text + vision
     const reply = await callAI(ctx, userId, messages, 800, replyModel, apiKey);
 
-    // Parse log blocks — support multiple items and new types
-    let cleanReply = reply;
-    const loggedItems: any[] = [];
-    const memoryApprovals: any[] = [];
-    const logOutcomes: Array<{ type: string; name: string; ok: boolean; error?: string; errorCode?: string; actionId?: string; groupId?: string }> = [];
-    const failedItems: FailedLogItem[] = [];
-    const submissionRawInput = image ? `${message}\n[image:${stableHash(image)}]` : message;
-    const chatGroupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput: submissionRawInput, clientSubmissionId });
-    const chatGroup = {
+    const extractionHistory: HomepageHistoryMessage[] = history.flatMap((entry) => {
+      const role = entry.role === "ai" ? "assistant" : entry.role;
+      return role === "user" || role === "assistant"
+        ? [{ role, content: entry.content } as HomepageHistoryMessage]
+        : [];
+    });
+    const extraction = await extractStructuredLogItems({
+      ctx,
       userId,
-      groupIdempotencyKey: chatGroupKey,
-      clientSubmissionId,
-      sourceSurface: "chat" as const,
-      rawInput: submissionRawInput,
-      clientLocalDate: today,
-    };
-
-    // Candidates held for clarification instead of being written immediately.
-    type PendingCandidate = {
-      actionType: "meal" | "workout" | "recovery";
-      description: string;
-      payload: any;
-      confidence?: number;
-      resolvedDate?: string;
-      resolvedTime?: string;
-      provenance: "user_reported" | "ai_extracted" | "ai_estimated" | "database_match";
-      validation: { status: "valid" | "warning" | "error"; messages: string[] };
-      reason: string;
-      question?: string;
-      ordinal: number;
-    };
-    type ParsedCandidate = Omit<PendingCandidate, "reason"> & { reason?: string };
-    const pendingCandidates: PendingCandidate[] = [];
-    const parsedCandidates: ParsedCandidate[] = [];
-
-    // Strip all log blocks from the reply text
-    cleanReply = reply
-      .replace(/⟦LOG_MEAL⟧[\s\S]*?⟦\/LOG_MEAL⟧/g, "")
-      .replace(/⟦LOG_WORKOUT⟧[\s\S]*?⟦\/LOG_WORKOUT⟧/g, "")
-      .replace(/⟦LOG_SLEEP⟧[\s\S]*?⟦\/LOG_SLEEP⟧/g, "")
-      .replace(/⟦LOG_WATER⟧[\s\S]*?⟦\/LOG_WATER⟧/g, "")
-      .replace(/⟦LOG_MOOD⟧[\s\S]*?⟦\/LOG_MOOD⟧/g, "")
-      .replace(/⟦LOG_STEPS⟧[\s\S]*?⟦\/LOG_STEPS⟧/g, "")
-      .trim();
-
-    function resolveMarkerDate(dateValue: unknown): { date: string; resolution: import("./time_resolve").ActionDateResolution } {
-      if (dateValue === "UNKNOWN_VAGUE") {
-        return { date: today, resolution: { status: "needs_clarification", reason: "The date is too vague; provide an exact date" } };
-      }
-      if (typeof dateValue === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
-        return { date: dateValue, resolution: resolveChatActionDate({ explicitDate: dateValue, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0) };
-      }
-      const resolution = resolveChatActionDate({ actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
-      return { date: today, resolution };
-    }
-
-    // Meal
-    const mealMatches = [...reply.matchAll(/⟦LOG_MEAL⟧([\s\S]*?)⟦\/LOG_MEAL⟧/g)];
-    for (const [mealIndex, mealMatch] of mealMatches.entries()) {
-      let retryArgs: MealRetryArgs | undefined;
-      let retryDescription = "meal";
-      try {
-        const logData = JSON.parse(mealMatch[1].trim());
-        retryDescription = logData.description || message;
-        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
-        const parsed = await parseMealDescription(logData.description || message, logData.mealType || "unspecified", logData.time || "", ctx, userId, parseModel, apiKey);
-        if (parsed.parseError) {
-          logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
-          continue;
-        }
-        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
-        const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsed, date: targetDate }, { userId, useMemory: true }));
-        const draft = nutrition.ingredientBreakdown as MealDraft;
-        const finalStructuredItems = JSON.stringify(draft.ingredients);
-        const finalIngredientBreakdown = JSON.stringify(draft);
-        retryArgs = {
-          name: parsed.name,
-          calories: nutrition.calories,
-          protein: nutrition.protein,
-          carbs: nutrition.carbs,
-          fat: nutrition.fat,
-          time: parsed.time,
-          date: targetDate,
-          aiSuggestion: parsed.aiSuggestion,
-          mealType: parsed.mealType,
-          components: parsed.components,
-          confidence: nutrition.confidence,
-          nutritionSource: nutrition.nutritionSource,
-          structuredItems: finalStructuredItems,
-          ingredientBreakdown: finalIngredientBreakdown,
-          logSource: "coach",
-        };
-        const mealPayload = mealPayloadFromDraft(draft, {
-          aiSuggestion: parsed.aiSuggestion,
-          mealType: parsed.mealType,
-          components: parsed.components,
-          logSource: "coach",
+      message,
+      image,
+      today,
+      history: extractionHistory,
+      model: parseModel,
+      visionModel: settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL,
+      apiKey,
+    });
+    const parsedTurn = extraction.failure
+      ? { drafts: [], summaryParts: [], failedItems: [] as FailedLogItem[] }
+      : await parseStructuredLogItems({
+          ctx,
+          userId,
+          items: extraction.items,
+          image,
+          today,
+          settingsModel: parseModel,
+          visionModel: settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL,
+          apiKey,
+          userMacros: extractUserMacros(message),
         });
-        const mealValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, nutrition.confidence, mealValidation.status, draft.ingredients.length > 0 && draft.unresolved.length > 0);
-        const candidate: ParsedCandidate = {
-          actionType: "meal",
-          description: retryDescription,
-          payload: mealPayload,
-          confidence: nutrition.confidence,
-          resolvedDate: exposedResolvedDate,
-          resolvedTime: parsed.time,
-          provenance: "ai_extracted",
-          validation: mealValidation,
-          reason: reason ?? undefined,
-          question: logData.question,
-          ordinal: parsedCandidates.length,
-        };
-        parsedCandidates.push(candidate);
-        if (reason) {
-          pendingCandidates.push({ ...candidate, reason });
-          logOutcomes.push({ type: "meal", name: parsed.name || "meal", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
-          continue;
-        }
-      } catch (err) {
-        const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
-        const errorCode = getConvexErrorCode(err);
-        logOutcomes.push({ type: "meal", name: "meal", ok: false, error: message, errorCode });
-        if (retryArgs && errorCode === "NEAR_DUPLICATE") {
-          failedItems.push({
-            kind: "meal",
-            code: errorCode,
-            description: retryDescription,
-            retryArgs,
-          });
-        }
-        console.error("Failed to log meal from AI:", err);
-      }
-    }
-
-    // Workout
-    const workoutMatches = [...reply.matchAll(/⟦LOG_WORKOUT⟧([\s\S]*?)⟦\/LOG_WORKOUT⟧/g)];
-    for (const [workoutIndex, workoutMatch] of workoutMatches.entries()) {
-      let retryArgs: WorkoutRetryArgs | undefined;
-      let retryDescription = "workout";
-      try {
-        const logData = JSON.parse(workoutMatch[1].trim());
-        retryDescription = logData.description || message;
-        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
-        const timestamp = new Date().toISOString().slice(11, 16);
-        const metabolicProfile: any = await ctx.runQuery(api.calibration.getMetabolicProfileForContext, {});
-        const userPhysique: UserPhysique | undefined = profile ? {
-          weight: profile.weight, height: profile.height, age: profile.age, sex: profile.sex,
-          fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
-          metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
-        } : undefined;
-        const parsed = await parseWorkoutDescription(logData.description || message, ctx, userId, undefined, undefined, parseModel, apiKey, userPhysique);
-        if (parsed.parseError) {
-          logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: false, error: parsed.parseError, errorCode: "PARSE_ERROR" });
-          continue;
-        }
-        const calorieFields = parsed.calorieResult ? {
-          calorieConfidence: parsed.calorieResult.confidence, calorieRangeLow: parsed.calorieResult.range_low,
-          calorieRangeHigh: parsed.calorieResult.range_high, calorieEstimateRough: parsed.calorieResult.rough,
-          calorieBreakdown: JSON.stringify(parsed.calorieResult.breakdown), calculationVersion: 1,
-        } : {};
-        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
-        const workoutConfidence = parsed.calorieResult?.confidence;
-        const reportedCaloriesValue = extractStatedWorkoutCalories(logData.description || message) ?? undefined;
-        const estimatedCaloriesValue = profile?.weight && parsed.calorieResult?.total_kcal != null ? parsed.calorieResult.total_kcal : undefined;
-        const calorieSourceValue = reportedCaloriesValue != null ? "reported" : estimatedCaloriesValue != null ? "estimated" : undefined;
-        const caloriesBurnedValue = reportedCaloriesValue ?? estimatedCaloriesValue ?? parsed.caloriesBurned;
-        retryArgs = {
-          name: parsed.name,
-          sets: parsed.sets,
-          duration: parsed.duration,
-          intensity: parsed.intensity,
-          date: targetDate,
-          exercises: parsed.exercises,
-          rationale: parsed.rationale,
-          caloriesBurned: caloriesBurnedValue,
-          reportedCalories: reportedCaloriesValue,
-          estimatedCalories: estimatedCaloriesValue,
-          calorieSource: calorieSourceValue,
-          structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
-          timestamp,
-          logSource: "coach",
-          ...calorieFields,
-        };
-        const workoutPayload = {
-          date: targetDate, name: parsed.name, sets: parsed.sets, duration: parsed.duration,
-          intensity: parsed.intensity, exercises: parsed.exercises, rationale: parsed.rationale,
-          caloriesBurned: caloriesBurnedValue,
-          reportedCalories: reportedCaloriesValue,
-          estimatedCalories: estimatedCaloriesValue,
-          calorieSource: calorieSourceValue,
-          structuredSets: parsed.exercises ? JSON.stringify(parsed.exercises) : undefined,
-          timestamp, logSource: "coach", ...calorieFields,
-        };
-        const workoutValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, workoutConfidence, workoutValidation.status);
-        const candidate: ParsedCandidate = {
-          actionType: "workout",
-          description: retryDescription,
-          payload: workoutPayload,
-          confidence: workoutConfidence,
-          resolvedDate: exposedResolvedDate,
-          resolvedTime: timestamp,
-          provenance: "ai_extracted",
-          validation: workoutValidation,
-          reason: reason ?? undefined,
-          question: logData.question,
-          ordinal: parsedCandidates.length,
-        };
-        parsedCandidates.push(candidate);
-        if (reason) {
-          pendingCandidates.push({ ...candidate, reason });
-          logOutcomes.push({ type: "workout", name: parsed.name || "workout", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
-          continue;
-        }
-      } catch (err) {
-        const message = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
-        const errorCode = getConvexErrorCode(err);
-        logOutcomes.push({ type: "workout", name: "workout", ok: false, error: message, errorCode });
-        if (retryArgs && errorCode === "NEAR_DUPLICATE") {
-          failedItems.push({
-            kind: "workout",
-            code: errorCode,
-            description: retryDescription,
-            retryArgs,
-          });
-        }
-        console.error("Failed to log workout from AI:", err);
-      }
-    }
-
-    // Sleep
-    const sleepMatches = [...reply.matchAll(/⟦LOG_SLEEP⟧([\s\S]*?)⟦\/LOG_SLEEP⟧/g)];
-    for (const [sleepIndex, sleepMatch] of sleepMatches.entries()) {
-      try {
-        const logData = JSON.parse(sleepMatch[1].trim());
-        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
-        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
-        const parsedHours = typeof logData.hours === "number" && Number.isFinite(logData.hours) ? logData.hours : undefined;
-        const parsedBand = ["under_6", "six_to_eight", "eight_plus"].includes(logData.band) ? logData.band : undefined;
-        const parsedQuality = ["poor", "ok", "good", "great"].includes(logData.quality) ? logData.quality : undefined;
-        const sleepDraft = buildRecoveryDraft({ kind: "sleep", date: targetDate, hours: parsedHours, band: parsedBand, quality: parsedQuality, source: "ai_extracted" });
-        const sleepPayload = recoveryPayloadFromDraft(sleepDraft);
-        const sleepValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, undefined, sleepValidation.status)
-          ?? (sleepDraft.unresolved.length > 0 ? "Sleep hours or band is required" : null);
-        const candidate: ParsedCandidate = {
-          actionType: "recovery",
-          description: `Sleep ${parsedHours != null ? `${parsedHours}h` : parsedBand ?? "value needed"}${parsedQuality ? ` (${parsedQuality})` : ""}`,
-          payload: sleepPayload,
-          resolvedDate: exposedResolvedDate,
-          provenance: "ai_extracted",
-          validation: sleepValidation,
-          reason: reason ?? undefined,
-          question: logData.question,
-          ordinal: parsedCandidates.length,
-        };
-        parsedCandidates.push(candidate);
-        if (reason) {
-          pendingCandidates.push({ ...candidate, reason });
-          logOutcomes.push({ type: "sleep", name: "sleep", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
-          continue;
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logOutcomes.push({ type: "sleep", name: "sleep", ok: false, error: message });
-        console.error("Failed to log sleep from AI:", err);
-      }
-    }
-
-    // Water
-    const waterMatches = [...reply.matchAll(/⟦LOG_WATER⟧([\s\S]*?)⟦\/LOG_WATER⟧/g)];
-    for (const [waterIndex, waterMatch] of waterMatches.entries()) {
-      try {
-        const logData = JSON.parse(waterMatch[1].trim());
-        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
-        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
-        const ml = typeof logData.ml === "number" && Number.isFinite(logData.ml) ? logData.ml : undefined;
-        const time = new Date().toTimeString().slice(0, 5);
-        const waterDraft = buildRecoveryDraft({ kind: "water", ml, date: targetDate, time, source: "ai_extracted" });
-        const waterPayload = recoveryPayloadFromDraft(waterDraft);
-        const waterValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, undefined, waterValidation.status)
-          ?? (waterDraft.unresolved.length > 0 ? "Water amount is required" : null);
-        const candidate: ParsedCandidate = {
-          actionType: "recovery",
-          description: `Water ${ml != null ? `${ml}ml` : "value needed"}`,
-          payload: waterPayload,
-          resolvedDate: exposedResolvedDate,
-          resolvedTime: time,
-          provenance: "ai_extracted",
-          validation: waterValidation,
-          reason: reason ?? undefined,
-          question: logData.question,
-          ordinal: parsedCandidates.length,
-        };
-        parsedCandidates.push(candidate);
-        if (reason) {
-          pendingCandidates.push({ ...candidate, reason });
-          logOutcomes.push({ type: "water", name: "water", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
-          continue;
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logOutcomes.push({ type: "water", name: "water", ok: false, error: message });
-        console.error("Failed to log water from AI:", err);
-      }
-    }
-
-    // Mood
-    const moodMatches = [...reply.matchAll(/⟦LOG_MOOD⟧([\s\S]*?)⟦\/LOG_MOOD⟧/g)];
-    for (const [moodIndex, moodMatch] of moodMatches.entries()) {
-      try {
-        const logData = JSON.parse(moodMatch[1].trim());
-        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
-        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
-        const rating = typeof logData.rating === "number" && Number.isFinite(logData.rating) ? logData.rating : undefined;
-        const time = new Date().toTimeString().slice(0, 5);
-        const moodDraft = buildRecoveryDraft({ kind: "mood", rating, date: targetDate, time, note: logData.note, source: "ai_extracted" });
-        const moodPayload = recoveryPayloadFromDraft(moodDraft);
-        const moodValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, undefined, moodValidation.status)
-          ?? (moodDraft.unresolved.length > 0 ? "Mood rating is required" : null);
-        const candidate: ParsedCandidate = {
-          actionType: "recovery",
-          description: `Mood ${rating != null ? `${rating}/5` : "value needed"}`,
-          payload: moodPayload,
-          resolvedDate: exposedResolvedDate,
-          resolvedTime: time,
-          provenance: "ai_extracted",
-          validation: moodValidation,
-          reason: reason ?? undefined,
-          question: logData.question,
-          ordinal: parsedCandidates.length,
-        };
-        parsedCandidates.push(candidate);
-        if (reason) {
-          pendingCandidates.push({ ...candidate, reason });
-          logOutcomes.push({ type: "mood", name: "mood", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
-          continue;
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logOutcomes.push({ type: "mood", name: "mood", ok: false, error: message });
-        console.error("Failed to log mood from AI:", err);
-      }
-    }
-
-    // Steps
-    const stepsMatches = [...reply.matchAll(/⟦LOG_STEPS⟧([\s\S]*?)⟦\/LOG_STEPS⟧/g)];
-    for (const [stepsIndex, stepsMatch] of stepsMatches.entries()) {
-      try {
-        const logData = JSON.parse(stepsMatch[1].trim());
-        const { date: initialDate, resolution: dateResolution } = resolveMarkerDate(logData.date);
-        const targetDate = dateResolution.status === "resolved" ? dateResolution.date : initialDate;
-        const exposedResolvedDate = dateResolution.status === "resolved" ? dateResolution.date : undefined;
-        const count = typeof logData.count === "number" && Number.isFinite(logData.count) ? logData.count : undefined;
-        const stepsDraft = buildRecoveryDraft({ kind: "steps", count, date: targetDate, source: "ai_extracted" });
-        const stepsPayload = recoveryPayloadFromDraft(stepsDraft);
-        const stepsValidation = parseMarkerValidation(logData);
-        const reason = clarifyingReason(logData.date, dateResolution, undefined, stepsValidation.status)
-          ?? (stepsDraft.unresolved.length > 0 ? "Step count is required" : null);
-        const candidate: ParsedCandidate = {
-          actionType: "recovery",
-          description: `Steps ${count != null ? count : "value needed"}`,
-          payload: stepsPayload,
-          resolvedDate: exposedResolvedDate,
-          provenance: "ai_extracted",
-          validation: stepsValidation,
-          reason: reason ?? undefined,
-          question: logData.question,
-          ordinal: parsedCandidates.length,
-        };
-        parsedCandidates.push(candidate);
-        if (reason) {
-          pendingCandidates.push({ ...candidate, reason });
-          logOutcomes.push({ type: "steps", name: "steps", ok: false, error: reason, errorCode: "CLARIFICATION_NEEDED" });
-          continue;
-        }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        logOutcomes.push({ type: "steps", name: "steps", ok: false, error: message });
-        console.error("Failed to log steps from AI:", err);
-      }
-    }
-
-    let confirmation: {
-      groupId: string;
-      items: Array<{
-        actionType: string;
-        description: string;
-        resolvedDate?: string;
-        confidence?: number;
-        provenance: string;
-        validation: { status: "valid" | "warning" | "error"; messages: string[] };
-        ordinal: number;
-      }>;
-    } | undefined;
-    let confirmationRequested = false;
-
-    async function writeCandidate(candidate: ParsedCandidate): Promise<void> {
-      const member = markerMember(
-        chatGroupKey,
-        candidate.actionType,
-        candidate.payload,
-        candidate.ordinal,
-        candidate.confidence,
-        candidate.validation,
-        candidate.resolvedDate,
-      );
-      member.resolvedTime = candidate.resolvedTime;
-      let rowId: string;
-      let previous: unknown;
-      if (candidate.actionType === "meal") {
-        rowId = String(await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: chatGroup, member }));
-      } else if (candidate.actionType === "workout") {
-        rowId = String(await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: chatGroup, member }));
-      } else {
-        const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: chatGroup, member });
-        rowId = String(result?.id ?? result);
-        previous = result?.previous;
-      }
-      const table = candidate.actionType === "meal"
-        ? "meals"
-        : candidate.actionType === "workout"
-          ? "workouts"
-          : `${candidate.payload.kind}_logs`;
-      const actionMetadata = await committedActionMetadata(ctx, userId, table, rowId);
-      const type = candidate.actionType === "recovery" ? candidate.payload.kind : candidate.actionType;
-      loggedItems.push({
-        type,
-        data: {
-          _id: rowId,
-          ...candidate.payload,
-          previous,
-          provenance: candidate.provenance,
-          confidence: candidate.confidence,
-          validation: candidate.validation,
-          ...actionMetadata,
-        },
-      });
-      if (actionMetadata.actionId) {
-        memoryApprovals.push(...await pendingMemoryApprovalsForAction(ctx, userId, actionMetadata.actionId));
-      }
-      logOutcomes.push({ type, name: candidate.description, ok: true, ...actionMetadata });
-    }
-
-    if (parsedCandidates.length > AUTO_WRITE_MAX_ACTIONS) {
-      confirmationRequested = true;
-      confirmation = { groupId: "", items: [] };
-    }
-    const readyCandidates = parsedCandidates.filter((candidate) => !candidate.reason);
-    const candidatesToStage = parsedCandidates;
-    let stagedGroupId: string | undefined;
-    const stagedMembersByKey = new Map<string, { _id: string }>();
-    if (candidatesToStage.length > 0) {
-      const stagedMembers = candidatesToStage.map((candidate) => ({
-        ...markerMember(
-          chatGroupKey,
-          candidate.actionType,
-          candidate.payload,
-          candidate.ordinal,
-          candidate.confidence,
-          candidate.validation,
-          candidate.resolvedDate,
-        ),
-        actionType: candidate.actionType,
-        ordinal: candidate.ordinal,
-      }));
-      const staged: { groupId: string } = await ctx.runMutation(internal.ai.stageClarificationGroup, {
-        userId,
-        groupIdempotencyKey: chatGroupKey,
-        sourceSurface: "chat",
-        rawInput: submissionRawInput,
-        model: parseModel,
-        clientLocalDate: today,
-        createdAt: Date.now(),
-        members: stagedMembers,
-      });
-      stagedGroupId = staged.groupId;
-      const stagedRows: any[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: staged.groupId as any });
-      for (const row of stagedRows) stagedMembersByKey.set(row.memberIdempotencyKey, row);
-    }
-    if (!confirmationRequested) {
-      for (const candidate of readyCandidates) {
-        try {
-          await writeCandidate(candidate);
-        } catch (err) {
-          const error = getConvexErrorMessage(err) ?? (err instanceof Error ? err.message : String(err));
-          const errorCode = getConvexErrorCode(err);
-          logOutcomes.push({ type: candidate.actionType, name: candidate.description, ok: false, error, errorCode });
-          const member = stagedMembersByKey.get(markerMember(
-            chatGroupKey,
-            candidate.actionType,
-            candidate.payload,
-            candidate.ordinal,
-            candidate.confidence,
-            candidate.validation,
-            candidate.resolvedDate,
-          ).memberIdempotencyKey);
-          if (member) {
-            await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, { actionId: member._id as any, error });
-          }
-          console.error("Failed to log parsed AI action:", err);
-        }
-      }
-      if (readyCandidates.length > 0) {
-        const chatGroupRow = await ctx.runQuery(internal.ai.getActionGroupByKey, { userId, groupIdempotencyKey: chatGroupKey });
-        if (chatGroupRow) await finalizeActionGroup(ctx, chatGroupRow._id);
-      }
-    }
-
-    if (logOutcomes.length > 0 && !confirmationRequested) {
-      const saved = logOutcomes.filter((outcome) => outcome.ok);
-      const failed = logOutcomes.filter((outcome) => !outcome.ok);
-      const statusParts: string[] = [];
-      if (saved.length > 0) {
-        statusParts.push(`Saved ${saved.map((outcome) => outcome.name).join(", ")}.`);
-      }
-      if (failed.length > 0) {
-        const duplicate = failed.some((outcome) => outcome.errorCode === "NEAR_DUPLICATE");
-        const otherFailures = failed.filter((outcome) => outcome.errorCode !== "NEAR_DUPLICATE");
-        if (duplicate) {
-          statusParts.push("I did not save the duplicate-looking log. Confirm or edit it if you want to log it anyway.");
-        }
-        if (otherFailures.length > 0) {
-          const parseError = otherFailures.some((outcome) => outcome.errorCode === "PARSE_ERROR");
-          statusParts.push(parseError
-            ? `I couldn't parse ${otherFailures.map((outcome) => outcome.name).join(", ")} reliably, so I didn't save it. Please confirm or edit and try again.`
-            : `I couldn't save ${otherFailures.map((outcome) => outcome.name).join(", ")}. Please confirm or edit and try again.`);
-        }
-      }
-      cleanReply = [cleanReply, statusParts.join(" ")].filter(Boolean).join("\n\n");
-    }
-
-    let clarification: { groupId: string; items: any[]; question: string } | undefined;
-    if (stagedGroupId) {
-      if (confirmationRequested) {
-        confirmation = {
-          groupId: stagedGroupId,
-          items: parsedCandidates.map((candidate) => ({
-            actionType: candidate.actionType,
-            description: candidate.description,
-            resolvedDate: candidate.resolvedDate,
-            confidence: candidate.confidence,
-            provenance: candidate.provenance,
-            validation: candidate.validation,
-            ordinal: candidate.ordinal,
-          })),
-        };
-        cleanReply = [cleanReply, `I found ${parsedCandidates.length} items. Review them before saving.`].filter(Boolean).join("\n\n");
-      } else if (pendingCandidates.length > 0) {
-        const questions = [...new Set(pendingCandidates.map((c) => c.question).filter((q): q is string => typeof q === "string" && q.length > 0))];
-        clarification = {
-          groupId: stagedGroupId,
-          items: pendingCandidates.map((candidate) => ({
-            actionType: candidate.actionType,
-            description: candidate.description,
-            reason: candidate.reason,
-            resolvedDate: candidate.resolvedDate,
-            confidence: candidate.confidence,
-          })),
-          question: questions.join(" ") || "Please confirm the details so I can save this.",
-        };
-      }
-    }
-
-    const loggedItem = loggedItems.length === 1 ? loggedItems[0] : loggedItems.length > 1 ? { type: "multiple", items: loggedItems } : null;
+    const candidates = parsedTurn.drafts.map(turnCandidateFromDraft);
+    const submissionRawInput = image ? `${message}\n[image:${stableHash(image)}]` : message;
+    const turnResult = await executeTurnPolicy({
+      ctx,
+      userId,
+      rawInput: submissionRawInput,
+      clientSubmissionId,
+      today,
+      model: parseModel,
+      candidates,
+      parseFailures: parsedTurn.failedItems,
+      turnFailure: extraction.failure,
+      forceConfirmation: false,
+    });
+    const statusText = turnOutcomeText(turnResult);
+    const conversationalReply = sanitizeConversationalReply(reply);
+    const cleanReply = [conversationalReply, statusText].filter(Boolean).join("\n\n")
+      || (turnResult.outcome === "no_action" ? "How can I help with that?" : "I couldn't save that. Please try again.");
+    const loggedItem = turnResult.loggedItems.length === 1
+      ? turnResult.loggedItems[0]
+      : turnResult.loggedItems.length > 1
+        ? { type: "multiple", items: turnResult.loggedItems }
+        : null;
+    const memoryApprovals = turnResult.memoryApprovals;
+    const failedItems = parsedTurn.failedItems;
+    const clarification = turnResult.clarification;
+    const confirmation = turnResult.confirmation;
 
     // Save AI reply
-    await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "ai", content: cleanReply });
+    const messageId = await ctx.runMutation(internal.chat.addMessage, {
+      userId,
+      sessionId,
+      role: "ai",
+      content: cleanReply,
+      clientSubmissionId,
+      turnContractVersion: 1,
+      turnOutcome: turnResult.outcome,
+      turnCards: turnResult.cards,
+      actionGroupId: turnResult.groupId,
+      actionIds: turnResult.actionIds,
+    });
 
     // Update session
     if (sessionId) {
@@ -2198,7 +1868,19 @@ Rules:
       }
     }
 
-    return { reply: cleanReply, loggedItem, memoryApprovals, failedItems, coachType: detectedCoach, clarification, confirmation, restricted: restrictedGuidance };
+    return {
+      reply: cleanReply,
+      loggedItem,
+      memoryApprovals,
+      failedItems,
+      coachType: detectedCoach,
+      clarification,
+      confirmation,
+      restricted: restrictedGuidance,
+      outcome: turnResult.outcome,
+      cards: turnResult.cards,
+      messageId,
+    };
   },
 });
 
@@ -2778,6 +2460,24 @@ const EXTRACTION_HISTORY_TURNS = 12;
 
 type HomepageHistoryEntry = { role: string; content: string };
 type HomepageHistoryMessage = { role: "user" | "assistant"; content: string };
+type StructuredLogItem = {
+  type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps";
+  description: string;
+  date: string;
+  dateUnresolved?: boolean;
+  question?: string;
+  confidence?: number;
+  validation?: { status: "valid" | "warning" | "error"; messages: string[] };
+};
+type StructuredExtraction = {
+  isQuestion: boolean;
+  items: StructuredLogItem[];
+  failure?: {
+    code: "EXTRACTION_FAILED" | "TRUNCATED_RESPONSE";
+    message: string;
+    retriable: boolean;
+  };
+};
 
 export function trimHomepageHistory(history: HomepageHistoryEntry[]): HomepageHistoryMessage[] {
   return history
@@ -2788,6 +2488,163 @@ export function trimHomepageHistory(history: HomepageHistoryEntry[]): HomepageHi
       if (role !== "user" && role !== "assistant") return [];
       return [{ role, content: entry.content }];
     });
+}
+
+function validateStructuredExtraction(value: unknown, today: string): { isQuestion: boolean; items: StructuredLogItem[] } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.isQuestion !== "boolean" || !Array.isArray(candidate.items)) return null;
+  const allowedTypes = new Set<StructuredLogItem["type"]>(["meal", "workout", "sleep", "water", "mood", "steps"]);
+  const items: StructuredLogItem[] = [];
+  for (const rawItem of candidate.items) {
+    if (!rawItem || typeof rawItem !== "object" || Array.isArray(rawItem)) return null;
+    const item = rawItem as Record<string, unknown>;
+    if (!allowedTypes.has(item.type as StructuredLogItem["type"])) return null;
+    if (typeof item.description !== "string" || !item.description.trim()) return null;
+    const dateUnresolved = item.date === "UNKNOWN_VAGUE";
+    const date = !dateUnresolved && typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date)
+      ? item.date
+      : today;
+    const question = typeof item.question === "string" && item.question.trim() ? item.question.trim() : undefined;
+    const confidence = typeof item.confidence === "number" && Number.isFinite(item.confidence)
+      ? Math.max(0, Math.min(1, item.confidence))
+      : undefined;
+    const rawValidation = item.validation && typeof item.validation === "object" && !Array.isArray(item.validation)
+      ? item.validation as Record<string, unknown>
+      : undefined;
+    const validationStatus = rawValidation?.status;
+    if (validationStatus !== undefined && validationStatus !== "valid" && validationStatus !== "warning" && validationStatus !== "error") {
+      return null;
+    }
+    const validationMessages = rawValidation?.messages;
+    if (validationMessages !== undefined && (!Array.isArray(validationMessages) || !validationMessages.every((message) => typeof message === "string"))) {
+      return null;
+    }
+    items.push({
+      type: item.type as StructuredLogItem["type"],
+      description: item.description.trim(),
+      date,
+      ...(dateUnresolved ? { dateUnresolved: true } : {}),
+      ...(question ? { question } : {}),
+      ...(confidence !== undefined ? { confidence } : {}),
+      ...(validationStatus ? {
+        validation: {
+          status: validationStatus,
+          messages: (validationMessages as string[] | undefined) ?? [],
+        },
+      } : {}),
+    });
+  }
+  return { isQuestion: candidate.isQuestion, items };
+}
+
+function structuredExtractionPrompt(today: string): string {
+  const yesterday = new Date(new Date(today).getTime() - 86_400_000).toISOString().split("T")[0];
+  const twoDaysAgo = new Date(new Date(today).getTime() - 2 * 86_400_000).toISOString().split("T")[0];
+  return `You are a wellness tracking assistant. Extract ALL loggable items from the user's message.
+
+Today's date is ${today}.
+
+Return ONLY this JSON shape:
+{
+  "isQuestion": boolean,
+  "items": [
+    {
+      "type": "meal" | "workout" | "sleep" | "water" | "mood" | "steps",
+      "description": "the specific user-reported item",
+      "date": "YYYY-MM-DD" | "UNKNOWN_VAGUE",
+      "question": "optional clarification question",
+      "confidence": "optional number from 0 to 1",
+      "validation": {"status":"valid"|"warning"|"error","messages":[]}
+    }
+  ]
+}
+
+Rules:
+- A report of food, drink, exercise, sleep, mood, or steps is not a pure question.
+- Extract every reported item, including reports that also contain a question.
+- Negated activities are not items.
+- A list of exercises in one session is one workout item.
+- Resolve explicit references from recent USER messages only. Never invent placeholders.
+- "yesterday" is ${yesterday}; "2 days ago" is ${twoDaysAgo}.
+- "last night" sleep uses ${today}; other "last night" reports use ${yesterday}.
+- Missing dates use ${today}.
+- Vague dates that cannot be resolved use "UNKNOWN_VAGUE" and include a question.
+- Pure advice/conversation returns {"isQuestion":true,"items":[]}.`;
+}
+
+async function extractStructuredLogItems(input: {
+  ctx: ActionCtx;
+  userId: string;
+  message: string;
+  image?: string;
+  today: string;
+  history: HomepageHistoryMessage[];
+  model?: string;
+  visionModel: string;
+  apiKey?: string;
+}): Promise<StructuredExtraction> {
+  const {
+    ctx, userId, message, image, today, history, model, visionModel, apiKey,
+  } = input;
+  const estimateMode = looksLikeFoodEstimate(message);
+  const homepageIntent = classifyHomepageIntent(message);
+  const heuristicSaysLog = !!image || homepageIntent === "log_report" || looksLikeLog(message) || estimateMode;
+  const prompt = structuredExtractionPrompt(today);
+  const messages: AIMessage[] = [
+    { role: "system", content: prompt },
+    ...history,
+    image
+      ? { role: "user", content: [{ type: "text", text: message || "What do you see?" }, { type: "image_url", image_url: { url: image } }] }
+      : { role: "user", content: message },
+  ];
+  const selectedModel = image ? visionModel : model;
+
+  let firstError: unknown;
+  let parsed: { isQuestion: boolean; items: StructuredLogItem[] } | null = null;
+  try {
+    const raw = await callAI(ctx, userId, messages, EXTRACTION_MAX_TOKENS, selectedModel, apiKey);
+    parsed = validateStructuredExtraction(parseJSON<unknown>(raw, null), today);
+  } catch (error) {
+    firstError = error;
+  }
+
+  const suspicious = !parsed || (heuristicSaysLog && (parsed.isQuestion || parsed.items.length === 0));
+  if (suspicious) {
+    try {
+      const raw = await callAI(ctx, userId, [
+        { role: "system", content: `${prompt}\n\nRETRY: Return complete valid JSON. The current message ${heuristicSaysLog ? "is a log report; do not omit its items" : "must be re-evaluated without inventing items"}.` },
+        ...history,
+        image
+          ? { role: "user", content: [{ type: "text", text: message || "What do you see?" }, { type: "image_url", image_url: { url: image } }] }
+          : { role: "user", content: message },
+      ], EXTRACTION_MAX_TOKENS, selectedModel, apiKey);
+      const retried = validateStructuredExtraction(parseJSON<unknown>(raw, null), today);
+      if (retried) parsed = retried;
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+
+  if (!parsed || (heuristicSaysLog && (parsed.isQuestion || parsed.items.length === 0))) {
+    if (!heuristicSaysLog && parsed) return { ...parsed, items: [] };
+    const messageText = firstError instanceof Error ? firstError.message : "The model did not return a valid structured extraction";
+    const truncated = /finish_reason:\s*(?:length|content_filter)|incomplete response|truncat/i.test(messageText);
+    return {
+      isQuestion: false,
+      items: [],
+      failure: {
+        code: truncated ? "TRUNCATED_RESPONSE" : "EXTRACTION_FAILED",
+        message: messageText,
+        retriable: true,
+      },
+    };
+  }
+
+  return {
+    isQuestion: parsed.isQuestion,
+    items: parsed.items.filter((item) => !isNegatedLogItem(message, item)),
+  };
 }
 
 export function isUnusablePlaceholderMeal(description: string, parsed: {
@@ -2823,14 +2680,804 @@ export function disambiguateCardTitles(titles: string[]): string[] {
   });
 }
 
+async function parseStructuredLogItems(input: {
+  ctx: ActionCtx;
+  userId: string;
+  items: StructuredLogItem[];
+  image?: string;
+  today: string;
+  settingsModel?: string;
+  visionModel: string;
+  apiKey?: string;
+  userMacros: ReturnType<typeof extractUserMacros>;
+}): Promise<{
+  drafts: any[];
+  summaryParts: string[];
+  failedItems: FailedLogItem[];
+}> {
+  const {
+    ctx, userId, items, image, today, settingsModel, visionModel, apiKey, userMacros,
+  } = input;
+  const hasUserMacros = Object.values(userMacros).some((value) => value != null);
+  const withTurnMetadata = (draft: any, item: StructuredLogItem) => ({
+    ...draft,
+    _turnDescription: item.description,
+    _turnDateUnresolved: item.dateUnresolved,
+    _turnQuestion: item.question,
+    _turnConfidence: item.confidence,
+    _turnValidation: item.validation,
+  });
+  const [profile, metabolicProfile, userIngredients] = await Promise.all([
+    ctx.runQuery(internal.profile.getProfileForContext, { userId }),
+    ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
+    ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
+  ]);
+  const userPhysique: UserPhysique | undefined = profile ? {
+    weight: profile.weight,
+    height: profile.height,
+    age: profile.age,
+    sex: profile.sex,
+    fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
+    metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
+  } : undefined;
+  const drafts: any[] = [];
+  const summaryParts: string[] = [];
+  const failedItems: FailedLogItem[] = [];
+
+  for (const item of items) {
+    try {
+      assertMaxChars(item.description, AI_INPUT_LIMITS.textChars, "log item description");
+      if (item.type === "meal") {
+        let description = item.description;
+        if (image && !description.trim()) {
+          description = await callAI(ctx, userId, [{
+            role: "user",
+            content: [{ type: "text", text: "Describe this food briefly." }, { type: "image_url", image_url: { url: image } }],
+          }], 150, visionModel, apiKey);
+        }
+
+        const memoryDraft = await buildMealDraftFromParsed(ctx, {
+          name: description,
+          description,
+          date: item.date,
+          time: new Date().toTimeString().slice(0, 5),
+          mealType: "unspecified",
+        }, { userId, useMemory: true });
+        if (memoryDraft.foodMemoryId) {
+          const draft = {
+            kind: "meal",
+            date: memoryDraft.date,
+            description: memoryDraft.name,
+            name: memoryDraft.name,
+            kcal: memoryDraft.calories,
+            protein: Math.round(memoryDraft.protein),
+            carbs: Math.round(memoryDraft.carbs),
+            fat: Math.round(memoryDraft.fat),
+            items: memoryDraft.ingredients.map((ingredient) => ingredient.foodText),
+            components: memoryDraft.ingredients.map((ingredient) => ingredient.foodText).join(", "),
+            mealType: memoryDraft.mealType,
+            time: memoryDraft.time,
+            confidence: memoryDraft.confidence,
+            nutritionSource: memoryDraft.nutritionSource,
+            autoApplied: false,
+            memoryNote: `Using your usual ${memoryDraft.name}`,
+            foodMemoryId: memoryDraft.foodMemoryId,
+            ingredientBreakdown: memoryDraft,
+          };
+          drafts.push(withTurnMetadata(draft, item));
+          summaryParts.push(`${memoryDraft.name} (~${draft.kcal} kcal, from memory)`);
+          continue;
+        }
+
+        const parsed = await parseMealDescription(description, "unspecified", "", ctx, userId, settingsModel, apiKey, userIngredients as any[]);
+        if (isUnusablePlaceholderMeal(description, parsed)) {
+          failedItems.push({
+            kind: "meal",
+            code: "PARSE_FAILED",
+            description,
+            reason: parsed.parseError || "The meal description did not contain usable food details",
+          });
+          continue;
+        }
+        const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(
+          ctx,
+          { ...parsed, date: item.date, description },
+          { userId, useMemory: true },
+        ));
+        const canonicalDraft = nutrition.ingredientBreakdown as MealDraft;
+        const baseDraft = {
+          kind: "meal",
+          date: item.date,
+          description: parsed.name || description,
+          name: parsed.name,
+          kcal: nutrition.calories,
+          protein: Math.round(nutrition.protein),
+          carbs: Math.round(nutrition.carbs),
+          fat: Math.round(nutrition.fat),
+          items: canonicalDraft.ingredients.map((ingredient) => ingredient.foodText),
+          components: parsed.components,
+          mealType: parsed.mealType ?? "unspecified",
+          time: parsed.time,
+          aiSuggestion: parsed.aiSuggestion,
+          confidence: nutrition.confidence,
+          nutritionSource: nutrition.nutritionSource,
+          ingredientBreakdown: canonicalDraft,
+          reportedCalories: nutrition.reportedCalories,
+          estimatedCalories: nutrition.estimatedCalories,
+          calorieSource: nutrition.calorieSource,
+          parseError: parsed.parseError,
+        };
+        const macroDecision = hasUserMacros
+          ? applyUserMacros(baseDraft, userMacros)
+          : { draft: baseDraft, conflict: false, reason: "" };
+        drafts.push(withTurnMetadata(macroDecision.draft, item));
+        summaryParts.push(`${parsed.name || "Meal"} (~${macroDecision.draft.kcal} kcal)`);
+      } else if (item.type === "workout") {
+        const parsed = await parseWorkoutDescription(item.description, ctx, userId, undefined, undefined, settingsModel, apiKey, userPhysique);
+        if (parsed.parseError) {
+          failedItems.push({
+            kind: "workout",
+            code: "PARSE_FAILED",
+            description: item.description,
+            reason: parsed.parseError,
+          });
+          continue;
+        }
+        const statedKcal = extractStatedWorkoutCalories(item.description);
+        const finalKcal = statedKcal ?? parsed.caloriesBurned ?? 0;
+        drafts.push(withTurnMetadata({
+          kind: "workout",
+          date: item.date,
+          description: parsed.name,
+          name: parsed.name,
+          type: parsed.name,
+          duration: parseDurationMinutes(parsed.duration ?? "30 min") || 30,
+          kcal: finalKcal,
+          reportedCalories: statedKcal,
+          estimatedCalories: statedKcal == null ? parsed.calorieResult?.total_kcal : undefined,
+          calorieSource: statedKcal != null ? "reported" : parsed.calorieResult?.total_kcal != null ? "estimated" : undefined,
+          intensity: parsed.intensity?.toLowerCase() === "high"
+            ? "high"
+            : parsed.intensity?.toLowerCase() === "low"
+              ? "light"
+              : "medium",
+          sets: parsed.sets,
+          rationale: parsed.rationale,
+          exercises: parsed.exercises,
+          calorieResult: parsed.calorieResult,
+          parseError: parsed.parseError,
+          confidence: parsed.calorieResult?.confidence,
+          time: new Date().toTimeString().slice(0, 5),
+        }, item));
+        const range = statedKcal != null
+          ? `~${statedKcal} kcal burned`
+          : parsed.calorieResult
+            ? `~${parsed.calorieResult.range_low}-${parsed.calorieResult.range_high} kcal, rough`
+            : `~${finalKcal} kcal burned`;
+        summaryParts.push(`${parsed.name} (${range})`);
+      } else if (item.type === "sleep") {
+        const raw = await callAI(ctx, userId, [{
+          role: "user",
+          content: `Extract sleep data from: "${item.description}"
+Return ONLY JSON: {"hours": number, "quality": "poor"|"ok"|"good"|"great"}.`,
+        }], 80, settingsModel, apiKey);
+        const data = parseJSON<{ hours?: number; band?: string; quality?: string }>(raw, {});
+        const hours = typeof data.hours === "number" && Number.isFinite(data.hours) ? data.hours : undefined;
+        const band = ["under_6", "six_to_eight", "eight_plus"].includes(data.band ?? "") ? data.band : undefined;
+        const quality = ["poor", "ok", "good", "great"].includes(data.quality ?? "") ? data.quality : undefined;
+        const draft = buildRecoveryDraft({ kind: "sleep", date: item.date ?? today, hours, band, quality, source: "ai_extracted" });
+        drafts.push(withTurnMetadata({ ...recoveryPayloadFromDraft(draft), description: item.description }, item));
+        summaryParts.push(hours != null ? `Sleep: ${hours.toFixed(1)}h${quality ? ` (${quality})` : ""}` : band ? `Sleep: ${band}` : "Sleep: value needed");
+      } else if (item.type === "water") {
+        const raw = await callAI(ctx, userId, [{
+          role: "user",
+          content: `Extract water amount in ml from: "${item.description}"
+Common conversions: 1 glass = 250ml, 1L = 1000ml, 1 bottle = 500ml.
+Return ONLY a number (ml).`,
+        }], 20, settingsModel, apiKey);
+        const parsedMl = parseInt(raw.replace(/[^0-9]/g, ""), 10);
+        const ml = Number.isFinite(parsedMl) ? parsedMl : undefined;
+        const draft = buildRecoveryDraft({ kind: "water", date: item.date ?? today, ml, source: "ai_extracted" });
+        drafts.push(withTurnMetadata({ ...recoveryPayloadFromDraft(draft), description: item.description }, item));
+        summaryParts.push(ml != null ? `Water: ${ml >= 1000 ? `${(ml / 1000).toFixed(1)}L` : `${ml}ml`}` : "Water: value needed");
+      } else if (item.type === "mood") {
+        const raw = await callAI(ctx, userId, [{
+          role: "user",
+          content: `Extract mood rating 1-5 from: "${item.description}"
+1=very bad, 2=bad, 3=ok, 4=good, 5=great. Return ONLY a number 1-5.`,
+        }], 10, settingsModel, apiKey);
+        const parsedRating = parseInt(raw.replace(/[^0-9]/g, ""), 10);
+        const rating = Number.isFinite(parsedRating) ? parsedRating : undefined;
+        const draft = buildRecoveryDraft({ kind: "mood", date: item.date ?? today, rating, source: "ai_extracted" });
+        drafts.push(withTurnMetadata({ ...recoveryPayloadFromDraft(draft), description: item.description }, item));
+        summaryParts.push(rating != null ? `Mood: ${rating}/5` : "Mood: value needed");
+      } else {
+        const raw = await callAI(ctx, userId, [{
+          role: "user",
+          content: `Extract step count from: "${item.description}". Return ONLY a number.`,
+        }], 15, settingsModel, apiKey);
+        const parsedCount = parseInt(raw.replace(/[^0-9]/g, ""), 10);
+        const count = Number.isFinite(parsedCount) ? parsedCount : undefined;
+        const draft = buildRecoveryDraft({ kind: "steps", date: item.date ?? today, count, source: "ai_extracted" });
+        drafts.push(withTurnMetadata({ ...recoveryPayloadFromDraft(draft), description: item.description }, item));
+        summaryParts.push(count != null ? `Steps: ${count.toLocaleString()}` : "Steps: value needed");
+      }
+    } catch (error) {
+      failedItems.push({
+        kind: item.type,
+        code: "PARSE_FAILED",
+        description: item.description,
+        reason: getConvexErrorMessage(error) ?? (error instanceof Error ? error.message : String(error)),
+      });
+    }
+  }
+
+  return { drafts, summaryParts, failedItems };
+}
+
+type TurnCandidate = {
+  actionType: "meal" | "workout" | "recovery";
+  description: string;
+  payload: any;
+  confidence?: number;
+  resolvedDate?: string;
+  resolvedTime?: string;
+  provenance: "user_reported" | "ai_extracted" | "ai_estimated" | "database_match";
+  validation: { status: "valid" | "warning" | "error"; messages: string[] };
+  reason?: string;
+  ordinal: number;
+};
+
+function turnCandidateFromDraft(draft: any, ordinal: number): TurnCandidate {
+  if (draft.kind === "meal") {
+    const canonicalDraft = draft.ingredientBreakdown as MealDraft;
+    const messages = [
+      ...(canonicalDraft?.unresolved ?? []).map((name) => `Ambiguous food: ${name}`),
+      ...(draft.parseError ? [String(draft.parseError)] : []),
+      ...(draft._turnValidation?.messages ?? []),
+    ];
+    const validation = {
+      status: draft._turnValidation?.status === "error"
+        ? "error" as const
+        : messages.length > 0 || draft._turnValidation?.status === "warning"
+          ? "warning" as const
+          : "valid" as const,
+      messages,
+    };
+    const confidence = typeof draft._turnConfidence === "number"
+      ? draft._turnConfidence
+      : typeof draft.confidence === "number"
+        ? draft.confidence
+        : canonicalDraft?.confidence;
+    return {
+      actionType: "meal",
+      description: String(draft._turnDescription ?? draft.description ?? draft.name ?? "Meal"),
+      payload: mealPayloadFromDraft(canonicalDraft, {
+        aiSuggestion: draft.aiSuggestion,
+        mealType: draft.mealType,
+        components: draft.components,
+        logSource: "chat",
+      }),
+      confidence,
+      resolvedDate: draft.date,
+      resolvedTime: draft.time,
+      provenance: draft.nutritionSource === "database" || draft.nutritionSource === "memory"
+        ? "database_match"
+        : "ai_extracted",
+      validation,
+      reason: draft._turnDateUnresolved
+        ? draft._turnQuestion ?? "Which exact date should I use?"
+        : validation.status !== "valid"
+        ? "The meal needs confirmation before saving"
+        : isConfidenceLow(confidence)
+          ? `Confidence (${confidence!.toFixed(2)}) is below the auto-write threshold`
+          : undefined,
+      ordinal,
+    };
+  }
+
+  if (draft.kind === "workout") {
+    const reportedCalories = typeof draft.reportedCalories === "number"
+      ? draft.reportedCalories
+      : draft.calorieSource === "reported" && typeof draft.kcal === "number"
+        ? draft.kcal
+        : undefined;
+    const estimatedCalories = typeof draft.estimatedCalories === "number"
+      ? draft.estimatedCalories
+      : reportedCalories == null && typeof draft.kcal === "number" && draft.kcal > 0
+        ? draft.kcal
+        : undefined;
+    const time = typeof draft.time === "string" ? draft.time : new Date().toTimeString().slice(0, 5);
+    const validationMessages = [
+      ...(draft.parseError ? [String(draft.parseError)] : []),
+      ...(draft._turnValidation?.messages ?? []),
+    ];
+    const validation = {
+      status: draft._turnValidation?.status === "error"
+        ? "error" as const
+        : validationMessages.length > 0 || draft._turnValidation?.status === "warning"
+          ? "warning" as const
+          : "valid" as const,
+      messages: validationMessages,
+    };
+    const confidence = typeof draft._turnConfidence === "number"
+      ? draft._turnConfidence
+      : typeof draft.confidence === "number"
+        ? draft.confidence
+        : draft.calorieResult?.confidence;
+    return {
+      actionType: "workout",
+      description: String(draft._turnDescription ?? draft.description ?? draft.name ?? "Workout"),
+      payload: {
+        name: String(draft.description ?? draft.name ?? "Workout"),
+        sets: String(draft.sets ?? "1"),
+        duration: String(draft.duration ?? ""),
+        intensity: String(draft.intensity ?? "MEDIUM").toUpperCase(),
+        date: draft.date,
+        timestamp: time,
+        exercises: draft.exercises,
+        rationale: draft.rationale,
+        caloriesBurned: typeof draft.kcal === "number" && draft.kcal > 0 ? draft.kcal : undefined,
+        reportedCalories,
+        estimatedCalories,
+        calorieSource: reportedCalories != null ? "reported" : estimatedCalories != null ? "estimated" : undefined,
+        calorieConfidence: draft.calorieResult?.confidence,
+        calorieRangeLow: draft.calorieResult?.range_low,
+        calorieRangeHigh: draft.calorieResult?.range_high,
+        calorieEstimateRough: draft.calorieResult?.rough,
+        calorieBreakdown: draft.calorieResult?.breakdown ? JSON.stringify(draft.calorieResult.breakdown) : undefined,
+        calculationVersion: draft.calorieResult ? 1 : undefined,
+        structuredSets: draft.exercises ? JSON.stringify(draft.exercises) : undefined,
+        logSource: "chat",
+      },
+      confidence,
+      resolvedDate: draft.date,
+      resolvedTime: time,
+      provenance: reportedCalories != null ? "user_reported" : "ai_extracted",
+      validation,
+      reason: draft._turnDateUnresolved
+        ? draft._turnQuestion ?? "Which exact date should I use?"
+        : validation.status !== "valid"
+        ? "Please confirm the workout details before saving"
+        : isConfidenceLow(confidence)
+          ? `Confidence (${confidence!.toFixed(2)}) is below the auto-write threshold`
+          : undefined,
+      ordinal,
+    };
+  }
+
+  const recoveryDraft = buildRecoveryDraft({ ...draft, source: "ai_extracted" });
+  const payload = recoveryPayloadFromDraft(recoveryDraft);
+  const validationMessages = [
+    ...recoveryDraft.unresolved.map((field) => `${field} needs clarification`),
+    ...(draft._turnValidation?.messages ?? []),
+  ];
+  const validation = {
+    status: draft._turnValidation?.status === "error"
+      ? "error" as const
+      : validationMessages.length > 0 || draft._turnValidation?.status === "warning"
+        ? "warning" as const
+        : "valid" as const,
+    messages: validationMessages,
+  };
+  return {
+    actionType: "recovery",
+    description: String(draft._turnDescription ?? draft.description ?? `${draft.kind} entry`),
+    payload,
+    confidence: typeof draft._turnConfidence === "number" ? draft._turnConfidence : recoveryDraft.confidence,
+    resolvedDate: recoveryDraft.date,
+    resolvedTime: recoveryDraft.time,
+    provenance: "ai_extracted",
+    validation,
+    reason: draft._turnDateUnresolved
+      ? draft._turnQuestion ?? "Which exact date should I use?"
+      : validation.status !== "valid"
+        ? "Please clarify the missing details before saving"
+        : undefined,
+    ordinal,
+  };
+}
+
+type TurnPolicyResult = {
+  outcome: ChatTurnOutcome;
+  cards: ChatTurnCard[];
+  groupId?: Id<"actionGroups">;
+  actionIds: Id<"actions">[];
+  loggedItems: any[];
+  memoryApprovals: any[];
+  confirmation?: {
+    groupId: string;
+    items: Array<{
+      actionType: string;
+      description: string;
+      resolvedDate?: string;
+      confidence?: number;
+      provenance: string;
+      validation: { status: "valid" | "warning" | "error"; messages: string[] };
+      ordinal: number;
+    }>;
+  };
+  clarification?: { groupId: string; items: any[]; question: string };
+};
+
+function turnMember(
+  groupKey: string,
+  candidate: TurnCandidate,
+) {
+  return {
+    ...markerMember(
+      groupKey,
+      candidate.actionType,
+      candidate.payload,
+      candidate.ordinal,
+      candidate.confidence,
+      candidate.validation,
+      candidate.resolvedDate,
+    ),
+    resolvedTime: candidate.resolvedTime,
+  };
+}
+
+async function executeTurnPolicy(input: {
+  ctx: ActionCtx;
+  userId: string;
+  rawInput: string;
+  clientSubmissionId?: string;
+  today: string;
+  model?: string;
+  candidates: TurnCandidate[];
+  parseFailures: FailedLogItem[];
+  turnFailure?: StructuredExtraction["failure"];
+  forceConfirmation: boolean;
+}): Promise<TurnPolicyResult> {
+  const {
+    ctx, userId, rawInput, clientSubmissionId, today, model, candidates, parseFailures, turnFailure, forceConfirmation,
+  } = input;
+  const groupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput, clientSubmissionId });
+  const groupInput = {
+    userId,
+    groupIdempotencyKey: groupKey,
+    clientSubmissionId,
+    sourceSurface: "chat" as const,
+    rawInput,
+    model,
+    clientLocalDate: today,
+  };
+  const loggedItems: any[] = [];
+  const memoryApprovals: any[] = [];
+  const writeErrors = new Map<number, { message: string; code?: string }>();
+
+  let groupId: Id<"actionGroups"> | undefined;
+  if (candidates.length > 0) {
+    const staged: { groupId: Id<"actionGroups"> } = await ctx.runMutation(internal.ai.stageClarificationGroup, {
+      userId,
+      groupIdempotencyKey: groupKey,
+      sourceSurface: "chat",
+      rawInput,
+      model,
+      clientLocalDate: today,
+      createdAt: Date.now(),
+      members: candidates.map((candidate) => ({
+        ...turnMember(groupKey, candidate),
+        actionType: candidate.actionType,
+        ordinal: candidate.ordinal,
+      })),
+    });
+    groupId = staged.groupId;
+  } else if (parseFailures.length > 0 || turnFailure) {
+    const failedGroup: { groupId: Id<"actionGroups"> } = await ctx.runMutation(internal.ai.recordFailedTurnGroup, {
+      userId,
+      groupIdempotencyKey: groupKey,
+      rawInput,
+      model,
+      clientLocalDate: today,
+      createdAt: Date.now(),
+    });
+    groupId = failedGroup.groupId;
+  }
+
+  const confirmAll = forceConfirmation || candidates.length > AUTO_WRITE_MAX_ACTIONS;
+  if (groupId && !confirmAll) {
+    for (const candidate of candidates.filter((item) => !item.reason)) {
+      const member = turnMember(groupKey, candidate);
+      try {
+        let rowId: string;
+        let previous: unknown;
+        if (candidate.actionType === "meal") {
+          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: groupInput, member }));
+        } else if (candidate.actionType === "workout") {
+          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: groupInput, member }));
+        } else {
+          const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: groupInput, member });
+          rowId = String(result?.id ?? result);
+          previous = result?.previous;
+        }
+        const table = candidate.actionType === "meal"
+          ? "meals"
+          : candidate.actionType === "workout"
+            ? "workouts"
+            : `${candidate.payload.kind}_logs`;
+        const actionMetadata = await committedActionMetadata(ctx, userId, table, rowId);
+        const type = candidate.actionType === "recovery" ? candidate.payload.kind : candidate.actionType;
+        loggedItems.push({
+          type,
+          data: {
+            _id: rowId,
+            ...candidate.payload,
+            previous,
+            provenance: candidate.provenance,
+            confidence: candidate.confidence,
+            validation: candidate.validation,
+            ...actionMetadata,
+          },
+        });
+        if (actionMetadata.actionId) {
+          memoryApprovals.push(...await pendingMemoryApprovalsForAction(ctx, userId, actionMetadata.actionId));
+        }
+      } catch (error) {
+        const message = getConvexErrorMessage(error) ?? (error instanceof Error ? error.message : String(error));
+        const code = getConvexErrorCode(error);
+        writeErrors.set(candidate.ordinal, { message, code });
+        const members: any[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId });
+        const action = members.find((item) => confirmationOrdinal(item) === candidate.ordinal);
+        if (action) {
+          await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, { actionId: action._id, error: message });
+        }
+      }
+    }
+    await finalizeActionGroup(ctx, String(groupId));
+  }
+
+  const actions: Doc<"actions">[] = groupId
+    ? await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId })
+    : [];
+  const actionsByOrdinal = new Map(actions.map((action) => [confirmationOrdinal(action), action]));
+  const actionIds = actions.map((action) => action._id);
+  const committedItems = candidates.flatMap((candidate) => {
+    const action = actionsByOrdinal.get(candidate.ordinal);
+    if (!action || action.status !== "committed" || !action.committedRowRef) return [];
+    return [{
+      ordinal: candidate.ordinal,
+      actionType: candidate.actionType,
+      title: candidate.description,
+      description: candidate.description,
+      date: candidate.resolvedDate,
+      time: candidate.resolvedTime,
+      status: "committed" as const,
+      actionId: String(action._id),
+      record: action.committedRowRef,
+    }];
+  });
+  const failedResultItems = [
+    ...candidates.flatMap((candidate) => {
+      const action = actionsByOrdinal.get(candidate.ordinal);
+      const error = writeErrors.get(candidate.ordinal);
+      if (!error && action?.status !== "failed") return [];
+      return [{
+        ordinal: candidate.ordinal,
+        actionType: candidate.actionType,
+        title: candidate.description,
+        description: candidate.description,
+        date: candidate.resolvedDate,
+        time: candidate.resolvedTime,
+        status: "failed" as const,
+        ...(action ? { actionId: String(action._id) } : {}),
+        reason: error?.message ?? action?.validation.messages.at(-1) ?? "The item could not be saved",
+        retriable: true,
+      }];
+    }),
+    ...parseFailures.map((failure, index) => ({
+      ordinal: candidates.length + index,
+      actionType: failure.kind === "meal" || failure.kind === "workout" ? failure.kind : "recovery" as const,
+      title: failure.description,
+      description: failure.description,
+      status: "failed" as const,
+      reason: "reason" in failure ? failure.reason : failure.code,
+      retriable: true,
+    })),
+  ];
+  const pendingCandidates = candidates.filter((candidate) => {
+    const action = actionsByOrdinal.get(candidate.ordinal);
+    return action?.status === "pending";
+  });
+  const cards: ChatTurnCard[] = [];
+  let confirmation: TurnPolicyResult["confirmation"];
+  let clarification: TurnPolicyResult["clarification"];
+
+  if (groupId && pendingCandidates.length > 0) {
+    if (confirmAll) {
+      cards.push({
+        version: 1,
+        kind: "confirmation",
+        data: {
+          groupId: String(groupId),
+          expiresAt: Date.now() + CONFIRMATION_TTL_MS,
+          items: pendingCandidates.map((candidate) => ({
+            ordinal: candidate.ordinal,
+            actionType: candidate.actionType,
+            title: candidate.description,
+            description: candidate.description,
+            date: candidate.resolvedDate,
+            time: candidate.resolvedTime,
+            actionId: String(actionsByOrdinal.get(candidate.ordinal)!._id),
+            confidence: candidate.confidence,
+            validationMessages: candidate.validation.messages,
+          })),
+        },
+      });
+      confirmation = {
+        groupId: String(groupId),
+        items: pendingCandidates.map((candidate) => ({
+          actionType: candidate.actionType,
+          description: candidate.description,
+          resolvedDate: candidate.resolvedDate,
+          confidence: candidate.confidence,
+          provenance: candidate.provenance,
+          validation: candidate.validation,
+          ordinal: candidate.ordinal,
+        })),
+      };
+    } else {
+      const prompt = [...new Set(pendingCandidates.map((candidate) => candidate.reason).filter(Boolean))].join(" ")
+        || "Please confirm or clarify the highlighted details so I can save them.";
+      cards.push({
+        version: 1,
+        kind: "clarification",
+        data: {
+          groupId: String(groupId),
+          prompt,
+          items: pendingCandidates.map((candidate) => ({
+            ordinal: candidate.ordinal,
+            actionType: candidate.actionType,
+            title: candidate.description,
+            description: candidate.description,
+            date: candidate.resolvedDate,
+            time: candidate.resolvedTime,
+            actionId: String(actionsByOrdinal.get(candidate.ordinal)!._id),
+            reason: candidate.reason ?? "Confirmation is required",
+          })),
+        },
+      });
+      clarification = {
+        groupId: String(groupId),
+        items: pendingCandidates.map((candidate) => ({
+          actionType: candidate.actionType,
+          description: candidate.description,
+          reason: candidate.reason ?? "Confirmation is required",
+          resolvedDate: candidate.resolvedDate,
+          confidence: candidate.confidence,
+        })),
+        question: prompt,
+      };
+    }
+  }
+
+  const duplicateItems = candidates.flatMap((candidate) => {
+    const error = writeErrors.get(candidate.ordinal);
+    const action = actionsByOrdinal.get(candidate.ordinal);
+    if (error?.code !== "NEAR_DUPLICATE" || !action) return [];
+    return [{
+      ordinal: candidate.ordinal,
+      actionType: candidate.actionType,
+      title: candidate.description,
+      description: candidate.description,
+      date: candidate.resolvedDate,
+      time: candidate.resolvedTime,
+      actionId: String(action._id),
+      reason: error.message,
+    }];
+  });
+  if (groupId && duplicateItems.length > 0) {
+    cards.push({ version: 1, kind: "duplicate", data: { groupId: String(groupId), items: duplicateItems } });
+  }
+  if (groupId && committedItems.length > 0) {
+    cards.push({
+      version: 1,
+      kind: "result",
+      data: { groupId: String(groupId), items: [...committedItems, ...failedResultItems] },
+    });
+  } else if (failedResultItems.length > 0) {
+    cards.push({
+      version: 1,
+      kind: "failure",
+      data: {
+        ...(groupId ? { groupId: String(groupId) } : {}),
+        code: "TURN_FAILED",
+        message: "No items were saved.",
+        retriable: true,
+        items: failedResultItems.map(({ status: _status, retriable: _retriable, ...item }) => item),
+      },
+    });
+  }
+  if (turnFailure) {
+    cards.push({
+      version: 1,
+      kind: "failure",
+      data: {
+        ...(groupId ? { groupId: String(groupId) } : {}),
+        code: turnFailure.code,
+        message: turnFailure.message,
+        retriable: turnFailure.retriable,
+        items: [],
+      },
+    });
+  }
+  if (groupId && committedItems.length > 0) {
+    cards.push({
+      version: 1,
+      kind: "undo",
+      data: {
+        groupId: String(groupId),
+        items: committedItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
+      },
+    });
+  }
+
+  const outcome: ChatTurnOutcome = pendingCandidates.length > 0
+    ? "confirmation_required"
+    : committedItems.length > 0
+      ? "committed"
+      : failedResultItems.length > 0 || turnFailure
+        ? "failed"
+        : "no_action";
+  return {
+    outcome,
+    cards,
+    groupId,
+    actionIds,
+    loggedItems,
+    memoryApprovals,
+    confirmation,
+    clarification,
+  };
+}
+
+function sanitizeConversationalReply(reply: string): string {
+  return reply
+    .split(/(?<=[.!?])\s+|\n+/)
+    .filter((sentence) => !(
+      /\b(?:i(?:'ve|\s+have)?\s+)?(?:logged|saved|recorded|added)\b/i.test(sentence)
+      || /\b(?:done|all set|taken care of)\b/i.test(sentence)
+      || /\b(?:in|into)\s+(?:your|the)\s+(?:diary|log|tracker|records?)\b/i.test(sentence)
+      || /\b(?:put|got|entered)\s+(?:it|that|this|those|them)?\s*(?:in|into|down)\b/i.test(sentence)
+      || /\bupdated\s+(?:your|the)\s+(?:diary|log|tracker|records?)\b/i.test(sentence)
+    ))
+    .join(" ")
+    .trim();
+}
+
+function turnOutcomeText(result: TurnPolicyResult): string {
+  const resultCard = result.cards.find((card) => card.kind === "result");
+  const committed = resultCard?.kind === "result"
+    ? resultCard.data.items.filter((item) => item.status === "committed")
+    : [];
+  const failed = resultCard?.kind === "result"
+    ? resultCard.data.items.filter((item) => item.status === "failed")
+    : [];
+  if (result.outcome === "confirmation_required") {
+    return result.confirmation
+      ? `I found ${result.confirmation.items.length} item${result.confirmation.items.length === 1 ? "" : "s"}. Review before saving.`
+      : result.clarification?.question ?? "Please confirm the details before I save this.";
+  }
+  if (result.outcome === "committed") {
+    const savedText = `Saved ${committed.map((item) => item.title).join(", ")}.`;
+    return failed.length > 0
+      ? `${savedText} I couldn't save ${failed.map((item) => item.title).join(", ")}.`
+      : savedText;
+  }
+  if (result.outcome === "failed") return "I couldn't save that. Please try again.";
+  return "";
+}
+
 export const homepageInput = action({
   args: {
     message: v.string(),
     image: v.optional(v.string()),
     today: v.optional(v.string()),
     sessionId: v.optional(v.id("chat_sessions")),
+    clientSubmissionId: v.optional(v.string()),
   },
-  handler: async (ctx, { message, image, today: todayArg, sessionId }): Promise<{
+  handler: async (ctx, { message, image, today: todayArg, sessionId, clientSubmissionId }): Promise<{
     drafts: any[];
     tier1Summary: string;
     tier2Detail: string;
@@ -2842,6 +3489,8 @@ export const homepageInput = action({
     messageId?: string;
     restricted?: boolean;
     failedItems: FailedLogItem[];
+    outcome?: ChatTurnOutcome;
+    cards?: ChatTurnCard[];
   }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
@@ -2867,6 +3516,7 @@ export const homepageInput = action({
       sessionId: activeSessionId,
       role: "user",
       content: message,
+      clientSubmissionId,
     });
 
     // Phase 5: MemoryAgent — fire-and-forget fact extraction (does not block response)
@@ -2890,131 +3540,63 @@ export const homepageInput = action({
     const homepageIntent = classifyHomepageIntent(message);
     const heuristicSaysLog = !!image || homepageIntent === "log_report" || looksLikeLog(message) || estimateMode;
 
-    // Step 1: Extract ALL loggable items from the message in one LLM call.
-    const yesterdayStr = new Date(new Date(today).getTime() - 86400000).toISOString().split("T")[0];
-    const twoDaysAgoStr = new Date(new Date(today).getTime() - 2 * 86400000).toISOString().split("T")[0];
-    const extractSystem = `You are a wellness tracking assistant. Extract ALL loggable items from the user's message.
+    const extraction = await extractStructuredLogItems({
+      ctx,
+      userId,
+      message,
+      image,
+      today,
+      history: trimmedHistory,
+      model: intentModel,
+      visionModel,
+      apiKey,
+    });
+    let extracted = {
+      isQuestion: extraction.isQuestion,
+      items: extraction.items,
+    };
+    const submissionRawInput = image ? `${message}\n[image:${stableHash(image)}]` : message;
 
-Today's date is ${today}.
-
-Return a JSON object:
-{
-  "isQuestion": boolean,
-  "items": [
-    {
-      "type": "meal" | "workout" | "sleep" | "water" | "mood" | "steps",
-      "description": "what the user said about this item (verbatim chunk)",
-      "date": "YYYY-MM-DD"
-    }
-  ]
-}
-
-CRITICAL CLASSIFICATION RULES:
-- "isQuestion" is TRUE only when the user is asking a question, requesting advice, or chatting WITHOUT mentioning anything they did/ate/drank/slept.
-- ANY mention of food/drink consumed, exercise performed, sleep, mood, or steps is a LOG report — set isQuestion=false and add an item.
-- NEGATIONS are NOT logs: "I haven't worked out today", "didn't eat lunch", "no steps yet", "skipped breakfast" → isQuestion=false, items=[].
-- If the user reports activities AND asks a question, set isQuestion=false and still add the items (we'll handle the question separately).
-- "I had X" / "I ate X" / "just had X" / "had X for breakfast" / "X for lunch/dinner/snack" → meal log, isQuestion=false
-- "I drank X" / "X glasses of water" / "Xml of water" / "had Xl of water" → water log, isQuestion=false
-- "Did/ran/walked/biked/lifted X" / "30 min run" / "5km run" / "leg day" → workout log, isQuestion=false
-- A list of exercises (e.g. "declined press: ..., incline press: ..., pec fly: ...") = ONE workout item, not multiple. Combine all into a single workout description.
-- "Slept X" / "went to bed at X" / "woke up at Y" → sleep log, isQuestion=false
-- "Feeling X/Y" / "mood is X" / "X out of 5" → mood log, isQuestion=false
-- "X steps" / "walked X steps" → steps log, isQuestion=false
-- Pure questions ("how am I doing?", "what should I eat?", "explain X") → isQuestion=true, items=[]
-- Food estimate questions ("how many calories is X?", "can I have X?", "would X fit?") → isQuestion=false and add a meal item, but the app may ask before logging.
-- Resolve references such as "log those", "log the meals I mentioned", or "log N meals" from the recent conversation.
-- For referenced meals, copy the specific food details from prior USER messages. Never invent generic items such as "meal", "food", or numbered placeholders.
-- Do not extract items from prior messages unless the current USER message explicitly refers to them.
-- If the referenced details are not present in the conversation, return isQuestion=false with items=[] instead of fabricating descriptions.
-
-Date inference rules:
-- "yesterday" → ${yesterdayStr}
-- "2 days ago" → ${twoDaysAgoStr}
-- "last night" for SLEEP → ${today} (the wake-up day)
-- "last night" for MEAL/WORKOUT → ${yesterdayStr}
-- "this morning", "today", no day mentioned → ${today}
-- For SLEEP entries: the date is the wake-up day, so "slept 6h last night" → ${today}
-
-Examples (assume today=${today}):
-- USER: "I had chicken salad for lunch"
-  → {"isQuestion": false, "items": [{"type": "meal", "description": "chicken salad for lunch", "date": "${today}"}]}
-- USER: "had pizza"
-  → {"isQuestion": false, "items": [{"type": "meal", "description": "pizza", "date": "${today}"}]}
-- USER: "Yesterday I had pizza for dinner"
-  → {"isQuestion": false, "items": [{"type": "meal", "description": "pizza for dinner", "date": "${yesterdayStr}"}]}
-- USER: "Did a 30 min run and drank a litre of water"
-  → {"isQuestion": false, "items": [{"type": "workout", "description": "30 min run", "date": "${today}"},{"type": "water", "description": "1 litre of water", "date": "${today}"}]}
-- USER: "Slept 7h last night"
-  → {"isQuestion": false, "items": [{"type": "sleep", "description": "slept 7h", "date": "${today}"}]}
-- USER: "How am I doing today?"
-  → {"isQuestion": true, "items": []}
-- USER: "I haven't worked out today"
-  → {"isQuestion": false, "items": []}
-- USER: "Can I have 200ml milk, 3 biscuits, and whey? How many calories?"
-  → {"isQuestion": false, "items": [{"type": "meal", "description": "200ml milk, 3 biscuits, and whey", "date": "${today}"}]}
-
-Sleep descriptions like "slept X hours", "went to bed at X", "woke up at Y" are type="sleep", NOT "workout".
-Return ONLY valid JSON, no markdown.`;
-
-    const extractMessages: AIMessage[] = [
-      { role: "system", content: extractSystem },
-      ...trimmedHistory,
-      image
-        ? { role: "user", content: [{ type: "text", text: message || "What do you see?" }, { type: "image_url", image_url: { url: image } }] }
-        : { role: "user", content: message },
-    ];
-
-    // Twelve full-day entries at ~80 output tokens each need ~960 tokens; 1,600
-    // leaves room for longer descriptions, dates, the envelope, and ~50% headroom.
-    const extractRaw = await callAI(ctx, userId, extractMessages, EXTRACTION_MAX_TOKENS, intentModel, apiKey);
-    const extractionFallback = { isQuestion: true, items: [] as { type: string; description: string; date?: string }[] };
-    let extracted = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
-      extractRaw,
-      extractionFallback,
-      { context: "homepage_item_extraction", maxTokens: EXTRACTION_MAX_TOKENS },
-    );
-    const extractionParseFailed = extracted === extractionFallback;
-
-    // Retry malformed output even when heuristics miss a narrative log report.
-    // A valid but suspicious question/empty result still uses the heuristic gate.
-    if (extractionParseFailed || (heuristicSaysLog && (extracted.isQuestion || (extracted.items?.length ?? 0) === 0))) {
-      const retryInstruction = heuristicSaysLog
-        ? "The current user message is a log report. Resolve any references from the conversation and never return generic placeholders."
-        : "The previous response was malformed. Re-evaluate the request, remembering that conversational full-day descriptions can be logs even without explicit logging keywords.";
-      const retryMessages: AIMessage[] = [
-        { role: "system", content: `${extractSystem}\n\nRETRY: Return complete valid JSON. ${retryInstruction}` },
-        ...trimmedHistory,
-        image
-          ? { role: "user", content: [{ type: "text", text: message || "What do you see?" }, { type: "image_url", image_url: { url: image } }] }
-          : { role: "user", content: message },
-      ];
-      const forcedRaw = await callAI(ctx, userId, retryMessages, EXTRACTION_MAX_TOKENS, intentModel, apiKey).catch((error: unknown) => {
-        console.warn(JSON.stringify({
-          event: "ai_extraction_retry_failed",
-          message: error instanceof Error ? error.message : String(error),
-        }));
-        return "";
+    if (extraction.failure) {
+      const turnResult = await executeTurnPolicy({
+        ctx,
+        userId,
+        rawInput: submissionRawInput,
+        clientSubmissionId,
+        today,
+        model: intentModel,
+        candidates: [],
+        parseFailures: [],
+        turnFailure: extraction.failure,
+        forceConfirmation: false,
       });
-      const forcedFallback = { isQuestion: true, items: [] as { type: string; description: string; date?: string }[] };
-      const forced = parseJSON<{ isQuestion: boolean; items: { type: string; description: string; date?: string }[] }>(
-        forcedRaw,
-        forcedFallback,
-        { context: "homepage_item_extraction_retry", maxTokens: EXTRACTION_MAX_TOKENS },
-      );
-      if (forced.items && forced.items.length > 0) {
-        extracted = { isQuestion: false, items: forced.items };
-      }
-    }
-
-    // Validate date strings — fall back to today if invalid
-    const isValidDate = (d: any) => typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d);
-    const allowedTypes = new Set(["meal", "workout", "sleep", "water", "mood", "steps"]);
-    extracted.items = (extracted.items ?? [])
-      .filter((it) => allowedTypes.has(it.type))
-      .filter((it) => !isNegatedLogItem(message, it));
-    for (const item of extracted.items) {
-      if (!isValidDate(item.date)) item.date = today;
+      const reply = turnOutcomeText(turnResult);
+      const messageId = await ctx.runMutation(internal.chat.addMessage, {
+        userId,
+        sessionId: activeSessionId,
+        role: "ai",
+        content: reply,
+        clientSubmissionId,
+        turnContractVersion: 1,
+        turnOutcome: turnResult.outcome,
+        turnCards: turnResult.cards,
+        actionGroupId: turnResult.groupId,
+        actionIds: turnResult.actionIds,
+      });
+      return {
+        drafts: [],
+        tier1Summary: "",
+        tier2Detail: "",
+        isQuestion: false,
+        reply,
+        coachType: "overall",
+        sessionId: activeSessionId,
+        messageId,
+        restricted: restrictedGuidance,
+        failedItems: [],
+        outcome: turnResult.outcome,
+        cards: turnResult.cards,
+      };
     }
 
     // If it's a question, route to chat coach (with chat history)
@@ -3093,7 +3675,8 @@ Return ONLY valid JSON, no markdown.`;
       ];
       // Upgraded chat reply (CHAT_MODEL) for text; image stays on the vision model.
       // Parsing/extraction elsewhere in this action stays on the cheap settingsModel/DEFAULT.
-      const reply = await callAI(ctx, userId, replyMessages, 250, image ? visionModel : (settingsModel ?? CHAT_MODEL), apiKey);
+      const rawReply = await callAI(ctx, userId, replyMessages, 250, image ? visionModel : (settingsModel ?? CHAT_MODEL), apiKey);
+      const reply = sanitizeConversationalReply(rawReply) || "How can I help with that?";
 
       // Persist AI reply
       const messageId = await ctx.runMutation(internal.chat.addMessage, {
@@ -3101,206 +3684,86 @@ Return ONLY valid JSON, no markdown.`;
         sessionId: activeSessionId,
         role: "ai",
         content: reply,
+        clientSubmissionId,
+        turnContractVersion: 1,
+        turnOutcome: "no_action",
+        turnCards: [],
+        actionIds: [],
       });
 
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType, sessionId: activeSessionId, messageId, restricted: restrictedGuidance, failedItems: [] };
+      return {
+        drafts: [],
+        tier1Summary: "",
+        tier2Detail: "",
+        isQuestion: true,
+        reply,
+        coachType,
+        sessionId: activeSessionId,
+        messageId,
+        restricted: restrictedGuidance,
+        failedItems: [],
+        outcome: "no_action",
+        cards: [],
+      };
     }
 
-    // Step 2: Parse each item in parallel
-    const [profile, metabolicProfile, userIngredients] = await Promise.all([
-      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-      ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
-      ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
-    ]);
-    const userPhysique: UserPhysique | undefined = profile ? {
-      weight: profile.weight, height: profile.height, age: profile.age, sex: profile.sex,
-      fitnessLevel: metabolicProfile?.fitnessLevel ?? "beginner",
-      metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
-    } : undefined;
-
-    const drafts: any[] = [];
-    const summaryParts: string[] = [];
-    const failedItems: FailedLogItem[] = [];
-    let skippedPlaceholderMeals = 0;
-
-    for (const item of extracted.items) {
-      try {
-        assertMaxChars(item.description, AI_INPUT_LIMITS.textChars, "log item description");
-        if (item.type === "meal") {
-          let desc = item.description;
-          if (image && !desc.trim()) {
-            const d = await callAI(ctx, userId, [{ role: "user", content: [{ type: "text", text: "Describe this food briefly." }, { type: "image_url", image_url: { url: image } }] }], 150, visionModel, apiKey);
-            desc = d;
-          }
-
-          // Food memory is resolved through the same canonical draft path as every other meal source.
-          const memoryDraft = await buildMealDraftFromParsed(ctx, {
-            name: desc,
-            description: desc,
-            date: item.date,
-            time: new Date().toTimeString().slice(0, 5),
-            mealType: "unspecified",
-          }, { userId, useMemory: true });
-          if (memoryDraft.foodMemoryId) {
-            const draft = {
-              kind: "meal",
-              date: memoryDraft.date,
-              description: memoryDraft.name,
-              name: memoryDraft.name,
-              kcal: memoryDraft.calories,
-              protein: Math.round(memoryDraft.protein),
-              carbs: Math.round(memoryDraft.carbs),
-              fat: Math.round(memoryDraft.fat),
-              items: memoryDraft.ingredients.map((ingredient) => ingredient.foodText),
-              components: memoryDraft.ingredients.map((ingredient) => ingredient.foodText).join(", "),
-              mealType: memoryDraft.mealType,
-              time: memoryDraft.time,
-              confidence: memoryDraft.confidence,
-              nutritionSource: memoryDraft.nutritionSource,
-              autoApplied: false,
-              memoryNote: `Using your usual ${memoryDraft.name}`,
-              foodMemoryId: memoryDraft.foodMemoryId,
-              ingredientBreakdown: memoryDraft,
-            };
-            drafts.push(draft);
-            summaryParts.push(`${memoryDraft.name} (~${draft.kcal} kcal, from memory)`);
-            continue;
-          }
-          // ── End memory match — fall through to LLM parse ──────────────────
-
-          const parsed = await parseMealDescription(desc, "unspecified", "", ctx, userId, settingsModel, apiKey, userIngredients as any[]);
-          if (isUnusablePlaceholderMeal(desc, parsed)) {
-            skippedPlaceholderMeals += 1;
-            continue;
-          }
-          const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsed, date: item.date, description: desc }, { userId, useMemory: true }));
-          const canonicalDraft = nutrition.ingredientBreakdown as MealDraft;
-          const baseDraft = {
-            kind: "meal",
-            date: item.date,
-            description: parsed.name || desc,
-            name: parsed.name,
-            kcal: nutrition.calories,
-            protein: Math.round(nutrition.protein),
-            carbs: Math.round(nutrition.carbs),
-            fat: Math.round(nutrition.fat),
-            items: canonicalDraft.ingredients.map((ingredient) => ingredient.foodText),
-            components: parsed.components,
-            mealType: parsed.mealType ?? "unspecified",
-            time: parsed.time,
-            aiSuggestion: parsed.aiSuggestion,
-            confidence: nutrition.confidence,
-            nutritionSource: nutrition.nutritionSource,
-            ingredientBreakdown: canonicalDraft,
-            reportedCalories: nutrition.reportedCalories,
-            estimatedCalories: nutrition.estimatedCalories,
-            calorieSource: nutrition.calorieSource,
-            parseError: parsed.parseError,
-          };
-          const macroDecision = hasUserMacros ? applyUserMacros(baseDraft, userMacros) : { draft: baseDraft, conflict: false, reason: "" };
-          drafts.push(macroDecision.draft);
-          summaryParts.push(`${parsed.name || "Meal"} (~${macroDecision.draft.kcal} kcal)`);
-
-        } else if (item.type === "workout") {
-          const parsed = await parseWorkoutDescription(item.description, ctx, userId, undefined, undefined, settingsModel, apiKey, userPhysique);
-          if (parsed.parseError) {
-            summaryParts.push("Workout needs details before it can be logged");
-            continue;
-          }
-          // Extract user-stated calories from description (e.g. "75 kcal burned", "75cal")
-          const statedKcal = extractStatedWorkoutCalories(item.description);
-          const finalKcal = statedKcal ?? parsed.caloriesBurned ?? 0;
-          drafts.push({
-            kind: "workout",
-            date: item.date,
-            description: parsed.name,
-            name: parsed.name,
-            type: parsed.name,
-            duration: parseDurationMinutes(parsed.duration ?? "30 min") || 30,
-            kcal: finalKcal,
-            reportedCalories: statedKcal,
-            estimatedCalories: statedKcal == null ? parsed.calorieResult?.total_kcal : undefined,
-            calorieSource: statedKcal != null ? "reported" : parsed.calorieResult?.total_kcal != null ? "estimated" : undefined,
-            intensity: (parsed.intensity?.toLowerCase() === "high" ? "high" : parsed.intensity?.toLowerCase() === "low" ? "light" : "medium"),
-            sets: parsed.sets,
-            rationale: parsed.rationale,
-            exercises: parsed.exercises,
-            calorieResult: parsed.calorieResult,
-            parseError: parsed.parseError,
-          });
-          const range = statedKcal != null
-            ? `~${statedKcal} kcal burned`
-            : parsed.calorieResult
-            ? `~${parsed.calorieResult.range_low}-${parsed.calorieResult.range_high} kcal, rough`
-            : `~${finalKcal} kcal burned`;
-          summaryParts.push(`${parsed.name} (${range})`);
-
-        } else if (item.type === "sleep") {
-          // Parse sleep: extract hours and quality from description
-          const sleepParsePrompt = `Extract sleep data from: "${item.description}"
-Return JSON: {"hours": number, "quality": "poor"|"ok"|"good"|"great"}
-Examples: "slept 6.5 hours" → {"hours":6.5,"quality":"ok"}, "slept 8h, felt great" → {"hours":8,"quality":"great"}
-If hours can't be determined from a time range, calculate: e.g. "12:30am to 7am" = 6.5 hours.
-Return ONLY JSON.`;
-          const sleepRaw = await callAI(ctx, userId, [{ role: "user", content: sleepParsePrompt }], 80, settingsModel, apiKey);
-          const sleepData = parseJSON<{ hours?: number; band?: string; quality?: string }>(sleepRaw, {});
-          const hours = typeof sleepData.hours === "number" && Number.isFinite(sleepData.hours) ? sleepData.hours : undefined;
-          const band = ["under_6", "six_to_eight", "eight_plus"].includes(sleepData.band ?? "") ? sleepData.band : undefined;
-          const quality = ["poor", "ok", "good", "great"].includes(sleepData.quality ?? "") ? sleepData.quality : undefined;
-          const sleepDraft = buildRecoveryDraft({ kind: "sleep", date: item.date ?? today, hours, band, quality, source: "ai_extracted" });
-          drafts.push({ ...recoveryPayloadFromDraft(sleepDraft), description: item.description });
-          summaryParts.push(hours != null ? `Sleep: ${hours.toFixed(1)}h${quality ? ` (${quality})` : ""}` : band ? `Sleep: ${band}` : "Sleep: value needed");
-
-        } else if (item.type === "water") {
-          // Parse water: extract ml from description
-          const waterParsePrompt = `Extract water amount in ml from: "${item.description}"
-Common conversions: 1 glass = 250ml, 1L = 1000ml, 1 bottle = 500ml.
-Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml" → 500`;
-          const mlRaw = await callAI(ctx, userId, [{ role: "user", content: waterParsePrompt }], 20, settingsModel, apiKey);
-          const parsedMl = parseInt(mlRaw.replace(/[^0-9]/g, ""), 10);
-          const ml = Number.isFinite(parsedMl) ? parsedMl : undefined;
-          const waterDraft = buildRecoveryDraft({ kind: "water", date: item.date ?? today, ml, source: "ai_extracted" });
-          drafts.push({ ...recoveryPayloadFromDraft(waterDraft), description: item.description });
-          summaryParts.push(ml != null ? `Water: ${ml >= 1000 ? (ml / 1000).toFixed(1) + "L" : ml + "ml"}` : "Water: value needed");
-
-        } else if (item.type === "mood") {
-          const moodParsePrompt = `Extract mood rating 1-5 from: "${item.description}"
-1=very bad, 2=bad, 3=ok, 4=good, 5=great. Return ONLY a number 1-5.`;
-          const ratingRaw = await callAI(ctx, userId, [{ role: "user", content: moodParsePrompt }], 10, settingsModel, apiKey);
-          const parsedRating = parseInt(ratingRaw.replace(/[^0-9]/g, ""), 10);
-          const rating = Number.isFinite(parsedRating) ? parsedRating : undefined;
-          const moodDraft = buildRecoveryDraft({ kind: "mood", date: item.date ?? today, rating, source: "ai_extracted" });
-          drafts.push({ ...recoveryPayloadFromDraft(moodDraft), description: item.description });
-          summaryParts.push(rating != null ? `Mood: ${rating}/5` : "Mood: value needed");
-
-        } else if (item.type === "steps") {
-          const stepsParsePrompt = `Extract step count from: "${item.description}". Return ONLY a number.`;
-          const stepsRaw = await callAI(ctx, userId, [{ role: "user", content: stepsParsePrompt }], 15, settingsModel, apiKey);
-          const parsedCount = parseInt(stepsRaw.replace(/[^0-9]/g, ""), 10);
-          const count = Number.isFinite(parsedCount) ? parsedCount : undefined;
-          const stepsDraft = buildRecoveryDraft({ kind: "steps", date: item.date ?? today, count, source: "ai_extracted" });
-          drafts.push({ ...recoveryPayloadFromDraft(stepsDraft), description: item.description });
-          summaryParts.push(count != null ? `Steps: ${count.toLocaleString()}` : "Steps: value needed");
-        }
-      } catch (error) {
-        failedItems.push({
-          kind: item.type as FailedLogItem["kind"],
-          code: "PARSE_FAILED",
-          description: item.description,
-          reason: getConvexErrorMessage(error) ?? (error instanceof Error ? error.message : String(error)),
-        });
-      }
-    }
+    const parsedTurn = await parseStructuredLogItems({
+      ctx,
+      userId,
+      items: extracted.items,
+      image,
+      today,
+      settingsModel,
+      visionModel,
+      apiKey,
+      userMacros,
+    });
+    const { drafts, summaryParts, failedItems } = parsedTurn;
+    const skippedPlaceholderMeals = failedItems.filter((item) => item.kind === "meal").length;
 
     if (drafts.length === 0) {
-      // Fallback to question path
-      const reply = skippedPlaceholderMeals > 0
-        ? `I couldn't catch the details for ${skippedPlaceholderMeals === 1 ? "that meal" : `${skippedPlaceholderMeals} of those meals`}. Could you describe ${skippedPlaceholderMeals === 1 ? "it" : "them"} again?`
-        : "I couldn't parse that. Could you be more specific?";
-      const messageId = await ctx.runMutation(internal.chat.addMessage, {
-        userId, sessionId: activeSessionId, role: "ai", content: reply,
+      const turnResult = await executeTurnPolicy({
+        ctx,
+        userId,
+        rawInput: submissionRawInput,
+        clientSubmissionId,
+        today,
+        model: settingsModel,
+        candidates: [],
+        parseFailures: failedItems,
+        forceConfirmation: false,
       });
-      return { drafts: [], tier1Summary: "", tier2Detail: "", isQuestion: true, reply, coachType: "overall", sessionId: activeSessionId, messageId, restricted: restrictedGuidance, failedItems };
+      const reply = turnResult.outcome === "failed"
+        ? turnOutcomeText(turnResult)
+        : skippedPlaceholderMeals > 0
+          ? `I couldn't catch the details for ${skippedPlaceholderMeals === 1 ? "that meal" : `${skippedPlaceholderMeals} of those meals`}. Could you describe ${skippedPlaceholderMeals === 1 ? "it" : "them"} again?`
+          : "I couldn't parse that. Could you be more specific?";
+      const messageId = await ctx.runMutation(internal.chat.addMessage, {
+        userId,
+        sessionId: activeSessionId,
+        role: "ai",
+        content: reply,
+        clientSubmissionId,
+        turnContractVersion: 1,
+        turnOutcome: turnResult.outcome,
+        turnCards: turnResult.cards,
+        actionGroupId: turnResult.groupId,
+        actionIds: turnResult.actionIds,
+      });
+      return {
+        drafts: [],
+        tier1Summary: "",
+        tier2Detail: "",
+        isQuestion: turnResult.outcome === "no_action",
+        reply,
+        coachType: "overall",
+        sessionId: activeSessionId,
+        messageId,
+        restricted: restrictedGuidance,
+        failedItems,
+        outcome: turnResult.outcome,
+        cards: turnResult.cards,
+      };
     }
 
     // If any draft has a date != today, mention it in the summary
@@ -3309,16 +3772,39 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
     const skippedNote = skippedPlaceholderMeals > 0
       ? ` I couldn't catch the details for ${skippedPlaceholderMeals === 1 ? "1 meal" : `${skippedPlaceholderMeals} meals`}; please describe ${skippedPlaceholderMeals === 1 ? "it" : "them"} again.`
       : "";
-    const tier1Summary = summaryParts.join(" · ") + dateNote + `. Confirm to log.${skippedNote}`;
+    const candidates = drafts.map(turnCandidateFromDraft);
+    const homeAutoCommitEnabled = process.env.HOME_CHAT_AUTO_COMMIT === "true";
+    const turnResult = await executeTurnPolicy({
+      ctx,
+      userId,
+      rawInput: submissionRawInput,
+      clientSubmissionId,
+      today,
+      model: settingsModel,
+      candidates,
+      parseFailures: failedItems,
+      forceConfirmation: !homeAutoCommitEnabled,
+    });
+    const tier1Summary = `${summaryParts.join(" · ")}${dateNote}. ${turnOutcomeText(turnResult)}${skippedNote}`.trim();
 
     // Tier 2: brief analysis of the combined log
-    const tier2Prompt = `Give a brief, encouraging analysis (2-3 sentences) of what the user just logged: ${summaryParts.join(", ")}. Be specific and actionable.`;
-    const tier2Detail = await callAI(ctx, userId, [{ role: "user", content: tier2Prompt }], 150, settingsModel, apiKey).catch(() => "");
+    const tier2Prompt = `Give a brief, encouraging analysis (2-3 sentences) of what the user just reported: ${summaryParts.join(", ")}. Do not claim it was logged or saved. Be specific and actionable.`;
+    const tier2Raw = await callAI(ctx, userId, [{ role: "user", content: tier2Prompt }], 150, settingsModel, apiKey).catch(() => "");
+    const tier2Detail = sanitizeConversationalReply(tier2Raw);
 
     // Persist the assistant's response (tier1 + tier2) so the chat thread stays meaningful
     const persistedReply = tier2Detail ? `${tier1Summary}\n\n${tier2Detail}` : tier1Summary;
     const messageId = await ctx.runMutation(internal.chat.addMessage, {
-      userId, sessionId: activeSessionId, role: "ai", content: persistedReply,
+      userId,
+      sessionId: activeSessionId,
+      role: "ai",
+      content: persistedReply,
+      clientSubmissionId,
+      turnContractVersion: 1,
+      turnOutcome: turnResult.outcome,
+      turnCards: turnResult.cards,
+      actionGroupId: turnResult.groupId,
+      actionIds: turnResult.actionIds,
     });
 
     const actions: any[] = [];
@@ -3369,6 +3855,18 @@ Return ONLY a number (ml). Examples: "1L" → 1000, "2 glasses" → 500, "500ml"
       }
     }
 
-    return { drafts, tier1Summary, tier2Detail, isQuestion: false, actions, sessionId: activeSessionId, messageId, restricted: restrictedGuidance, failedItems };
+    return {
+      drafts,
+      tier1Summary,
+      tier2Detail,
+      isQuestion: false,
+      actions,
+      sessionId: activeSessionId,
+      messageId,
+      restricted: restrictedGuidance,
+      failedItems,
+      outcome: turnResult.outcome,
+      cards: turnResult.cards,
+    };
   },
 });

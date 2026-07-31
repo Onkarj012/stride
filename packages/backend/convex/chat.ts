@@ -1,5 +1,6 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
+import { assertChatTurnCards } from "../../shared/src/chat-turn";
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -87,7 +88,16 @@ export const getMessages = query({
       .collect();
     return messages
       .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.turnContractVersion !== undefined ? { turnContractVersion: m.turnContractVersion } : {}),
+        ...(m.turnOutcome !== undefined ? { turnOutcome: m.turnOutcome } : {}),
+        ...(m.turnCards !== undefined ? { turnCards: m.turnCards } : {}),
+        ...(m.actionGroupId !== undefined ? { actionGroupId: m.actionGroupId } : {}),
+        ...(m.actionIds !== undefined ? { actionIds: m.actionIds } : {}),
+        ...(m.clientSubmissionId !== undefined ? { clientSubmissionId: m.clientSubmissionId } : {}),
+      }));
   },
 });
 
@@ -122,8 +132,10 @@ export const getMessagesForContext = internalQuery({
 });
 
 export const getMessageCount = internalQuery({
-  args: { sessionId: v.id("chat_sessions") },
-  handler: async (ctx, { sessionId }) => {
+  args: { userId: v.string(), sessionId: v.id("chat_sessions") },
+  handler: async (ctx, { userId, sessionId }) => {
+    const session = await ctx.db.get(sessionId);
+    if (!session || session.userId !== userId) return 0;
     const messages = await ctx.db
       .query("chat_messages")
       .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
@@ -138,10 +150,51 @@ export const addMessage = internalMutation({
     sessionId: v.optional(v.id("chat_sessions")),
     role: v.string(),
     content: v.string(),
+    clientSubmissionId: v.optional(v.string()),
+    turnContractVersion: v.optional(v.literal(1)),
+    turnOutcome: v.optional(v.union(
+      v.literal("committed"),
+      v.literal("confirmation_required"),
+      v.literal("failed"),
+      v.literal("no_action"),
+    )),
+    turnCards: v.optional(v.any()),
+    actionGroupId: v.optional(v.id("actionGroups")),
+    actionIds: v.optional(v.array(v.id("actions"))),
   },
   handler: async (ctx, args) => {
     const session = args.sessionId ? await ctx.db.get(args.sessionId) : null;
     if (args.sessionId && (!session || session.userId !== args.userId)) throw new Error("Not found");
+    if (args.turnCards !== undefined) assertChatTurnCards(args.turnCards);
+    if (
+      args.turnContractVersion !== undefined
+      || args.turnOutcome !== undefined
+      || args.turnCards !== undefined
+      || args.actionGroupId !== undefined
+      || args.actionIds !== undefined
+    ) {
+      if (args.role !== "ai") throw new Error("Turn outcomes may only be stored on assistant messages");
+      if (args.turnContractVersion !== 1 || !args.turnOutcome) throw new Error("Turn outcome contract is incomplete");
+    }
+    if (args.clientSubmissionId) {
+      const existing = await ctx.db
+        .query("chat_messages")
+        .withIndex("by_user_submission_and_role", (q) =>
+          q.eq("userId", args.userId)
+            .eq("clientSubmissionId", args.clientSubmissionId)
+            .eq("role", args.role),
+        )
+        .first();
+      if (existing) {
+        if (String(existing.sessionId ?? "") !== String(args.sessionId ?? "")) {
+          throw new Error("Submission already belongs to a different chat session");
+        }
+        if (args.role === "user" && existing.content !== args.content) {
+          throw new Error("Submission already belongs to different content");
+        }
+        return existing._id;
+      }
+    }
     const id = await ctx.db.insert("chat_messages", args);
     // Cache first user message as previewTitle on homepage sessions (avoids N+1 in getSessions)
     if (args.role === "user" && args.sessionId) {
@@ -150,6 +203,39 @@ export const addMessage = internalMutation({
       }
     }
     return id;
+  },
+});
+
+export const updateAssistantOutcomeForGroup = internalMutation({
+  args: {
+    userId: v.string(),
+    actionGroupId: v.id("actionGroups"),
+    content: v.string(),
+    turnOutcome: v.union(
+      v.literal("committed"),
+      v.literal("confirmation_required"),
+      v.literal("failed"),
+      v.literal("no_action"),
+    ),
+    turnCards: v.any(),
+    actionIds: v.array(v.id("actions")),
+  },
+  handler: async (ctx, args) => {
+    assertChatTurnCards(args.turnCards);
+    const message = await ctx.db
+      .query("chat_messages")
+      .withIndex("by_action_group", (q) => q.eq("actionGroupId", args.actionGroupId))
+      .first();
+    if (!message) return null;
+    if (message.userId !== args.userId || message.role !== "ai") throw new Error("Not found");
+    await ctx.db.patch(message._id, {
+      content: args.content,
+      turnContractVersion: 1,
+      turnOutcome: args.turnOutcome,
+      turnCards: args.turnCards,
+      actionIds: args.actionIds,
+    });
+    return await ctx.db.get(message._id);
   },
 });
 
@@ -219,7 +305,18 @@ export const getHomepageMessages = query({
     const sorted = messages
       .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))
       .slice(-30)
-      .map((m) => ({ role: m.role, content: m.content, ts: m._creationTime ?? 0, id: m._id }));
+      .map((m) => ({
+        role: m.role,
+        content: m.content,
+        ts: m._creationTime ?? 0,
+        id: m._id,
+        ...(m.turnContractVersion !== undefined ? { turnContractVersion: m.turnContractVersion } : {}),
+        ...(m.turnOutcome !== undefined ? { turnOutcome: m.turnOutcome } : {}),
+        ...(m.turnCards !== undefined ? { turnCards: m.turnCards } : {}),
+        ...(m.actionGroupId !== undefined ? { actionGroupId: m.actionGroupId } : {}),
+        ...(m.actionIds !== undefined ? { actionIds: m.actionIds } : {}),
+        ...(m.clientSubmissionId !== undefined ? { clientSubmissionId: m.clientSubmissionId } : {}),
+      }));
     return { sessionId: session._id, messages: sorted };
   },
 });

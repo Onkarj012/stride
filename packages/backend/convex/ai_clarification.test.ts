@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import { callAI } from "./ai/llm";
+import {
+  legacyConversationText,
+  legacyMarkerValue,
+  structuredExtractionFromLegacyMarkers,
+} from "./chat_turn_test_helpers";
 
 vi.mock("./ai/llm", async () => {
   const actual = await vi.importActual<typeof import("./ai/llm")>("./ai/llm");
@@ -30,7 +35,11 @@ function isMealParsePrompt(messages: any[]): boolean {
 
 function mockChatReply(reply: string) {
   mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
+    const prompt = promptText(messages);
     if (isTitlePrompt(messages)) return "Chat";
+    if (prompt.includes("Extract ALL loggable items")) {
+      return structuredExtractionFromLegacyMarkers(reply) ?? reply;
+    }
     if (isMealParsePrompt(messages)) {
       return JSON.stringify({
         name: "Pizza",
@@ -46,7 +55,18 @@ function mockChatReply(reply: string) {
         total_recipe_servings: 1,
       });
     }
-    return reply;
+    if (prompt.includes("Extract water amount in ml")) {
+      return String(legacyMarkerValue(reply, "WATER", "ml") ?? "");
+    }
+    if (prompt.includes("Extract sleep data")) {
+      return JSON.stringify({
+        hours: legacyMarkerValue(reply, "SLEEP", "hours"),
+        quality: legacyMarkerValue(reply, "SLEEP", "quality"),
+      });
+    }
+    if (prompt.includes("Extract mood rating")) return String(legacyMarkerValue(reply, "MOOD", "rating") ?? "");
+    if (prompt.includes("Extract step count")) return String(legacyMarkerValue(reply, "STEPS", "count") ?? "");
+    return legacyConversationText(reply);
   });
 }
 
@@ -161,6 +181,9 @@ describe("clarification flow", () => {
     const reply = 'Two similar entries.⟦LOG_WORKOUT⟧{"description":"running","date":"2026-07-16"}⟦/LOG_WORKOUT⟧⟦LOG_WORKOUT⟧{"description":"running variation","date":"2026-07-16"}⟦/LOG_WORKOUT⟧';
     mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
       if (isTitlePrompt(messages)) return "Chat";
+      if (promptText(messages).includes("Extract ALL loggable items")) {
+        return structuredExtractionFromLegacyMarkers(reply)!;
+      }
       if (promptText(messages).includes("professional fitness trainer")) {
         const prompt = messages.at(-1)?.content;
         return JSON.stringify({
@@ -172,7 +195,7 @@ describe("clarification flow", () => {
           rationale: "Keep it steady.",
         });
       }
-      return reply;
+      return legacyConversationText(reply);
     });
 
     await t.run((ctx) => ctx.db.insert("user_profiles", { userId: "user1", activityLevel: "moderate", weight: 75, age: 30, sex: "male" }));
@@ -188,6 +211,10 @@ describe("clarification flow", () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });
     mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
+      const reply = 'I am not sure about this entry.⟦LOG_MEAL⟧{"description":"mystery food","date":"2026-07-16"}⟦/LOG_MEAL⟧';
+      if (promptText(messages).includes("Extract ALL loggable items")) {
+        return structuredExtractionFromLegacyMarkers(reply)!;
+      }
       if (isTitlePrompt(messages)) return "Chat";
       if (isMealParsePrompt(messages)) {
         return JSON.stringify({
@@ -204,7 +231,7 @@ describe("clarification flow", () => {
           total_recipe_servings: 1,
         });
       }
-      return 'I am not sure about this entry.⟦LOG_MEAL⟧{"description":"mystery food","date":"2026-07-16"}⟦/LOG_MEAL⟧';
+      return legacyConversationText(reply);
     });
 
     const result = await asUser.action(api.ai.chat, {

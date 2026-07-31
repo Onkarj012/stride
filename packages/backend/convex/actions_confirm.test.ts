@@ -4,6 +4,11 @@ import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import { callAI } from "./ai/llm";
 import { AUTO_WRITE_MAX_ACTIONS, CONFIRMATION_TTL_MS } from "./actions_envelope";
+import {
+  legacyConversationText,
+  legacyMarkerValue,
+  structuredExtractionFromLegacyMarkers,
+} from "./chat_turn_test_helpers";
 
 vi.mock("./ai/llm", async () => {
   const actual = await vi.importActual<typeof import("./ai/llm")>("./ai/llm");
@@ -17,6 +22,23 @@ const modules = (import.meta as ImportMeta & {
 
 function waterMarker(count: number) {
   return `⟦LOG_WATER⟧${JSON.stringify({ ml: count, date: "2026-07-16" })}⟦/LOG_WATER⟧`;
+}
+
+function mockChatReply(reply: string) {
+  mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
+    const prompt = typeof messages?.[0]?.content === "string" ? messages[0].content : "";
+    if (prompt.includes("Extract ALL loggable items")) return structuredExtractionFromLegacyMarkers(reply) ?? reply;
+    if (prompt.includes("Extract water amount in ml")) return String(legacyMarkerValue(reply, "WATER", "ml") ?? "");
+    if (prompt.includes("Extract sleep data")) {
+      return JSON.stringify({
+        hours: legacyMarkerValue(reply, "SLEEP", "hours"),
+        quality: legacyMarkerValue(reply, "SLEEP", "quality"),
+      });
+    }
+    if (prompt.includes("Extract mood rating")) return String(legacyMarkerValue(reply, "MOOD", "rating") ?? "");
+    if (prompt.includes("Extract step count")) return String(legacyMarkerValue(reply, "STEPS", "count") ?? "");
+    return legacyConversationText(reply);
+  });
 }
 
 function mealPayload(name: string, date = "2026-07-16") {
@@ -50,7 +72,7 @@ describe("large-batch confirmation", () => {
   test("writes exactly the four-action boundary automatically", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "confirm-user" });
-    mockedCallAI.mockResolvedValue([
+    mockChatReply([
       "Logged it.",
       waterMarker(500),
       "⟦LOG_SLEEP⟧{\"hours\":7,\"quality\":\"good\",\"date\":\"2026-07-16\"}⟦/LOG_SLEEP⟧",
@@ -68,7 +90,7 @@ describe("large-batch confirmation", () => {
   test("stages five valid actions without writing any domain rows", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "confirm-user" });
-    mockedCallAI.mockResolvedValue(Array.from({ length: AUTO_WRITE_MAX_ACTIONS + 1 }, (_, i) => waterMarker(500 + i)).join(""));
+    mockChatReply(Array.from({ length: AUTO_WRITE_MAX_ACTIONS + 1 }, (_, i) => waterMarker(500 + i)).join(""));
 
     const result = await asUser.action(api.ai.chat, { message: "five logs", today: "2026-07-16" }) as any;
     expect(result.confirmation.items).toHaveLength(AUTO_WRITE_MAX_ACTIONS + 1);
