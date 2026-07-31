@@ -52,7 +52,7 @@ describe("persisted chat-turn outcome contract", () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "turn-user" });
     mockTurn({
-      reply: "Done — it's in your diary.",
+      reply: "Perfect, your breakfast is now tracked and noted.",
       extraction: "not valid structured JSON",
     });
 
@@ -64,7 +64,7 @@ describe("persisted chat-turn outcome contract", () => {
 
     expect(result.outcome).toBe("failed");
     expect(result.reply).toMatch(/couldn't save/i);
-    expect(result.reply).not.toMatch(/\bdone\b|diary|logged|saved/i);
+    expect(result.reply).not.toMatch(/\btracked\b|\bnoted\b|\brecorded\b/i);
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(0);
     const assistant = (await t.run((ctx) => ctx.db.query("chat_messages").collect()))
       .find((message) => message.role === "ai");
