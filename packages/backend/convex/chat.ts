@@ -239,6 +239,21 @@ export const updateAssistantOutcomeForGroup = internalMutation({
   },
 });
 
+export const getAssistantOutcomeForGroup = internalQuery({
+  args: {
+    userId: v.string(),
+    actionGroupId: v.id("actionGroups"),
+  },
+  handler: async (ctx, { userId, actionGroupId }) => {
+    const message = await ctx.db
+      .query("chat_messages")
+      .withIndex("by_action_group", (q) => q.eq("actionGroupId", actionGroupId))
+      .first();
+    if (!message || message.userId !== userId || message.role !== "ai") throw new Error("Not found");
+    return message;
+  },
+});
+
 export const updateSessionTitleFromAI = internalMutation({
   args: { userId: v.string(), sessionId: v.id("chat_sessions"), title: v.string() },
   handler: async (ctx, { userId, sessionId, title }) => {

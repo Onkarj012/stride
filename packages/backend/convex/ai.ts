@@ -622,6 +622,21 @@ type ConfirmGroupResult = {
   memoryApprovals?: unknown[];
 };
 
+type LogAnywayForActionResult = {
+  actionId: Id<"actions">;
+  actionGroupId: Id<"actionGroups">;
+  status: "committed";
+  record: { table: string; id: string };
+  turn: {
+    content: string;
+    turnContractVersion: 1;
+    turnOutcome: "committed";
+    turnCards: ChatTurnCard[];
+    actionGroupId: Id<"actionGroups">;
+    actionIds: Id<"actions">[];
+  };
+};
+
 function isRecord(value: unknown): value is Record<string, any> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -929,6 +944,149 @@ export const confirmGroup = action({
       actionIds: currentMembers.map((member) => member._id),
     });
     return { groupId, status, results, loggedItems, unresolvedItems, memoryApprovals };
+  },
+});
+
+/** Commit one action that a persisted duplicate card previously blocked. */
+export const logAnywayForAction = action({
+  args: {
+    actionId: v.id("actions"),
+  },
+  handler: async (ctx, { actionId }): Promise<LogAnywayForActionResult> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+    const aiInternal = (internal as any).ai;
+    const member: Doc<"actions"> | null = await ctx.runQuery(aiInternal.getActionMember, { actionId });
+    if (!member || member.userId !== userId) throw new Error("Not found");
+    const group: Doc<"actionGroups"> | null = await ctx.runQuery(aiInternal.getActionGroupForClarification, {
+      groupId: member.groupId,
+    });
+    if (!group || group.userId !== userId) throw new Error("Not found");
+    const message: Doc<"chat_messages"> = await ctx.runQuery((internal as any).chat.getAssistantOutcomeForGroup, {
+      userId,
+      actionGroupId: group._id,
+    });
+    if (!message || message.userId !== userId) throw new Error("Not found");
+
+    const duplicateCard = Array.isArray(message.turnCards)
+      ? (message.turnCards as ChatTurnCard[]).find((card) =>
+          card.kind === "duplicate"
+          && card.data.items.some((item) => item.actionId === String(actionId)),
+        )
+      : undefined;
+    if (member.status !== "committed" && !duplicateCard) {
+      throw new Error("Action is not duplicate-blocked");
+    }
+    if (member.status !== "failed" && member.status !== "committed") {
+      throw new Error("Action is not duplicate-blocked");
+    }
+    if (member.actionType !== "meal" && member.actionType !== "workout" && member.actionType !== "recovery") {
+      throw new Error("Unsupported duplicate action type");
+    }
+
+    const groupInput = {
+      userId,
+      groupIdempotencyKey: group.groupIdempotencyKey,
+      sourceSurface: group.sourceSurface,
+      rawInput: group.rawInput,
+      model: group.model,
+      clientLocalDate: group.clientLocalDate,
+      clientLocalTime: group.clientLocalTime,
+      clientTimeZone: group.clientTimeZone,
+      createdAt: group.createdAt,
+    };
+    const payload = {
+      ...(member.payload as Record<string, unknown>),
+      ...(member.actionType === "recovery" ? { mode: "allow_duplicate" } : { allowDuplicate: true }),
+    };
+    const memberInput = {
+      memberIdempotencyKey: member.memberIdempotencyKey,
+      payload,
+      provenance: member.provenance,
+      confidence: member.confidence,
+      validation: member.validation,
+      reversible: member.reversible,
+      resolvedDate: member.resolvedDate,
+      resolvedTime: member.resolvedTime,
+    };
+
+    if (member.actionType === "meal") {
+      await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: groupInput, member: memberInput });
+    } else if (member.actionType === "workout") {
+      await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: groupInput, member: memberInput });
+    } else {
+      await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: groupInput, member: memberInput });
+    }
+    await finalizeActionGroup(ctx, String(group._id));
+
+    const currentMembers: Doc<"actions">[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, {
+      groupId: group._id,
+    });
+    const committed = currentMembers.find((candidate) => candidate._id === actionId);
+    if (!committed || committed.userId !== userId || committed.status !== "committed" || !committed.committedRowRef) {
+      throw new Error("Action was not committed");
+    }
+    const resultItems = resultCardItemsForActions(currentMembers);
+    const committedItems = resultItems.filter(
+      (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
+    );
+    const preservedCards: ChatTurnCard[] = [];
+    for (const card of (message.turnCards ?? []) as ChatTurnCard[]) {
+      if (card.kind === "result" || card.kind === "undo") continue;
+      if (card.kind === "duplicate") {
+        const items = card.data.items.filter((item) => item.actionId !== String(actionId));
+        if (items.length > 0) preservedCards.push({ ...card, data: { ...card.data, items } });
+        continue;
+      }
+      if (card.kind === "failure") {
+        const items = card.data.items.filter((item) => item.actionId !== String(actionId));
+        if (items.length > 0) preservedCards.push({ ...card, data: { ...card.data, items } });
+        continue;
+      }
+      preservedCards.push(card);
+    }
+    const turnCards: ChatTurnCard[] = [
+      ...preservedCards,
+      {
+        version: 1,
+        kind: "result",
+        data: { groupId: String(group._id), items: resultItems },
+      },
+      {
+        version: 1,
+        kind: "undo",
+        data: {
+          groupId: String(group._id),
+          items: committedItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
+        },
+      },
+    ];
+    const content = `Saved ${confirmationDescription(committed)}.`;
+    const actionIds = currentMembers.map((candidate) => candidate._id);
+    await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
+      userId,
+      actionGroupId: group._id,
+      content,
+      turnOutcome: "committed",
+      turnCards,
+      actionIds,
+    });
+
+    return {
+      actionId,
+      actionGroupId: group._id,
+      status: "committed",
+      record: committed.committedRowRef,
+      turn: {
+        content,
+        turnContractVersion: 1,
+        turnOutcome: "committed",
+        turnCards,
+        actionGroupId: group._id,
+        actionIds,
+      },
+    };
   },
 });
 
