@@ -3,12 +3,12 @@ import { motion, AnimatePresence } from "motion/react";
 import { X, Barcode, ImagePlus, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
-import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
-import { MessageBubble } from "@/components/chat/MessageBubble";
+import { ChatTurnMessage, type PersistedChatMessage } from "@/components/chat/cards/ChatTurnMessage";
+import { useChatCardActions } from "@/components/chat/cards/useChatCardActions";
+import { CHAT_CARD_BAND, CHAT_COLUMN } from "@/components/chat/cards/cardSizing";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
 import { InputBar } from "@/components/ui-kit";
 import type { AttachItem, InputMode, Modality } from "@/components/ui-kit";
@@ -17,20 +17,16 @@ import { useDailyWindow, type DailyWindow } from "@/hooks/useDailyWindow";
 import { useBehavior } from "@/hooks/useBehavior";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useToast } from "@/context/ToastContext";
-import { localDateStr } from "@/lib/utils";
+import { cn, localDateStr } from "@/lib/utils";
 import { getAIErrorMessage } from "@/lib/ai-errors";
+import { useSubmissionId } from "@/lib/submissionId";
 import { FADE_FAST } from "@/lib/motion";
 import {
-  normalizeDraft,
-  normalizeDrafts,
-  mergeDrafts,
   splitActions,
   stageActions,
   promoteOnMessages,
   promoteOnTimeout,
   STAGED_FALLBACK_MS,
-  loadPendingDrafts,
-  savePendingDrafts,
   type StagedActions,
 } from "./logDraftFlow";
 
@@ -104,9 +100,7 @@ type AssistantConsoleProps = {
   initialActions?: AgentAction[];
 };
 
-type HomepageMessage = {
-  role: string;
-  content: string;
+type HomepageMessage = PersistedChatMessage & {
   ts: number;
   id?: string;
 };
@@ -127,14 +121,6 @@ function numericValueForAnswer(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function getNearDuplicateData(err: unknown): { message?: string } | null {
-  if (!(err instanceof ConvexError)) return null;
-  const data = err.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const payload = data as { code?: string; message?: string };
-  return payload.code === "NEAR_DUPLICATE" ? payload : null;
-}
-
 function modalityForContent(content: string): { modality?: Modality; chip?: string } {
   const fileMatch = content.match(/^\[File: ([^\]]+)\]/);
   if (fileMatch) return { modality: "ocr", chip: fileMatch[1] };
@@ -144,8 +130,6 @@ function modalityForContent(content: string): { modality?: Modality; chip?: stri
 
 export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, presenceLine, initialActions = [] }: AssistantConsoleProps) {
   const today = useLocalDate();
-  const todayRef = useRef(today);
-  todayRef.current = today;
   const dailyWindow = useDailyWindow();
   const [textValue, setTextValue] = useState("");
   const [thinking, setThinking] = useState(false);
@@ -181,23 +165,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
   }, [effectiveInitialActions, today]);
 
-  // ConfirmModal queue — persisted in sessionStorage and scoped to today's date.
-  const [pendingDrafts, setPendingDraftsRaw] = useState<any[]>(() => {
-    const restored = loadPendingDrafts(sessionStorage, today);
-    savePendingDrafts(sessionStorage, today, restored);
-    return restored;
-  });
-  const setPendingDrafts = useCallback((updater: any[] | ((prev: any[]) => any[])) => {
-    setPendingDraftsRaw((prev) => {
-      const next = normalizeDrafts(typeof updater === "function" ? updater(prev) : updater);
-      savePendingDrafts(sessionStorage, todayRef.current, next);
-      return next;
-    });
-  }, []);
-  const pendingTier2Ref = useRef<string>("");
-  const submittingDraftIdsRef = useRef<Set<string>>(new Set());
-
-  // Auto-applied memory drafts — removed (all drafts now go through confirm card)
+  // Logging confirmations are no longer client-side drafts: every turn persists
+  // its own cards, so the transcript is the only source of pending log state.
   const [editEntry, setEditEntry] = useState<EditableMeal | null>(null);
 
   const { user } = useUser();
@@ -210,6 +179,14 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const bottomSentinelRef = useRef<HTMLDivElement>(null);
   const activeRef = inputRef ?? internalRef;
   const toast = useToast();
+  const submissionIds = useSubmissionId();
+
+  // Confirm / clarify / undo run through the same shared wiring as Coach.
+  const { handlers: cardHandlers, state: cardState } = useChatCardActions({
+    onSettled: () => {
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    },
+  });
 
   // Persistent homepage chat: load history from Convex.
   const homepageChat = useQuery(api.chat.getHomepageMessages, { date: today });
@@ -220,11 +197,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   const stagedRef = useRef<StagedActions<AgentAction>>(staged);
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // Log drafts are dropped: logging confirmations arrive as persisted turn
+  // cards instead. Only conversational actions (check-ins, notes) are promoted.
   const promoteActions = useCallback((actions: AgentAction[]) => {
-    const { drafts, rest } = splitActions(actions);
-    if (drafts.length > 0) setPendingDrafts((prev) => mergeDrafts(prev, drafts));
+    const { rest } = splitActions(actions);
     setAgentActions(rest);
-  }, [setPendingDrafts]);
+  }, []);
 
   const transitionStaged = useCallback((updater: (current: StagedActions<AgentAction>) => StagedActions<AgentAction>) => {
     const next = updater(stagedRef.current);
@@ -272,9 +250,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   useEffect(() => {
     if (today === previousDateRef.current) return;
     previousDateRef.current = today;
-    const restored = loadPendingDrafts(sessionStorage, today);
-    setPendingDraftsRaw(restored);
-    savePendingDrafts(sessionStorage, today, restored);
     transitionStaged(() => null);
     setAgentActions(filterInitialCheckIns(effectiveInitialActions, today));
   }, [today, effectiveInitialActions, transitionStaged]);
@@ -282,9 +257,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Backend actions/mutations
   const homepageInput = useAction(api.ai.homepageInput);
   const clearHomepageMessages = useMutation(api.chat.clearHomepageMessages);
-  const addMeal = useMutation(api.meals.addMeal);
-  const commitHomeDraft = useMutation(api.ai.commitHomeDraft);
-  const recordBehavior = useMutation(api.behavior.recordBehavior);
   const submitCheckInAnswer = useMutation(api.checkins.submitAnswer);
 
   const firstName = user?.firstName ?? user?.username ?? "there";
@@ -307,7 +279,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Scroll to bottom when content changes
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length, thinking, pendingDrafts.length, agentActions.length, freshTs]);
+  }, [messages.length, thinking, agentActions.length, freshTs]);
 
   /* ── Voice (Groq Whisper) ── */
   const onTranscript = useCallback((t: string) => {
@@ -380,102 +352,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     return () => document.removeEventListener("paste", onPaste);
   }, [onPickImage]);
 
-  /* ── Confirm draft → actually log ── */
-  const handleConfirm = useCallback(async (draft: any) => {
-    const normalizedDraft = normalizeDraft(draft);
-    if (!normalizedDraft) return;
-    if (normalizedDraft.kind === "workout"
-      && (!Number.isFinite(normalizedDraft.kcal) || normalizedDraft.kcal <= 0)) {
-      toast.error("Calories required", "Enter a calorie estimate before confirming this workout.");
-      return;
-    }
-    const draftKey = normalizedDraft._clientId;
-    if (submittingDraftIdsRef.current.has(draftKey)) return;
-    submittingDraftIdsRef.current.add(draftKey);
-    const matchesDraft = (candidate: any) => candidate?._clientId === draftKey;
-    setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? { ...d, ...normalizedDraft, submitting: true, error: undefined } : d));
-    const time = new Date().toTimeString().slice(0, 5);
-    const today = localDateStr();
-    const tier2 = pendingTier2Ref.current;
-
-    try {
-      const d = normalizedDraft as any;
-      const date = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : today;
-      const isPastDay = date !== today;
-      const dateNote = isPastDay ? ` for ${date}` : "";
-
-      if (d.kind === "meal") {
-        const isUnparsed = d.parseError && d.kcal === 0 && d.protein === 0 && d.carbs === 0 && d.fat === 0;
-        if (isUnparsed) {
-          toast.error("Couldn't parse meal", "Please edit the meal details before confirming.");
-          setPendingDrafts((prev) => prev.map((item) => matchesDraft(item) ? { ...item, ...normalizedDraft, submitting: false } : item));
-          return;
-        }
-        const ingredientBreakdown = d.ingredientBreakdown ?? null;
-        await addMeal({
-          name: d.description,
-          calories: d.kcal,
-          protein: d.protein,
-          carbs: d.carbs,
-          fat: d.fat,
-          time,
-          date,
-          aiSuggestion: tier2 || undefined,
-          components: d.items?.join(", "),
-          confidence: d.confidence,
-          nutritionSource: d.nutritionSource,
-          nutritionVerified: d.nutritionVerified,
-          foodMemoryId: d.foodMemoryId,
-          structuredItems: ingredientBreakdown?.items ? JSON.stringify(ingredientBreakdown.items) : undefined,
-          ingredientBreakdown: ingredientBreakdown ? JSON.stringify(ingredientBreakdown) : undefined,
-          logSource: "home",
-          allowDuplicate: d.allowDuplicate,
-        });
-        void recordBehavior({ kind: "log", key: "meal_confirm" }).catch(() => {});
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
-      } else if (d.kind === "workout") {
-        await commitHomeDraft({ draft: { ...d, date, timestamp: time, rationale: tier2 || d.rationale || undefined }, clientSubmissionId: draftKey });
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
-      } else if (d.kind === "sleep") {
-        await commitHomeDraft({ draft: { ...d, date, time }, clientSubmissionId: draftKey });
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Sleep logged${dateNote}`, `${d.hours.toFixed(1)}h · ${d.quality}`);
-      } else if (d.kind === "water" || d.kind === "mood" || d.kind === "steps") {
-        await commitHomeDraft({ draft: { ...d, date, time }, clientSubmissionId: draftKey });
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        const detail = d.kind === "water"
-          ? `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`
-          : d.kind === "mood"
-            ? `${d.rating}/5`
-            : `${d.count.toLocaleString()} steps`;
-        toast.success(`${d.kind[0].toUpperCase()}${d.kind.slice(1)} logged${dateNote}`, detail);
-      }
-    } catch (err) {
-      const duplicate = getNearDuplicateData(err);
-      const raw = err instanceof Error ? err.message : "Something went wrong — try again.";
-      const isDuplicate = !!duplicate;
-      const message = duplicate?.message ?? raw;
-      setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? {
-        ...d,
-        ...normalizedDraft,
-        submitting: false,
-        error: message,
-        allowDuplicate: isDuplicate ? true : d.allowDuplicate,
-      } : d));
-      toast.error(isDuplicate ? "Possible duplicate" : "Couldn't log", message);
-    } finally {
-      submittingDraftIdsRef.current.delete(draftKey);
-    }
-    if (pendingDrafts.length <= 1) pendingTier2Ref.current = "";
-  }, [addMeal, commitHomeDraft, recordBehavior, setPendingDrafts, toast, pendingDrafts.length]);
-
-  const handleDiscard = useCallback(() => {
-    setPendingDrafts((prev) => prev.some((draft) => draft.submitting) ? prev : []);
-    pendingTier2Ref.current = "";
-  }, [setPendingDrafts]);
-
   /* ── Send to backend ── */
   const send = useCallback(async (text: string, image?: string) => {
     const v = text.trim();
@@ -485,6 +361,9 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     const messageText = attachedFile
       ? `[File: ${attachedFile.name}]\n${attachedFile.content}\n\n${v}`.trim()
       : v;
+
+    // Stable per-attempt id so a retry of the same message cannot double-write.
+    const clientSubmissionId = submissionIds.idFor(`${messageText}|${image ? "image" : ""}`);
 
     inFlightRequestsRef.current += 1;
     setThinking(true);
@@ -500,8 +379,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         message: messageText,
         image,
         today,
+        clientSubmissionId,
       });
 
+      submissionIds.clear();
       setFreshTs(Date.now());
       const actions = (Array.isArray(result.actions) ? result.actions : []) as AgentAction[];
       if (localDateStr() !== today) return;
@@ -523,12 +404,13 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         : raw.includes("Unauthenticated")
         ? "Session expired — please sign in again."
         : "Something went wrong. Try again.");
+      // The submission id is deliberately kept so retrying stays idempotent.
       toast.error("Couldn't reach Stry", msg);
     } finally {
       inFlightRequestsRef.current = Math.max(0, inFlightRequestsRef.current - 1);
       setThinking(inFlightRequestsRef.current > 0);
     }
-  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, today, transitionStaged]);
+  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, submissionIds, today, transitionStaged]);
 
   const submitQuickQuestionAnswer = useCallback(async (
     action: Extract<AgentAction, { type: "quick_question" }>,
@@ -568,12 +450,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   }, [dailyWindow, savingCheckInId, submitCheckInAnswer, today, toast]);
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
-    if (button.value === "confirm_log" && pendingDrafts[0]) {
-      void handleConfirm(pendingDrafts[0]);
-      return;
-    }
-    if (button.value === "discard_log") {
-      handleDiscard();
+    if (button.value === "confirm_log" || button.value === "discard_log") {
+      // Logging is confirmed on the persisted turn card, not through a button row.
       setAgentActions([]);
       return;
     }
@@ -590,24 +468,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       return;
     }
     setAgentActions((prev) => prev.filter((a) => a !== action));
-  }, [handleConfirm, handleDiscard, pendingDrafts, send, submitQuickQuestionAnswer, thinking]);
-
-  const openDraft = useCallback((draft: any) => {
-    pendingTier2Ref.current = "";
-    setPendingDrafts((prev) => mergeDrafts(prev, [draft]));
-  }, [setPendingDrafts]);
-
-  const useEngineEstimate = useCallback((draft: any) => {
-    if (!draft?.engineEstimate) return openDraft(draft);
-    openDraft({
-      ...draft,
-      kcal: draft.engineEstimate.kcal,
-      protein: draft.engineEstimate.protein,
-      carbs: draft.engineEstimate.carbs,
-      fat: draft.engineEstimate.fat,
-      nutritionSource: "engine",
-    });
-  }, [openDraft]);
+  }, [send, submitQuickQuestionAnswer, thinking]);
 
   // Identify the most recent AI message for typewriter animation
   const lastAiTs = useMemo(() => {
@@ -628,7 +489,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Inline action button — themed to design system
   const Btn = ({ label, onClick, disabled = false }: { label: string; onClick: () => void; disabled?: boolean }) => (
     <button type="button" onClick={onClick} disabled={disabled}
-      className="inline-flex items-center rounded-full bg-lavender-soft hover:bg-lavender/25 disabled:opacity-50 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-text transition-colors">
+      className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-lavender-soft hover:bg-lavender/25 disabled:opacity-50 border border-lavender/20 px-4 text-[14px] font-semibold text-text transition-colors">
       {label}
     </button>
   );
@@ -648,26 +509,14 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         ? "border-l-mint bg-mint-soft"
         : "border-l-lavender bg-lavender-soft";
       return (
-        <div className={`rounded-2xl border border-border border-l-4 px-3.5 py-3 text-[13.5px] leading-relaxed text-text ${toneStyle}`}>
+        <div className={`rounded-2xl border border-border border-l-4 px-4 py-3.5 text-[14px] leading-relaxed text-text ${toneStyle}`}>
           {action.text}
         </div>
       );
     }
-    // log_draft actions are promoted into pendingDrafts and rendered as
-    // LogConfirmCard so logging is a single confirmation step.
-    if (action.type === "log_draft") return null;
-    if (action.type === "macro_conflict") {
-      return (
-        <div className="rounded-2xl border border-peach/25 bg-peach-soft border-l-4 border-l-peach px-3.5 py-3 space-y-2.5">
-          <p className="text-[0.95rem] font-semibold text-text">{action.title ?? "Macro check"}</p>
-          {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
-          <div className="flex flex-wrap gap-2">
-            <Btn label="Use my numbers" onClick={() => { openDraft(action.draft); setAgentActions([]); }} />
-            <Btn label="Use estimate" onClick={() => { useEngineEstimate(action.draft); setAgentActions([]); }} />
-          </div>
-        </div>
-      );
-    }
+    // Logging drafts are not rendered here any more: the turn persists its own
+    // confirmation/result cards, which both chat surfaces render identically.
+    if (action.type === "log_draft" || action.type === "macro_conflict") return null;
     // quick_question — lavender tinted
     if (action.answerType === "number") {
       const saving = savingCheckInId === action.id;
@@ -679,10 +528,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       const skip = action.options.find((option) => option.value === "skip");
       return (
         <div className="rounded-2xl border border-lavender/20 bg-lavender-soft px-3.5 py-3 space-y-2.5">
-          <p className="text-[13.5px] font-semibold text-text">{action.title}</p>
-          {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
+          <p className="text-[15px] font-semibold text-text">{action.title}</p>
+          {action.body && <p className="text-[13px] text-text-muted">{action.body}</p>}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex min-w-[150px] flex-1 items-center rounded-full border border-lavender/20 bg-card px-3 py-1.5">
+            <div className="flex min-h-[44px] min-w-[150px] flex-1 items-center rounded-full border border-lavender/20 bg-card px-3">
               <input
                 type="number"
                 inputMode="decimal"
@@ -704,7 +553,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                 const label = action.unit ? `${parsed} ${action.unit}` : String(parsed);
                 void submitQuickQuestionAnswer(action, String(parsed), label, false);
               }}
-              className="inline-flex items-center rounded-full bg-lavender hover:bg-lavender/80 disabled:opacity-50 border border-lavender/20 px-3 py-1.5 text-[0.95rem] font-semibold text-ink transition-colors"
+              className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-lavender hover:bg-lavender/80 disabled:opacity-50 border border-lavender/20 px-4 text-[14px] font-semibold text-ink transition-colors"
             >
               Save
             </button>
@@ -716,8 +565,8 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     const saving = savingCheckInId === action.id;
     return (
       <div className="rounded-2xl border border-lavender/20 bg-lavender-soft px-3.5 py-3 space-y-2.5">
-        <p className="text-[13.5px] font-semibold text-text">{action.title}</p>
-        {action.body && <p className="text-[12px] text-text-muted">{action.body}</p>}
+        <p className="text-[15px] font-semibold text-text">{action.title}</p>
+        {action.body && <p className="text-[13px] text-text-muted">{action.body}</p>}
         <div className="flex flex-wrap gap-2">
           {action.options.map((b) => <Btn key={b.value} label={b.label} disabled={saving} onClick={() => handleActionButton(b, action)} />)}
         </div>
@@ -734,10 +583,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
       <div className="flex h-full min-h-0 flex-col transition-colors duration-300">
         <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto" aria-live="polite" aria-label="Chat with Stry">
-          <div className="max-w-[720px] mx-auto px-4 pt-5 pb-3 space-y-4">
+          <div className={cn(CHAT_COLUMN, "pt-5 pb-3 space-y-4")}>
           {!showHistory && (
             <motion.div
-              className="flex flex-col max-w-[92%]"
+              className={cn("flex flex-col", CHAT_CARD_BAND)}
               initial={reduceMotion ? false : { opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 28 }}
@@ -748,11 +597,13 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
             </motion.div>
           )}
 
+          {/* Text and cards both come straight from the persisted turn. */}
           {messages.map((m) => (
-            <MessageBubble
+            <ChatTurnMessage
               key={m.ts}
-              role={m.role === "user" ? "user" : "ai"}
-              content={m.content}
+              message={m}
+              handlers={cardHandlers}
+              state={cardState}
               fresh={freshTs !== null && m.ts === lastAiTs}
               {...(m.role === "user" ? modalityForContent(m.content) : {})}
               onEdit={m.role === "user" ? () => {
@@ -764,33 +615,14 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
           {thinking && <ThinkingBubble />}
 
-          {/* Inline action cards */}
+          {/* Inline action cards — sized by the shared card band, never scaled. */}
           <AnimatePresence>
             {agentActions.map((action, i) => (
               <motion.div key={`${action.type}-${i}`}
                 initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                 transition={reduceMotion ? { duration: 0 } : FADE_FAST}>
-                <div className="max-w-[92%] w-full" style={{ zoom: 0.72 } as React.CSSProperties}>
+                <div className={CHAT_CARD_BAND}>
                   <AgentActionCard action={action} />
-                </div>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-
-          {/* Inline confirm cards */}
-          <AnimatePresence>
-            {pendingDrafts.map((draft, i) => (
-              <motion.div key={draft._clientId ?? `draft-${i}`}
-                initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                transition={reduceMotion ? { duration: 0 } : FADE_FAST}>
-                <div className="w-full max-w-[92%]" style={{ zoom: 0.72 } as React.CSSProperties}>
-                  <LogConfirmCard
-                    draft={draft}
-                    onConfirm={handleConfirm}
-                    onDiscard={() => setPendingDrafts((prev) => prev.some((d) => d._clientId === draft._clientId && d.submitting)
-                      ? prev
-                      : prev.filter((d) => d._clientId !== draft._clientId))}
-                  />
                 </div>
               </motion.div>
             ))}
@@ -806,7 +638,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
           {(attachedImage || attachedFile) && (
             <motion.div initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
               transition={reduceMotion ? { duration: 0 } : { duration: 0.18 }}
-              className="shrink-0 max-w-[720px] mx-auto w-full px-3 pb-2 flex items-center gap-2">
+              className={cn(CHAT_COLUMN, "shrink-0 pb-2 flex items-center gap-2")}>
               {attachedImage && (
                 <div className="relative inline-block">
                   <img src={attachedImage} alt="Attached" className="h-14 w-14 rounded-xl object-cover border border-border" />
@@ -832,7 +664,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
         <div className="shrink-0"
           style={{ paddingBottom: kbPad > 0 ? `${kbPad}px` : "max(env(safe-area-inset-bottom), 0.75rem)" }}>
-          <div className="max-w-[720px] mx-auto px-3 pt-1">
+          <div className={cn(CHAT_COLUMN, "pt-1")}>
             <InputBar
               inputRef={activeRef as React.RefObject<HTMLTextAreaElement>}
               value={textValue}
