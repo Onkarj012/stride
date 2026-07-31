@@ -54,6 +54,8 @@ export type ConfirmationMacroData = {
 export type ConfirmationCardData = {
   groupId: string
   expiresAt: number
+  /** Present when the user deliberately discarded the whole batch. */
+  state?: 'resolved'
   items: Array<CardItemBase & {
     actionId: string
     confidence?: number
@@ -178,6 +180,7 @@ export function isChatTurnCard(value: unknown): value is ChatTurnCard {
   if (value.kind === 'confirmation') {
     return typeof data.groupId === 'string'
       && typeof data.expiresAt === 'number'
+      && (data.state === undefined || data.state === 'resolved')
       && everyItem(data.items, (item) =>
         typeof item.actionId === 'string'
         && (item.confidence === undefined || typeof item.confidence === 'number')

@@ -307,7 +307,7 @@ export const stageClarificationGroup = internalMutation({
         clientTimeZone: args.clientTimeZone,
       }),
     });
-    if (["committed", "discarded", "expired"].includes(groupResult.group.status)) {
+    if (["committed", "discarded", "expired", "failed"].includes(groupResult.group.status)) {
       return { groupId: groupResult.group._id };
     }
     const members = buildActionMembers({
@@ -375,7 +375,17 @@ export const recordFailedTurnGroup = internalMutation({
   },
 });
 
-type ResolveClarificationResult = { groupId: string; loggedItems: any[]; memoryApprovals?: any[]; errors?: string[] };
+type ResolveClarificationResult = {
+  groupId: string;
+  loggedItems: any[];
+  memoryApprovals?: any[];
+  errors?: string[];
+  content: string;
+  turnOutcome: ChatTurnOutcome;
+  turnCards: ChatTurnCard[];
+  actionIds: Id<"actions">[];
+  messageId?: string;
+};
 
 async function executeClarificationResolution(ctx: any, userId: string, groupId: string, date: string): Promise<ResolveClarificationResult> {
   const group = await ctx.runQuery(internal.ai.getActionGroupForClarification, { groupId: groupId as any });
@@ -478,14 +488,36 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
 
   await finalizeActionGroup(ctx, groupId);
 
-  if (errors.length > 0 && loggedItems.length === 0) {
-    throw new Error(`Could not resolve clarification: ${errors.join("; ")}`);
-  }
+  const currentMembers: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, {
+    groupId: groupId as any,
+  });
+  const { content, turnOutcome, turnCards } = clarificationResolutionOutcome(groupId, currentMembers);
+  const updatedMessage = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
+    userId,
+    actionGroupId: groupId as any,
+    content,
+    turnOutcome,
+    turnCards,
+    actionIds: currentMembers.map((member) => member._id),
+  });
 
   const memoryApprovals = (await Promise.all(loggedItems.map((item) =>
     item.data?.actionId ? pendingMemoryApprovalsForAction(ctx, userId, item.data.actionId) : [],
   ))).flat();
-  return { groupId, loggedItems, memoryApprovals, errors: errors.length > 0 ? errors : undefined };
+  if (errors.length > 0 && loggedItems.length === 0) {
+    throw new Error(`Could not resolve clarification: ${errors.join("; ")}`);
+  }
+  return {
+    groupId,
+    loggedItems,
+    memoryApprovals,
+    errors: errors.length > 0 ? errors : undefined,
+    content,
+    turnOutcome,
+    turnCards,
+    actionIds: currentMembers.map((member) => member._id),
+    messageId: updatedMessage?._id,
+  };
 }
 
 async function finalizeActionGroup(ctx: ActionCtx, groupId: string): Promise<ActionGroupStatus> {
@@ -754,6 +786,49 @@ function resultCardItemsForActions(actions: Doc<"actions">[]): ResultCardItem[] 
   return items;
 }
 
+function clarificationResolutionOutcome(groupId: string, members: Doc<"actions">[]): {
+  content: string;
+  turnOutcome: ChatTurnOutcome;
+  turnCards: ChatTurnCard[];
+} {
+  const resultItems = resultCardItemsForActions(members);
+  const committedItems = resultItems.filter(
+    (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
+  );
+  const cards: ChatTurnCard[] = [];
+  if (committedItems.length > 0) {
+    cards.push({ version: 1, kind: "result", data: { groupId, items: resultItems } });
+    cards.push({
+      version: 1,
+      kind: "undo",
+      data: {
+        groupId,
+        items: committedItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
+      },
+    });
+  } else if (resultItems.length > 0) {
+    const failedItems = resultItems.filter(
+      (item): item is Extract<ResultCardItem, { status: "failed" }> => item.status === "failed",
+    );
+    cards.push({
+      version: 1,
+      kind: "failure",
+      data: {
+        groupId,
+        code: "CLARIFICATION_FAILED",
+        message: "No items were saved.",
+        retriable: true,
+        items: failedItems.map(({ status: _status, retriable: _retriable, ...item }) => item),
+      },
+    });
+  }
+  const turnOutcome: ChatTurnOutcome = committedItems.length > 0 ? "committed" : "failed";
+  const content = turnOutcome === "committed"
+    ? `Saved ${committedItems.map((item) => item.title).join(", ")}.`
+    : "I couldn't save that. Please try again.";
+  return { content, turnOutcome, turnCards: cards };
+}
+
 /** Confirm, discard, or edit members of a staged large batch independently. */
 export const confirmGroup = action({
   args: {
@@ -899,8 +974,33 @@ export const confirmGroup = action({
       (item): item is Extract<ResultCardItem, { status: "failed" }> => item.status === "failed",
     );
     const pendingMembers = currentMembers.filter((member) => member.status === "pending");
+    const allDiscarded = currentMembers.length > 0 && currentMembers.every((member) => member.status === "discarded");
     const cards: ChatTurnCard[] = [];
-    if (pendingMembers.length > 0) {
+    if (allDiscarded) {
+      cards.push({
+        version: 1,
+        kind: "confirmation",
+        data: {
+          groupId: String(groupId),
+          expiresAt: group.createdAt + CONFIRMATION_TTL_MS,
+          state: "resolved",
+          items: currentMembers.map((member) => ({
+            ordinal: confirmationOrdinal(member),
+            actionType: member.actionType as "meal" | "workout" | "recovery",
+            title: confirmationDescription(member),
+            description: confirmationDescription(member),
+            date: member.resolvedDate,
+            time: member.resolvedTime,
+            ...(member.actionType === "meal" && confirmationMacros(member.payload)
+              ? { macros: confirmationMacros(member.payload) }
+              : {}),
+            actionId: String(member._id),
+            confidence: member.confidence,
+            validationMessages: member.validation.messages,
+          })),
+        },
+      });
+    } else if (pendingMembers.length > 0) {
       cards.push({
         version: 1,
         kind: "confirmation",
@@ -955,12 +1055,16 @@ export const confirmGroup = action({
       ? "confirmation_required"
       : committedCardItems.length > 0
         ? "committed"
-        : "failed";
+        : allDiscarded
+          ? "no_action"
+          : "failed";
     const content = turnOutcome === "confirmation_required"
       ? `${pendingMembers.length} item${pendingMembers.length === 1 ? "" : "s"} still need review.`
       : turnOutcome === "committed"
         ? `Saved ${committedCardItems.map((item) => item.title).join(", ")}.${resultCardItems.some((item) => item.status === "failed") ? " Some items could not be saved." : ""}`
-        : "I couldn't save that. Please try again.";
+        : turnOutcome === "no_action"
+          ? "Discarded. Nothing was saved."
+          : "I couldn't save that. Please try again.";
     await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
       userId,
       actionGroupId: groupId,
@@ -968,6 +1072,7 @@ export const confirmGroup = action({
       turnOutcome,
       turnCards: cards,
       actionIds: currentMembers.map((member) => member._id),
+      allowTerminalRetry: true,
     });
     return { groupId, status, results, loggedItems, unresolvedItems, memoryApprovals };
   },
@@ -1097,6 +1202,7 @@ export const logAnywayForAction = action({
       turnOutcome: "committed",
       turnCards,
       actionIds,
+      allowTerminalRetry: true,
     });
 
     return {
@@ -1791,6 +1897,7 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       clientSubmissionId,
     });
 
+    try {
     // Free-text clarification answer: if the user provided a groupId and a resolvable date,
     // write the pending group immediately without another AI round-trip.
     if (clarificationGroupId) {
@@ -1803,44 +1910,6 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       }
       if (answerDate) {
         const resolved = await executeClarificationResolution(ctx, userId, clarificationGroupId as unknown as string, answerDate);
-        const actionRows: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, {
-          groupId: clarificationGroupId,
-        });
-        const resultItems = resultCardItemsForActions(actionRows);
-        const committedItems = resultItems.filter(
-          (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
-        );
-        const outcome: ChatTurnOutcome = committedItems.length > 0 ? "committed" : "failed";
-        const cards: ChatTurnCard[] = [{
-          version: 1,
-          kind: "result",
-          data: { groupId: String(clarificationGroupId), items: resultItems },
-        }];
-        if (committedItems.length > 0) {
-          cards.push({
-            version: 1,
-            kind: "undo",
-            data: {
-              groupId: String(clarificationGroupId),
-              items: committedItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
-            },
-          });
-        }
-        const resolvedReply = outcome === "committed"
-          ? `Saved ${committedItems.map((item) => item.title).join(", ")} for ${answerDate}.`
-          : "I couldn't save that. Please try again.";
-        await ctx.runMutation(internal.chat.addMessage, {
-          userId,
-          sessionId,
-          role: "ai",
-          content: resolvedReply,
-          clientSubmissionId,
-          turnContractVersion: 1,
-          turnOutcome: outcome,
-          turnCards: cards,
-          actionGroupId: clarificationGroupId,
-          actionIds: actionRows.map((action) => action._id),
-        });
         if (sessionId) {
           await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
         }
@@ -1850,14 +1919,15 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
             ? { type: "multiple", items: resolved.loggedItems }
             : null;
         return {
-          reply: resolvedReply,
+          reply: resolved.content,
           loggedItem,
           memoryApprovals: resolved.memoryApprovals ?? [],
           failedItems: [],
           coachType: toLegacyPersona(coachType),
           restricted: restrictedGuidance,
-          outcome,
-          cards,
+          outcome: resolved.turnOutcome,
+          cards: resolved.turnCards,
+          messageId: resolved.messageId,
         };
       }
     }
@@ -2067,6 +2137,37 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       cards: turnResult.cards,
       messageId,
     };
+    } catch (error) {
+      if (!clarificationGroupId) {
+        try {
+          const finalized = await persistFailedChatTurn(
+            ctx,
+            userId,
+            sessionId,
+            image ? `${message}\n[image:${stableHash(image)}]` : message,
+            clientSubmissionId,
+            today,
+            settings?.openRouterModel ?? undefined,
+            error,
+          );
+          return {
+            reply: "I couldn't save that. Please try again.",
+            loggedItem: null,
+            memoryApprovals: [],
+            failedItems: [],
+            coachType: toLegacyPersona(coachType),
+            restricted: restrictedGuidance,
+            outcome: "failed" as const,
+            cards: finalized.turnCards,
+            messageId: finalized.messageId,
+            processingError: error instanceof Error ? error.message : String(error),
+          };
+        } catch (finalizeError) {
+          console.error("Failed to persist terminal chat outcome:", finalizeError);
+        }
+      }
+      throw error;
+    }
   },
 });
 
@@ -3697,6 +3798,54 @@ function turnOutcomeText(result: TurnPolicyResult): string {
   }
   if (result.outcome === "failed") return "I couldn't save that. Please try again.";
   return "";
+}
+
+async function persistFailedChatTurn(
+  ctx: ActionCtx,
+  userId: string,
+  sessionId: Id<"chat_sessions"> | undefined,
+  rawInput: string,
+  clientSubmissionId: string | undefined,
+  today: string,
+  model: string | undefined,
+  error: unknown,
+) {
+  const failedGroup = await ctx.runMutation(internal.ai.recordFailedTurnGroup, {
+    userId,
+    groupIdempotencyKey: deriveGroupKey({ userId, sourceSurface: "chat", rawInput, clientSubmissionId }),
+    rawInput,
+    model,
+    clientLocalDate: today,
+    createdAt: Date.now(),
+  });
+  const actionRows: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, {
+    groupId: failedGroup.groupId,
+  });
+  const reason = error instanceof Error ? error.message : String(error);
+  const turnCards: ChatTurnCard[] = [{
+    version: 1,
+    kind: "failure",
+    data: {
+      groupId: String(failedGroup.groupId),
+      code: "TURN_PROCESSING_FAILED",
+      message: reason,
+      retriable: true,
+      items: [],
+    },
+  }];
+  const messageId = await ctx.runMutation(internal.chat.addMessage, {
+    userId,
+    sessionId,
+    role: "ai",
+    content: "I couldn't save that. Please try again.",
+    clientSubmissionId,
+    turnContractVersion: 1,
+    turnOutcome: "failed",
+    turnCards,
+    actionGroupId: failedGroup.groupId,
+    actionIds: actionRows.map((action) => action._id),
+  });
+  return { messageId, groupId: failedGroup.groupId, turnCards };
 }
 
 export const homepageInput = action({

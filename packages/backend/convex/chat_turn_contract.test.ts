@@ -99,6 +99,26 @@ describe("persisted chat-turn outcome contract", () => {
       }),
     }));
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(0);
+    const assistant = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).find((message) => message.role === "ai");
+    expect(assistant).toMatchObject({ turnOutcome: "failed", turnCards: result.cards });
+  });
+
+  test("a terminal outcome cannot be overwritten by a late finalize", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "turn-user" });
+    mockTurn({ extraction: { isQuestion: false, items: [{ type: "water", description: "500ml water", date: "2026-07-16" }] } });
+    const result = await asUser.action(api.ai.chat, { message: "I drank 500ml water", today: "2026-07-16", clientSubmissionId: "terminal-once" }) as any;
+    const groupId = result.cards.find((card: any) => card.kind === "result").data.groupId;
+
+    await t.mutation(internal.chat.updateAssistantOutcomeForGroup, {
+      userId: "turn-user", actionGroupId: groupId, content: "Saved water.", turnOutcome: "committed", turnCards: [], actionIds: [],
+    });
+    await t.mutation(internal.chat.updateAssistantOutcomeForGroup, {
+      userId: "turn-user", actionGroupId: groupId, content: "I couldn't save that. Please try again.", turnOutcome: "failed", turnCards: [], actionIds: [],
+    });
+
+    const assistant = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).find((message) => message.role === "ai");
+    expect(assistant).toMatchObject({ turnOutcome: "committed", content: "Saved 500ml water." });
   });
 
   test("multi-item turns persist committed and failed per-item outcomes", async () => {

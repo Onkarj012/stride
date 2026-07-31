@@ -219,15 +219,20 @@ export const updateAssistantOutcomeForGroup = internalMutation({
     ),
     turnCards: v.any(),
     actionIds: v.array(v.id("actions")),
+    allowTerminalRetry: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     assertChatTurnCards(args.turnCards);
-    const message = await ctx.db
+    const messages = await ctx.db
       .query("chat_messages")
       .withIndex("by_action_group", (q) => q.eq("actionGroupId", args.actionGroupId))
-      .first();
+      .collect();
+    const message = messages
+      .filter((candidate) => candidate.role === "ai")
+      .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
     if (!message) return null;
-    if (message.userId !== args.userId || message.role !== "ai") throw new Error("Not found");
+    if (message.userId !== args.userId) throw new Error("Not found");
+    if (message.turnOutcome && message.turnOutcome !== "confirmation_required" && !args.allowTerminalRetry) return message;
     await ctx.db.patch(message._id, {
       content: args.content,
       turnContractVersion: 1,
@@ -245,10 +250,12 @@ export const getAssistantOutcomeForGroup = internalQuery({
     actionGroupId: v.id("actionGroups"),
   },
   handler: async (ctx, { userId, actionGroupId }) => {
-    const message = await ctx.db
+    const message = (await ctx.db
       .query("chat_messages")
       .withIndex("by_action_group", (q) => q.eq("actionGroupId", actionGroupId))
-      .first();
+      .collect())
+      .filter((candidate) => candidate.role === "ai")
+      .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
     if (!message || message.userId !== userId || message.role !== "ai") throw new Error("Not found");
     return message;
   },

@@ -36,26 +36,28 @@ async function markTurnUndoState(
   groupId: Doc<"actionGroups">["_id"],
   actionIds: Set<string>,
 ) {
-  const message = await ctx.db
+  const messages = await ctx.db
     .query("chat_messages")
     .withIndex("by_action_group", (q) => q.eq("actionGroupId", groupId))
-    .first();
-  if (!message || message.userId !== userId || !message.turnCards) return;
-  const turnCards = message.turnCards.map((card: any) => {
-    if (card.kind !== "undo" || card.data?.groupId !== String(groupId) || !Array.isArray(card.data.items)) {
-      return card;
-    }
-    return {
-      ...card,
-      data: {
-        ...card.data,
-        items: card.data.items.map((item: any) =>
-          actionIds.has(String(item.actionId)) ? { ...item, state: "undone" } : item,
-        ),
-      },
-    };
-  });
-  await ctx.db.patch(message._id, { turnCards });
+    .collect();
+  for (const message of messages) {
+    if (message.userId !== userId || !message.turnCards) continue;
+    const turnCards = message.turnCards.map((card: any) => {
+      if (card.kind !== "undo" || card.data?.groupId !== String(groupId) || !Array.isArray(card.data.items)) {
+        return card;
+      }
+      return {
+        ...card,
+        data: {
+          ...card.data,
+          items: card.data.items.map((item: any) =>
+            actionIds.has(String(item.actionId)) ? { ...item, state: "undone" } : item,
+          ),
+        },
+      };
+    });
+    await ctx.db.patch(message._id, { turnCards });
+  }
 }
 
 type UndoResult = {

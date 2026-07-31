@@ -334,6 +334,17 @@ describe("clarification flow", () => {
 
     const actions = await t.run((ctx) => ctx.db.query("actions").collect());
     expect(actions[0]).toMatchObject({ status: "committed", committedRowRef: { table: "meals" } });
+    const assistantMessages = await t.run((ctx) => ctx.db.query("chat_messages").collect());
+    const assistant = assistantMessages.find((message) => message.role === "ai");
+    expect(assistantMessages.filter((message) => message.role === "ai")).toHaveLength(1);
+    expect(assistant).toMatchObject({ turnOutcome: "committed", actionGroupId: groupId });
+    expect(assistant?.turnCards).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "result" }),
+      expect.objectContaining({ kind: "undo" }),
+    ]));
+    expect(assistant?.turnCards).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "clarification" }),
+    ]));
   });
 
   test("resolved group cannot be double-committed", async () => {
@@ -384,6 +395,55 @@ describe("clarification flow", () => {
     const meals = await t.run((ctx) => ctx.db.query("meals").collect());
     expect(meals).toHaveLength(1);
     expect(meals[0]).toMatchObject({ date: "2026-07-12", name: "Pizza" });
+    const assistantMessages = await t.run((ctx) => ctx.db.query("chat_messages").collect());
+    expect(assistantMessages.filter((message) => message.role === "ai")).toHaveLength(1);
+    expect(assistantMessages.find((message) => message.role === "ai")).toMatchObject({
+      turnOutcome: "committed",
+      actionGroupId: groupId,
+    });
+    expect(assistantMessages.find((message) => message.role === "ai")?.turnCards).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "clarification" }),
+    ]));
+  });
+
+  test("undo after typed clarification patches the one persisted outcome message", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    mockChatReply(
+      'I need the exact date.⟦LOG_MEAL⟧{"description":"pizza","date":"UNKNOWN_VAGUE","question":"Which date did you eat this?"}⟦/LOG_MEAL⟧',
+    );
+
+    const initial = await asUser.action(api.ai.chat, { message: "I ate pizza a while ago", today: "2026-07-16", clientSubmissionId: "typed-original" }) as any;
+    const groupId = initial.clarification.groupId;
+    await asUser.action(api.ai.chat, { message: "2026-07-12", today: "2026-07-16", clarificationGroupId: groupId as any, clientSubmissionId: "typed-answer" });
+    const action = await t.run((ctx) => ctx.db.query("actions").first());
+    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
+
+    const assistantMessages = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).filter((message) => message.role === "ai");
+    expect(assistantMessages).toHaveLength(1);
+    expect(assistantMessages[0].turnCards).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "undo", data: expect.objectContaining({ items: [expect.objectContaining({ actionId: String(action!._id), state: "undone" })] }) }),
+    ]));
+    expect(await t.run((ctx) => ctx.db.get(action!.committedRowRef!.id as any))).toMatchObject({ undoneAt: expect.any(Number) });
+  });
+
+  test("discard all persists a resolved confirmation outcome instead of a retriable failure", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    mockChatReply(Array.from({ length: 5 }, (_, index) => `⟦LOG_WATER⟧{"ml":${500 + index},"date":"2026-07-16"}⟦/LOG_WATER⟧`).join(""));
+    const initial = await asUser.action(api.ai.chat, { message: "five glasses", today: "2026-07-16" }) as any;
+    const discarded = await asUser.action((api as any).ai.confirmGroup, {
+      groupId: initial.confirmation.groupId,
+      decisions: initial.confirmation.items.map((item: any) => ({ ordinal: item.ordinal, action: "discard" })),
+    }) as any;
+
+    expect(discarded.status).toBe("discarded");
+    expect(await t.run((ctx) => ctx.db.query("water_logs").collect())).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("actions").collect())).toEqual(expect.arrayContaining([expect.objectContaining({ status: "discarded" })]));
+    const assistant = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).find((message) => message.role === "ai");
+    expect(assistant).toMatchObject({ turnOutcome: "no_action", content: "Discarded. Nothing was saved." });
+    expect(assistant?.content).not.toMatch(/couldn't save|try again/i);
+    expect(assistant?.turnCards).toEqual([expect.objectContaining({ kind: "confirmation", data: expect.objectContaining({ state: "resolved" }) })]);
   });
 
   test("confirming with a future date edit fails the member and writes nothing", async () => {
