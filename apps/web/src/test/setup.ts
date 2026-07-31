@@ -16,3 +16,20 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   value: storage,
 });
+
+// jsdom does not implement matchMedia; components read it for reduced-motion.
+if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
