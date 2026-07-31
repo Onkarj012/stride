@@ -1,9 +1,34 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ChatTurnCard, ConfirmationCardData } from "@stride/shared";
 import { ChatTurnCards, type ChatCardHandlers } from "./ChatTurnCards";
 import { ChatTurnMessage, type PersistedChatMessage } from "./ChatTurnMessage";
 import { hasMinimumTouchTarget } from "./cardSizing";
+import { useChatCardActions } from "./useChatCardActions";
+
+const { logAnywayForAction, toastError, toastSuccess } = vi.hoisted(() => ({
+  logAnywayForAction: vi.fn(),
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
+}));
+
+vi.mock("@convex/_generated/api", () => {
+  const node = (path: string[]): any => new Proxy({}, {
+    get: (_target, prop) => prop === "toString" || prop === Symbol.toPrimitive
+      ? () => path.join(".")
+      : node([...path, String(prop)]),
+  });
+  return { api: node([]) };
+});
+
+vi.mock("convex/react", () => ({
+  useAction: (ref: unknown) => String(ref) === "ai.logAnywayForAction" ? logAnywayForAction : vi.fn(),
+  useMutation: () => vi.fn(),
+}));
+
+vi.mock("@/context/ToastContext", () => ({
+  useToast: () => ({ error: toastError, success: toastSuccess }),
+}));
 
 const HOUR = 60 * 60 * 1000;
 
@@ -112,7 +137,100 @@ function persistedMessage(cards: ChatTurnCard[]): PersistedChatMessage {
   })) as PersistedChatMessage;
 }
 
+function duplicateMessage(): PersistedChatMessage {
+  return {
+    role: "ai",
+    content: "I found possible duplicates.",
+    turnCards: [{
+      version: 1,
+      kind: "duplicate",
+      data: {
+        groupId: "group-duplicate",
+        items: [
+          { ordinal: 0, actionType: "meal", title: "Oatmeal", actionId: "action-oatmeal", reason: "Looks similar" },
+          { ordinal: 1, actionType: "workout", title: "5k run", actionId: "action-run", reason: "Looks similar" },
+        ],
+      },
+    }],
+  };
+}
+
+function ActionHarness({ message }: { message: PersistedChatMessage }) {
+  const { handlers, state } = useChatCardActions();
+  return <ChatTurnMessage message={message} handlers={handlers} state={state} />;
+}
+
 describe("chat turn cards", () => {
+  it("commits log-anyway and renders the resolved state from the returned turn", async () => {
+    logAnywayForAction.mockResolvedValue({
+      actionId: "action-run",
+      actionGroupId: "group-duplicate",
+      status: "committed",
+      record: { table: "workouts", id: "workout-1" },
+      turn: {
+        content: "Saved 5k run.",
+        turnContractVersion: 1,
+        turnOutcome: "committed",
+        turnCards: [
+          {
+            version: 1,
+            kind: "result",
+            data: {
+              groupId: "group-duplicate",
+              items: [{
+                ordinal: 1,
+                actionType: "workout",
+                title: "5k run",
+                actionId: "action-run",
+                status: "committed",
+                record: { table: "workouts", id: "workout-1" },
+              }],
+            },
+          },
+          {
+            version: 1,
+            kind: "undo",
+            data: {
+              groupId: "group-duplicate",
+              items: [{
+                ordinal: 1,
+                actionType: "workout",
+                title: "5k run",
+                actionId: "action-run",
+                record: { table: "workouts", id: "workout-1" },
+                state: "available",
+              }],
+            },
+          },
+        ],
+        actionGroupId: "group-duplicate",
+        actionIds: ["action-run"],
+      },
+    });
+
+    render(<ActionHarness message={duplicateMessage()} />);
+    fireEvent.click(within(screen.getByRole("region", { name: "Possible duplicate" })).getAllByRole("button", { name: "Log anyway" })[1]);
+
+    await waitFor(() => expect(logAnywayForAction).toHaveBeenCalledWith({ actionId: "action-run" }));
+    expect(await screen.findByRole("region", { name: "Logged" })).toHaveAttribute("data-card-state", "resolved");
+    expect(screen.getByText("Saved 5k run.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo 5k run" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Possible duplicate" })).toBeNull();
+  });
+
+  it("leaves the duplicate unresolved and surfaces the error when log-anyway fails", async () => {
+    logAnywayForAction.mockRejectedValue(new Error("Action unavailable"));
+
+    render(<ActionHarness message={duplicateMessage()} />);
+    fireEvent.click(within(screen.getByRole("region", { name: "Possible duplicate" })).getAllByRole("button", { name: "Log anyway" })[0]);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't save", "Action unavailable"));
+    const duplicate = screen.getByRole("region", { name: "Possible duplicate" });
+    expect(duplicate).toHaveAttribute("data-card-state", "active");
+    expect(within(duplicate).getAllByRole("button", { name: "Log anyway" })[0]).toBeEnabled();
+    expect(screen.queryByRole("region", { name: "Logged" })).toBeNull();
+  });
+
   it("renders the expected structure for every card kind in the contract", () => {
     render(<ChatTurnCards cards={allCardKinds()} handlers={handlers} />);
 

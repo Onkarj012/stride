@@ -1,14 +1,24 @@
 import { useCallback, useMemo, useState } from "react";
 import { useAction, useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
+import type { DuplicateCardData } from "@stride/shared";
 import { useToast } from "@/context/ToastContext";
-import type { ChatCardHandlers, ChatCardState, ConfirmationDecision } from "./ChatTurnCards";
+import type {
+  ChatCardHandlers,
+  ChatCardState,
+  ChatTurnResolution,
+  ConfirmationDecision,
+} from "./ChatTurnCards";
 
 type ConfirmGroupResult = {
   status?: string;
   results?: Array<{ ordinal: number; status: string }>;
   unresolvedItems?: unknown[];
   memoryApprovals?: Array<{ memoryId: string; kind: "food" | "workout"; label: string }>;
+};
+
+type LogAnywayResult = {
+  turn: ChatTurnResolution;
 };
 
 type Options = {
@@ -39,6 +49,7 @@ function withoutId(set: ReadonlySet<string>, id: string): Set<string> {
 export function useChatCardActions(options: Options = {}): { handlers: ChatCardHandlers; state: ChatCardState } {
   const confirmGroup = useAction((api as any).ai.confirmGroup);
   const resolveClarification = useAction(api.ai.resolveClarification);
+  const logAnywayForAction = useAction(api.ai.logAnywayForAction);
   const undoAction = useMutation((api as any).actions_undo.undoAction);
   const undoGroup = useMutation((api as any).actions_undo.undoGroup);
   const toast = useToast();
@@ -129,12 +140,32 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     }
   }, [onSettled, toast, undoGroup]);
 
+  const onLogAnyway = useCallback(async (_groupId: string, item: DuplicateCardData["items"][number]) => {
+    let alreadyPending = false;
+    setPendingActionIds((current) => {
+      alreadyPending = current.has(item.actionId);
+      return alreadyPending ? current : withId(current, item.actionId);
+    });
+    if (alreadyPending) return;
+    try {
+      const result = await logAnywayForAction({ actionId: item.actionId }) as LogAnywayResult;
+      toast.success("Saved", `${item.title} was logged`);
+      onSettled?.();
+      return result.turn;
+    } catch (error) {
+      toast.error("Couldn't save", error instanceof Error ? error.message : "Try again");
+    } finally {
+      setPendingActionIds((current) => withoutId(current, item.actionId));
+    }
+  }, [logAnywayForAction, onSettled, toast]);
+
   const handlers = useMemo<ChatCardHandlers>(() => ({
     onConfirm: (groupId, decisions) => void onConfirm(groupId, decisions),
     onClarify: (groupId, date) => void onClarify(groupId, date),
     onUndoItem: (groupId, actionId) => void onUndoItem(groupId, actionId),
     onUndoAll: (groupId) => void onUndoAll(groupId),
-  }), [onClarify, onConfirm, onUndoAll, onUndoItem]);
+    onLogAnyway: (groupId, item) => onLogAnyway(groupId, item),
+  }), [onClarify, onConfirm, onLogAnyway, onUndoAll, onUndoItem]);
 
   const state = useMemo<ChatCardState>(
     () => ({ pendingGroupIds, pendingActionIds, resolvedGroupIds }),

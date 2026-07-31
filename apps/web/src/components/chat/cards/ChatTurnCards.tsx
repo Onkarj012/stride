@@ -3,6 +3,7 @@ import { AlertTriangle, Check, Copy, RotateCcw } from "lucide-react";
 import {
   isChatTurnCard,
   type ChatTurnCard,
+  type ChatTurnOutcome,
   type ClarificationCardData,
   type DuplicateCardData,
   type FailureCardData,
@@ -25,6 +26,15 @@ import {
 
 export type { ConfirmationDecision };
 
+export type ChatTurnResolution = {
+  content: string;
+  turnContractVersion: 1;
+  turnOutcome: ChatTurnOutcome;
+  turnCards: ChatTurnCard[];
+  actionGroupId: string;
+  actionIds: string[];
+};
+
 /** Callbacks a surface wires to Convex. Every one is optional: a card whose */
 /** handler is missing renders as a durable record without live controls. */
 export type ChatCardHandlers = {
@@ -32,7 +42,10 @@ export type ChatCardHandlers = {
   onClarify?: (groupId: string, date: string) => void;
   onUndoItem?: (groupId: string, actionId: string) => void;
   onUndoAll?: (groupId: string) => void;
-  onLogAnyway?: (groupId: string, item: DuplicateCardData["items"][number]) => void;
+  onLogAnyway?: (
+    groupId: string,
+    item: DuplicateCardData["items"][number],
+  ) => Promise<ChatTurnResolution | void>;
 };
 
 /** Transient UI state layered on top of the persisted cards. */
@@ -43,8 +56,6 @@ export type ChatCardState = {
   pendingActionIds?: ReadonlySet<string>;
   /** Groups already resolved in this session (before the query catches up). */
   resolvedGroupIds?: ReadonlySet<string>;
-  /** Duplicate items force-logged in this session. */
-  loggedActionIds?: ReadonlySet<string>;
   now?: number;
 };
 
@@ -263,7 +274,6 @@ function DuplicateCard({
   state: ChatCardState;
 }) {
   const pendingActionIds = state.pendingActionIds ?? EMPTY_SET;
-  const loggedActionIds = state.loggedActionIds ?? EMPTY_SET;
   return (
     <section
       data-card-kind="duplicate"
@@ -284,7 +294,6 @@ function DuplicateCard({
       </div>
       <ul className="space-y-2.5">
         {data.items.map((item) => {
-          const logged = loggedActionIds.has(item.actionId);
           const pending = pendingActionIds.has(item.actionId);
           return (
             <li key={item.actionId} className={CHAT_CARD_ROW}>
@@ -293,17 +302,17 @@ function DuplicateCard({
               {handlers.onLogAnyway && (
                 <button
                   type="button"
-                  disabled={logged || pending}
+                  disabled={pending}
                   onClick={() => handlers.onLogAnyway?.(data.groupId, item)}
                   className={cn(
                     CHAT_CARD_PILL,
                     "mt-2 border",
-                    logged || pending
+                    pending
                       ? "border-ink/10 text-ink/40 dark:border-white/10 dark:text-white/35"
                       : "border-peach/50 text-ink dark:text-peach",
                   )}
                 >
-                  {logged ? `Logged ${item.title}` : pending ? "Logging…" : "Log anyway"}
+                  {pending ? "Logging…" : "Log anyway"}
                 </button>
               )}
             </li>
