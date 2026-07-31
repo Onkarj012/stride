@@ -9,6 +9,7 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
       "@convex/_generated/api": path.resolve(__dirname, "./src/lib/convex-api-shim.ts"),
       "@convex": path.resolve(__dirname, "../backend/convex"),
+      "@stride/shared": path.resolve(__dirname, "../../packages/shared/src/index.ts"),
     },
   },
   test: {
