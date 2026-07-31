@@ -5,10 +5,12 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./chat-turn": "./src/chat-turn.ts",
     "./tokens": "./src/tokens.ts"
   },
   "scripts": {
-    "build:tokens": "tsx src/build-tokens.ts"
+    "build:tokens": "tsx src/build-tokens.ts",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
