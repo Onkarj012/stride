@@ -1,19 +1,22 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Trash2, Barcode, ImagePlus, Paperclip, X, RotateCcw } from "lucide-react";
+import { Plus, Trash2, Barcode, ImagePlus, Paperclip, X } from "lucide-react";
 import { useQuery, useMutation, useAction } from "convex/react";
-import type { FunctionArgs } from "convex/server";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
-import { ConfirmationCard, type ConfirmationDecision, type ConfirmationPayload, type ConfirmationResult } from "@/components/coach/ConfirmationCard";
+import { ChatTurnMessage, type PersistedChatMessage } from "@/components/chat/cards/ChatTurnMessage";
+import { parseChatTurnCards } from "@/components/chat/cards/ChatTurnCards";
+import { useChatCardActions } from "@/components/chat/cards/useChatCardActions";
+import { CHAT_CARD_BAND, CHAT_CARD_PILL, CHAT_COLUMN } from "@/components/chat/cards/cardSizing";
 import { AgentBadge } from "@/components/ui-kit/AgentBadge";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
 import { Skeleton } from "@/components/primitives/Skeleton";
 import { CoachBubble, InputBar } from "@/components/ui-kit";
 import type { AgentType, AttachItem, InputMode, Modality } from "@/components/ui-kit";
+import { useSubmissionId } from "@/lib/submissionId";
 import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
@@ -54,36 +57,16 @@ function coachToAgent(coachType?: string): Agent {
   return personaToAgent[coachType ?? "general"] ?? "main";
 }
 
-type TextMessage = { kind: "text"; id: string; role: "user" | "assistant"; text: string; agent?: Agent; streamed?: boolean; entrance?: boolean; modality?: Modality; chip?: string };
-type UndoEntry = { type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps"; id: string; actionId?: string; groupId?: string; label: string; provenance?: string; confidence?: number; undone?: boolean; previous?: { hours: number; quality: string; note?: string } | { count: number } | null; expected?: { hours: number; quality: string; note?: string } | { count: number } };
-type UndoMessage = { kind: "undo"; id: string; groupId?: string; entries: UndoEntry[] };
 type MemoryApprovalEntry = { memoryId: string; kind: "food" | "workout"; label: string; status?: "pending" | "approved" | "rejected" };
-type MemoryApprovalMessage = { kind: "memory-approval"; id: string; entries: MemoryApprovalEntry[] };
-type MealRetryArgs = Omit<FunctionArgs<typeof api.meals.addMeal>, "allowDuplicate">;
-type WorkoutRetryArgs = Omit<FunctionArgs<typeof api.workouts.addWorkout>, "allowDuplicate">;
-type FailedLogItem =
-  | { kind: "meal"; code: string; description: string; retryArgs: MealRetryArgs; logged?: boolean }
-  | { kind: "workout"; code: string; description: string; retryArgs: WorkoutRetryArgs; logged?: boolean };
-type DuplicateMessage = { kind: "duplicate"; id: string; items: FailedLogItem[] };
-type ClarificationItem = { actionType: string; description: string; reason: string; resolvedDate?: string; confidence?: number };
-type ClarificationPayload = { groupId: string; items: ClarificationItem[]; question: string };
-type ClarificationMessage = { kind: "clarification"; id: string; groupId: string; items: ClarificationItem[]; question: string; resolved?: boolean };
-type ConfirmationMessage = { kind: "confirmation"; id: string; payload: ConfirmationPayload; result?: ConfirmationResult };
-type Message = TextMessage | UndoMessage | MemoryApprovalMessage | DuplicateMessage | ClarificationMessage | ConfirmationMessage;
+/**
+ * Transient additions to the transcript. Everything durable — messages, cards,
+ * outcomes — lives on the persisted chat message and is rendered from there.
+ */
+type LocalNote =
+  | { kind: "text"; id: string; text: string }
+  | { kind: "memory-approval"; id: string; entries: MemoryApprovalEntry[] };
+type PendingSend = { submissionId: string; text: string; modality?: Modality; chip?: string };
 type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
-type ConvexChatMessage = { role: "user" | "ai"; content: string };
-
-function confidenceBand(confidence?: number): string | undefined {
-  if (confidence == null) return undefined;
-  return confidence >= 0.8 ? "high confidence" : confidence >= 0.6 ? "medium confidence" : "low confidence";
-}
-
-function provenanceLabel(provenance?: string, confidence?: number): string | undefined {
-  if (!provenance && confidence == null) return undefined;
-  const source = (provenance ?? "unknown").replaceAll("_", " ");
-  const band = confidenceBand(confidence);
-  return band ? `${source} · ${band}` : source;
-}
 
 const RAIL_SPRING = { type: "spring", stiffness: 260, damping: 30 } as const;
 const CHAT_RAIL_STORAGE_KEY = "stride_chat_rail_expanded";
@@ -174,27 +157,23 @@ export function CoachPage() {
   const sessions = (sessionsResult ?? []) as ChatSessionSummary[];
   const createSession = useMutation(api.chat.createSession);
   const deleteSession = useMutation(api.chat.deleteSession);
-  const addMeal = useMutation(api.meals.addMeal);
-  const addWorkout = useMutation(api.workouts.addWorkout);
-  const undoAction = useMutation((api as any).actions_undo.undoAction);
-  const undoGroup = useMutation((api as any).actions_undo.undoGroup);
   const approveFoodMemory = useMutation((api as any).food_memory.approveMemory);
   const rejectFoodMemory = useMutation((api as any).food_memory.rejectMemory);
   const approveWorkoutMemory = useMutation((api as any).workout_memory.approveMemory);
   const rejectWorkoutMemory = useMutation((api as any).workout_memory.rejectMemory);
   const sendToAI = useAction(api.ai.chat);
   const parseNutritionImage = useAction(api.ai.parseNutritionImage);
-  const confirmGroup = useAction((api as any).ai.confirmGroup);
-  const resolveClarification = useAction(api.ai.resolveClarification);
   const toast = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [activeSessionId, setActiveSessionId] = useState<Id<"chat_sessions"> | null>(null);
-  const convexMessages = useQuery(api.chat.getMessages, activeSessionId ? { sessionId: activeSessionId } : "skip") as ConvexChatMessage[] | undefined;
+  const convexMessages = useQuery(api.chat.getMessages, activeSessionId ? { sessionId: activeSessionId } : "skip") as PersistedChatMessage[] | undefined;
+  const persistedMessages = useMemo(() => convexMessages ?? [], [convexMessages]);
 
-  const [messages, setMessages] = useState<Message[]>(() => [
-    { kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true },
-  ]);
+  const [notes, setNotes] = useState<LocalNote[]>([]);
+  const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
+  const [agentBySubmission, setAgentBySubmission] = useState<Record<string, Agent>>({});
+  const [freshSubmissionId, setFreshSubmissionId] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
   const [panelOpen, setPanelOpen] = useState<boolean>(() => {
@@ -208,26 +187,43 @@ export function CoachPage() {
   const [barcodeOpen, setBarcodeOpen] = useState(false);
   const [pendingPickerMode, setPendingPickerMode] = useState<"photo" | "ocr" | null>(null);
   const [kbPad, setKbPad] = useState(0);
-  const [pendingUndoIds, setPendingUndoIds] = useState<Set<string>>(() => new Set());
-  const [pendingRetryIds, setPendingRetryIds] = useState<Set<string>>(() => new Set());
-  const [activeClarificationGroupId, setActiveClarificationGroupId] = useState<Id<"actionGroups"> | null>(null);
-  const [pendingConfirmIds, setPendingConfirmIds] = useState<Set<string>>(() => new Set());
   const [deletingSessionId, setDeletingSessionId] = useState<Id<"chat_sessions"> | null>(null);
-  const [clarifyDates, setClarifyDates] = useState<Record<string, string>>({});
-  const pendingUndoIdsRef = useRef<Set<string>>(new Set());
-  const pendingRetryIdsRef = useRef<Set<string>>(new Set());
-  const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
   const sendingRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const labelFileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const submissionIds = useSubmissionId();
 
-  function resetClarificationState() {
-    setActiveClarificationGroupId(null);
-    setPendingConfirmIds(new Set());
-    setClarifyDates({});
-  }
+  const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
+
+  const addMemoryApprovals = useCallback((entries: MemoryApprovalEntry[]) => {
+    if (entries.length === 0) return;
+    setNotes((prev) => [...prev, { kind: "memory-approval", id: `memory-${Date.now()}`, entries }]);
+  }, []);
+
+  const { handlers: cardHandlers, state: cardState } = useChatCardActions({
+    onConfirmResult: (result) => addMemoryApprovals((result.memoryApprovals ?? []) as MemoryApprovalEntry[]),
+    onSettled: () => scroll(),
+  });
+
+  /**
+   * A pending clarification is reconstructed from the persisted cards, so a
+   * free-text date answer still resolves the right group after a reload.
+   */
+  const activeClarificationGroupId = useMemo(() => {
+    for (let index = persistedMessages.length - 1; index >= 0; index -= 1) {
+      const cards = parseChatTurnCards(persistedMessages[index].turnCards);
+      const clarification = cards.find((card) => card.kind === "clarification");
+      if (clarification && clarification.kind === "clarification") {
+        return cardState.resolvedGroupIds?.has(clarification.data.groupId)
+          ? null
+          : clarification.data.groupId;
+      }
+      if (cards.length > 0) return null;
+    }
+    return null;
+  }, [persistedMessages, cardState.resolvedGroupIds]);
 
   const onTranscript = useCallback((t: string) => {
     setInput((prev) => (prev ? `${prev} ${t}` : t).trim());
@@ -318,25 +314,19 @@ export function CoachPage() {
     return () => document.removeEventListener("paste", onPaste);
   }, [onPickImage]);
 
+  // Scroll to the newest turn whenever persisted history arrives or grows.
   useEffect(() => {
-    if (!activeSessionId || pendingHydrateRef.current !== activeSessionId || !convexMessages) return;
-    const hydrated: Message[] = convexMessages.map((m, i) => ({
-      kind: "text" as const, id: `cx-${i}`,
-      role: m.role === "ai" ? "assistant" as const : "user" as const, text: m.content, streamed: false, entrance: false,
-    }));
-    setMessages(hydrated.length > 0 ? hydrated : [{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
-    pendingHydrateRef.current = null;
-    resetClarificationState();
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "auto" }), 50);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId, convexMessages]);
+    if (persistedMessages.length === 0) return;
+    const timer = setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "auto" }), 50);
+    return () => clearTimeout(timer);
+  }, [persistedMessages.length, activeSessionId]);
 
   const loadSession = useCallback((id: Id<"chat_sessions">) => {
     if (id === activeSessionId) return;
-    resetClarificationState();
-    pendingHydrateRef.current = id;
     setActiveSessionId(id);
-    setMessages([{ kind: "text", id: "loading", role: "assistant", text: "Loading…", streamed: false }]);
+    setNotes([]);
+    setPendingSend(null);
+    setFreshSubmissionId(null);
   }, [activeSessionId]);
 
   // Load session from sidebar ?session= param, then clear the param from URL
@@ -347,196 +337,27 @@ export function CoachPage() {
     if (match) { loadSession(match.id as Id<"chat_sessions">); setSearchParams({}, { replace: true }); }
   }, [searchParams, sessions, loadSession, setSearchParams]);
 
-  const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
-
-  const resolveMemoryApproval = useCallback(async (messageId: string, entry: MemoryApprovalEntry, approved: boolean) => {
+  const resolveMemoryApproval = useCallback(async (noteId: string, entry: MemoryApprovalEntry, approved: boolean) => {
     try {
       if (entry.kind === "food") {
         await (approved ? approveFoodMemory : rejectFoodMemory)({ id: entry.memoryId });
       } else {
         await (approved ? approveWorkoutMemory : rejectWorkoutMemory)({ id: entry.memoryId });
       }
-      setMessages((prev) => prev.map((message) => message.kind === "memory-approval" && message.id === messageId
-        ? { ...message, entries: message.entries.map((candidate) => candidate.memoryId === entry.memoryId ? { ...candidate, status: approved ? ("approved" as const) : ("rejected" as const) } : candidate) }
-        : message));
+      setNotes((prev) => prev.map((note) => note.kind === "memory-approval" && note.id === noteId
+        ? { ...note, entries: note.entries.map((candidate) => candidate.memoryId === entry.memoryId ? { ...candidate, status: approved ? ("approved" as const) : ("rejected" as const) } : candidate) }
+        : note));
     } catch (err) {
       toast.error("Couldn't update memory", err instanceof Error ? err.message : "Try again");
     }
   }, [approveFoodMemory, rejectFoodMemory, approveWorkoutMemory, rejectWorkoutMemory, toast]);
 
-  const undoAutoLog = useCallback(async (messageId: string, entry: UndoEntry) => {
-    if (!entry.actionId || entry.undone || pendingUndoIdsRef.current.has(entry.actionId)) return;
-    pendingUndoIdsRef.current.add(entry.actionId);
-    setPendingUndoIds((prev) => new Set(prev).add(entry.actionId!));
-    try {
-      await undoAction({ actionId: entry.actionId as Id<"actions"> });
-      setMessages((prev) => prev.map((m) => m.kind === "undo" && m.id === messageId
-        ? { ...m, entries: m.entries.map((e) => e.actionId === entry.actionId ? { ...e, undone: true } : e) }
-        : m));
-      toast.success("Undone", `${entry.label} reversed`);
-    } catch (err) {
-      toast.error("Couldn't undo", err instanceof Error ? err.message : "Try again");
-    } finally {
-      pendingUndoIdsRef.current.delete(entry.actionId!);
-      setPendingUndoIds((prev) => {
-        const next = new Set(prev);
-        next.delete(entry.actionId!);
-        return next;
-      });
-    }
-  }, [undoAction, toast]);
-
-  const undoAutoGroup = useCallback(async (messageId: string, groupId: string, entries: UndoEntry[]) => {
-    const pendingId = `group:${groupId}`;
-    if (entries.every((entry) => entry.undone) || pendingUndoIdsRef.current.has(pendingId)) return;
-    pendingUndoIdsRef.current.add(pendingId);
-    setPendingUndoIds((prev) => new Set(prev).add(pendingId));
-    try {
-      const result = await undoGroup({ groupId: groupId as Id<"actionGroups"> }) as { results?: Array<{ actionId: string; status: string }> };
-      const undoneIds = new Set((result.results ?? []).filter((item) => item.status === "undone" || item.status === "already_undone").map((item) => item.actionId));
-      setMessages((prev) => prev.map((m) => m.kind === "undo" && m.id === messageId
-        ? { ...m, entries: m.entries.map((entry) => entry.actionId && undoneIds.has(entry.actionId) ? { ...entry, undone: true } : entry) }
-        : m));
-      toast.success("Undone", "Saved items in this group were reversed");
-    } catch (err) {
-      toast.error("Couldn't undo", err instanceof Error ? err.message : "Try again");
-    } finally {
-      pendingUndoIdsRef.current.delete(pendingId);
-      setPendingUndoIds((prev) => {
-        const next = new Set(prev);
-        next.delete(pendingId);
-        return next;
-      });
-    }
-  }, [undoGroup, toast]);
-
-  const retryFailedLog = useCallback(async (messageId: string, itemIndex: number, item: FailedLogItem) => {
-    const retryId = `${messageId}:${itemIndex}`;
-    if (item.logged || pendingRetryIdsRef.current.has(retryId)) return;
-    pendingRetryIdsRef.current.add(retryId);
-    setPendingRetryIds((prev) => new Set(prev).add(retryId));
-    try {
-      await (item.kind === "meal"
-        ? addMeal({ ...item.retryArgs, allowDuplicate: true })
-        : addWorkout({ ...item.retryArgs, allowDuplicate: true }));
-      setMessages((prev) => prev.map((message) => message.kind === "duplicate" && message.id === messageId
-        ? { ...message, items: message.items.map((candidate, index) => index === itemIndex ? { ...candidate, logged: true } : candidate) }
-        : message));
-      toast.success(item.kind === "meal" ? `Logged: ${item.description}` : `Logged workout: ${item.description}`);
-      scroll();
-    } catch (err) {
-      toast.error("Couldn't log", err instanceof Error ? err.message : "Try again");
-    } finally {
-      pendingRetryIdsRef.current.delete(retryId);
-      setPendingRetryIds((prev) => {
-        const next = new Set(prev);
-        next.delete(retryId);
-        return next;
-      });
-    }
-  }, [addMeal, addWorkout, scroll, toast]);
-
-  const resolveClarificationCard = useCallback(async (messageId: string, groupId: string, date: string) => {
-    if (pendingConfirmIds.has(groupId)) return;
-    setPendingConfirmIds((prev) => new Set(prev).add(groupId));
-    try {
-      const result = await resolveClarification({ groupId: groupId as Id<"actionGroups">, date });
-      setActiveClarificationGroupId(null);
-      setMessages((prev) => prev.map((message) => message.kind === "clarification" && message.id === messageId
-        ? { ...message, resolved: true }
-        : message));
-      const loggedItem = result.loggedItems.length === 1
-        ? result.loggedItems[0]
-        : result.loggedItems.length > 1
-          ? { type: "multiple", items: result.loggedItems }
-          : null;
-      if (loggedItem) {
-        const undoEntries = undoEntriesFromLoggedItem(loggedItem);
-        if (undoEntries.length > 0) {
-          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, groupId: undoEntries[0].groupId, entries: undoEntries }]);
-        }
-      }
-      toast.success("Saved", date);
-      scroll();
-    } catch (err) {
-      toast.error("Couldn't save", err instanceof Error ? err.message : "Try again");
-    } finally {
-      setPendingConfirmIds((prev) => {
-        const next = new Set(prev);
-        next.delete(groupId);
-        return next;
-      });
-    }
-  }, [resolveClarification, scroll, toast, pendingConfirmIds]);
-
-  const confirmLargeGroup = useCallback(async (messageId: string, payload: ConfirmationPayload, decisions: ConfirmationDecision[]) => {
-    if (pendingConfirmIds.has(payload.groupId)) return;
-    setPendingConfirmIds((prev) => new Set(prev).add(payload.groupId));
-    try {
-      const result = await confirmGroup({ groupId: payload.groupId as Id<"actionGroups">, decisions }) as ConfirmationResult & { loggedItems?: any[]; unresolvedItems?: any[]; memoryApprovals?: MemoryApprovalEntry[] };
-      setMessages((prev) => prev.map((message) => message.kind === "confirmation" && message.id === messageId ? { ...message, result } : message));
-      const loggedItem = result.loggedItems?.length === 1
-        ? result.loggedItems[0]
-        : result.loggedItems && result.loggedItems.length > 1
-          ? { type: "multiple", items: result.loggedItems }
-          : null;
-      if (loggedItem) {
-        const undoEntries = undoEntriesFromLoggedItem(loggedItem);
-        if (undoEntries.length > 0) {
-          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, groupId: undoEntries[0].groupId, entries: undoEntries }]);
-        }
-      }
-      if (result.memoryApprovals?.length) {
-        setMessages((prev) => [...prev, { kind: "memory-approval", id: `memory-${Date.now()}`, entries: result.memoryApprovals! }]);
-      }
-      if (result.status === "expired") toast.error("Confirmation expired", "This batch can no longer be saved");
-      else if (result.unresolvedItems?.length) toast.error("Some items need attention", "Saved items remain available to undo");
-      else if (result.status === "discarded") toast.success("Discarded", "No items were saved");
-      else toast.success("Saved", "Confirmed items were logged");
-      scroll();
-    } catch (err) {
-      toast.error("Couldn't save", err instanceof Error ? err.message : "Try again");
-    } finally {
-      setPendingConfirmIds((prev) => {
-        const next = new Set(prev);
-        next.delete(payload.groupId);
-        return next;
-      });
-    }
-  }, [confirmGroup, pendingConfirmIds, scroll, toast]);
-
-  function undoEntriesFromLoggedItem(loggedItem: any): UndoEntry[] {
-    const rawItems = loggedItem?.type === "multiple" ? loggedItem.items : loggedItem ? [loggedItem] : [];
-    if (!Array.isArray(rawItems)) return [];
-    return rawItems.flatMap((item: any) => {
-      const id = item?.data?._id;
-      const actionId = item?.data?.actionId;
-      const groupId = item?.data?.groupId;
-      if (!id || !actionId || !groupId) return [];
-      switch (item.type) {
-        case "meal":
-        case "workout":
-          return [{ type: item.type, id, actionId, groupId, label: item.data?.name ?? item.type, provenance: item.data?.provenance, confidence: item.data?.confidence }];
-        case "sleep":
-          return [{ type: "sleep" as const, id, actionId, groupId, label: `Sleep (${item.data?.hours}h)`, provenance: item.data?.provenance, confidence: item.data?.confidence, previous: item.data?.previous ?? null, expected: { hours: item.data?.hours, quality: item.data?.quality, note: item.data?.note } }];
-        case "water":
-          return [{ type: "water" as const, id, actionId, groupId, label: `Water (${item.data?.ml}ml)`, provenance: item.data?.provenance, confidence: item.data?.confidence }];
-        case "mood":
-          return [{ type: "mood" as const, id, actionId, groupId, label: `Mood (${item.data?.rating}/5)`, provenance: item.data?.provenance, confidence: item.data?.confidence }];
-        case "steps":
-          return [{ type: "steps" as const, id, actionId, groupId, label: `Steps (${item.data?.count})`, provenance: item.data?.provenance, confidence: item.data?.confidence, previous: item.data?.previous ?? null, expected: { count: item.data?.count } }];
-        default:
-          return [];
-      }
-    });
-  }
-
   const newChat = useCallback(() => {
-    pendingHydrateRef.current = null;
-    resetClarificationState();
     setActiveSessionId(null);
-    setMessages([{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
-  }, [style]);
+    setNotes([]);
+    setPendingSend(null);
+    setFreshSubmissionId(null);
+  }, []);
 
   const removeSession = useCallback(async (id: Id<"chat_sessions">) => {
     setDeletingSessionId(id);
@@ -552,9 +373,10 @@ export function CoachPage() {
   }, [deleteSession, toast]);
 
   const orderedSuggestions = useMemo(() => orderSuggestions(COACH_SUGGESTIONS), []);
-  const hasUserMsg = messages.some((m) => m.kind === "text" && m.role === "user");
-  const lastTextIdx = messages.reduce((acc, m, i) => m.kind === "text" ? i : acc, -1);
+  const hasUserMsg = persistedMessages.some((m) => m.role === "user") || pendingSend !== null;
   const activeMode: InputMode = voice.recording || voice.transcribing ? "voice" : attachedImage ? "photo" : attachedLabel ? "ocr" : "type";
+  const pendingSendPersisted = pendingSend !== null
+    && persistedMessages.some((m) => m.role === "user" && m.clientSubmissionId === pendingSend.submissionId);
 
   const send = useCallback(async (text: string, image?: string) => {
     if (sendingRef.current) return;
@@ -570,9 +392,16 @@ export function CoachPage() {
       : labelForSend
       ? { modality: "ocr" as const, chip: "Nutrition label" }
       : undefined;
+    // Stable per-attempt id: retrying the same message reuses it so the backend
+    // de-duplicates instead of logging twice.
+    const clientSubmissionId = submissionIds.idFor(`${messageText}|${image ? "image" : ""}`);
     setInput("");
     setAttachedImage(null);
-    setMessages((prev) => [...prev, { kind: "text", id: `u-${Date.now()}`, role: "user", text: v || (image ? "Photo of meal" : "Nutrition label"), ...userMeta }]);
+    setPendingSend({
+      submissionId: clientSubmissionId,
+      text: v || (image ? "Photo of meal" : "Nutrition label"),
+      ...userMeta,
+    });
     scroll();
 
     setThinking(true);
@@ -589,59 +418,26 @@ export function CoachPage() {
         sessionId,
         coachType: "auto",
         today: localDateStr(),
-        clarificationGroupId: activeClarificationGroupId ?? undefined,
-        clientSubmissionId: crypto.randomUUID(),
+        clarificationGroupId: (activeClarificationGroupId ?? undefined) as Id<"actionGroups"> | undefined,
+        clientSubmissionId,
       });
       const r = result as Record<string, unknown>;
-      const reply = typeof r.reply === "string" ? r.reply : String(result);
       const coachType = typeof r.coachType === "string" ? r.coachType : undefined;
       const agent = coachToAgent(coachType);
       const loggedItem = (r.loggedItem && typeof r.loggedItem === "object" && "type" in (r.loggedItem as object))
         ? r.loggedItem as { type: string; data: any } : undefined;
-      const failedItems = Array.isArray(r.failedItems)
-        ? r.failedItems.filter((item): item is FailedLogItem => {
-            if (!item || typeof item !== "object") return false;
-            const candidate = item as Partial<FailedLogItem>;
-            return (candidate.kind === "meal" || candidate.kind === "workout")
-              && typeof candidate.code === "string"
-              && typeof candidate.description === "string"
-              && !!candidate.retryArgs
-              && typeof candidate.retryArgs === "object";
-          })
-        : [];
-      const clarification = (r.clarification && typeof r.clarification === "object" && "groupId" in (r.clarification as object))
-        ? r.clarification as ClarificationPayload
-        : undefined;
-      const confirmation = (r.confirmation && typeof r.confirmation === "object" && "groupId" in (r.confirmation as object) && "items" in (r.confirmation as object))
-        ? r.confirmation as ConfirmationPayload
-        : undefined;
       const memoryApprovals = Array.isArray(r.memoryApprovals) ? r.memoryApprovals as MemoryApprovalEntry[] : [];
-      if (clarification) setActiveClarificationGroupId(clarification.groupId as Id<"actionGroups">);
-      else if (activeClarificationGroupId) setActiveClarificationGroupId(null);
 
-      setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: reply, agent, streamed: true }]);
+      // The reply text and every card are read back from the persisted turn;
+      // nothing about this turn is held in component state.
+      submissionIds.clear();
+      setAgentBySubmission((prev) => ({ ...prev, [clientSubmissionId]: agent }));
+      setFreshSubmissionId(clientSubmissionId);
+      addMemoryApprovals(memoryApprovals);
       scroll();
 
-      if (failedItems.length > 0) {
-        setMessages((prev) => [...prev, { kind: "duplicate", id: `duplicate-${Date.now()}`, items: failedItems }]);
-        scroll();
-      }
-
-      if (clarification) {
-        setMessages((prev) => [...prev, { kind: "clarification", id: `clarify-${Date.now()}`, ...clarification }]);
-        scroll();
-      }
-
-      if (confirmation) {
-        setMessages((prev) => [...prev, { kind: "confirmation", id: `confirm-${Date.now()}`, payload: confirmation }]);
-        scroll();
-      }
-
-      if (memoryApprovals.length > 0) {
-        setMessages((prev) => [...prev, { kind: "memory-approval", id: `memory-${Date.now()}`, entries: memoryApprovals }]);
-        scroll();
-      }
-
+      // Toasts stay, but only as a supplementary notification — the result card
+      // in the transcript is the durable record.
       if (loggedItem) {
         if (loggedItem.type === "meal") {
           const d = loggedItem.data;
@@ -662,11 +458,6 @@ export function CoachPage() {
           const d = loggedItem.data;
           toast.success("Logged steps", `${d.count} steps`);
         }
-        const undoEntries = undoEntriesFromLoggedItem(loggedItem);
-        if (undoEntries.length > 0) {
-          setMessages((prev) => [...prev, { kind: "undo", id: `undo-${Date.now()}`, groupId: undoEntries[0].groupId, entries: undoEntries }]);
-          scroll();
-        }
       }
       if (labelForSend) setAttachedLabel(null);
     } catch (err) {
@@ -680,13 +471,15 @@ export function CoachPage() {
         : raw.toLowerCase().includes("timeout") || raw.toLowerCase().includes("timed out")
         ? "Request timed out — check your connection."
         : "Couldn't reach Stry right now. Please try again.");
-      setMessages((prev) => [...prev, { kind: "text", id: `a-${Date.now()}`, role: "assistant", text: userMsg, streamed: false }]);
+      // Keep the submission id so a retry of this exact message stays idempotent.
+      setNotes((prev) => [...prev, { kind: "text", id: `err-${Date.now()}`, text: userMsg }]);
       toast.error("Error", userMsg);
     } finally {
       sendingRef.current = false;
+      setPendingSend(null);
       setThinking(false);
     }
-  }, [activeMode, activeSessionId, activeClarificationGroupId, attachedLabel, createSession, sendToAI, scroll, toast]);
+  }, [activeMode, activeSessionId, activeClarificationGroupId, addMemoryApprovals, attachedLabel, createSession, sendToAI, scroll, submissionIds, toast]);
 
   const attachItems: AttachItem[] = [
     { key: "photo", label: "Photo of meal", mode: "photo", icon: <ImagePlus className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => fileRef.current?.click() },
@@ -795,7 +588,7 @@ export function CoachPage() {
           <span className="text-[13px] font-medium text-ink/45 dark:text-white/45 ml-1">ask anything about your day</span>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar" aria-live="polite" aria-label="Chat with Stry">
-          <div className="max-w-[720px] mx-auto px-4 pt-5 pb-3 space-y-4">
+          <div className={cn(CHAT_COLUMN, "pt-5 pb-3 space-y-4")}>
             {!hasUserMsg && (
               <div>
                 <CoachBubble
@@ -810,168 +603,54 @@ export function CoachPage() {
               </div>
             )}
 
-            {messages.map((m, i) => {
-              if (m.kind === "memory-approval") {
-                return (
-                  <div key={m.id} className="max-w-[92%] rounded-[16px] border border-lavender/30 bg-lavender/10 p-3.5 space-y-2">
-                    <p className="text-[13px] font-bold text-ink dark:text-surface">Save this as a preference?</p>
-                    {m.entries.map((entry) => (
-                      <div key={entry.memoryId} className="flex items-center justify-between gap-2">
-                        <span className="text-[12px] text-ink/70 dark:text-white/65">{entry.label}</span>
-                        {entry.status && entry.status !== "pending" ? (
-                          <span className="text-[11px] font-bold text-ink/45 dark:text-white/45">{entry.status}</span>
-                        ) : (
-                          <div className="flex gap-1.5">
-                            <button type="button" onClick={() => void resolveMemoryApproval(m.id, entry, true)} className="rounded-full border border-mint/40 px-2.5 py-1 text-[11px] font-bold text-ink dark:text-surface">Approve</button>
-                            <button type="button" onClick={() => void resolveMemoryApproval(m.id, entry, false)} className="rounded-full border border-ink/15 px-2.5 py-1 text-[11px] font-bold text-ink/60 dark:text-white/60">Reject</button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                );
-              }
-              if (m.kind === "undo") {
-                if (m.entries.length === 0) return null;
-                return (
-                  <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]">
-                    {m.entries.length > 1 && m.groupId && (
-                      <button
-                        type="button"
-                        disabled={m.entries.every((entry) => entry.undone) || pendingUndoIds.has(`group:${m.groupId}`)}
-                        onClick={() => undoAutoGroup(m.id, m.groupId!, m.entries)}
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
-                          m.entries.every((entry) => entry.undone) || pendingUndoIds.has(`group:${m.groupId}`)
-                            ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
-                            : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
-                        )}
-                      >
-                        <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
-                        {pendingUndoIds.has(`group:${m.groupId}`) ? "Undoing all" : "Undo all"}
-                      </button>
-                    )}
-                    {m.entries.map((entry) => (
-                      <button
-                        key={entry.id}
-                        type="button"
-                        disabled={!entry.actionId || entry.undone || pendingUndoIds.has(entry.actionId)}
-                        onClick={() => undoAutoLog(m.id, entry)}
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
-                          !entry.actionId || entry.undone || pendingUndoIds.has(entry.actionId)
-                            ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
-                            : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
-                        )}
-                      >
-                        <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
-                        <span className="flex flex-col items-start leading-tight">
-                          <span>{entry.undone ? `${entry.label} reversed` : pendingUndoIds.has(entry.actionId ?? "") ? `Undoing: ${entry.label}` : `Undo: ${entry.label}`}</span>
-                          {provenanceLabel(entry.provenance, entry.confidence) && <span className="text-[9px] font-semibold opacity-65">{provenanceLabel(entry.provenance, entry.confidence)}</span>}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                );
-              }
-              if (m.kind === "duplicate") {
-                if (m.items.length === 0) return null;
-                return (
-                  <div key={m.id} className="flex flex-wrap gap-2 max-w-[92%]">
-                    {m.items.map((item, itemIndex) => {
-                      const retryId = `${m.id}:${itemIndex}`;
-                      const pending = pendingRetryIds.has(retryId);
-                      return (
-                        <button
-                          key={`${item.kind}-${itemIndex}`}
-                          type="button"
-                          disabled={item.logged || pending}
-                          onClick={() => retryFailedLog(m.id, itemIndex, item)}
-                          className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] font-bold transition-colors",
-                            item.logged || pending
-                              ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
-                              : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
-                          )}
-                        >
-                          <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
-                          {item.logged ? `Logged: ${item.description}` : pending ? `Logging: ${item.description}` : `Log anyway: ${item.description}`}
-                        </button>
-                      );
-                    })}
-                  </div>
-                );
-              }
-              if (m.kind === "confirmation") {
-                return (
-                  <ConfirmationCard
-                    key={m.id}
-                    payload={m.payload}
-                    result={m.result}
-                    pending={pendingConfirmIds.has(m.payload.groupId)}
-                    onConfirm={(decisions) => void confirmLargeGroup(m.id, m.payload, decisions)}
-                  />
-                );
-              }
-              if (m.kind === "clarification") {
-                if (m.resolved || m.items.length === 0) return null;
-                const pending = pendingConfirmIds.has(m.groupId);
-                const defaultDate = m.items[0]?.resolvedDate ?? localDateStr();
-                const dateValue = clarifyDates[m.id] ?? defaultDate;
-                return (
-                  <div key={m.id} className="max-w-[92%] rounded-[16px] border border-ink/8 dark:border-white/10 bg-white dark:bg-[#1a1e2e] shadow-[0_8px_24px_rgba(13,16,27,0.06)] p-3.5 space-y-3">
-                    <div className="space-y-2">
-                      {m.items.map((item, index) => (
-                        <div key={index} className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[11px] font-extrabold uppercase tracking-wide text-ink/45 dark:text-white/45">{item.actionType}</span>
-                            <span className="text-[13px] font-medium text-ink dark:text-surface">{item.description}</span>
-                          </div>
-                          <p className="text-[12px] text-ink/60 dark:text-white/55 leading-snug">{item.reason}</p>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-[15px] font-medium text-ink dark:text-surface">{m.question}</p>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="date"
-                        value={dateValue}
-                        disabled={pending}
-                        onChange={(e) => setClarifyDates((prev) => ({ ...prev, [m.id]: e.target.value }))}
-                        className="h-9 rounded-[10px] border border-ink/12 dark:border-white/12 bg-surface dark:bg-[#0b0d15] px-3 text-[13px] font-medium text-ink dark:text-surface focus:outline-none focus:ring-2 focus:ring-lavender/40"
-                      />
-                      <button
-                        type="button"
-                        disabled={pending || !dateValue}
-                        onClick={() => void resolveClarificationCard(m.id, m.groupId, dateValue)}
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-bold transition-colors",
-                          pending || !dateValue
-                            ? "border-ink/10 text-ink/35 dark:border-white/10 dark:text-white/30 cursor-default"
-                            : "border-bubblegum/30 text-bubblegum hover:bg-bubblegum/10 dark:border-bubblegum/40 cursor-pointer",
-                        )}
-                      >
-                        <RotateCcw className="h-3 w-3" strokeWidth={2.4} />
-                        {pending ? "Saving…" : "Confirm"}
-                      </button>
-                    </div>
-                    <p className="text-[11px] text-ink/40 dark:text-white/40">Or just tell me the date in chat.</p>
-                  </div>
-                );
-              }
-              if (!hasUserMsg && m.id === "init") return null;
+            {/* Every durable turn — text and cards — is rendered from persisted state. */}
+            {persistedMessages.map((message, index) => {
+              const submissionId = message.clientSubmissionId;
+              const agent = message.role === "ai" && submissionId ? agentBySubmission[submissionId] : undefined;
               return (
-                <MessageBubble
-                  key={m.id}
-                  role={m.role === "assistant" ? "ai" : "user"}
-                  content={m.text}
-                  entrance={m.entrance}
-                  fresh={i === lastTextIdx && !!m.streamed}
-                  onEdit={m.role === "user" ? () => { setInput(m.text); inputRef.current?.focus(); } : undefined}
-                  badge={m.role === "assistant" && m.agent && m.agent !== "main" ? <AgentBadge agent={m.agent} /> : undefined}
-                  modality={m.role === "user" ? m.modality : undefined}
-                  chip={m.role === "user" ? m.chip : undefined}
+                <ChatTurnMessage
+                  key={`${submissionId ?? "m"}-${index}`}
+                  message={message}
+                  handlers={cardHandlers}
+                  state={cardState}
+                  fresh={message.role === "ai" && submissionId != null && submissionId === freshSubmissionId}
+                  badge={agent && agent !== "main" ? <AgentBadge agent={agent} /> : undefined}
+                  onEdit={message.role === "user" ? () => { setInput(message.content); inputRef.current?.focus(); } : undefined}
                 />
+              );
+            })}
+
+            {pendingSend && !pendingSendPersisted && (
+              <MessageBubble
+                key={pendingSend.submissionId}
+                role="user"
+                content={pendingSend.text}
+                modality={pendingSend.modality}
+                chip={pendingSend.chip}
+              />
+            )}
+
+            {notes.map((note) => {
+              if (note.kind === "text") {
+                return <MessageBubble key={note.id} role="ai" content={note.text} />;
+              }
+              return (
+                <div key={note.id} className={cn(CHAT_CARD_BAND, "rounded-[16px] border border-lavender/30 bg-lavender/10 p-4 space-y-2")}>
+                  <p className="text-[15px] font-extrabold text-ink dark:text-surface">Save this as a preference?</p>
+                  {note.entries.map((entry) => (
+                    <div key={entry.memoryId} className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[14px] text-ink/70 dark:text-white/65">{entry.label}</span>
+                      {entry.status && entry.status !== "pending" ? (
+                        <span className="text-[13px] font-bold text-ink/45 dark:text-white/45">{entry.status}</span>
+                      ) : (
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => void resolveMemoryApproval(note.id, entry, true)} className={cn(CHAT_CARD_PILL, "border border-mint/40 text-ink dark:text-surface")}>Approve</button>
+                          <button type="button" onClick={() => void resolveMemoryApproval(note.id, entry, false)} className={cn(CHAT_CARD_PILL, "border border-ink/15 text-ink/60 dark:text-white/60")}>Reject</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               );
             })}
             {thinking && <ThinkingBubble />}
@@ -980,7 +659,7 @@ export function CoachPage() {
         </div>
 
         {!hasUserMsg && (
-          <div className="shrink-0 max-w-[720px] mx-auto w-full px-3 pb-2">
+          <div className={cn(CHAT_COLUMN, "shrink-0 pb-2")}>
             <div className="flex flex-wrap gap-1.5">
               {orderedSuggestions.map((s) => (
                 <button key={s} type="button" onClick={() => { recordSuggestion(s); void send(s); }}
@@ -1000,7 +679,7 @@ export function CoachPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
               transition={reduceMotion ? { duration: 0 } : { duration: 0.18 }}
-              className="shrink-0 max-w-[720px] mx-auto w-full px-3 pb-2 flex"
+              className={cn(CHAT_COLUMN, "shrink-0 pb-2 flex")}
             >
               <div className="relative">
                 <img src={attachedImage} alt="Attached" className="h-16 w-16 rounded-xl object-cover border border-ink/8 dark:border-white/10" />
@@ -1017,7 +696,7 @@ export function CoachPage() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 8 }}
               transition={reduceMotion ? { duration: 0 } : { duration: 0.18 }}
-              className="shrink-0 max-w-[720px] mx-auto w-full px-3 pb-2"
+              className={cn(CHAT_COLUMN, "shrink-0 pb-2")}
             >
               <div className="relative rounded-xl border border-lavender/20 bg-lavender/10 px-3 py-2 pr-8 text-[12px] text-text">
                 <p className="font-semibold">{attachedLabel.name}</p>
@@ -1032,7 +711,7 @@ export function CoachPage() {
         </AnimatePresence>
 
         <div className="shrink-0" style={{ paddingBottom: kbPad > 0 ? `${kbPad}px` : "max(env(safe-area-inset-bottom), 0.75rem)" }}>
-          <div className="max-w-[720px] mx-auto px-3 pt-1">
+          <div className={cn(CHAT_COLUMN, "pt-1")}>
             <InputBar
               inputRef={inputRef}
               value={input}
