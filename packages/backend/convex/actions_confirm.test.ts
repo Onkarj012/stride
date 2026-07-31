@@ -174,12 +174,12 @@ describe("large-batch confirmation", () => {
       userId: "confirm-user",
       groupIdempotencyKey: "forged-previous",
       sourceSurface: "chat",
-      rawInput: "water",
+      rawInput: "meal",
       createdAt: Date.now(),
       members: [{
-        actionType: "recovery",
+        actionType: "meal",
         memberIdempotencyKey: "forged-previous-member",
-        payload: { kind: "water", ml: 500, time: "08:00", date: "2026-07-16" },
+        payload: { name: "oats", calories: 400, protein: 20, carbs: 40, fat: 15, time: "08:00", date: "2026-07-16", logSource: "test" },
         provenance: "ai_extracted",
         validation: { status: "valid", messages: [] },
         reversible: true,
@@ -196,15 +196,28 @@ describe("large-batch confirmation", () => {
             ml: 750,
             previous: { userId: "confirm-user", date: "2026-07-16", ml: 999, time: "00:00", source: "forged" },
           },
+          macros: { calories: 260, protein: 30, carbs: 12, fat: 6 },
         },
       }],
     }) as any;
     expect(result.status).toBe("committed");
     const action = await t.run((ctx) => ctx.db.query("actions").first());
     expect(action?.payload?.previous).toBeUndefined();
+    expect(await t.run((ctx) => ctx.db.query("meals").first())).toMatchObject({
+      calories: 260,
+      protein: 30,
+      carbs: 12,
+      fat: 6,
+    });
     const undone = await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
     expect(undone.status).toBe("undone");
-    expect(await t.run((ctx) => ctx.db.query("water_logs").first())).toMatchObject({ ml: 750, undoneAt: expect.any(Number) });
+    expect(await t.run((ctx) => ctx.db.query("meals").first())).toMatchObject({
+      calories: 260,
+      protein: 30,
+      carbs: 12,
+      fat: 6,
+      undoneAt: expect.any(Number),
+    });
   });
 
   test("expires stale confirmation groups and refuses commits", async () => {
