@@ -1,6 +1,63 @@
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { assertChatTurnCards } from "../../shared/src/chat-turn";
+import { stableHash } from "./validation";
+
+const turnOutcomeValidator = v.union(
+  v.literal("committed"),
+  v.literal("confirmation_required"),
+  v.literal("failed"),
+  v.literal("no_action"),
+);
+
+type ChatTurnOutcome = "committed" | "confirmation_required" | "failed" | "no_action";
+
+function sameOptionalId(left: unknown, right: unknown): boolean {
+  return String(left ?? "") === String(right ?? "");
+}
+
+function turnCardsHash(cards: unknown): string {
+  return stableHash(JSON.stringify(cards ?? []));
+}
+
+async function assertCanonicalCommittedRows(ctx: any, args: {
+  userId: string;
+  actionGroupId: any;
+  actionIds: any[];
+  turnOutcome: ChatTurnOutcome;
+  turnCards: unknown;
+}) {
+  if (args.turnOutcome !== "committed") return;
+  const actions: any[] = await ctx.db
+    .query("actions")
+    .withIndex("by_group", (q: any) => q.eq("groupId", args.actionGroupId))
+    .collect();
+  const actionById = new Map(actions.map((action) => [String(action._id), action]));
+  const committedIds = new Set<string>();
+  for (const actionId of args.actionIds) {
+    const action = actionById.get(String(actionId));
+    if (!action || action.userId !== args.userId || String(action.groupId) !== String(args.actionGroupId)) {
+      throw new Error("Assistant outcome action rows do not match the action group");
+    }
+    if (action.status === "committed") {
+      if (!action.committedRowRef) throw new Error("Committed action is missing its durable record");
+      committedIds.add(String(action._id));
+    }
+  }
+  const cardCommittedIds = new Set<string>();
+  for (const card of args.turnOutcome === "committed" && Array.isArray(args.turnCards) ? args.turnCards : []) {
+    if (card?.kind !== "result") continue;
+    for (const item of card.data?.items ?? []) {
+      if (item?.status === "committed" && item.actionId) cardCommittedIds.add(String(item.actionId));
+    }
+  }
+  for (const actionId of cardCommittedIds) {
+    if (!committedIds.has(actionId)) throw new Error("Committed card item is not backed by a durable action row");
+  }
+  if (committedIds.size === 0 || cardCommittedIds.size === 0) {
+    throw new Error("Committed assistant outcome is missing a durable record");
+  }
+}
 
 async function requireUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
@@ -152,12 +209,7 @@ export const addMessage = internalMutation({
     content: v.string(),
     clientSubmissionId: v.optional(v.string()),
     turnContractVersion: v.optional(v.literal(1)),
-    turnOutcome: v.optional(v.union(
-      v.literal("committed"),
-      v.literal("confirmation_required"),
-      v.literal("failed"),
-      v.literal("no_action"),
-    )),
+    turnOutcome: v.optional(turnOutcomeValidator),
     turnCards: v.optional(v.any()),
     actionGroupId: v.optional(v.id("actionGroups")),
     actionIds: v.optional(v.array(v.id("actions"))),
@@ -211,15 +263,11 @@ export const updateAssistantOutcomeForGroup = internalMutation({
     userId: v.string(),
     actionGroupId: v.id("actionGroups"),
     content: v.string(),
-    turnOutcome: v.union(
-      v.literal("committed"),
-      v.literal("confirmation_required"),
-      v.literal("failed"),
-      v.literal("no_action"),
-    ),
+    turnOutcome: turnOutcomeValidator,
     turnCards: v.any(),
     actionIds: v.array(v.id("actions")),
-    allowTerminalRetry: v.optional(v.boolean()),
+    expectedTurnOutcome: v.optional(turnOutcomeValidator),
+    expectedTurnCardsHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     assertChatTurnCards(args.turnCards);
@@ -232,7 +280,23 @@ export const updateAssistantOutcomeForGroup = internalMutation({
       .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
     if (!message) return null;
     if (message.userId !== args.userId) throw new Error("Not found");
-    if (message.turnOutcome && message.turnOutcome !== "confirmation_required" && !args.allowTerminalRetry) return message;
+    if (args.expectedTurnOutcome !== undefined && message.turnOutcome !== args.expectedTurnOutcome) return message;
+    if (args.expectedTurnCardsHash !== undefined && turnCardsHash(message.turnCards) !== args.expectedTurnCardsHash) return message;
+    const isSafeExplicitRecovery =
+      (message.turnOutcome === "failed" || message.turnOutcome === "committed")
+      && args.expectedTurnOutcome === message.turnOutcome
+      && args.expectedTurnCardsHash !== undefined
+      && args.turnOutcome === "committed";
+    if (message.turnOutcome && message.turnOutcome !== "confirmation_required" && !isSafeExplicitRecovery) return message;
+    if (isSafeExplicitRecovery) {
+      await assertCanonicalCommittedRows(ctx, {
+        userId: args.userId,
+        actionGroupId: args.actionGroupId,
+        actionIds: args.actionIds,
+        turnOutcome: args.turnOutcome,
+        turnCards: args.turnCards,
+      });
+    }
     await ctx.db.patch(message._id, {
       content: args.content,
       turnContractVersion: 1,
@@ -241,6 +305,57 @@ export const updateAssistantOutcomeForGroup = internalMutation({
       actionIds: args.actionIds,
     });
     return await ctx.db.get(message._id);
+  },
+});
+
+export const getTurnBySubmission = internalQuery({
+  args: {
+    userId: v.string(),
+    sessionId: v.optional(v.id("chat_sessions")),
+    clientSubmissionId: v.string(),
+    content: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userMessage = await ctx.db
+      .query("chat_messages")
+      .withIndex("by_user_submission_and_role", (q) =>
+        q.eq("userId", args.userId)
+          .eq("clientSubmissionId", args.clientSubmissionId)
+          .eq("role", "user"),
+      )
+      .first();
+    if (userMessage) {
+      if (!sameOptionalId(userMessage.sessionId, args.sessionId)) {
+        throw new Error("Submission already belongs to a different chat session");
+      }
+      if (args.content !== undefined && userMessage.content !== args.content) {
+        throw new Error("Submission already belongs to different content");
+      }
+    }
+    const assistant = await ctx.db
+      .query("chat_messages")
+      .withIndex("by_user_submission_and_role", (q) =>
+        q.eq("userId", args.userId)
+          .eq("clientSubmissionId", args.clientSubmissionId)
+          .eq("role", "ai"),
+      )
+      .first();
+    if (!assistant) return null;
+    if (!sameOptionalId(assistant.sessionId, args.sessionId)) {
+      throw new Error("Submission already belongs to a different chat session");
+    }
+    if (assistant.turnContractVersion !== 1 || !assistant.turnOutcome) return null;
+    return {
+      messageId: assistant._id,
+      sessionId: assistant.sessionId,
+      content: assistant.content,
+      turnOutcome: assistant.turnOutcome,
+      turnCards: assistant.turnCards ?? [],
+      actionGroupId: assistant.actionGroupId,
+      actionIds: assistant.actionIds ?? [],
+      clientSubmissionId: assistant.clientSubmissionId,
+      turnCardsHash: turnCardsHash(assistant.turnCards),
+    };
   },
 });
 
@@ -256,7 +371,8 @@ export const getAssistantOutcomeForGroup = internalQuery({
       .collect())
       .filter((candidate) => candidate.role === "ai")
       .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
-    if (!message || message.userId !== userId || message.role !== "ai") throw new Error("Not found");
+    if (!message) return null;
+    if (message.userId !== userId || message.role !== "ai") throw new Error("Not found");
     return message;
   },
 });

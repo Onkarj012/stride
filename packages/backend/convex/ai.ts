@@ -492,6 +492,10 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     groupId: groupId as any,
   });
   const { content, turnOutcome, turnCards } = clarificationResolutionOutcome(groupId, currentMembers);
+  const existingMessage: any = await ctx.runQuery(internal.chat.getAssistantOutcomeForGroup, {
+    userId,
+    actionGroupId: groupId as any,
+  });
   const updatedMessage = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
     userId,
     actionGroupId: groupId as any,
@@ -499,6 +503,8 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     turnOutcome,
     turnCards,
     actionIds: currentMembers.map((member) => member._id),
+    expectedTurnOutcome: existingMessage?.turnOutcome,
+    expectedTurnCardsHash: existingMessage ? stableHash(JSON.stringify(existingMessage.turnCards ?? [])) : undefined,
   });
 
   const memoryApprovals = (await Promise.all(loggedItems.map((item) =>
@@ -870,6 +876,10 @@ export const confirmGroup = action({
     }
 
     const members: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
+    const existingMessage: any = await ctx.runQuery(internal.chat.getAssistantOutcomeForGroup, {
+      userId,
+      actionGroupId: groupId,
+    });
     const decisionsByOrdinal = new Map(decisions.map((decision) => [decision.ordinal, decision]));
     const results: any[] = [];
     const loggedItems: any[] = [];
@@ -1072,7 +1082,8 @@ export const confirmGroup = action({
       turnOutcome,
       turnCards: cards,
       actionIds: currentMembers.map((member) => member._id),
-      allowTerminalRetry: true,
+      expectedTurnOutcome: existingMessage?.turnOutcome,
+      expectedTurnCardsHash: existingMessage ? stableHash(JSON.stringify(existingMessage.turnCards ?? [])) : undefined,
     });
     return { groupId, status, results, loggedItems, unresolvedItems, memoryApprovals };
   },
@@ -1099,6 +1110,11 @@ export const logAnywayForAction = action({
       actionGroupId: group._id,
     });
     if (!message || message.userId !== userId) throw new Error("Not found");
+    const expectedTurnOutcome = message.turnOutcome;
+    if (expectedTurnOutcome !== "failed" && expectedTurnOutcome !== "committed") {
+      throw new Error("Action is not duplicate-blocked");
+    }
+    const expectedTurnCardsHash = stableHash(JSON.stringify(message.turnCards ?? []));
 
     const duplicateCard = Array.isArray(message.turnCards)
       ? (message.turnCards as ChatTurnCard[]).find((card) =>
@@ -1195,15 +1211,19 @@ export const logAnywayForAction = action({
     ];
     const content = `Saved ${confirmationDescription(committed)}.`;
     const actionIds = currentMembers.map((candidate) => candidate._id);
-    await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
+    const updatedMessage = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
       userId,
       actionGroupId: group._id,
       content,
       turnOutcome: "committed",
       turnCards,
       actionIds,
-      allowTerminalRetry: true,
+      expectedTurnOutcome,
+      expectedTurnCardsHash,
     });
+    const persistedTurnCards = ((updatedMessage?.turnCards ?? turnCards) as ChatTurnCard[]);
+    const persistedTurnOutcome = (updatedMessage?.turnOutcome ?? "committed") as "committed";
+    const persistedContent = updatedMessage?.content ?? content;
 
     return {
       actionId,
@@ -1211,12 +1231,12 @@ export const logAnywayForAction = action({
       status: "committed",
       record: committed.committedRowRef,
       turn: {
-        content,
+        content: persistedContent,
         turnContractVersion: 1,
-        turnOutcome: "committed",
-        turnCards,
+        turnOutcome: persistedTurnOutcome,
+        turnCards: persistedTurnCards,
         actionGroupId: group._id,
-        actionIds,
+        actionIds: (updatedMessage?.actionIds ?? actionIds) as Id<"actions">[],
       },
     };
   },
@@ -1807,6 +1827,15 @@ export const chat = action({
     const userName = identity.name ?? "Athlete";
     const today = assertValidDate(todayArg ?? new Date().toISOString().split("T")[0]);
     const restrictedGuidance = hasRestrictedRecoverySignal(message);
+    const existingTurn = clientSubmissionId
+      ? await ctx.runQuery(internal.chat.getTurnBySubmission, {
+          userId,
+          sessionId,
+          clientSubmissionId,
+          content: message,
+        })
+      : null;
+    if (existingTurn) return chatResponseFromPersistedTurn(existingTurn, coachType, restrictedGuidance);
 
     // Gather context
     const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory, userIngredients, checkInAnswers] = await Promise.all([
@@ -2151,13 +2180,13 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
             error,
           );
           return {
-            reply: "I couldn't save that. Please try again.",
-            loggedItem: null,
+            reply: finalized.content,
+            loggedItem: loggedItemFromCards(finalized.turnCards),
             memoryApprovals: [],
             failedItems: [],
             coachType: toLegacyPersona(coachType),
             restricted: restrictedGuidance,
-            outcome: "failed" as const,
+            outcome: finalized.turnOutcome,
             cards: finalized.turnCards,
             messageId: finalized.messageId,
             processingError: error instanceof Error ? error.message : String(error),
@@ -3800,6 +3829,65 @@ function turnOutcomeText(result: TurnPolicyResult): string {
   return "";
 }
 
+function loggedItemFromCards(cards: ChatTurnCard[]): any {
+  const committedItems = cards.flatMap((card) =>
+    card.kind === "result"
+      ? card.data.items.filter((item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed")
+      : [],
+  );
+  if (committedItems.length === 0) return null;
+  const toLoggedItem = (item: Extract<ResultCardItem, { status: "committed" }>) => ({
+    type: item.actionType === "recovery" ? item.record.table.replace(/_logs$/, "") : item.actionType,
+    data: {
+      _id: item.record.id,
+      actionId: item.actionId,
+      record: item.record,
+      title: item.title,
+      description: item.description,
+      date: item.date,
+      time: item.time,
+    },
+  });
+  return committedItems.length === 1
+    ? toLoggedItem(committedItems[0])
+    : { type: "multiple", items: committedItems.map(toLoggedItem) };
+}
+
+function chatResponseFromPersistedTurn(turn: any, coachType: string | undefined, restricted: boolean) {
+  const cards = (turn.turnCards ?? []) as ChatTurnCard[];
+  return {
+    reply: turn.content,
+    loggedItem: loggedItemFromCards(cards),
+    memoryApprovals: [],
+    failedItems: [],
+    coachType: toLegacyPersona(coachType),
+    restricted,
+    outcome: turn.turnOutcome,
+    cards,
+    messageId: turn.messageId,
+    clarification: cards.find((card) => card.kind === "clarification")?.data,
+    confirmation: cards.find((card) => card.kind === "confirmation")?.data,
+  };
+}
+
+function homepageResponseFromPersistedTurn(turn: any, activeSessionId: Id<"chat_sessions">, restricted: boolean) {
+  const cards = (turn.turnCards ?? []) as ChatTurnCard[];
+  return {
+    drafts: [],
+    tier1Summary: turn.content,
+    tier2Detail: "",
+    isQuestion: turn.turnOutcome === "no_action",
+    reply: turn.content,
+    coachType: "overall" as CoachType,
+    sessionId: activeSessionId,
+    messageId: turn.messageId,
+    restricted,
+    failedItems: [],
+    outcome: turn.turnOutcome as ChatTurnOutcome,
+    cards,
+  };
+}
+
 async function persistFailedChatTurn(
   ctx: ActionCtx,
   userId: string,
@@ -3822,30 +3910,54 @@ async function persistFailedChatTurn(
     groupId: failedGroup.groupId,
   });
   const reason = error instanceof Error ? error.message : String(error);
-  const turnCards: ChatTurnCard[] = [{
-    version: 1,
-    kind: "failure",
-    data: {
-      groupId: String(failedGroup.groupId),
-      code: "TURN_PROCESSING_FAILED",
-      message: reason,
-      retriable: true,
-      items: [],
-    },
-  }];
+  const resultItems = resultCardItemsForActions(actionRows);
+  const committedItems = resultItems.filter(
+    (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
+  );
+  const turnCards: ChatTurnCard[] = committedItems.length > 0
+    ? [
+        {
+          version: 1,
+          kind: "result",
+          data: { groupId: String(failedGroup.groupId), items: resultItems },
+        },
+        {
+          version: 1,
+          kind: "undo",
+          data: {
+            groupId: String(failedGroup.groupId),
+            items: committedItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
+          },
+        },
+      ]
+    : [{
+        version: 1,
+        kind: "failure",
+        data: {
+          groupId: String(failedGroup.groupId),
+          code: "TURN_PROCESSING_FAILED",
+          message: reason,
+          retriable: true,
+          items: [],
+        },
+      }];
+  const content = committedItems.length > 0
+    ? `Saved ${committedItems.map((item) => item.title).join(", ")}.`
+    : "I couldn't save that. Please try again.";
+  const turnOutcome: ChatTurnOutcome = committedItems.length > 0 ? "committed" : "failed";
   const messageId = await ctx.runMutation(internal.chat.addMessage, {
     userId,
     sessionId,
     role: "ai",
-    content: "I couldn't save that. Please try again.",
+    content,
     clientSubmissionId,
     turnContractVersion: 1,
-    turnOutcome: "failed",
+    turnOutcome,
     turnCards,
     actionGroupId: failedGroup.groupId,
     actionIds: actionRows.map((action) => action._id),
   });
-  return { messageId, groupId: failedGroup.groupId, turnCards };
+  return { messageId, groupId: failedGroup.groupId, turnCards, content, turnOutcome };
 }
 
 export const homepageInput = action({
@@ -3870,6 +3982,7 @@ export const homepageInput = action({
     failedItems: FailedLogItem[];
     outcome?: ChatTurnOutcome;
     cards?: ChatTurnCard[];
+    processingError?: string;
   }> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
@@ -3888,6 +4001,15 @@ export const homepageInput = action({
     // Make sure we have a homepage session to persist into
     const activeSessionId = sessionId
       ?? (await ctx.runMutation(internal.chat.getOrCreateHomepageSession, { userId, date: today }));
+    const existingTurn = clientSubmissionId
+      ? await ctx.runQuery(internal.chat.getTurnBySubmission, {
+          userId,
+          sessionId: activeSessionId,
+          clientSubmissionId,
+          content: message,
+        })
+      : null;
+    if (existingTurn) return homepageResponseFromPersistedTurn(existingTurn, activeSessionId, restrictedGuidance);
 
     // Save user message immediately
     await ctx.runMutation(internal.chat.addMessage, {
@@ -3898,6 +4020,7 @@ export const homepageInput = action({
       clientSubmissionId,
     });
 
+    try {
     // Phase 5: MemoryAgent — fire-and-forget fact extraction (does not block response)
     ctx.runAction(internal.agents.runMemoryAgentAction, {
       userId, message, today,
@@ -4194,5 +4317,33 @@ export const homepageInput = action({
       outcome: turnResult.outcome,
       cards: turnResult.cards,
     };
+    } catch (error) {
+      const finalized = await persistFailedChatTurn(
+        ctx,
+        userId,
+        activeSessionId,
+        image ? `${message}\n[image:${stableHash(image)}]` : message,
+        clientSubmissionId,
+        today,
+        settingsModel,
+        error,
+      );
+      const reason = error instanceof Error ? error.message : String(error);
+      return {
+        drafts: [],
+        tier1Summary: finalized.content,
+        tier2Detail: "",
+        isQuestion: false,
+        reply: finalized.content,
+        coachType: "overall",
+        sessionId: activeSessionId,
+        messageId: finalized.messageId,
+        restricted: restrictedGuidance,
+        failedItems: [],
+        outcome: finalized.turnOutcome,
+        cards: finalized.turnCards,
+        processingError: reason,
+      };
+    }
   },
 });

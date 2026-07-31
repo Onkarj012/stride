@@ -113,12 +113,150 @@ describe("persisted chat-turn outcome contract", () => {
     await t.mutation(internal.chat.updateAssistantOutcomeForGroup, {
       userId: "turn-user", actionGroupId: groupId, content: "Saved water.", turnOutcome: "committed", turnCards: [], actionIds: [],
     });
-    await t.mutation(internal.chat.updateAssistantOutcomeForGroup, {
-      userId: "turn-user", actionGroupId: groupId, content: "I couldn't save that. Please try again.", turnOutcome: "failed", turnCards: [], actionIds: [],
-    });
+    await expect(t.mutation(internal.chat.updateAssistantOutcomeForGroup, {
+      userId: "turn-user", actionGroupId: groupId, content: "I couldn't save that. Please try again.", turnOutcome: "failed", turnCards: [], actionIds: [], allowTerminalRetry: true,
+    } as any)).rejects.toThrow();
 
     const assistant = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).find((message) => message.role === "ai");
     expect(assistant).toMatchObject({ turnOutcome: "committed", content: "Saved 500ml water." });
+  });
+
+  test("transport retry reconstructs a persisted failed outcome without rerunning the log", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "turn-user" });
+    const request = {
+      message: "I ate lunch",
+      today: "2026-07-16",
+      clientSubmissionId: "failed-transport-retry",
+    };
+    mockTurn({ extraction: new Error("provider unavailable") });
+    const first = await asUser.action(api.ai.chat, request) as any;
+
+    mockTurn({ extraction: {
+      isQuestion: false,
+      items: [{ type: "water", description: "500ml water", date: "2026-07-16" }],
+    } });
+    const retry = await asUser.action(api.ai.chat, request) as any;
+
+    expect(retry).toMatchObject({
+      messageId: first.messageId,
+      reply: first.reply,
+      outcome: "failed",
+      cards: first.cards,
+    });
+    expect(await t.run((ctx) => ctx.db.query("water_logs").collect())).toHaveLength(0);
+    const messages = await t.run((ctx) => ctx.db.query("chat_messages").collect());
+    expect(messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(messages.filter((message) => message.role === "ai")).toHaveLength(1);
+    expect(messages.find((message) => message.role === "ai")).toMatchObject({
+      turnOutcome: "failed",
+      clientSubmissionId: request.clientSubmissionId,
+    });
+  });
+
+  test("homepage failure after user persistence creates one retriable terminal outcome", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "turn-user" });
+    mockTurn({ extraction: new Error("homepage extraction unavailable") });
+    const result = await asUser.action(api.ai.homepageInput, {
+      message: "I ate lunch",
+      today: "2026-07-16",
+      clientSubmissionId: "homepage-failure",
+    }) as any;
+
+    expect(result.outcome).toBe("failed");
+    expect(result.cards).toContainEqual(expect.objectContaining({
+      kind: "failure",
+      data: expect.objectContaining({
+        retriable: true,
+        message: "homepage extraction unavailable",
+      }),
+    }));
+    const messages = await t.run((ctx) => ctx.db.query("chat_messages").collect());
+    expect(messages.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(messages.filter((message) => message.role === "ai")).toHaveLength(1);
+    expect(messages.find((message) => message.role === "ai")).toMatchObject({
+      turnOutcome: "failed",
+      clientSubmissionId: "homepage-failure",
+    });
+  });
+
+  test("explicit retry can recover a current failed confirmation through the CAS path", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "turn-user" });
+    const { id: sessionId } = await asUser.mutation(api.chat.createSession, { title: "Safe retry" });
+    const staged = await t.mutation((internal as any).ai.stageClarificationGroup, {
+      userId: "turn-user",
+      groupIdempotencyKey: "safe-failed-retry",
+      sourceSurface: "chat",
+      rawInput: "log an unclear meal",
+      createdAt: Date.now(),
+      members: [{
+        actionType: "meal",
+        memberIdempotencyKey: "safe-failed-retry-member",
+        payload: { name: "Unclear meal", calories: -1, protein: 10, carbs: 30, fat: 10, date: "2026-07-16", time: "12:00", logSource: "chat" },
+        provenance: "ai_extracted",
+        confidence: 0.8,
+        validation: { status: "valid", messages: [] },
+        reversible: true,
+        resolvedDate: "2026-07-16",
+        resolvedTime: "12:00",
+        ordinal: 0,
+      }],
+    });
+    const action = await t.run((ctx) => ctx.db.query("actions").first());
+    expect(action).toBeDefined();
+    await t.mutation(internal.chat.addMessage, {
+      userId: "turn-user",
+      sessionId,
+      role: "ai",
+      content: "1 item needs review.",
+      clientSubmissionId: "safe-failed-retry",
+      turnContractVersion: 1,
+      turnOutcome: "confirmation_required",
+      turnCards: [{
+        version: 1,
+        kind: "confirmation",
+        data: {
+          groupId: String(staged.groupId),
+          expiresAt: Date.now() + 60 * 60 * 1000,
+          items: [{
+            ordinal: 0,
+            actionType: "meal",
+            title: "Unclear meal",
+            description: "Unclear meal",
+            date: "2026-07-16",
+            time: "12:00",
+            actionId: String(action!._id),
+            confidence: 0.8,
+            validationMessages: [],
+          }],
+        },
+      }],
+      actionGroupId: staged.groupId,
+      actionIds: [action!._id],
+    });
+
+    const first = await asUser.action((api as any).ai.confirmGroup, {
+      groupId: staged.groupId,
+      decisions: [{ ordinal: 0, action: "confirm" }],
+    }) as any;
+    expect(first.status).toBe("failed");
+    expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(0);
+
+    const retry = await asUser.action((api as any).ai.confirmGroup, {
+      groupId: staged.groupId,
+      decisions: [{
+        ordinal: 0,
+        action: "confirm",
+        edits: { payload: { name: "Dal", calories: 220, protein: 12, carbs: 35, fat: 4, date: "2026-07-16", time: "13:00", logSource: "chat" } },
+      }],
+    }) as any;
+
+    expect(retry.results[0].status).toBe("committed");
+    expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
+    const assistant = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).find((message) => message.role === "ai");
+    expect(assistant).toMatchObject({ turnOutcome: "committed", content: expect.stringContaining("Saved Dal") });
   });
 
   test("multi-item turns persist committed and failed per-item outcomes", async () => {
