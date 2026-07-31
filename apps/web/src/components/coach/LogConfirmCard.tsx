@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { Check, X, Pencil, Flame, Dumbbell, Footprints, Zap, Moon, Droplets, Smile, Activity } from "lucide-react";
 import type { LogDraft, MealDraft, WorkoutDraft } from "@/data/mock";
 import { cn } from "@/lib/utils";
+import { CHAT_CARD_TOUCH_TARGET } from "@/components/chat/cards/cardSizing";
 import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 type SleepDraft = { kind: "sleep"; description: string; hours: number; quality: "poor"|"ok"|"good"|"great" };
@@ -70,7 +71,7 @@ function NumField({
 }) {
   return (
     <div className="flex flex-col items-center gap-0.5">
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+      <span className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">
         {label}
       </span>
       {editing ? (
@@ -78,12 +79,12 @@ function NumField({
           type="number"
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="w-16 text-center text-[20px] font-extrabold bg-input border border-border rounded-lg py-0.5 text-text focus:outline-none focus:border-lavender"
+          className={cn(CHAT_CARD_TOUCH_TARGET, "w-16 text-center text-[20px] font-extrabold bg-input border border-border rounded-lg text-text focus:outline-none focus:border-lavender")}
         />
       ) : (
         <span className={cn("text-[24px] font-extrabold leading-none", color)}>{value}</span>
       )}
-      <span className="text-[12px] text-text-muted">{unit}</span>
+      <span className="text-[13px] text-text-muted">{unit}</span>
     </div>
   );
 }
@@ -176,7 +177,7 @@ function MealCard({
               style={{ width: `${Math.round((draft as any).confidence * 100)}%` }}
             />
           </div>
-          <span className="text-[11.5px] text-text-muted whitespace-nowrap">
+          <span className="text-[13px] text-text-muted whitespace-nowrap">
             {Math.round((draft as any).confidence * 100)}% confidence
           </span>
           <NutritionSourceBadge source={(draft as any).nutritionSource} />
@@ -251,7 +252,7 @@ function WorkoutCard({
           />
         ) : (
           <div className="flex flex-col items-center gap-0.5">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Type</span>
+            <span className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Type</span>
             <span className="text-[17px] font-bold text-text">{draft.type}</span>
           </div>
         )}
@@ -273,7 +274,7 @@ function WorkoutCard({
             <select
               value={draft.intensity}
               onChange={(e) => onChange({ ...clearWorkoutEstimate(draft), intensity: e.target.value as WorkoutDraft["intensity"] })}
-              className="rounded-lg bg-input border border-border px-2 py-1 text-[13px] font-bold text-text focus:outline-none focus:border-lavender"
+              className={cn(CHAT_CARD_TOUCH_TARGET, "rounded-lg bg-input border border-border px-2 text-[13px] font-bold text-text focus:outline-none focus:border-lavender")}
             >
               <option value="light">light</option>
               <option value="medium">medium</option>
@@ -299,10 +300,10 @@ function WorkoutCard({
       {Array.isArray(draft.exercises) && draft.exercises.length > 0 && (
         <div className="space-y-2 px-1">
           <div className="flex items-center justify-between">
-            <span className="text-[12px] font-bold uppercase tracking-wider text-text-muted">
+            <span className="text-[13px] font-bold uppercase tracking-wider text-text-muted">
               Exercises
             </span>
-            <span className="text-[12px] font-semibold text-text-muted">
+            <span className="text-[13px] font-semibold text-text-muted">
               {draft.exercises.reduce((sum, ex) => sum + (ex.sets?.length ?? 0), 0)} sets
             </span>
           </div>
@@ -312,7 +313,7 @@ function WorkoutCard({
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[14px] font-bold text-text truncate">{ex.name}</span>
                   {ex.muscle_group && (
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-subtle shrink-0">
+                    <span className="text-[13px] font-semibold uppercase tracking-wide text-text-subtle shrink-0">
                       {ex.muscle_group}
                     </span>
                   )}
@@ -321,7 +322,7 @@ function WorkoutCard({
                   {(ex.sets ?? []).map((set, j) => (
                     <span
                       key={j}
-                      className="rounded-lg bg-card px-2 py-1 text-[12px] font-semibold text-text-muted tabular-nums"
+                      className="rounded-lg bg-card px-2 py-1 text-[13px] font-semibold text-text-muted tabular-nums"
                     >
                       {j + 1}. {formatExerciseSet(set as Record<string, unknown>, ex.weight_unit)}
                     </span>
@@ -343,12 +344,12 @@ function WorkoutCard({
                 style={{ width: `${Math.round((draft as any).calorieResult.confidence * 100)}%` }}
               />
             </div>
-            <span className="text-[11.5px] text-text-muted whitespace-nowrap">
+            <span className="text-[13px] text-text-muted whitespace-nowrap">
               ~{(draft as any).calorieResult.range_low}-{(draft as any).calorieResult.range_high} kcal · {Math.round((draft as any).calorieResult.confidence * 100)}%
             </span>
           </div>
           {(draft as any).calorieResult.rough && (
-            <span className="inline-flex rounded-full bg-lavender-soft px-2 py-0.5 text-[11.5px] font-bold uppercase tracking-wide text-lavender">
+            <span className="inline-flex rounded-full bg-lavender-soft px-2 py-0.5 text-[13px] font-bold uppercase tracking-wide text-lavender">
               Rough estimate
             </span>
           )}
@@ -366,10 +367,10 @@ function SleepCard({ draft, editing, onChange }: { draft: SleepDraft; editing: b
         <NumField label="Hours" value={draft.hours} unit="h" editing={editing}
           onChange={(v) => onChange({ ...draft, hours: v })} color="text-lavender" />
         <div className="flex flex-col items-center gap-0.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Quality</span>
+          <span className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Quality</span>
           {editing ? (
             <select value={draft.quality} onChange={(e) => onChange({ ...draft, quality: e.target.value as SleepDraft["quality"] })}
-              className="text-[16px] font-bold bg-input border border-border rounded-lg px-2 py-0.5 text-text focus:outline-none focus:border-lavender">
+              className={cn(CHAT_CARD_TOUCH_TARGET, "text-[16px] font-bold bg-input border border-border rounded-lg px-2 text-text focus:outline-none focus:border-lavender")}>
               <option value="poor">poor</option>
               <option value="ok">ok</option>
               <option value="good">good</option>
@@ -378,7 +379,7 @@ function SleepCard({ draft, editing, onChange }: { draft: SleepDraft; editing: b
           ) : (
             <span className="text-[20px] font-extrabold leading-none text-text capitalize">{draft.quality}</span>
           )}
-          <span className="text-[12px] text-text-muted">felt</span>
+          <span className="text-[13px] text-text-muted">felt</span>
         </div>
       </div>
     </div>
@@ -403,7 +404,7 @@ function MoodCard({ draft, editing, onChange }: { draft: MoodDraft; editing: boo
         <div className="flex gap-1">
           {[1, 2, 3, 4, 5].map((r) => (
             <button key={r} onClick={() => onChange({ ...draft, rating: r as MoodDraft["rating"] })}
-              className={cn("h-8 w-8 rounded-full text-[14px] font-bold transition-colors",
+              className={cn(CHAT_CARD_TOUCH_TARGET, "rounded-full text-[14px] font-bold transition-colors",
                 r === draft.rating ? "bg-lavender text-text-on-ink" : "bg-input text-text-muted hover:text-text")}>
               {r}
             </button>
@@ -468,10 +469,10 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
         <HeaderIcon className={cn("h-4 w-4 shrink-0", header.color)} strokeWidth={2} />
         <div className="flex-1 min-w-0">
           <p className="text-[15px] font-bold text-text truncate">{draft.description}</p>
-          <p className="text-[12px] text-text-muted">{header.label}</p>
+          <p className="text-[13px] text-text-muted">{header.label}</p>
         </div>
         {(draft as any).date && (draft as any).date !== new Date().toLocaleDateString("en-CA") && (
-          <span className="shrink-0 rounded-full bg-card-elev border border-border px-2 py-0.5 text-[11px] font-bold text-text">
+          <span className="shrink-0 rounded-full bg-card-elev border border-border px-2 py-0.5 text-[13px] font-bold text-text">
             {(draft as any).date}
           </span>
         )}
@@ -500,7 +501,7 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
             type="button"
             onClick={() => setEditing(true)}
             disabled={submitting}
-            className="inline-flex items-center justify-center rounded-full border border-lavender/25 bg-lavender-soft px-3 py-2.5 text-[13px] font-bold text-text disabled:opacity-50"
+            className={cn(CHAT_CARD_TOUCH_TARGET, "inline-flex items-center justify-center rounded-full border border-lavender/25 bg-lavender-soft px-4 text-[13px] font-bold text-text disabled:opacity-50")}
           >
             Refine
           </motion.button>
@@ -509,7 +510,7 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
           whileTap={{ scale: 0.95 }}
           onClick={handleConfirm}
           disabled={submitting || needsWorkoutCalories}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink py-2.5 text-[14px] font-bold disabled:opacity-50"
+          className={cn(CHAT_CARD_TOUCH_TARGET, "flex-1 inline-flex items-center justify-center gap-1.5 rounded-full bg-ink text-text-on-ink text-[14px] font-bold disabled:opacity-50")}
         >
           <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
           {submitting ? "Logging..." : needsWorkoutCalories ? "Enter kcal" : (draft as any).allowDuplicate ? "Log anyway" : "Confirm"}
@@ -519,7 +520,8 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
           onClick={() => setEditing((e) => !e)}
           disabled={submitting}
           className={cn(
-            "inline-flex items-center justify-center gap-1.5 rounded-full border px-4 py-2.5 text-[14px] font-semibold transition-colors disabled:opacity-50",
+            CHAT_CARD_TOUCH_TARGET,
+            "inline-flex items-center justify-center gap-1.5 rounded-full border px-4 text-[14px] font-semibold transition-colors disabled:opacity-50",
             editing
               ? "bg-lavender-soft border-lavender text-text"
               : "border-border text-text-muted hover:text-text",
@@ -534,7 +536,7 @@ export function LogConfirmCard({ draft: initialDraft, onConfirm, onDiscard }: Pr
             if (!submitting) onDiscard();
           }}
           disabled={submitting}
-          className="inline-flex items-center justify-center h-10 w-10 rounded-full border border-border text-text-muted hover:text-text transition-colors disabled:opacity-50"
+          className={cn(CHAT_CARD_TOUCH_TARGET, "inline-flex items-center justify-center rounded-full border border-border text-text-muted hover:text-text transition-colors disabled:opacity-50")}
           aria-label="Discard"
         >
           <X className="h-4 w-4" strokeWidth={2} />
