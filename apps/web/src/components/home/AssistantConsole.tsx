@@ -3,17 +3,13 @@ import { motion, AnimatePresence } from "motion/react";
 import { X, Barcode, ImagePlus, Paperclip } from "lucide-react";
 import { useUser } from "@clerk/react";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { ConvexError } from "convex/values";
 import { api } from "@convex/_generated/api";
 import { BarcodeModal } from "@/components/coach/BarcodeModal";
-import { LogConfirmCard } from "@/components/coach/LogConfirmCard";
 import { EditLogModal, type EditableMeal } from "@/components/coach/EditLogModal";
 import { ChatTurnMessage, type PersistedChatMessage } from "@/components/chat/cards/ChatTurnMessage";
 import { useChatCardActions } from "@/components/chat/cards/useChatCardActions";
 import {
   CHAT_CARD_BAND,
-  CHAT_CARD_META,
-  CHAT_CARD_PILL,
   CHAT_COLUMN,
 } from "@/components/chat/cards/cardSizing";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
@@ -28,18 +24,6 @@ import { cn, localDateStr } from "@/lib/utils";
 import { getAIErrorMessage } from "@/lib/ai-errors";
 import { useSubmissionId } from "@/lib/submissionId";
 import { FADE_FAST } from "@/lib/motion";
-import {
-  mergeDrafts,
-  normalizeDraft,
-  normalizeDrafts,
-  splitActions,
-  stageActions,
-  promoteOnMessages,
-  promoteOnTimeout,
-  STAGED_FALLBACK_MS,
-  type AnyDraft,
-  type StagedActions,
-} from "./logDraftFlow";
 
 function useLocalDate(): string {
   const [date, setDate] = useState(() => localDateStr());
@@ -89,8 +73,6 @@ type AgentAction =
       window?: DailyWindow;
       queue?: Array<{ id: string; title: string; body?: string; options: AgentButton[] }>;
     }
-  | { type: "log_draft"; title?: string; body?: string; source?: string; draft: any }
-  | { type: "macro_conflict"; title?: string; body?: string; draft: any; buttons: AgentButton[] }
   | { type: "button_row"; buttons: AgentButton[] }
   | { type: "coach_note"; tone?: "recovery" | "momentum" | "neutral"; text: string };
 
@@ -130,37 +112,6 @@ function filterInitialCheckIns(actions: AgentAction[], date: string): AgentActio
 function numericValueForAnswer(value: string): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function getNearDuplicateData(err: unknown): { message?: string } | null {
-  if (!(err instanceof ConvexError)) return null;
-  const data = err.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const payload = data as { code?: string; message?: string };
-  return payload.code === "NEAR_DUPLICATE" ? payload : null;
-}
-
-/** Swap a macro-conflict draft between the user's own numbers and the engine estimate. */
-export function applyEngineEstimate(draft: AnyDraft): AnyDraft {
-  const estimate = draft.engineEstimate;
-  if (!estimate) return draft;
-  return {
-    ...draft,
-    _reportedMacros: draft._reportedMacros ?? {
-      kcal: draft.kcal, protein: draft.protein, carbs: draft.carbs, fat: draft.fat,
-    },
-    kcal: estimate.kcal,
-    protein: estimate.protein,
-    carbs: estimate.carbs,
-    fat: estimate.fat,
-    nutritionSource: "engine",
-  };
-}
-
-export function applyReportedMacros(draft: AnyDraft): AnyDraft {
-  const reported = draft._reportedMacros;
-  if (!reported) return draft;
-  return { ...draft, ...reported, nutritionSource: "macro_conflict" };
 }
 
 function modalityForContent(content: string): { modality?: Modality; chip?: string } {
@@ -207,16 +158,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     }
   }, [effectiveInitialActions, today]);
 
-  // Macro-level confirmation still runs through transient drafts, because the
-  // persisted card contract carries no macro fields yet. In-memory only — a
-  // reload drops an unconfirmed draft rather than resurrecting it from storage.
-  const [pendingDraftsRaw, setPendingDraftsRaw] = useState<AnyDraft[]>([]);
-  const pendingDrafts = pendingDraftsRaw;
-  const setPendingDrafts = useCallback((updater: AnyDraft[] | ((prev: AnyDraft[]) => AnyDraft[])) => {
-    setPendingDraftsRaw((prev) => normalizeDrafts(typeof updater === "function" ? updater(prev) : updater));
-  }, []);
-  const submittingDraftIdsRef = useRef<Set<string>>(new Set());
-
   const [editEntry, setEditEntry] = useState<EditableMeal | null>(null);
 
   const { user } = useUser();
@@ -241,91 +182,16 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   // Persistent homepage chat: load history from Convex.
   const homepageChat = useQuery(api.chat.getHomepageMessages, { date: today });
   const messages = (homepageChat?.messages ?? []) as HomepageMessage[];
-  const initialActionKey = effectiveInitialActions.map((a) => `${a.type}:${"id" in a ? a.id : ""}`).join("|");
-
-  const [staged, setStaged] = useState<StagedActions<AgentAction>>(null);
-  const stagedRef = useRef<StagedActions<AgentAction>>(staged);
-  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-
-  const promoteActions = useCallback((actions: AgentAction[]) => {
-    setAgentActions(actions);
-  }, []);
-
-  // Any draft-bearing action that reaches the inline list — from a send, from
-  // a check-in batch, or handed in as an initial action — is claimed once into
-  // the confirm stack. Nothing carrying a draft is silently dropped, and a
-  // claimed action is never re-read, so edits to a draft survive re-renders.
-  const claimedDraftActionsRef = useRef<WeakSet<object>>(new WeakSet());
-  useEffect(() => {
-    const drafts: any[] = [];
-    for (const action of agentActions) {
-      if (claimedDraftActionsRef.current.has(action)) continue;
-      const claimed = splitActions([action]).drafts;
-      if (claimed.length === 0) continue;
-      claimedDraftActionsRef.current.add(action);
-      drafts.push(...claimed);
-    }
-    if (drafts.length === 0) return;
-    setPendingDrafts((prev) => mergeDrafts(prev, drafts));
-  }, [agentActions, setPendingDrafts]);
-
-  const transitionStaged = useCallback((updater: (current: StagedActions<AgentAction>) => StagedActions<AgentAction>) => {
-    const next = updater(stagedRef.current);
-    stagedRef.current = next;
-    setStaged(next);
-  }, []);
-
-  useEffect(() => {
-    transitionStaged((current) => {
-      const result = promoteOnMessages(current, messages);
-      if (result.promote) promoteActions(result.promote);
-      return result.staged;
-    });
-  }, [messages, promoteActions, staged, transitionStaged]);
-
-  useEffect(() => {
-    const batches = stagedRef.current ?? [];
-    const liveBatchIds = new Set(batches.map((batch) => batch.batchId));
-    for (const [batchId, timer] of timersRef.current) {
-      if (!liveBatchIds.has(batchId)) {
-        clearTimeout(timer);
-        timersRef.current.delete(batchId);
-      }
-    }
-    for (const batch of batches) {
-      if (timersRef.current.has(batch.batchId)) continue;
-      const timer = setTimeout(() => {
-        transitionStaged((current) => {
-          const result = promoteOnTimeout(current, batch.batchId);
-          if (result.promote) promoteActions(result.promote);
-          return result.staged;
-        });
-        timersRef.current.delete(batch.batchId);
-      }, STAGED_FALLBACK_MS);
-      timersRef.current.set(batch.batchId, timer);
-    }
-  }, [promoteActions, staged, transitionStaged]);
-
-  useEffect(() => () => {
-    for (const timer of timersRef.current.values()) clearTimeout(timer);
-    timersRef.current.clear();
-  }, []);
-
   const previousDateRef = useRef(today);
   useEffect(() => {
     if (today === previousDateRef.current) return;
     previousDateRef.current = today;
-    setPendingDrafts([]);
-    transitionStaged(() => null);
     setAgentActions(filterInitialCheckIns(effectiveInitialActions, today));
-  }, [today, effectiveInitialActions, setPendingDrafts, transitionStaged]);
+  }, [today, effectiveInitialActions]);
 
   // Backend actions/mutations
   const homepageInput = useAction(api.ai.homepageInput);
   const clearHomepageMessages = useMutation(api.chat.clearHomepageMessages);
-  const addMeal = useMutation(api.meals.addMeal);
-  const commitHomeDraft = useMutation(api.ai.commitHomeDraft);
-  const recordBehavior = useMutation(api.behavior.recordBehavior);
   const submitCheckInAnswer = useMutation(api.checkins.submitAnswer);
 
   const firstName = user?.firstName ?? user?.username ?? "there";
@@ -343,12 +209,12 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     if (messages.length > 0) return;
     setAgentActions((cur) => cur.length === 0 ? filterInitialCheckIns(effectiveInitialActions, today) : cur);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialActionKey, messages.length, today]);
+  }, [effectiveInitialActions, messages.length, today]);
 
   // Scroll to bottom when content changes
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages.length, thinking, pendingDrafts.length, agentActions.length, freshTs]);
+  }, [messages.length, thinking, agentActions.length, freshTs]);
 
   /* ── Voice (Groq Whisper) ── */
   const onTranscript = useCallback((t: string) => {
@@ -421,105 +287,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     return () => document.removeEventListener("paste", onPaste);
   }, [onPickImage]);
 
-  /* ── Confirm a macro-level draft → actually log it ── */
-  const handleConfirm = useCallback(async (draft: any) => {
-    const normalizedDraft = normalizeDraft(draft);
-    if (!normalizedDraft) return;
-    if (normalizedDraft.kind === "workout"
-      && (!Number.isFinite(normalizedDraft.kcal) || normalizedDraft.kcal <= 0)) {
-      toast.error("Calories required", "Enter a calorie estimate before confirming this workout.");
-      return;
-    }
-    const draftKey = normalizedDraft._clientId;
-    if (submittingDraftIdsRef.current.has(draftKey)) return;
-    submittingDraftIdsRef.current.add(draftKey);
-    const matchesDraft = (candidate: any) => candidate?._clientId === draftKey;
-    setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? { ...d, ...normalizedDraft, submitting: true, error: undefined } : d));
-    const time = new Date().toTimeString().slice(0, 5);
-    const currentDate = localDateStr();
-
-    try {
-      const d = normalizedDraft as any;
-      const date = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : currentDate;
-      const dateNote = date !== currentDate ? ` for ${date}` : "";
-
-      if (d.kind === "meal") {
-        const isUnparsed = d.parseError && d.kcal === 0 && d.protein === 0 && d.carbs === 0 && d.fat === 0;
-        if (isUnparsed) {
-          toast.error("Couldn't parse meal", "Please edit the meal details before confirming.");
-          setPendingDrafts((prev) => prev.map((item) => matchesDraft(item) ? { ...item, ...normalizedDraft, submitting: false } : item));
-          return;
-        }
-        const ingredientBreakdown = d.ingredientBreakdown ?? null;
-        await addMeal({
-          name: d.description,
-          calories: d.kcal,
-          protein: d.protein,
-          carbs: d.carbs,
-          fat: d.fat,
-          time,
-          date,
-          components: d.items?.join(", "),
-          confidence: d.confidence,
-          nutritionSource: d.nutritionSource,
-          nutritionVerified: d.nutritionVerified,
-          foodMemoryId: d.foodMemoryId,
-          structuredItems: ingredientBreakdown?.items ? JSON.stringify(ingredientBreakdown.items) : undefined,
-          ingredientBreakdown: ingredientBreakdown ? JSON.stringify(ingredientBreakdown) : undefined,
-          logSource: "home",
-          allowDuplicate: d.allowDuplicate,
-        });
-        void recordBehavior({ kind: "log", key: "meal_confirm" }).catch(() => {});
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Logged${dateNote}: ${d.description}`, `${d.kcal} kcal · ${d.protein}g protein`);
-      } else if (d.kind === "workout") {
-        await commitHomeDraft({ draft: { ...d, date, timestamp: time, rationale: d.rationale || undefined }, clientSubmissionId: draftKey });
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Logged workout${dateNote}: ${d.description}`, `${d.duration} min · ${d.kcal} kcal burned`);
-      } else if (d.kind === "sleep") {
-        await commitHomeDraft({ draft: { ...d, date, time }, clientSubmissionId: draftKey });
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        toast.success(`Sleep logged${dateNote}`, `${d.hours.toFixed(1)}h · ${d.quality}`);
-      } else if (d.kind === "water" || d.kind === "mood" || d.kind === "steps") {
-        await commitHomeDraft({ draft: { ...d, date, time }, clientSubmissionId: draftKey });
-        setPendingDrafts((prev) => prev.filter((item) => !matchesDraft(item)));
-        const detail = d.kind === "water"
-          ? `${d.ml >= 1000 ? (d.ml / 1000).toFixed(1) + "L" : d.ml + "ml"}`
-          : d.kind === "mood"
-            ? `${d.rating}/5`
-            : `${d.count.toLocaleString()} steps`;
-        toast.success(`${d.kind[0].toUpperCase()}${d.kind.slice(1)} logged${dateNote}`, detail);
-      }
-    } catch (err) {
-      const duplicate = getNearDuplicateData(err);
-      const raw = err instanceof Error ? err.message : "Something went wrong — try again.";
-      const isDuplicate = !!duplicate;
-      const message = duplicate?.message ?? raw;
-      setPendingDrafts((prev) => prev.map((d) => matchesDraft(d) ? {
-        ...d,
-        ...normalizedDraft,
-        submitting: false,
-        error: message,
-        allowDuplicate: isDuplicate ? true : d.allowDuplicate,
-      } : d));
-      toast.error(isDuplicate ? "Possible duplicate" : "Couldn't log", message);
-    } finally {
-      submittingDraftIdsRef.current.delete(draftKey);
-    }
-  }, [addMeal, commitHomeDraft, recordBehavior, setPendingDrafts, toast]);
-
-  const discardDraft = useCallback((clientId: string) => {
-    setPendingDrafts((prev) => prev.some((draft) => draft._clientId === clientId && draft.submitting)
-      ? prev
-      : prev.filter((draft) => draft._clientId !== clientId));
-  }, [setPendingDrafts]);
-
-  const swapDraftMacros = useCallback((clientId: string, useEstimate: boolean) => {
-    setPendingDrafts((prev) => prev.map((draft) => draft._clientId === clientId
-      ? (useEstimate ? applyEngineEstimate(draft) : applyReportedMacros(draft))
-      : draft));
-  }, [setPendingDrafts]);
-
   /* ── Send to backend ── */
   const send = useCallback(async (text: string, image?: string) => {
     const v = text.trim();
@@ -543,7 +310,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
     recordEngagement(dailyWindow);
 
     try {
-      const result = await homepageInput({
+      await homepageInput({
         message: messageText,
         image,
         today,
@@ -552,14 +319,10 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
 
       submissionIds.clear();
       setFreshTs(Date.now());
-      const actions = (Array.isArray(result.actions) ? result.actions : []) as AgentAction[];
       if (localDateStr() !== today) return;
-      if (actions.length === 0) {
-        setAgentActions([]);
-      } else {
-        const batch = stageActions(actions, result.messageId ?? null);
-        if (batch) transitionStaged((current) => [...(current ?? []), ...batch]);
-      }
+      // Logging cards are reconstructed from the persisted assistant message.
+      // The homepage action intentionally has no second, transient draft path.
+      setAgentActions([]);
     } catch (err) {
       const raw = err instanceof Error ? err.message : "";
       const msg = getAIErrorMessage(err)
@@ -578,7 +341,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       inFlightRequestsRef.current = Math.max(0, inFlightRequestsRef.current - 1);
       setThinking(inFlightRequestsRef.current > 0);
     }
-  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, submissionIds, today, transitionStaged]);
+  }, [homepageInput, toast, recordEngagement, dailyWindow, attachedFile, submissionIds, today]);
 
   const submitQuickQuestionAnswer = useCallback(async (
     action: Extract<AgentAction, { type: "quick_question" }>,
@@ -618,15 +381,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
   }, [dailyWindow, savingCheckInId, submitCheckInAnswer, today, toast]);
 
   const handleActionButton = useCallback((button: AgentButton, action?: AgentAction) => {
-    if (button.value === "confirm_log" && pendingDrafts[0]) {
-      void handleConfirm(pendingDrafts[0]);
-      return;
-    }
-    if (button.value === "discard_log") {
-      setPendingDrafts((prev) => prev.some((draft) => draft.submitting) ? prev : []);
-      setAgentActions([]);
-      return;
-    }
     if (action?.type === "quick_question") {
       const skipped = button.value === "skip";
       void submitQuickQuestionAnswer(action, button.value, button.label, skipped);
@@ -640,7 +394,7 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
       return;
     }
     setAgentActions((prev) => prev.filter((a) => a !== action));
-  }, [handleConfirm, pendingDrafts, send, setPendingDrafts, submitQuickQuestionAnswer, thinking]);
+  }, [send, submitQuickQuestionAnswer, thinking]);
 
   // Identify the most recent AI message for typewriter animation
   const lastAiTs = useMemo(() => {
@@ -686,8 +440,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
         </div>
       );
     }
-    // Handled by the LogConfirmCard stack below — never silently dropped.
-    if (action.type === "log_draft" || action.type === "macro_conflict") return null;
     // quick_question — lavender tinted
     if (action.answerType === "number") {
       const saving = savingCheckInId === action.id;
@@ -797,51 +549,6 @@ export function AssistantConsole({ inputRef, queuedPrompt, onPromptConsumed, pre
                 </div>
               </motion.div>
             ))}
-          </AnimatePresence>
-
-          {/*
-            Macro-level confirmation. The persisted card contract has no macro
-            fields yet, so these drafts still ride alongside the contract cards
-            instead of through them — same band, same sizing rules.
-          */}
-          <AnimatePresence>
-            {pendingDrafts.map((draft, i) => {
-              const clientId = String(draft._clientId ?? `draft-${i}`);
-              const estimate = draft.engineEstimate as { kcal?: number } | undefined;
-              const usingEstimate = draft.nutritionSource === "engine" && !!draft._reportedMacros;
-              const macroConflict = !!estimate && (draft.nutritionSource === "macro_conflict" || usingEstimate);
-              return (
-                <motion.div key={clientId}
-                  initial={reduceMotion ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
-                  transition={reduceMotion ? { duration: 0 } : FADE_FAST}>
-                  <div className={cn(CHAT_CARD_BAND, "space-y-2")}>
-                    {macroConflict && (
-                      <div className="rounded-2xl border border-peach/25 border-l-4 border-l-peach bg-peach-soft px-4 py-3 space-y-2">
-                        <p className="text-[15px] font-semibold text-text">Macro check</p>
-                        <p className={CHAT_CARD_META}>
-                          {usingEstimate
-                            ? "Showing my estimate. Switch back to your numbers or edit anything below."
-                            : `Showing your numbers. My estimate is ~${Math.round(estimate?.kcal ?? 0)} kcal — switch or edit below.`}
-                        </p>
-                        <button
-                          type="button"
-                          disabled={!!draft.submitting}
-                          onClick={() => swapDraftMacros(clientId, !usingEstimate)}
-                          className={cn(CHAT_CARD_PILL, "border border-peach/40 bg-card text-text")}
-                        >
-                          {usingEstimate ? "Use my numbers" : "Use my estimate"}
-                        </button>
-                      </div>
-                    )}
-                    <LogConfirmCard
-                      draft={draft as never}
-                      onConfirm={handleConfirm}
-                      onDiscard={() => discardDraft(clientId)}
-                    />
-                  </div>
-                </motion.div>
-              );
-            })}
           </AnimatePresence>
 
           {/* Sentinel — always at the very bottom so scrollIntoView reaches past cards */}

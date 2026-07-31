@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, RotateCcw, X } from "lucide-react";
-import type { ConfirmationCardData } from "@stride/shared";
+import type { ConfirmationCardData, ConfirmationMacroData } from "@stride/shared";
 import { cn } from "@/lib/utils";
 import {
   CHAT_CARD_BODY,
@@ -17,7 +17,11 @@ import {
 export type ConfirmationDecision = {
   ordinal: number;
   action: "confirm" | "discard";
-  edits?: { date?: string; description?: string };
+  edits?: {
+    date?: string;
+    description?: string;
+    macros?: Pick<ConfirmationMacroData, "calories" | "protein" | "carbs" | "fat">;
+  };
 };
 
 type Props = {
@@ -35,6 +39,7 @@ type Draft = {
   selected: boolean;
   date: string;
   description: string;
+  macros?: ConfirmationMacroData;
 };
 
 function confidenceBand(confidence?: number): string | null {
@@ -48,6 +53,7 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
     selected: true,
     date: item.date ?? "",
     description: item.description ?? item.title,
+    macros: item.macros ? { ...item.macros, estimate: item.macros.estimate ? { ...item.macros.estimate } : undefined } : undefined,
   })));
 
   const expired = data.expiresAt <= now;
@@ -69,6 +75,14 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
         edits: {
           date: draft.date || undefined,
           description: draft.description !== originalDescription ? draft.description : undefined,
+          macros: draft.macros
+            ? {
+                calories: draft.macros.calories,
+                protein: draft.macros.protein,
+                carbs: draft.macros.carbs,
+                fat: draft.macros.fat,
+              }
+            : undefined,
         },
       };
     }));
@@ -138,6 +152,75 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
                       onChange={(event) => patchDraft(item.ordinal, { description: event.target.value })}
                       className={cn(CHAT_CARD_FIELD, "w-full")}
                     />
+                  )}
+                  {draft?.macros && (
+                    <div className="space-y-2 rounded-xl bg-card-elev px-3 py-2.5">
+                      {draft.macros.conflict && <p className="text-[13px] font-bold text-peach">Macro check</p>}
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {([
+                          ["Calories", "calories", "kcal"],
+                          ["Protein", "protein", "g"],
+                          ["Carbs", "carbs", "g"],
+                          ["Fat", "fat", "g"],
+                        ] as const).map(([label, field, unit]) => (
+                          <label key={field} className="flex min-w-0 flex-col gap-1 text-[12px] font-semibold text-text-muted">
+                            {label}
+                            {readOnly ? (
+                              <span className="text-[15px] font-extrabold text-text">{draft.macros?.[field]} <span className="text-[11px] font-medium">{unit}</span></span>
+                            ) : (
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                aria-label={`${label} for ${item.title}`}
+                                value={draft.macros?.[field] ?? 0}
+                                disabled={pending}
+                                onChange={(event) => patchDraft(item.ordinal, {
+                                  macros: draft.macros ? { ...draft.macros, [field]: Number(event.target.value) } : undefined,
+                                })}
+                                className={cn(CHAT_CARD_FIELD, "w-full")}
+                              />
+                            )}
+                          </label>
+                        ))}
+                      </div>
+                      {!readOnly && draft.macros.estimate && (
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() => {
+                            const macros = draft.macros;
+                            const estimate = macros?.estimate;
+                            if (!macros || !estimate) return;
+                            const usingEstimate = macros.calories === estimate.calories
+                              && macros.protein === estimate.protein
+                              && macros.carbs === estimate.carbs
+                              && macros.fat === estimate.fat;
+                            const source = usingEstimate ? (macros.reported ?? macros) : estimate;
+                            const target: ConfirmationMacroData = {
+                              calories: source.calories,
+                              protein: source.protein,
+                              carbs: source.carbs,
+                              fat: source.fat,
+                              reported: macros.reported,
+                              estimate: macros.estimate,
+                              conflict: macros.conflict,
+                            };
+                            patchDraft(item.ordinal, {
+                              macros: target,
+                            });
+                          }}
+                          className={cn(CHAT_CARD_PILL, "border border-peach/40 bg-card text-text")}
+                        >
+                          {draft.macros.calories === draft.macros.estimate.calories
+                            && draft.macros.protein === draft.macros.estimate.protein
+                            && draft.macros.carbs === draft.macros.estimate.carbs
+                            && draft.macros.fat === draft.macros.estimate.fat
+                            ? "Use my numbers"
+                            : "Use my estimate"}
+                        </button>
+                      )}
+                    </div>
                   )}
                   <div className="flex flex-wrap items-center gap-2">
                     {readOnly ? (

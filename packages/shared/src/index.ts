@@ -10,6 +10,7 @@ export type {
   ChatTurnCard,
   ChatTurnOutcome,
   ChatTurnRecordRef,
+  ConfirmationMacroData,
   ClarificationCardData,
   ConfirmationCardData,
   DuplicateCardData,

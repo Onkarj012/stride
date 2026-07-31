@@ -27,6 +27,28 @@ type CardItemBase = {
   description?: string
   date?: string
   time?: string
+  /** Optional meal nutrition editing data. Older persisted cards omit this. */
+  macros?: ConfirmationMacroData
+}
+
+export type ConfirmationMacroData = {
+  calories: number
+  protein: number
+  carbs: number
+  fat: number
+  reported?: {
+    calories: number
+    protein: number
+    carbs: number
+    fat: number
+  }
+  estimate?: {
+    calories: number
+    protein: number
+    carbs: number
+    fat: number
+  }
+  conflict?: boolean
 }
 
 export type ConfirmationCardData = {
@@ -110,6 +132,20 @@ function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string'
 }
 
+function isMacroValues(value: unknown): value is ConfirmationMacroData {
+  if (!isRecord(value)) return false
+  const fields = ['calories', 'protein', 'carbs', 'fat']
+  if (!fields.every((field) => typeof value[field] === 'number' && Number.isFinite(value[field]))) return false
+  if (value.conflict !== undefined && typeof value.conflict !== 'boolean') return false
+  if (value.reported !== undefined && !isMacroValues(value.reported)) return false
+  if (value.estimate !== undefined) {
+    if (!isRecord(value.estimate)) return false
+    const estimate = value.estimate as Record<string, unknown>
+    if (!fields.every((field) => typeof estimate[field] === 'number' && Number.isFinite(estimate[field]))) return false
+  }
+  return true
+}
+
 function isActionType(value: unknown): value is ChatTurnActionType {
   return value === 'meal' || value === 'workout' || value === 'recovery'
 }
@@ -122,6 +158,7 @@ function isItemBase(value: unknown): value is CardItemBase {
     && isOptionalString(value.description)
     && isOptionalString(value.date)
     && isOptionalString(value.time)
+    && (value.macros === undefined || isMacroValues(value.macros))
 }
 
 function isRecordRef(value: unknown): value is ChatTurnRecordRef {

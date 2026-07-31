@@ -18,7 +18,7 @@ import { toLegacyPersona } from "./personas";
 import { insertActionTelemetry } from "./telemetry";
 import { assertValidDate, assertValidTime, stableHash } from "./validation";
 import { finalizeActionGroup as finalizeActionGroupInMutation } from "./actions_group";
-import type { ChatTurnCard, ChatTurnOutcome, ResultCardItem } from "../../shared/src/chat-turn";
+import type { ChatTurnCard, ChatTurnOutcome, ConfirmationMacroData, ResultCardItem } from "../../shared/src/chat-turn";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
   await ctx.runMutation((internal as any).telemetry.record, { input });
@@ -653,6 +653,17 @@ function editedConfirmationMember(member: any, decision: ConfirmationDecision) {
     ? Object.fromEntries(Object.entries(member.payload).filter(([key]) => key !== "previous"))
     : {};
   const payload = { ...basePayload, ...directPayloadEdits, ...payloadEdits };
+  const macroEdits = isRecord(edits.macros) ? edits.macros : undefined;
+  if (macroEdits) {
+    for (const field of ["calories", "protein", "carbs", "fat"]) {
+      if (macroEdits[field] !== undefined) {
+        if (typeof macroEdits[field] !== "number" || !Number.isFinite(macroEdits[field]) || macroEdits[field] < 0) {
+          throw new Error(`Invalid meal macro: ${field}`);
+        }
+        payload[field] = macroEdits[field];
+      }
+    }
+  }
   if (typeof edits.date === "string" && edits.date.length > 0) payload.date = edits.date;
   if (typeof edits.description === "string" && edits.description.length > 0) {
     payload.description = edits.description;
@@ -675,6 +686,18 @@ function confirmationDescription(member: any): string {
     if (payload.kind === "steps") return `Steps ${payload.count}`;
   }
   return member.payload?.name ?? member.payload?.description ?? member.actionType;
+}
+
+function confirmationMacros(payload: any): ConfirmationMacroData | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const values = [payload.calories, payload.protein, payload.carbs, payload.fat];
+  if (!values.every((value) => typeof value === "number" && Number.isFinite(value))) return undefined;
+  return {
+    calories: payload.calories,
+    protein: payload.protein,
+    carbs: payload.carbs,
+    fat: payload.fat,
+  };
 }
 
 function confirmationOrdinal(member: any): number {
@@ -891,6 +914,9 @@ export const confirmGroup = action({
             description: confirmationDescription(member),
             date: member.resolvedDate,
             time: member.resolvedTime,
+            ...(member.actionType === "meal" && confirmationMacros(member.payload)
+              ? { macros: confirmationMacros(member.payload) }
+              : {}),
             actionId: String(member._id),
             confidence: member.confidence,
             validationMessages: member.validation.messages,
@@ -1974,7 +2000,9 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       forceConfirmation: false,
     });
     const statusText = turnOutcomeText(turnResult);
-    const conversationalReply = sanitizeConversationalReply(reply);
+    // Report turns use only the persisted outcome as user-facing status text.
+    // Unconstrained model prose is safe only for genuine no_action turns.
+    const conversationalReply = turnResult.outcome === "no_action" ? sanitizeConversationalReply(reply) : "";
     const cleanReply = [conversationalReply, statusText].filter(Boolean).join("\n\n")
       || (turnResult.outcome === "no_action" ? "How can I help with that?" : "I couldn't save that. Please try again.");
     const loggedItem = turnResult.loggedItems.length === 1
@@ -3082,6 +3110,7 @@ type TurnCandidate = {
   resolvedTime?: string;
   provenance: "user_reported" | "ai_extracted" | "ai_estimated" | "database_match";
   validation: { status: "valid" | "warning" | "error"; messages: string[] };
+  macros?: ConfirmationMacroData;
   reason?: string;
   ordinal: number;
 };
@@ -3107,15 +3136,56 @@ function turnCandidateFromDraft(draft: any, ordinal: number): TurnCandidate {
       : typeof draft.confidence === "number"
         ? draft.confidence
         : canonicalDraft?.confidence;
+    const canonicalPayload = mealPayloadFromDraft(canonicalDraft, {
+      aiSuggestion: draft.aiSuggestion,
+      mealType: draft.mealType,
+      components: draft.components,
+      logSource: "chat",
+    });
+    const payload = {
+      ...canonicalPayload,
+      name: String(draft.description ?? draft.name ?? canonicalPayload.name ?? "Meal"),
+      calories: typeof draft.kcal === "number" ? draft.kcal : canonicalPayload.calories,
+      protein: typeof draft.protein === "number" ? draft.protein : canonicalPayload.protein,
+      carbs: typeof draft.carbs === "number" ? draft.carbs : canonicalPayload.carbs,
+      fat: typeof draft.fat === "number" ? draft.fat : canonicalPayload.fat,
+      nutritionSource: draft.nutritionSource ?? canonicalPayload.nutritionSource,
+    };
+    const macros = [payload.calories, payload.protein, payload.carbs, payload.fat].every(
+      (value) => typeof value === "number" && Number.isFinite(value),
+    )
+      ? {
+          calories: payload.calories,
+          protein: payload.protein,
+          carbs: payload.carbs,
+          fat: payload.fat,
+          ...(draft.nutritionSource === "macro_conflict"
+            ? {
+                reported: {
+                  calories: payload.calories,
+                  protein: payload.protein,
+                  carbs: payload.carbs,
+                  fat: payload.fat,
+                },
+              }
+            : {}),
+          ...(draft.engineEstimate
+            ? {
+                estimate: {
+                  calories: draft.engineEstimate.kcal,
+                  protein: draft.engineEstimate.protein,
+                  carbs: draft.engineEstimate.carbs,
+                  fat: draft.engineEstimate.fat,
+                },
+              }
+            : {}),
+          ...(draft.nutritionSource === "macro_conflict" ? { conflict: true } : {}),
+        }
+      : undefined;
     return {
       actionType: "meal",
       description: String(draft._turnDescription ?? draft.description ?? draft.name ?? "Meal"),
-      payload: mealPayloadFromDraft(canonicalDraft, {
-        aiSuggestion: draft.aiSuggestion,
-        mealType: draft.mealType,
-        components: draft.components,
-        logSource: "chat",
-      }),
+      payload,
       confidence,
       resolvedDate: draft.date,
       resolvedTime: draft.time,
@@ -3123,6 +3193,7 @@ function turnCandidateFromDraft(draft: any, ordinal: number): TurnCandidate {
         ? "database_match"
         : "ai_extracted",
       validation,
+      macros,
       reason: draft._turnDateUnresolved
         ? draft._turnQuestion ?? "Which exact date should I use?"
         : validation.status !== "valid"
@@ -3457,6 +3528,7 @@ async function executeTurnPolicy(input: {
             description: candidate.description,
             date: candidate.resolvedDate,
             time: candidate.resolvedTime,
+            ...(candidate.macros ? { macros: candidate.macros } : {}),
             actionId: String(actionsByOrdinal.get(candidate.ordinal)!._id),
             confidence: candidate.confidence,
             validationMessages: candidate.validation.messages,
@@ -3694,7 +3766,6 @@ export const homepageInput = action({
     // Heuristic pre-check
     const estimateMode = looksLikeFoodEstimate(message);
     const userMacros = extractUserMacros(message);
-    const hasUserMacros = Object.values(userMacros).some((v) => v != null);
     const homepageIntent = classifyHomepageIntent(message);
     const heuristicSaysLog = !!image || homepageIntent === "log_report" || looksLikeLog(message) || estimateMode;
 
@@ -3945,13 +4016,10 @@ export const homepageInput = action({
     });
     const tier1Summary = `${summaryParts.join(" · ")}${dateNote}. ${turnOutcomeText(turnResult)}${skippedNote}`.trim();
 
-    // Tier 2: brief analysis of the combined log
-    const tier2Prompt = `Give a brief, encouraging analysis (2-3 sentences) of what the user just reported: ${summaryParts.join(", ")}. Do not claim it was logged or saved. Be specific and actionable.`;
-    const tier2Raw = await callAI(ctx, userId, [{ role: "user", content: tier2Prompt }], 150, settingsModel, apiKey).catch(() => "");
-    const tier2Detail = sanitizeConversationalReply(tier2Raw);
-
-    // Persist the assistant's response (tier1 + tier2) so the chat thread stays meaningful
-    const persistedReply = tier2Detail ? `${tier1Summary}\n\n${tier2Detail}` : tier1Summary;
+    // Report turns persist only deterministic text derived from the outcome.
+    // Model prose is intentionally not mixed into this status-bearing reply.
+    const tier2Detail = "";
+    const persistedReply = tier1Summary;
     const messageId = await ctx.runMutation(internal.chat.addMessage, {
       userId,
       sessionId: activeSessionId,
@@ -3965,60 +4033,11 @@ export const homepageInput = action({
       actionIds: turnResult.actionIds,
     });
 
-    const actions: any[] = [];
-    const cardTitles = disambiguateCardTitles(drafts.map((draft) => {
-      if (draft.kind === "meal" && draft.nutritionSource === "macro_conflict") return "Macro check";
-      return draft.description ?? (draft.kind === "meal" ? "Log this meal?" : `Log ${draft.kind}?`);
-    }));
-
-    // Always show a log_draft card for every draft — deterministic confirm flow
-    for (const [draftIndex, draft] of drafts.entries()) {
-      if (draft.kind === "meal") {
-        const rangeLow = Math.max(0, Math.round(draft.kcal * 0.88));
-        const rangeHigh = Math.round(draft.kcal * 1.12);
-        const isMacroConflict = draft.nutritionSource === "macro_conflict";
-        if (isMacroConflict) {
-          actions.push({
-            type: "macro_conflict",
-            title: cardTitles[draftIndex],
-            body: `${draft.engineEstimate ? `My estimate is ~${draft.engineEstimate.kcal} kcal. ` : ""}Your numbers differ significantly — which should I use?`,
-            draft,
-            buttons: [
-              { label: "Use my numbers", value: "use_user_macros" },
-              { label: "Use estimate", value: "use_engine_estimate" },
-            ],
-          });
-        } else {
-          actions.push({
-            type: "log_draft",
-            source: hasUserMacros ? "user_macros" : draft.nutritionSource ?? "estimate",
-            draft,
-            title: cardTitles[draftIndex],
-            body: estimateMode
-              ? `${rangeLow}–${rangeHigh} kcal depending on portions.`
-              : draft.parseError,
-          });
-        }
-      } else {
-        // workout, sleep, water, mood, steps — always confirm
-        actions.push({
-          type: "log_draft",
-          source: draft.kind,
-          draft,
-          title: cardTitles[draftIndex],
-          body: draft.kind === "workout" && draft.calorieResult
-            ? `~${draft.calorieResult.range_low}-${draft.calorieResult.range_high} kcal, rough. Refine duration or intensity if needed.`
-            : draft.parseError,
-        });
-      }
-    }
-
     return {
       drafts,
       tier1Summary,
       tier2Detail,
       isQuestion: false,
-      actions,
       sessionId: activeSessionId,
       messageId,
       restricted: restrictedGuidance,
