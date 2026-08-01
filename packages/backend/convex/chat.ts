@@ -12,6 +12,8 @@ const turnOutcomeValidator = v.union(
   v.literal("no_action"),
 );
 
+const CHAT_TURN_LEASE_MS = 120_000;
+
 type ChatTurnOutcome = "committed" | "confirmation_required" | "failed" | "no_action";
 
 function sameOptionalId(left: unknown, right: unknown): boolean {
@@ -171,6 +173,8 @@ export const addMessage = internalMutation({
     role: v.string(),
     content: v.string(),
     clientSubmissionId: v.optional(v.string()),
+    claimOwner: v.optional(v.string()),
+    claimVersion: v.optional(v.number()),
     turnContractVersion: v.optional(v.literal(1)),
     turnOutcome: v.optional(turnOutcomeValidator),
     turnCards: v.optional(v.any()),
@@ -181,6 +185,12 @@ export const addMessage = internalMutation({
     const session = args.sessionId ? await ctx.db.get(args.sessionId) : null;
     if (args.sessionId && (!session || session.userId !== args.userId)) throw new Error("Not found");
     if (args.turnCards !== undefined) assertChatTurnCards(args.turnCards);
+    if (args.role === "ai" && (args.claimOwner !== undefined || args.claimVersion !== undefined)) {
+      if (!args.clientSubmissionId || args.claimOwner === undefined || args.claimVersion === undefined) {
+        throw new Error("Chat turn claim is incomplete");
+      }
+      await assertCurrentTurnLease(ctx, args.userId, args.clientSubmissionId, args.claimOwner, args.claimVersion);
+    }
     if (
       args.turnContractVersion !== undefined
       || args.turnOutcome !== undefined
@@ -210,7 +220,8 @@ export const addMessage = internalMutation({
         return existing._id;
       }
     }
-    const id = await ctx.db.insert("chat_messages", args);
+    const { claimOwner: _claimOwner, claimVersion: _claimVersion, ...messageArgs } = args;
+    const id = await ctx.db.insert("chat_messages", messageArgs as any);
     // Cache first user message as previewTitle on homepage sessions (avoids N+1 in getSessions)
     if (args.role === "user" && args.sessionId) {
       if (session && isHomepageTitle(session.title) && !session.previewTitle) {
@@ -264,7 +275,13 @@ function resultCardItemsForActions(actions: any[]): any[] {
   return actions.reduce<any[]>((items, action) => {
     const actionType = cardActionType(action);
     if (!actionType) return items;
-    const base = { ...actionCardBase(action), actionType };
+    const base = {
+      ...actionCardBase(action),
+      actionType,
+      groupId: String(action.groupId),
+      provenance: action.provenance,
+      validation: action.validation,
+    };
     if (action.status === "committed" && action.committedRowRef) {
       items.push({ ...base, status: "committed" as const, actionId: String(action._id), record: action.committedRowRef });
       return items;
@@ -278,6 +295,14 @@ function resultCardItemsForActions(actions: any[]): any[] {
         retriable: true,
       });
     }
+    if (action.status === "discarded" || action.status === "expired") {
+      items.push({
+        ...base,
+        status: action.status,
+        actionId: String(action._id),
+        reason: action.status === "expired" ? "Confirmation expired" : "Discarded by you",
+      });
+    }
     return items;
   }, []);
 }
@@ -289,8 +314,13 @@ function pendingCardItems(actions: any[], existingCard: any): any[] {
     const previous = existingCard?.data?.items?.find((item: any) => item.actionId === String(action._id));
     const base = {
       ...actionCardBase(action),
+      ...(previous?.title ? { title: previous.title } : {}),
+      ...(previous?.description ? { description: previous.description } : {}),
       actionType,
       actionId: String(action._id),
+      provenance: action.provenance,
+      validation: action.validation,
+      confidence: action.confidence,
       ...(action.actionType === "meal" && confirmationMacros(action.payload)
         ? { macros: confirmationMacros(action.payload) }
         : {}),
@@ -301,7 +331,6 @@ function pendingCardItems(actions: any[], existingCard: any): any[] {
     }
     items.push({
       ...base,
-      confidence: action.confidence,
       validationMessages: action.validation?.messages ?? [],
     });
     return items;
@@ -329,7 +358,7 @@ function reconcileCards(message: any, group: any, actions: any[]) {
     if (card.kind === "duplicate") {
       const items = card.data.items.filter((item: any) => {
         const action = actionById.get(String(item.actionId));
-        return !action || (action.status !== "committed" && action.status !== "undone");
+        return Boolean(action && action.status === "failed" && action.validation?.messages?.some((message: string) => /duplicate/i.test(message)));
       });
       return items.length > 0 ? [{ ...card, data: { ...card.data, items } }] : [];
     }
@@ -395,8 +424,8 @@ function reconcileCards(message: any, group: any, actions: any[]) {
     });
   }
 
-  const allDiscarded = actions.length > 0 && actions.every((action) => action.status === "discarded");
-  if (allDiscarded) {
+  const allResolved = actions.length > 0 && actions.every((action) => action.status === "discarded" || action.status === "expired");
+  if (allResolved) {
     cards.push({
       version: 1,
       kind: "confirmation",
@@ -418,6 +447,8 @@ function reconcileCards(message: any, group: any, actions: any[]) {
   }
 
   const hasPreservedFailure = cards.some((card) => card.kind === "failure");
+  const discarded = actions.filter((action) => action.status === "discarded");
+  const expired = actions.filter((action) => action.status === "expired");
   const turnOutcome: ChatTurnOutcome = pending.length > 0
     ? "confirmation_required"
     : activeCommitted.length > 0
@@ -434,9 +465,15 @@ function reconcileCards(message: any, group: any, actions: any[]) {
   const generatedContent = turnOutcome === "confirmation_required"
     ? `${pending.length} item${pending.length === 1 ? "" : "s"} still need review.`
     : turnOutcome === "committed"
-      ? `Saved ${savedTitles.join(", ")}.${failed.length > 0 ? " Some items could not be saved." : ""}`
+      ? `Saved ${savedTitles.join(", ")}.${failed.length > 0 ? " Some items could not be saved." : discarded.length > 0 || expired.length > 0 ? " Some items were discarded or expired." : ""}`
       : turnOutcome === "no_action"
-        ? undone.length > 0 ? "That log was undone." : "Discarded. Nothing was saved."
+        ? expired.length > 0 && discarded.length === 0
+          ? "This confirmation expired. Nothing was saved."
+          : undone.length > 0 && discarded.length === 0
+            ? "That log was undone."
+            : discarded.length > 0 && expired.length > 0
+              ? "Some items were discarded or expired. Nothing was saved."
+              : "Discarded. Nothing was saved."
         : "I couldn't save that. Please try again.";
   const content = turnOutcome === "committed"
     && activeCommitted.length === 1
@@ -451,6 +488,9 @@ export async function reconcileAssistantOutcomeInMutation(
   ctx: MutationCtx,
   userId: string,
   actionGroupId: Doc<"actionGroups">["_id"],
+  claimOwner?: string,
+  claimVersion?: number,
+  claimSubmissionId?: string,
 ) {
   const group = await ctx.db.get("actionGroups", actionGroupId);
   if (!group || group.userId !== userId) throw new Error("Not found");
@@ -461,8 +501,20 @@ export async function reconcileAssistantOutcomeInMutation(
   const message = messages
     .filter((candidate) => candidate.role === "ai")
     .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
-  if (!message) return null;
+  if (!message) {
+    return {
+      group,
+      actions: await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", actionGroupId)).collect(),
+      message: null,
+    };
+  }
   if (message.userId !== userId) throw new Error("Not found");
+  if (claimOwner !== undefined || claimVersion !== undefined) {
+    if (claimOwner === undefined || claimVersion === undefined) {
+      throw new Error("Chat turn claim is incomplete");
+    }
+    await assertCurrentTurnLease(ctx, userId, claimSubmissionId ?? message.clientSubmissionId ?? "", claimOwner, claimVersion);
+  }
   const actions = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", actionGroupId)).collect();
   const reconciled = reconcileCards(message, group, actions);
   assertChatTurnCards(reconciled.turnCards);
@@ -473,18 +525,48 @@ export async function reconcileAssistantOutcomeInMutation(
     turnCards: reconciled.turnCards,
     actionIds: reconciled.actionIds,
   });
-  return await ctx.db.get(message._id);
+  return {
+    group: await ctx.db.get("actionGroups", actionGroupId),
+    actions: await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", actionGroupId)).collect(),
+    message: await ctx.db.get(message._id),
+  };
 }
 
 export const updateAssistantOutcomeForGroup = internalMutation({
   args: {
     userId: v.string(),
     actionGroupId: v.id("actionGroups"),
+    claimOwner: v.optional(v.string()),
+    claimVersion: v.optional(v.number()),
+    claimSubmissionId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    return reconcileAssistantOutcomeInMutation(ctx, args.userId, args.actionGroupId);
+    return reconcileAssistantOutcomeInMutation(ctx, args.userId, args.actionGroupId, args.claimOwner, args.claimVersion, args.claimSubmissionId);
   },
 });
+
+async function assertCurrentTurnLease(
+  ctx: MutationCtx,
+  userId: string,
+  clientSubmissionId: string,
+  claimOwner: string,
+  claimVersion: number,
+) {
+  const userMessage = await ctx.db
+    .query("chat_messages")
+    .withIndex("by_user_submission_and_role", (q) => q.eq("userId", userId).eq("clientSubmissionId", clientSubmissionId).eq("role", "user"))
+    .first();
+  const row = userMessage as any;
+  if (
+    !row
+    || row.processingLeaseOwner !== claimOwner
+    || row.processingLeaseVersion !== claimVersion
+    || typeof row.processingLeaseExpiresAt !== "number"
+    || row.processingLeaseExpiresAt <= Date.now()
+  ) {
+    throw new Error("Chat submission lease is no longer current");
+  }
+}
 
 export const claimTurn = internalMutation({
   args: {
@@ -492,6 +574,8 @@ export const claimTurn = internalMutation({
     sessionId: v.optional(v.id("chat_sessions")),
     clientSubmissionId: v.string(),
     content: v.string(),
+    submissionFingerprint: v.string(),
+    claimOwner: v.string(),
   },
   handler: async (ctx, args) => {
     const session = args.sessionId ? await ctx.db.get(args.sessionId) : null;
@@ -505,6 +589,10 @@ export const claimTurn = internalMutation({
     if (userMessage) {
       if (!sameOptionalId(userMessage.sessionId, args.sessionId)) throw new Error("Submission already belongs to a different chat session");
       if (userMessage.content !== args.content) throw new Error("Submission already belongs to different content");
+      const storedFingerprint = (userMessage as any).submissionFingerprint;
+      if (storedFingerprint && storedFingerprint !== args.submissionFingerprint) {
+        throw new Error("Submission already belongs to different request details");
+      }
     }
     const assistant = await ctx.db
       .query("chat_messages")
@@ -514,6 +602,9 @@ export const claimTurn = internalMutation({
       .first();
     if (assistant) {
       if (!sameOptionalId(assistant.sessionId, args.sessionId)) throw new Error("Submission already belongs to a different chat session");
+      if (userMessage && !(userMessage as any).submissionFingerprint) {
+        await ctx.db.patch(userMessage._id, { submissionFingerprint: args.submissionFingerprint } as any);
+      }
       if (assistant.turnContractVersion === 1 && assistant.turnOutcome) {
         return {
           state: "terminal" as const,
@@ -532,18 +623,36 @@ export const claimTurn = internalMutation({
       }
       return { state: "in_progress" as const };
     }
-    if (userMessage) return { state: "in_progress" as const };
+    const now = Date.now();
+    const currentVersion = (userMessage as any)?.processingLeaseVersion ?? 0;
+    const currentOwner = (userMessage as any)?.processingLeaseOwner;
+    const currentExpiry = (userMessage as any)?.processingLeaseExpiresAt;
+    if (userMessage && currentExpiry && currentExpiry > now && currentOwner !== args.claimOwner) {
+      return { state: "in_progress" as const };
+    }
+    const nextVersion = currentVersion + 1;
+    const claimFields = {
+      submissionFingerprint: args.submissionFingerprint,
+      processingLeaseOwner: args.claimOwner,
+      processingLeaseVersion: nextVersion,
+      processingLeaseExpiresAt: now + CHAT_TURN_LEASE_MS,
+    };
+    if (userMessage) {
+      await ctx.db.patch(userMessage._id, claimFields as any);
+      return { state: "claimed" as const, messageId: userMessage._id, claimVersion: nextVersion };
+    }
     const id = await ctx.db.insert("chat_messages", {
       userId: args.userId,
       sessionId: args.sessionId,
       role: "user",
       content: args.content,
       clientSubmissionId: args.clientSubmissionId,
-    });
+      ...claimFields,
+    } as any);
     if (args.sessionId && session && isHomepageTitle(session.title) && !session.previewTitle) {
       await ctx.db.patch(args.sessionId, { previewTitle: args.content.slice(0, 40).trim() });
     }
-    return { state: "claimed" as const, messageId: id };
+    return { state: "claimed" as const, messageId: id, claimVersion: nextVersion };
   },
 });
 

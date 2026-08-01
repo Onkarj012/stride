@@ -27,6 +27,12 @@ type CardItemBase = {
   description?: string
   date?: string
   time?: string
+  /** Optional canonical action metadata retained for legacy clients. */
+  provenance?: string
+  validation?: {
+    status: 'valid' | 'warning' | 'error'
+    messages: string[]
+  }
   /** Optional meal nutrition editing data. Older persisted cards omit this. */
   macros?: ConfirmationMacroData
 }
@@ -91,6 +97,11 @@ export type ResultCardItem =
       actionId?: string
       reason: string
       retriable: boolean
+    })
+  | (CardItemBase & {
+      status: 'discarded' | 'expired'
+      actionId: string
+      reason: string
     })
 
 export type ResultCardData = {
@@ -160,6 +171,12 @@ function isItemBase(value: unknown): value is CardItemBase {
     && isOptionalString(value.description)
     && isOptionalString(value.date)
     && isOptionalString(value.time)
+    && (value.provenance === undefined || typeof value.provenance === 'string')
+    && (value.validation === undefined
+      || (isRecord(value.validation)
+        && (value.validation.status === 'valid' || value.validation.status === 'warning' || value.validation.status === 'error')
+        && Array.isArray(value.validation.messages)
+        && value.validation.messages.every((message) => typeof message === 'string')))
     && (value.macros === undefined || isMacroValues(value.macros))
 }
 
@@ -204,7 +221,10 @@ export function isChatTurnCard(value: unknown): value is ChatTurnCard {
           : item.status === 'failed'
             && isOptionalString(item.actionId)
             && typeof item.reason === 'string'
-            && typeof item.retriable === 'boolean')
+            && typeof item.retriable === 'boolean'
+            || (item.status === 'discarded' || item.status === 'expired')
+              && typeof item.actionId === 'string'
+              && typeof item.reason === 'string')
   }
   if (value.kind === 'failure') {
     return isOptionalString(data.groupId)

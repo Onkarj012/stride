@@ -201,6 +201,12 @@ export default defineSchema({
     role: v.string(),
     content: v.string(),
     clientSubmissionId: v.optional(v.string()),
+    // Optional durable claim metadata. Older chat rows intentionally omit these
+    // fields and remain readable/retriable through the legacy path.
+    submissionFingerprint: v.optional(v.string()),
+    processingLeaseOwner: v.optional(v.string()),
+    processingLeaseVersion: v.optional(v.number()),
+    processingLeaseExpiresAt: v.optional(v.number()),
     turnContractVersion: v.optional(v.literal(1)),
     turnOutcome: v.optional(v.union(
       v.literal("committed"),
