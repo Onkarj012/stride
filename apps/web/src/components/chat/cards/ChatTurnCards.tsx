@@ -90,6 +90,7 @@ function ItemHeader({ actionType, title }: { actionType: string; title: string }
 function ResultCard({ data }: { data: ResultCardData }) {
   const committed = data.items.filter((item) => item.status === "committed");
   const failed = data.items.filter((item) => item.status === "failed");
+  const resolved = data.items.filter((item) => item.status === "discarded" || item.status === "expired");
   return (
     <section data-card-kind="result" data-card-state="resolved" aria-label="Logged" className={CHAT_CARD_SURFACE}>
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -100,7 +101,9 @@ function ResultCard({ data }: { data: ResultCardData }) {
           <p className={cn(CHAT_CARD_META, "mt-1")}>
             {failed.length > 0
               ? `${failed.length} item${failed.length === 1 ? "" : "s"} could not be saved.`
-              : "Saved to your log — undo below if this isn't right."}
+              : resolved.length > 0 && committed.length === 0
+                ? `${resolved.length} item${resolved.length === 1 ? "" : "s"} were resolved without being saved.`
+                : "Saved to your log — undo below if this isn't right."}
           </p>
         </div>
         {committed.length > 0 && (
@@ -116,7 +119,7 @@ function ResultCard({ data }: { data: ResultCardData }) {
             <li
               key={`${item.ordinal}-${item.status}`}
               data-result-status={item.status}
-              className={cn(CHAT_CARD_ROW, item.status === "failed" && "border-bubblegum/40 bg-bubblegum/5")}
+              className={cn(CHAT_CARD_ROW, item.status === "failed" && "border-bubblegum/40 bg-bubblegum/5", (item.status === "discarded" || item.status === "expired") && "opacity-70")}
             >
               <ItemHeader actionType={item.actionType} title={item.title} />
               {item.description && item.description !== item.title && (
@@ -125,7 +128,7 @@ function ResultCard({ data }: { data: ResultCardData }) {
               <p className={cn(CHAT_CARD_META, "mt-1")}>
                 {item.status === "committed"
                   ? [dateLine, `saved to ${item.record.table}`].filter(Boolean).join(" · ")
-                  : [dateLine, item.reason].filter(Boolean).join(" · ")}
+                  : [dateLine, item.status === "expired" ? "Confirmation expired" : item.status === "discarded" ? "Discarded" : item.reason].filter(Boolean).join(" · ")}
               </p>
             </li>
           );

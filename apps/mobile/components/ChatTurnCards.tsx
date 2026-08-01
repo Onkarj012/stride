@@ -95,13 +95,14 @@ function ItemRow({ children, warning = false }: { children: ReactNode; warning?:
 function ResultCard({ data }: { data: ResultCardData }) {
   const t = useTheme()
   const committed = data.items.filter(item => item.status === 'committed').length
-  const failed = data.items.length - committed
+  const failed = data.items.filter(item => item.status === 'failed').length
+  const resolved = data.items.filter(item => item.status === 'discarded' || item.status === 'expired').length
   return (
     <CardSurface>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: SPACE.md }}>
         <View style={{ flex: 1, gap: SPACE.xs }}>
           <Text style={{ fontFamily: 'Manrope_800ExtraBold', fontSize: 15, color: t.text }}>{committed ? `Logged ${committed} item${committed === 1 ? '' : 's'}` : 'Nothing was logged'}</Text>
-          <Meta>{failed ? `${failed} item${failed === 1 ? '' : 's'} could not be saved.` : 'Saved to your log.'}</Meta>
+          <Meta>{failed ? `${failed} item${failed === 1 ? '' : 's'} could not be saved.` : resolved && !committed ? `${resolved} item${resolved === 1 ? '' : 's'} were resolved without being saved.` : 'Saved to your log.'}</Meta>
         </View>
         {committed > 0 && <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACE.xs }}><Icon name="check" size={16} color={t.accent} sw={3} /><Text style={{ fontFamily: 'Manrope_800ExtraBold', fontSize: 13, color: t.accent }}>SAVED</Text></View>}
       </View>
@@ -110,7 +111,7 @@ function ResultCard({ data }: { data: ResultCardData }) {
         return <ItemRow key={`${item.ordinal}-${item.status}`} warning={item.status === 'failed'}>
           <ItemHeader actionType={item.actionType} title={item.title} />
           {item.description && item.description !== item.title && <Meta>{item.description}</Meta>}
-          <Meta>{item.status === 'committed' ? [dateLine, `saved to ${item.record.table} · ${item.record.id}`].filter(Boolean).join(' · ') : [dateLine, item.reason].filter(Boolean).join(' · ')}</Meta>
+          <Meta>{item.status === 'committed' ? [dateLine, `saved to ${item.record.table} · ${item.record.id}`].filter(Boolean).join(' · ') : [dateLine, item.status === 'expired' ? 'Confirmation expired' : item.status === 'discarded' ? 'Discarded' : item.reason].filter(Boolean).join(' · ')}</Meta>
         </ItemRow>
       })}
     </CardSurface>
