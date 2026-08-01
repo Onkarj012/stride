@@ -6,6 +6,7 @@ import { recomputeForAction, type DerivedActionType } from "./derived_state";
 import { assertTransition } from "./actions_envelope";
 import { insertActionTelemetry } from "./telemetry";
 import { normalizeName } from "./food_memory_match";
+import { reconcileAssistantOutcomeInMutation } from "./chat";
 
 type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs" | "weight_logs";
 
@@ -28,36 +29,6 @@ async function requireUserId(ctx: MutationCtx): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
   return identity.subject;
-}
-
-async function markTurnUndoState(
-  ctx: MutationCtx,
-  userId: string,
-  groupId: Doc<"actionGroups">["_id"],
-  actionIds: Set<string>,
-) {
-  const messages = await ctx.db
-    .query("chat_messages")
-    .withIndex("by_action_group", (q) => q.eq("actionGroupId", groupId))
-    .collect();
-  for (const message of messages) {
-    if (message.userId !== userId || !message.turnCards) continue;
-    const turnCards = message.turnCards.map((card: any) => {
-      if (card.kind !== "undo" || card.data?.groupId !== String(groupId) || !Array.isArray(card.data.items)) {
-        return card;
-      }
-      return {
-        ...card,
-        data: {
-          ...card.data,
-          items: card.data.items.map((item: any) =>
-            actionIds.has(String(item.actionId)) ? { ...item, state: "undone" } : item,
-          ),
-        },
-      };
-    });
-    await ctx.db.patch(message._id, { turnCards });
-  }
 }
 
 type UndoResult = {
@@ -368,7 +339,7 @@ export const undoAction = mutation({
     const group = await ctx.db.get(action.groupId);
     if (group) await recordUndoTelemetry(ctx, group, action, result, derivedStateVersion);
     if (result.status === "undone" || result.status === "already_undone") {
-      await markTurnUndoState(ctx, userId, action.groupId, new Set([String(action._id)]));
+      await reconcileAssistantOutcomeInMutation(ctx, userId, action.groupId);
     }
     return result;
   },
@@ -417,12 +388,7 @@ export const undoGroup = mutation({
         : undefined;
       await recordUndoTelemetry(ctx, group, action, result, derived?.version);
     }
-    await markTurnUndoState(
-      ctx,
-      userId,
-      groupId,
-      new Set(results.filter((result) => result.status === "undone" || result.status === "already_undone").map((result) => result.actionId)),
-    );
+    await reconcileAssistantOutcomeInMutation(ctx, userId, groupId);
     return { groupId, results };
   },
 });

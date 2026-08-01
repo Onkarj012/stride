@@ -393,9 +393,13 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   if (group.userId !== userId) throw new Error("Not authorized");
   if (["pending", "partial", "failed"].includes(group.status) && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
     await ctx.runMutation(internal.ai.expireActionGroup, { groupId: groupId as any });
+    await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, { userId, actionGroupId: groupId as any });
     throw new Error("This confirmation has expired");
   }
-  if (group.status === "expired") throw new Error("This confirmation has expired");
+  if (group.status === "expired") {
+    await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, { userId, actionGroupId: groupId as any });
+    throw new Error("This confirmation has expired");
+  }
   if (!["pending", "partial", "failed"].includes(group.status)) throw new Error("Group is not pending clarification");
   const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
   const dateCheck = resolveChatActionDate({ explicitDate: date, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
@@ -491,20 +495,9 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   const currentMembers: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, {
     groupId: groupId as any,
   });
-  const { content, turnOutcome, turnCards } = clarificationResolutionOutcome(groupId, currentMembers);
-  const existingMessage: any = await ctx.runQuery(internal.chat.getAssistantOutcomeForGroup, {
-    userId,
-    actionGroupId: groupId as any,
-  });
   const updatedMessage = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
     userId,
     actionGroupId: groupId as any,
-    content,
-    turnOutcome,
-    turnCards,
-    actionIds: currentMembers.map((member) => member._id),
-    expectedTurnOutcome: existingMessage?.turnOutcome,
-    expectedTurnCardsHash: existingMessage ? stableHash(JSON.stringify(existingMessage.turnCards ?? [])) : undefined,
   });
 
   const memoryApprovals = (await Promise.all(loggedItems.map((item) =>
@@ -518,10 +511,10 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     loggedItems,
     memoryApprovals,
     errors: errors.length > 0 ? errors : undefined,
-    content,
-    turnOutcome,
-    turnCards,
-    actionIds: currentMembers.map((member) => member._id),
+    content: updatedMessage?.content ?? "I couldn't save that. Please try again.",
+    turnOutcome: (updatedMessage?.turnOutcome ?? "failed") as ChatTurnOutcome,
+    turnCards: (updatedMessage?.turnCards ?? []) as ChatTurnCard[],
+    actionIds: (updatedMessage?.actionIds ?? currentMembers.map((member) => member._id)) as Id<"actions">[],
     messageId: updatedMessage?._id,
   };
 }
@@ -658,6 +651,14 @@ type ConfirmGroupResult = {
   loggedItems: unknown[];
   unresolvedItems: unknown[];
   memoryApprovals?: unknown[];
+  turn?: {
+    content: string;
+    turnContractVersion: 1;
+    turnOutcome: ChatTurnOutcome;
+    turnCards: ChatTurnCard[];
+    actionGroupId: Id<"actionGroups">;
+    actionIds: Id<"actions">[];
+  };
 };
 
 type LogAnywayForActionResult = {
@@ -792,49 +793,6 @@ function resultCardItemsForActions(actions: Doc<"actions">[]): ResultCardItem[] 
   return items;
 }
 
-function clarificationResolutionOutcome(groupId: string, members: Doc<"actions">[]): {
-  content: string;
-  turnOutcome: ChatTurnOutcome;
-  turnCards: ChatTurnCard[];
-} {
-  const resultItems = resultCardItemsForActions(members);
-  const committedItems = resultItems.filter(
-    (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
-  );
-  const cards: ChatTurnCard[] = [];
-  if (committedItems.length > 0) {
-    cards.push({ version: 1, kind: "result", data: { groupId, items: resultItems } });
-    cards.push({
-      version: 1,
-      kind: "undo",
-      data: {
-        groupId,
-        items: committedItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
-      },
-    });
-  } else if (resultItems.length > 0) {
-    const failedItems = resultItems.filter(
-      (item): item is Extract<ResultCardItem, { status: "failed" }> => item.status === "failed",
-    );
-    cards.push({
-      version: 1,
-      kind: "failure",
-      data: {
-        groupId,
-        code: "CLARIFICATION_FAILED",
-        message: "No items were saved.",
-        retriable: true,
-        items: failedItems.map(({ status: _status, retriable: _retriable, ...item }) => item),
-      },
-    });
-  }
-  const turnOutcome: ChatTurnOutcome = committedItems.length > 0 ? "committed" : "failed";
-  const content = turnOutcome === "committed"
-    ? `Saved ${committedItems.map((item) => item.title).join(", ")}.`
-    : "I couldn't save that. Please try again.";
-  return { content, turnOutcome, turnCards: cards };
-}
-
 /** Confirm, discard, or edit members of a staged large batch independently. */
 export const confirmGroup = action({
   args: {
@@ -855,6 +813,7 @@ export const confirmGroup = action({
 
     if ((group.status === "pending" || group.status === "partial" || group.status === "failed") && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
       await ctx.runMutation(aiInternal.expireActionGroup, { groupId });
+      await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, { userId, actionGroupId: groupId });
       const expiredMembers: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
       return {
         groupId,
@@ -865,6 +824,7 @@ export const confirmGroup = action({
       };
     }
     if (group.status === "expired") {
+      await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, { userId, actionGroupId: groupId });
       const expiredMembers: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
       return {
         groupId,
@@ -876,10 +836,6 @@ export const confirmGroup = action({
     }
 
     const members: any[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
-    const existingMessage: any = await ctx.runQuery(internal.chat.getAssistantOutcomeForGroup, {
-      userId,
-      actionGroupId: groupId,
-    });
     const decisionsByOrdinal = new Map(decisions.map((decision) => [decision.ordinal, decision]));
     const results: any[] = [];
     const loggedItems: any[] = [];
@@ -975,117 +931,28 @@ export const confirmGroup = action({
     }
 
     const status = await finalizeActionGroup(ctx, groupId);
-    const currentMembers: Doc<"actions">[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
-    const resultCardItems = resultCardItemsForActions(currentMembers);
-    const committedCardItems = resultCardItems.filter(
-      (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
-    );
-    const failedCardItems = resultCardItems.filter(
-      (item): item is Extract<ResultCardItem, { status: "failed" }> => item.status === "failed",
-    );
-    const pendingMembers = currentMembers.filter((member) => member.status === "pending");
-    const allDiscarded = currentMembers.length > 0 && currentMembers.every((member) => member.status === "discarded");
-    const cards: ChatTurnCard[] = [];
-    if (allDiscarded) {
-      cards.push({
-        version: 1,
-        kind: "confirmation",
-        data: {
-          groupId: String(groupId),
-          expiresAt: group.createdAt + CONFIRMATION_TTL_MS,
-          state: "resolved",
-          items: currentMembers.map((member) => ({
-            ordinal: confirmationOrdinal(member),
-            actionType: member.actionType as "meal" | "workout" | "recovery",
-            title: confirmationDescription(member),
-            description: confirmationDescription(member),
-            date: member.resolvedDate,
-            time: member.resolvedTime,
-            ...(member.actionType === "meal" && confirmationMacros(member.payload)
-              ? { macros: confirmationMacros(member.payload) }
-              : {}),
-            actionId: String(member._id),
-            confidence: member.confidence,
-            validationMessages: member.validation.messages,
-          })),
-        },
-      });
-    } else if (pendingMembers.length > 0) {
-      cards.push({
-        version: 1,
-        kind: "confirmation",
-        data: {
-          groupId: String(groupId),
-          expiresAt: group.createdAt + CONFIRMATION_TTL_MS,
-          items: pendingMembers.map((member) => ({
-            ordinal: confirmationOrdinal(member),
-            actionType: member.actionType as "meal" | "workout" | "recovery",
-            title: confirmationDescription(member),
-            description: confirmationDescription(member),
-            date: member.resolvedDate,
-            time: member.resolvedTime,
-            ...(member.actionType === "meal" && confirmationMacros(member.payload)
-              ? { macros: confirmationMacros(member.payload) }
-              : {}),
-            actionId: String(member._id),
-            confidence: member.confidence,
-            validationMessages: member.validation.messages,
-          })),
-        },
-      });
-    }
-    if (committedCardItems.length > 0) {
-      cards.push({
-        version: 1,
-        kind: "result",
-        data: { groupId: String(groupId), items: resultCardItems },
-      });
-      cards.push({
-        version: 1,
-        kind: "undo",
-        data: {
-          groupId: String(groupId),
-          items: committedCardItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
-        },
-      });
-    } else if (resultCardItems.length > 0) {
-      cards.push({
-        version: 1,
-        kind: "failure",
-        data: {
-          groupId: String(groupId),
-          code: "CONFIRMATION_FAILED",
-          message: "No items were saved.",
-          retriable: true,
-          items: failedCardItems.map(({ status: _status, retriable: _retriable, ...item }) => item),
-        },
-      });
-    }
-    const turnOutcome: ChatTurnOutcome = pendingMembers.length > 0
-      ? "confirmation_required"
-      : committedCardItems.length > 0
-        ? "committed"
-        : allDiscarded
-          ? "no_action"
-          : "failed";
-    const content = turnOutcome === "confirmation_required"
-      ? `${pendingMembers.length} item${pendingMembers.length === 1 ? "" : "s"} still need review.`
-      : turnOutcome === "committed"
-        ? `Saved ${committedCardItems.map((item) => item.title).join(", ")}.${resultCardItems.some((item) => item.status === "failed") ? " Some items could not be saved." : ""}`
-        : turnOutcome === "no_action"
-          ? "Discarded. Nothing was saved."
-          : "I couldn't save that. Please try again.";
-    await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
+    const persistedMessage = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
       userId,
       actionGroupId: groupId,
-      content,
-      turnOutcome,
-      turnCards: cards,
-      actionIds: currentMembers.map((member) => member._id),
-      expectedTurnOutcome: existingMessage?.turnOutcome,
-      expectedTurnCardsHash: existingMessage ? stableHash(JSON.stringify(existingMessage.turnCards ?? [])) : undefined,
     });
-    return { groupId, status, results, loggedItems, unresolvedItems, memoryApprovals };
+    return {
+      groupId,
+      status,
+      results,
+      loggedItems: persistedMessage ? loggedItemFromCards((persistedMessage.turnCards ?? []) as ChatTurnCard[]) : loggedItems,
+      unresolvedItems,
+      memoryApprovals,
+      turn: persistedMessage
+        ? {
+            content: persistedMessage.content,
+            turnContractVersion: 1 as const,
+            turnOutcome: persistedMessage.turnOutcome as ChatTurnOutcome,
+            turnCards: persistedMessage.turnCards ?? [],
+            actionGroupId: groupId,
+            actionIds: persistedMessage.actionIds ?? [],
+          }
+        : undefined,
+    };
   },
 });
 
@@ -1114,8 +981,6 @@ export const logAnywayForAction = action({
     if (expectedTurnOutcome !== "failed" && expectedTurnOutcome !== "committed") {
       throw new Error("Action is not duplicate-blocked");
     }
-    const expectedTurnCardsHash = stableHash(JSON.stringify(message.turnCards ?? []));
-
     const duplicateCard = Array.isArray(message.turnCards)
       ? (message.turnCards as ChatTurnCard[]).find((card) =>
           card.kind === "duplicate"
@@ -1167,76 +1032,36 @@ export const logAnywayForAction = action({
     }
     await finalizeActionGroup(ctx, String(group._id));
 
-    const currentMembers: Doc<"actions">[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, {
-      groupId: group._id,
-    });
+    const currentMembers: Doc<"actions">[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId: group._id });
     const committed = currentMembers.find((candidate) => candidate._id === actionId);
     if (!committed || committed.userId !== userId || committed.status !== "committed" || !committed.committedRowRef) {
       throw new Error("Action was not committed");
     }
-    const resultItems = resultCardItemsForActions(currentMembers);
-    const committedItems = resultItems.filter(
-      (item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed",
-    );
-    const preservedCards: ChatTurnCard[] = [];
-    for (const card of (message.turnCards ?? []) as ChatTurnCard[]) {
-      if (card.kind === "result" || card.kind === "undo") continue;
-      if (card.kind === "duplicate") {
-        const items = card.data.items.filter((item) => item.actionId !== String(actionId));
-        if (items.length > 0) preservedCards.push({ ...card, data: { ...card.data, items } });
-        continue;
-      }
-      if (card.kind === "failure") {
-        const items = card.data.items.filter((item) => item.actionId !== String(actionId));
-        if (items.length > 0) preservedCards.push({ ...card, data: { ...card.data, items } });
-        continue;
-      }
-      preservedCards.push(card);
-    }
-    const turnCards: ChatTurnCard[] = [
-      ...preservedCards,
-      {
-        version: 1,
-        kind: "result",
-        data: { groupId: String(group._id), items: resultItems },
-      },
-      {
-        version: 1,
-        kind: "undo",
-        data: {
-          groupId: String(group._id),
-          items: committedItems.map(({ status: _status, ...item }) => ({ ...item, state: "available" as const })),
-        },
-      },
-    ];
-    const content = `Saved ${confirmationDescription(committed)}.`;
-    const actionIds = currentMembers.map((candidate) => candidate._id);
     const updatedMessage = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
       userId,
       actionGroupId: group._id,
-      content,
-      turnOutcome: "committed",
-      turnCards,
-      actionIds,
-      expectedTurnOutcome,
-      expectedTurnCardsHash,
     });
-    const persistedTurnCards = ((updatedMessage?.turnCards ?? turnCards) as ChatTurnCard[]);
-    const persistedTurnOutcome = (updatedMessage?.turnOutcome ?? "committed") as "committed";
-    const persistedContent = updatedMessage?.content ?? content;
+    if (!updatedMessage) throw new Error("Assistant outcome was not found");
+    const reconciledMember = await ctx.runQuery(aiInternal.getActionMember, { actionId });
+    if (!reconciledMember || reconciledMember.status !== "committed" || !reconciledMember.committedRowRef) {
+      throw new Error("Action was undone before log-anyway completed");
+    }
+    const persistedTurnCards = (updatedMessage?.turnCards ?? []) as ChatTurnCard[];
+    const persistedTurnOutcome = updatedMessage.turnOutcome;
+    const persistedContent = updatedMessage.content;
 
     return {
       actionId,
       actionGroupId: group._id,
       status: "committed",
-      record: committed.committedRowRef,
+      record: reconciledMember.committedRowRef,
       turn: {
         content: persistedContent,
         turnContractVersion: 1,
-        turnOutcome: persistedTurnOutcome,
+        turnOutcome: persistedTurnOutcome as "committed",
         turnCards: persistedTurnCards,
         actionGroupId: group._id,
-        actionIds: (updatedMessage?.actionIds ?? actionIds) as Id<"actions">[],
+        actionIds: (updatedMessage?.actionIds ?? currentMembers.map((candidate) => candidate._id)) as Id<"actions">[],
       },
     };
   },
@@ -1827,15 +1652,11 @@ export const chat = action({
     const userName = identity.name ?? "Athlete";
     const today = assertValidDate(todayArg ?? new Date().toISOString().split("T")[0]);
     const restrictedGuidance = hasRestrictedRecoverySignal(message);
-    const existingTurn = clientSubmissionId
-      ? await ctx.runQuery(internal.chat.getTurnBySubmission, {
-          userId,
-          sessionId,
-          clientSubmissionId,
-          content: message,
-        })
+    const claim = clientSubmissionId
+      ? await ctx.runMutation(internal.chat.claimTurn, { userId, sessionId, clientSubmissionId, content: message })
       : null;
-    if (existingTurn) return chatResponseFromPersistedTurn(existingTurn, coachType, restrictedGuidance);
+    if (claim?.state === "terminal") return chatResponseFromPersistedTurn(claim.turn, coachType, restrictedGuidance);
+    if (claim?.state === "in_progress") throw new Error("Chat submission is already in progress; retry after the current request completes");
 
     // Gather context
     const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory, userIngredients, checkInAnswers] = await Promise.all([
@@ -1917,14 +1738,16 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       assertHistoryEntries(history);
     }
 
-    // Save user message
-    await ctx.runMutation(internal.chat.addMessage, {
-      userId,
-      sessionId,
-      role: "user",
-      content: message,
-      clientSubmissionId,
-    });
+    // A clientSubmissionId is atomically claimed above; legacy submissions without
+    // one still get the historical user-message persistence behavior.
+    if (!clientSubmissionId) {
+      await ctx.runMutation(internal.chat.addMessage, {
+        userId,
+        sessionId,
+        role: "user",
+        content: message,
+      });
+    }
 
     try {
     // Free-text clarification answer: if the user provided a groupId and a resolvable date,
@@ -2127,6 +1950,12 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       actionGroupId: turnResult.groupId,
       actionIds: turnResult.actionIds,
     });
+    const persistedMessage = turnResult.groupId
+      ? await reconcileAssistantOutcome(ctx, userId, turnResult.groupId)
+      : null;
+    const persistedCards = (persistedMessage?.turnCards ?? turnResult.cards) as ChatTurnCard[];
+    const persistedContent = persistedMessage?.content ?? cleanReply;
+    const persistedOutcome = (persistedMessage?.turnOutcome ?? turnResult.outcome) as ChatTurnOutcome;
 
     // Update session
     if (sessionId) {
@@ -2154,7 +1983,7 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
     }
 
     return {
-      reply: cleanReply,
+      reply: persistedContent,
       loggedItem,
       memoryApprovals,
       failedItems,
@@ -2162,9 +1991,9 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       clarification,
       confirmation,
       restricted: restrictedGuidance,
-      outcome: turnResult.outcome,
-      cards: turnResult.cards,
-      messageId,
+      outcome: persistedOutcome,
+      cards: persistedCards,
+      messageId: persistedMessage?._id ?? messageId,
     };
     } catch (error) {
       if (!clarificationGroupId) {
@@ -3830,12 +3659,20 @@ function turnOutcomeText(result: TurnPolicyResult): string {
 }
 
 function loggedItemFromCards(cards: ChatTurnCard[]): any {
+  const loggedItems = loggedItemsFromCards(cards);
+  return loggedItems.length === 0
+    ? null
+    : loggedItems.length === 1
+      ? loggedItems[0]
+      : { type: "multiple", items: loggedItems };
+}
+
+function loggedItemsFromCards(cards: ChatTurnCard[]): any[] {
   const committedItems = cards.flatMap((card) =>
     card.kind === "result"
       ? card.data.items.filter((item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed")
       : [],
   );
-  if (committedItems.length === 0) return null;
   const toLoggedItem = (item: Extract<ResultCardItem, { status: "committed" }>) => ({
     type: item.actionType === "recovery" ? item.record.table.replace(/_logs$/, "") : item.actionType,
     data: {
@@ -3848,9 +3685,7 @@ function loggedItemFromCards(cards: ChatTurnCard[]): any {
       time: item.time,
     },
   });
-  return committedItems.length === 1
-    ? toLoggedItem(committedItems[0])
-    : { type: "multiple", items: committedItems.map(toLoggedItem) };
+  return committedItems.map(toLoggedItem);
 }
 
 function chatResponseFromPersistedTurn(turn: any, coachType: string | undefined, restricted: boolean) {
@@ -3886,6 +3721,10 @@ function homepageResponseFromPersistedTurn(turn: any, activeSessionId: Id<"chat_
     outcome: turn.turnOutcome as ChatTurnOutcome,
     cards,
   };
+}
+
+async function reconcileAssistantOutcome(ctx: ActionCtx, userId: string, actionGroupId: Id<"actionGroups">) {
+  return ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, { userId, actionGroupId });
 }
 
 async function persistFailedChatTurn(
@@ -3957,7 +3796,14 @@ async function persistFailedChatTurn(
     actionGroupId: failedGroup.groupId,
     actionIds: actionRows.map((action) => action._id),
   });
-  return { messageId, groupId: failedGroup.groupId, turnCards, content, turnOutcome };
+  const persisted = await reconcileAssistantOutcome(ctx, userId, failedGroup.groupId);
+  return {
+    messageId: persisted?._id ?? messageId,
+    groupId: failedGroup.groupId,
+    turnCards: (persisted?.turnCards ?? turnCards) as ChatTurnCard[],
+    content: persisted?.content ?? content,
+    turnOutcome: (persisted?.turnOutcome ?? turnOutcome) as ChatTurnOutcome,
+  };
 }
 
 export const homepageInput = action({
@@ -4001,24 +3847,27 @@ export const homepageInput = action({
     // Make sure we have a homepage session to persist into
     const activeSessionId = sessionId
       ?? (await ctx.runMutation(internal.chat.getOrCreateHomepageSession, { userId, date: today }));
-    const existingTurn = clientSubmissionId
-      ? await ctx.runQuery(internal.chat.getTurnBySubmission, {
+    const claim = clientSubmissionId
+      ? await ctx.runMutation(internal.chat.claimTurn, {
           userId,
           sessionId: activeSessionId,
           clientSubmissionId,
           content: message,
         })
       : null;
-    if (existingTurn) return homepageResponseFromPersistedTurn(existingTurn, activeSessionId, restrictedGuidance);
+    if (claim?.state === "terminal") return homepageResponseFromPersistedTurn(claim.turn, activeSessionId, restrictedGuidance);
+    if (claim?.state === "in_progress") throw new Error("Chat submission is already in progress; retry after the current request completes");
 
-    // Save user message immediately
-    await ctx.runMutation(internal.chat.addMessage, {
-      userId,
-      sessionId: activeSessionId,
-      role: "user",
-      content: message,
-      clientSubmissionId,
-    });
+    // A clientSubmissionId is atomically claimed above; legacy submissions without
+    // one still get the historical user-message persistence behavior.
+    if (!clientSubmissionId) {
+      await ctx.runMutation(internal.chat.addMessage, {
+        userId,
+        sessionId: activeSessionId,
+        role: "user",
+        content: message,
+      });
+    }
 
     try {
     // Phase 5: MemoryAgent — fire-and-forget fact extraction (does not block response)
@@ -4084,19 +3933,25 @@ export const homepageInput = action({
         actionGroupId: turnResult.groupId,
         actionIds: turnResult.actionIds,
       });
+      const persistedMessage = turnResult.groupId
+        ? await reconcileAssistantOutcome(ctx, userId, turnResult.groupId)
+        : null;
+      const persistedCards = (persistedMessage?.turnCards ?? turnResult.cards) as ChatTurnCard[];
+      const persistedContent = persistedMessage?.content ?? reply;
+      const persistedOutcome = (persistedMessage?.turnOutcome ?? turnResult.outcome) as ChatTurnOutcome;
       return {
         drafts: [],
         tier1Summary: "",
         tier2Detail: "",
         isQuestion: false,
-        reply,
+        reply: persistedContent,
         coachType: "overall",
         sessionId: activeSessionId,
-        messageId,
+        messageId: persistedMessage?._id ?? messageId,
         restricted: restrictedGuidance,
         failedItems: [],
-        outcome: turnResult.outcome,
-        cards: turnResult.cards,
+        outcome: persistedOutcome,
+        cards: persistedCards,
       };
     }
 
@@ -4251,19 +4106,25 @@ export const homepageInput = action({
         actionGroupId: turnResult.groupId,
         actionIds: turnResult.actionIds,
       });
+      const persistedMessage = turnResult.groupId
+        ? await reconcileAssistantOutcome(ctx, userId, turnResult.groupId)
+        : null;
+      const persistedCards = (persistedMessage?.turnCards ?? turnResult.cards) as ChatTurnCard[];
+      const persistedContent = persistedMessage?.content ?? reply;
+      const persistedOutcome = (persistedMessage?.turnOutcome ?? turnResult.outcome) as ChatTurnOutcome;
       return {
         drafts: [],
         tier1Summary: "",
         tier2Detail: "",
         isQuestion: turnResult.outcome === "no_action",
-        reply,
+        reply: persistedContent,
         coachType: "overall",
         sessionId: activeSessionId,
-        messageId,
+        messageId: persistedMessage?._id ?? messageId,
         restricted: restrictedGuidance,
         failedItems,
-        outcome: turnResult.outcome,
-        cards: turnResult.cards,
+        outcome: persistedOutcome,
+        cards: persistedCards,
       };
     }
 
@@ -4304,18 +4165,24 @@ export const homepageInput = action({
       actionGroupId: turnResult.groupId,
       actionIds: turnResult.actionIds,
     });
+    const persistedMessage = turnResult.groupId
+      ? await reconcileAssistantOutcome(ctx, userId, turnResult.groupId)
+      : null;
+    const persistedCards = (persistedMessage?.turnCards ?? turnResult.cards) as ChatTurnCard[];
+    const persistedContent = persistedMessage?.content ?? persistedReply;
+    const persistedOutcome = (persistedMessage?.turnOutcome ?? turnResult.outcome) as ChatTurnOutcome;
 
     return {
       drafts,
-      tier1Summary,
+      tier1Summary: persistedContent,
       tier2Detail,
       isQuestion: false,
       sessionId: activeSessionId,
-      messageId,
+      messageId: persistedMessage?._id ?? messageId,
       restricted: restrictedGuidance,
       failedItems,
-      outcome: turnResult.outcome,
-      cards: turnResult.cards,
+      outcome: persistedOutcome,
+      cards: persistedCards,
     };
     } catch (error) {
       const finalized = await persistFailedChatTurn(

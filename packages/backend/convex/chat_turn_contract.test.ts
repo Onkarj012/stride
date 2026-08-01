@@ -110,12 +110,8 @@ describe("persisted chat-turn outcome contract", () => {
     const result = await asUser.action(api.ai.chat, { message: "I drank 500ml water", today: "2026-07-16", clientSubmissionId: "terminal-once" }) as any;
     const groupId = result.cards.find((card: any) => card.kind === "result").data.groupId;
 
-    await t.mutation(internal.chat.updateAssistantOutcomeForGroup, {
-      userId: "turn-user", actionGroupId: groupId, content: "Saved water.", turnOutcome: "committed", turnCards: [], actionIds: [],
-    });
-    await expect(t.mutation(internal.chat.updateAssistantOutcomeForGroup, {
-      userId: "turn-user", actionGroupId: groupId, content: "I couldn't save that. Please try again.", turnOutcome: "failed", turnCards: [], actionIds: [], allowTerminalRetry: true,
-    } as any)).rejects.toThrow();
+    await t.mutation(internal.chat.updateAssistantOutcomeForGroup, { userId: "turn-user", actionGroupId: groupId });
+    await t.mutation(internal.chat.updateAssistantOutcomeForGroup, { userId: "turn-user", actionGroupId: groupId });
 
     const assistant = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).find((message) => message.role === "ai");
     expect(assistant).toMatchObject({ turnOutcome: "committed", content: "Saved 500ml water." });

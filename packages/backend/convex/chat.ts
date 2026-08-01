@@ -1,7 +1,9 @@
-import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { assertChatTurnCards } from "../../shared/src/chat-turn";
 import { stableHash } from "./validation";
+import { CONFIRMATION_TTL_MS } from "./actions_envelope";
 
 const turnOutcomeValidator = v.union(
   v.literal("committed"),
@@ -18,45 +20,6 @@ function sameOptionalId(left: unknown, right: unknown): boolean {
 
 function turnCardsHash(cards: unknown): string {
   return stableHash(JSON.stringify(cards ?? []));
-}
-
-async function assertCanonicalCommittedRows(ctx: any, args: {
-  userId: string;
-  actionGroupId: any;
-  actionIds: any[];
-  turnOutcome: ChatTurnOutcome;
-  turnCards: unknown;
-}) {
-  if (args.turnOutcome !== "committed") return;
-  const actions: any[] = await ctx.db
-    .query("actions")
-    .withIndex("by_group", (q: any) => q.eq("groupId", args.actionGroupId))
-    .collect();
-  const actionById = new Map(actions.map((action) => [String(action._id), action]));
-  const committedIds = new Set<string>();
-  for (const actionId of args.actionIds) {
-    const action = actionById.get(String(actionId));
-    if (!action || action.userId !== args.userId || String(action.groupId) !== String(args.actionGroupId)) {
-      throw new Error("Assistant outcome action rows do not match the action group");
-    }
-    if (action.status === "committed") {
-      if (!action.committedRowRef) throw new Error("Committed action is missing its durable record");
-      committedIds.add(String(action._id));
-    }
-  }
-  const cardCommittedIds = new Set<string>();
-  for (const card of args.turnOutcome === "committed" && Array.isArray(args.turnCards) ? args.turnCards : []) {
-    if (card?.kind !== "result") continue;
-    for (const item of card.data?.items ?? []) {
-      if (item?.status === "committed" && item.actionId) cardCommittedIds.add(String(item.actionId));
-    }
-  }
-  for (const actionId of cardCommittedIds) {
-    if (!committedIds.has(actionId)) throw new Error("Committed card item is not backed by a durable action row");
-  }
-  if (committedIds.size === 0 || cardCommittedIds.size === 0) {
-    throw new Error("Committed assistant outcome is missing a durable record");
-  }
 }
 
 async function requireUserId(ctx: any): Promise<string> {
@@ -258,104 +221,329 @@ export const addMessage = internalMutation({
   },
 });
 
+function confirmationOrdinal(action: any): number {
+  if (typeof action.payload?._confirmationOrdinal === "number") return action.payload._confirmationOrdinal;
+  return typeof action.originalPayload?._confirmationOrdinal === "number" ? action.originalPayload._confirmationOrdinal : -1;
+}
+
+function confirmationDescription(action: any): string {
+  if (action.actionType === "recovery") {
+    if (action.payload?.kind === "water") return `Water ${action.payload.ml}ml`;
+    if (action.payload?.kind === "sleep") return `Sleep ${action.payload.hours}h (${action.payload.quality})`;
+    if (action.payload?.kind === "mood") return `Mood ${action.payload.rating}/5`;
+    if (action.payload?.kind === "steps") return `Steps ${action.payload.count}`;
+  }
+  return action.payload?.name ?? action.payload?.description ?? action.actionType;
+}
+
+function cardActionType(action: any): "meal" | "workout" | "recovery" | null {
+  return action.actionType === "meal" || action.actionType === "workout" || action.actionType === "recovery"
+    ? action.actionType
+    : null;
+}
+
+function confirmationMacros(payload: any) {
+  if (!payload || typeof payload !== "object") return undefined;
+  const values = [payload.calories, payload.protein, payload.carbs, payload.fat];
+  if (!values.every((value) => typeof value === "number" && Number.isFinite(value))) return undefined;
+  return { calories: payload.calories, protein: payload.protein, carbs: payload.carbs, fat: payload.fat };
+}
+
+function actionCardBase(action: any) {
+  return {
+    ordinal: confirmationOrdinal(action),
+    actionType: cardActionType(action) ?? "recovery",
+    title: confirmationDescription(action),
+    description: confirmationDescription(action),
+    date: action.resolvedDate,
+    time: action.resolvedTime,
+  };
+}
+
+function resultCardItemsForActions(actions: any[]): any[] {
+  return actions.reduce<any[]>((items, action) => {
+    const actionType = cardActionType(action);
+    if (!actionType) return items;
+    const base = { ...actionCardBase(action), actionType };
+    if (action.status === "committed" && action.committedRowRef) {
+      items.push({ ...base, status: "committed" as const, actionId: String(action._id), record: action.committedRowRef });
+      return items;
+    }
+    if (action.status === "failed") {
+      items.push({
+        ...base,
+        status: "failed" as const,
+        actionId: String(action._id),
+        reason: action.validation?.messages?.at(-1) ?? "The item could not be saved",
+        retriable: true,
+      });
+    }
+    return items;
+  }, []);
+}
+
+function pendingCardItems(actions: any[], existingCard: any): any[] {
+  return actions.reduce<any[]>((items, action) => {
+    const actionType = cardActionType(action);
+    if (!actionType || action.status !== "pending") return items;
+    const previous = existingCard?.data?.items?.find((item: any) => item.actionId === String(action._id));
+    const base = {
+      ...actionCardBase(action),
+      actionType,
+      actionId: String(action._id),
+      ...(action.actionType === "meal" && confirmationMacros(action.payload)
+        ? { macros: confirmationMacros(action.payload) }
+        : {}),
+    };
+    if (existingCard?.kind === "clarification") {
+      items.push({ ...base, reason: previous?.reason ?? action.validation?.messages?.at(-1) ?? "Confirmation is required" });
+      return items;
+    }
+    items.push({
+      ...base,
+      confidence: action.confidence,
+      validationMessages: action.validation?.messages ?? [],
+    });
+    return items;
+  }, []);
+}
+
+function reconcileCards(message: any, group: any, actions: any[]) {
+  const existingCards: any[] = Array.isArray(message.turnCards) ? message.turnCards : [];
+  const actionById = new Map(actions.map((action) => [String(action._id), action]));
+  const pending = actions.filter((action) => action.status === "pending" && cardActionType(action));
+  const activeCommitted = actions.filter((action) => action.status === "committed" && action.committedRowRef && cardActionType(action));
+  const undone = actions.filter((action) => action.status === "undone" && action.committedRowRef && cardActionType(action));
+  const failed = actions.filter((action) => action.status === "failed" && cardActionType(action));
+  const priorResultItems = existingCards
+    .filter((card) => card.kind === "result")
+    .flatMap((card) => card.data.items);
+  const resultItems = resultCardItemsForActions(actions).map((item: any) => {
+    const prior = priorResultItems.find((candidate: any) => candidate.actionId === item.actionId);
+    return prior ? { ...item, title: prior.title, description: prior.description } : item;
+  });
+  const preservedResultFailures = priorResultItems.filter((item: any) => !item.actionId && item.status === "failed");
+  const existingPending = existingCards.find((card) => card.kind === "confirmation" || card.kind === "clarification");
+  const preserved = existingCards.flatMap((card) => {
+    if (card.kind === "result" || card.kind === "undo" || card.kind === "confirmation" || card.kind === "clarification") return [];
+    if (card.kind === "duplicate") {
+      const items = card.data.items.filter((item: any) => {
+        const action = actionById.get(String(item.actionId));
+        return !action || (action.status !== "committed" && action.status !== "undone");
+      });
+      return items.length > 0 ? [{ ...card, data: { ...card.data, items } }] : [];
+    }
+    if (card.kind === "failure") {
+      const items = card.data.items.filter((item: any) => !item.actionId || !actionById.has(String(item.actionId)));
+      return items.length > 0 || card.data.items.length === 0 ? [{ ...card, data: { ...card.data, items } }] : [];
+    }
+    return [card];
+  });
+  const cards: any[] = [...preserved];
+
+  if (pending.length > 0) {
+    const items = pendingCardItems(pending, existingPending);
+    if (existingPending?.kind === "clarification") {
+      cards.push({
+        version: 1,
+        kind: "clarification",
+        data: { groupId: String(group._id), prompt: existingPending.data.prompt, items },
+      });
+    } else {
+      cards.push({
+        version: 1,
+        kind: "confirmation",
+        data: {
+          groupId: String(group._id),
+          expiresAt: group.createdAt + CONFIRMATION_TTL_MS,
+          items,
+        },
+      });
+    }
+  }
+
+  if (activeCommitted.length > 0) {
+    cards.push({ version: 1, kind: "result", data: { groupId: String(group._id), items: [...resultItems, ...preservedResultFailures] } });
+  } else if (failed.length > 0 || preservedResultFailures.length > 0) {
+    cards.push({
+      version: 1,
+      kind: "failure",
+      data: {
+        groupId: String(group._id),
+        code: "ACTION_GROUP_FAILED",
+        message: "No items were saved.",
+        retriable: true,
+        items: [...resultItems.filter((item: any) => item.status === "failed"), ...preservedResultFailures]
+          .map(({ status: _status, retriable: _retriable, ...item }: any) => item),
+      },
+    });
+  }
+
+  if (activeCommitted.length > 0 || undone.length > 0) {
+    cards.push({
+      version: 1,
+      kind: "undo",
+      data: {
+        groupId: String(group._id),
+        items: [...activeCommitted, ...undone].map((action) => ({
+          ...actionCardBase(action),
+          actionId: String(action._id),
+          record: action.committedRowRef,
+          state: action.status === "undone" ? "undone" : "available",
+        })),
+      },
+    });
+  }
+
+  const allDiscarded = actions.length > 0 && actions.every((action) => action.status === "discarded");
+  if (allDiscarded) {
+    cards.push({
+      version: 1,
+      kind: "confirmation",
+      data: {
+        groupId: String(group._id),
+        expiresAt: group.createdAt + CONFIRMATION_TTL_MS,
+        state: "resolved",
+        items: actions.filter((action) => cardActionType(action)).map((action) => ({
+          ...actionCardBase(action),
+          actionId: String(action._id),
+          ...(action.actionType === "meal" && confirmationMacros(action.payload)
+            ? { macros: confirmationMacros(action.payload) }
+            : {}),
+          confidence: action.confidence,
+          validationMessages: action.validation?.messages ?? [],
+        })),
+      },
+    });
+  }
+
+  const hasPreservedFailure = cards.some((card) => card.kind === "failure");
+  const turnOutcome: ChatTurnOutcome = pending.length > 0
+    ? "confirmation_required"
+    : activeCommitted.length > 0
+      ? "committed"
+      : failed.length > 0 || hasPreservedFailure
+        ? "failed"
+        : "no_action";
+  const savedTitles = activeCommitted.map((action) => {
+    const priorCardItem = existingCards
+      .flatMap((card) => card.kind === "result" || card.kind === "undo" ? card.data.items : [])
+      .find((item: any) => item.actionId === String(action._id));
+    return priorCardItem?.title ?? confirmationDescription(action);
+  });
+  const generatedContent = turnOutcome === "confirmation_required"
+    ? `${pending.length} item${pending.length === 1 ? "" : "s"} still need review.`
+    : turnOutcome === "committed"
+      ? `Saved ${savedTitles.join(", ")}.${failed.length > 0 ? " Some items could not be saved." : ""}`
+      : turnOutcome === "no_action"
+        ? undone.length > 0 ? "That log was undone." : "Discarded. Nothing was saved."
+        : "I couldn't save that. Please try again.";
+  const content = turnOutcome === "committed"
+    && activeCommitted.length === 1
+    && failed.length === 0
+    && /^Saved\b/i.test(message.content)
+    ? message.content
+    : generatedContent;
+  return { content, turnOutcome, turnCards: cards, actionIds: actions.map((action) => action._id) };
+}
+
+export async function reconcileAssistantOutcomeInMutation(
+  ctx: MutationCtx,
+  userId: string,
+  actionGroupId: Doc<"actionGroups">["_id"],
+) {
+  const group = await ctx.db.get("actionGroups", actionGroupId);
+  if (!group || group.userId !== userId) throw new Error("Not found");
+  const messages = await ctx.db
+    .query("chat_messages")
+    .withIndex("by_action_group", (q) => q.eq("actionGroupId", actionGroupId))
+    .collect();
+  const message = messages
+    .filter((candidate) => candidate.role === "ai")
+    .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
+  if (!message) return null;
+  if (message.userId !== userId) throw new Error("Not found");
+  const actions = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", actionGroupId)).collect();
+  const reconciled = reconcileCards(message, group, actions);
+  assertChatTurnCards(reconciled.turnCards);
+  await ctx.db.patch(message._id, {
+    content: reconciled.content,
+    turnContractVersion: 1,
+    turnOutcome: reconciled.turnOutcome,
+    turnCards: reconciled.turnCards,
+    actionIds: reconciled.actionIds,
+  });
+  return await ctx.db.get(message._id);
+}
+
 export const updateAssistantOutcomeForGroup = internalMutation({
   args: {
     userId: v.string(),
     actionGroupId: v.id("actionGroups"),
-    content: v.string(),
-    turnOutcome: turnOutcomeValidator,
-    turnCards: v.any(),
-    actionIds: v.array(v.id("actions")),
-    expectedTurnOutcome: v.optional(turnOutcomeValidator),
-    expectedTurnCardsHash: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    assertChatTurnCards(args.turnCards);
-    const messages = await ctx.db
-      .query("chat_messages")
-      .withIndex("by_action_group", (q) => q.eq("actionGroupId", args.actionGroupId))
-      .collect();
-    const message = messages
-      .filter((candidate) => candidate.role === "ai")
-      .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
-    if (!message) return null;
-    if (message.userId !== args.userId) throw new Error("Not found");
-    if (args.expectedTurnOutcome !== undefined && message.turnOutcome !== args.expectedTurnOutcome) return message;
-    if (args.expectedTurnCardsHash !== undefined && turnCardsHash(message.turnCards) !== args.expectedTurnCardsHash) return message;
-    const isSafeExplicitRecovery =
-      (message.turnOutcome === "failed" || message.turnOutcome === "committed")
-      && args.expectedTurnOutcome === message.turnOutcome
-      && args.expectedTurnCardsHash !== undefined
-      && args.turnOutcome === "committed";
-    if (message.turnOutcome && message.turnOutcome !== "confirmation_required" && !isSafeExplicitRecovery) return message;
-    if (isSafeExplicitRecovery) {
-      await assertCanonicalCommittedRows(ctx, {
-        userId: args.userId,
-        actionGroupId: args.actionGroupId,
-        actionIds: args.actionIds,
-        turnOutcome: args.turnOutcome,
-        turnCards: args.turnCards,
-      });
-    }
-    await ctx.db.patch(message._id, {
-      content: args.content,
-      turnContractVersion: 1,
-      turnOutcome: args.turnOutcome,
-      turnCards: args.turnCards,
-      actionIds: args.actionIds,
-    });
-    return await ctx.db.get(message._id);
+    return reconcileAssistantOutcomeInMutation(ctx, args.userId, args.actionGroupId);
   },
 });
 
-export const getTurnBySubmission = internalQuery({
+export const claimTurn = internalMutation({
   args: {
     userId: v.string(),
     sessionId: v.optional(v.id("chat_sessions")),
     clientSubmissionId: v.string(),
-    content: v.optional(v.string()),
+    content: v.string(),
   },
   handler: async (ctx, args) => {
+    const session = args.sessionId ? await ctx.db.get(args.sessionId) : null;
+    if (args.sessionId && (!session || session.userId !== args.userId)) throw new Error("Not found");
     const userMessage = await ctx.db
       .query("chat_messages")
       .withIndex("by_user_submission_and_role", (q) =>
-        q.eq("userId", args.userId)
-          .eq("clientSubmissionId", args.clientSubmissionId)
-          .eq("role", "user"),
+        q.eq("userId", args.userId).eq("clientSubmissionId", args.clientSubmissionId).eq("role", "user"),
       )
       .first();
     if (userMessage) {
-      if (!sameOptionalId(userMessage.sessionId, args.sessionId)) {
-        throw new Error("Submission already belongs to a different chat session");
-      }
-      if (args.content !== undefined && userMessage.content !== args.content) {
-        throw new Error("Submission already belongs to different content");
-      }
+      if (!sameOptionalId(userMessage.sessionId, args.sessionId)) throw new Error("Submission already belongs to a different chat session");
+      if (userMessage.content !== args.content) throw new Error("Submission already belongs to different content");
     }
     const assistant = await ctx.db
       .query("chat_messages")
       .withIndex("by_user_submission_and_role", (q) =>
-        q.eq("userId", args.userId)
-          .eq("clientSubmissionId", args.clientSubmissionId)
-          .eq("role", "ai"),
+        q.eq("userId", args.userId).eq("clientSubmissionId", args.clientSubmissionId).eq("role", "ai"),
       )
       .first();
-    if (!assistant) return null;
-    if (!sameOptionalId(assistant.sessionId, args.sessionId)) {
-      throw new Error("Submission already belongs to a different chat session");
+    if (assistant) {
+      if (!sameOptionalId(assistant.sessionId, args.sessionId)) throw new Error("Submission already belongs to a different chat session");
+      if (assistant.turnContractVersion === 1 && assistant.turnOutcome) {
+        return {
+          state: "terminal" as const,
+          turn: {
+            messageId: assistant._id,
+            sessionId: assistant.sessionId,
+            content: assistant.content,
+            turnOutcome: assistant.turnOutcome,
+            turnCards: assistant.turnCards ?? [],
+            actionGroupId: assistant.actionGroupId,
+            actionIds: assistant.actionIds ?? [],
+            clientSubmissionId: assistant.clientSubmissionId,
+            turnCardsHash: turnCardsHash(assistant.turnCards),
+          },
+        };
+      }
+      return { state: "in_progress" as const };
     }
-    if (assistant.turnContractVersion !== 1 || !assistant.turnOutcome) return null;
-    return {
-      messageId: assistant._id,
-      sessionId: assistant.sessionId,
-      content: assistant.content,
-      turnOutcome: assistant.turnOutcome,
-      turnCards: assistant.turnCards ?? [],
-      actionGroupId: assistant.actionGroupId,
-      actionIds: assistant.actionIds ?? [],
-      clientSubmissionId: assistant.clientSubmissionId,
-      turnCardsHash: turnCardsHash(assistant.turnCards),
-    };
+    if (userMessage) return { state: "in_progress" as const };
+    const id = await ctx.db.insert("chat_messages", {
+      userId: args.userId,
+      sessionId: args.sessionId,
+      role: "user",
+      content: args.content,
+      clientSubmissionId: args.clientSubmissionId,
+    });
+    if (args.sessionId && session && isHomepageTitle(session.title) && !session.previewTitle) {
+      await ctx.db.patch(args.sessionId, { previewTitle: args.content.slice(0, 40).trim() });
+    }
+    return { state: "claimed" as const, messageId: id };
   },
 });
 
