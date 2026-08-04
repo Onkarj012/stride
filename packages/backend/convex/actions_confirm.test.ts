@@ -244,10 +244,11 @@ describe("large-batch confirmation", () => {
     });
     await t.run((ctx) => ctx.db.patch(staged.groupId, { createdAt: Date.now() - CONFIRMATION_TTL_MS - 1 }));
 
-    await expect(asUser.action((api as any).ai.resolveClarification, {
+    const result = await asUser.action((api as any).ai.resolveClarification, {
       groupId: staged.groupId,
       date: "2026-07-16",
-    })).rejects.toThrow("This confirmation has expired");
+    }) as any;
+    expect(result.turnOutcome).toBe("failed");
     expect(await t.run((ctx) => ctx.db.get(staged.groupId))).toMatchObject({ status: "expired" });
     expect((await t.run((ctx) => ctx.db.query("actions").collect())).map((action) => action.status).sort()).toEqual(["committed", "expired"]);
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);

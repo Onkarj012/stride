@@ -1,7 +1,7 @@
 import { action, mutation, query, internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal, api } from "./_generated/api";
-import { deriveGroupKey, deriveMemberKey, deriveSubmissionFingerprint, ensureGroup, ensureMember } from "./actions_idempotency";
+import { deriveGroupKey, deriveLogicalMemberKey, deriveMemberKey, deriveSubmissionFingerprint, ensureGroup, ensureMember } from "./actions_idempotency";
 import { ConvexError, v } from "convex/values";
 import { resolveActionDate } from "./time_resolve";
 import {
@@ -18,6 +18,7 @@ import { toLegacyPersona } from "./personas";
 import { insertActionTelemetry } from "./telemetry";
 import { assertValidDate, assertValidTime, stableHash } from "./validation";
 import { finalizeActionGroup as finalizeActionGroupInMutation } from "./actions_group";
+import { assertCurrentChatClaim, hasCompleteChatClaim } from "./chat_claim";
 import type { ChatTurnCard, ChatTurnOutcome, ConfirmationMacroData, ResultCardItem } from "../../shared/src/chat-turn";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
@@ -142,7 +143,7 @@ function markerMember(
   resolvedDate?: string,
 ) {
   return {
-    memberIdempotencyKey: deriveMemberKey({ groupKey, actionType, payloadFingerprint: JSON.stringify(payload), ordinal }),
+    memberIdempotencyKey: deriveLogicalMemberKey({ groupKey, actionType, ordinal }),
     payload,
     provenance: "ai_extracted" as const,
     confidence,
@@ -204,14 +205,31 @@ function newTurnClaimOwner(clientSubmissionId: string) {
 }
 
 /** Convex-test-only coordination point for deterministic post-write races. */
+function isVerifiedVitestRuntime() {
+  return process.env.VITEST === "true";
+}
+
+let chatMemberBarrierToken: string | undefined;
+
+async function waitForChatMemberWriteBarrier() {
+  const barrier = process.env.STRIDE_CHAT_MEMBER_WRITE_BARRIER;
+  if (!isVerifiedVitestRuntime() || !barrier?.startsWith("paused-once:") || chatMemberBarrierToken === barrier) return;
+  chatMemberBarrierToken = barrier;
+  while (process.env.STRIDE_CHAT_MEMBER_WRITE_BARRIER === barrier) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 async function waitForChatReconciliationBarrier() {
   if (process.env.STRIDE_CHAT_RECONCILE_BARRIER !== "paused") return;
+  if (!isVerifiedVitestRuntime()) return;
   while (process.env.STRIDE_CHAT_RECONCILE_BARRIER === "paused") {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 }
 
 async function waitForChatContextBarrier() {
+  if (!isVerifiedVitestRuntime()) return;
   if (process.env.STRIDE_CHAT_CONTEXT_BARRIER !== "paused") return;
   while (process.env.STRIDE_CHAT_CONTEXT_BARRIER === "paused") {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -365,6 +383,9 @@ export const stageClarificationGroup = internalMutation({
     clientLocalTime: v.optional(v.string()),
     clientTimeZone: v.optional(v.string()),
     createdAt: v.number(),
+    claimSubmissionId: v.optional(v.string()),
+    claimOwner: v.optional(v.string()),
+    claimVersion: v.optional(v.number()),
     members: v.array(v.object({
       actionType: v.union(v.literal("meal"), v.literal("workout"), v.literal("recovery")),
       memberIdempotencyKey: v.string(),
@@ -378,7 +399,11 @@ export const stageClarificationGroup = internalMutation({
       ordinal: v.optional(v.number()),
     })),
   },
-  handler: async (ctx, args): Promise<{ groupId: Id<"actionGroups"> }> => {
+  handler: async (ctx, args): Promise<{ groupId: Id<"actionGroups">; members: Doc<"actions">[] }> => {
+    if (hasCompleteChatClaim(args)) {
+      if (!args.claimSubmissionId || !args.claimOwner || args.claimVersion === undefined) throw new Error("Chat turn claim is incomplete");
+      await assertCurrentChatClaim(ctx, args.userId, args.claimSubmissionId, args.claimOwner, args.claimVersion);
+    }
     if (args.clientLocalDate) {
       assertValidDate(args.clientLocalDate);
       const serverDate = new Date().toISOString().slice(0, 10);
@@ -408,14 +433,17 @@ export const stageClarificationGroup = internalMutation({
         clientTimeZone: args.clientTimeZone,
       }),
     });
-    if (["committed", "discarded", "expired", "failed"].includes(groupResult.group.status)) {
-      return { groupId: groupResult.group._id };
+    if (groupResult.members.length > 0 || ["committed", "discarded", "expired", "failed"].includes(groupResult.group.status)) {
+      return { groupId: groupResult.group._id, members: groupResult.members };
     }
     const members = buildActionMembers({
       groupId: groupResult.group._id,
       userId: args.userId,
       candidates: args.members.map(({ ordinal, ...member }) => ({
         ...member,
+        memberIdempotencyKey: ordinal === undefined
+          ? member.memberIdempotencyKey
+          : deriveLogicalMemberKey({ groupKey: args.groupIdempotencyKey, actionType: member.actionType, ordinal }),
         payload: ordinal === undefined ? member.payload : { ...member.payload, _confirmationOrdinal: ordinal },
       })),
     });
@@ -438,7 +466,7 @@ export const stageClarificationGroup = internalMutation({
         });
       }
     }
-    return { groupId: groupResult.group._id };
+    return { groupId: groupResult.group._id, members: await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupResult.group._id)).collect() };
   },
 });
 
@@ -450,8 +478,15 @@ export const recordFailedTurnGroup = internalMutation({
     model: v.optional(v.string()),
     clientLocalDate: v.optional(v.string()),
     createdAt: v.number(),
+    claimSubmissionId: v.optional(v.string()),
+    claimOwner: v.optional(v.string()),
+    claimVersion: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<{ groupId: Id<"actionGroups"> }> => {
+    if (hasCompleteChatClaim(args)) {
+      if (!args.claimSubmissionId || !args.claimOwner || args.claimVersion === undefined) throw new Error("Chat turn claim is incomplete");
+      await assertCurrentChatClaim(ctx, args.userId, args.claimSubmissionId, args.claimOwner, args.claimVersion);
+    }
     const result = await ensureGroup(ctx, {
       userId: args.userId,
       groupIdempotencyKey: args.groupIdempotencyKey,
@@ -488,20 +523,92 @@ type ResolveClarificationResult = {
   messageId?: string;
 };
 
+async function canonicalClarificationResult(
+  ctx: any,
+  userId: string,
+  groupId: string,
+  claim: TurnClaim = {},
+  errors?: string[],
+): Promise<ResolveClarificationResult> {
+  const reconciled = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
+    userId,
+    actionGroupId: groupId as any,
+    claimOwner: claim.claimOwner,
+    claimVersion: claim.claimVersion,
+    claimSubmissionId: claim.clientSubmissionId,
+  });
+  const canonicalActions = reconciled?.actions ?? await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
+  const updatedMessage = reconciled?.message;
+  const memoryApprovals = canonicalMemoryApprovals((await Promise.all(canonicalActions
+    .filter((action: any) => action.status === "committed" && action.committedRowRef)
+    .map((action: any) => pendingMemoryApprovalsForAction(ctx, userId, action._id)))).flat(), canonicalActions);
+  const result: ResolveClarificationResult = {
+    groupId,
+    loggedItems: loggedItemsFromCards((updatedMessage?.turnCards ?? []) as ChatTurnCard[]),
+    memoryApprovals,
+    errors: errors?.length ? errors : undefined,
+    content: updatedMessage?.content ?? "I couldn't save that. Please try again.",
+    turnOutcome: (updatedMessage?.turnOutcome ?? "failed") as ChatTurnOutcome,
+    turnCards: (updatedMessage?.turnCards ?? []) as ChatTurnCard[],
+    actionIds: (updatedMessage?.actionIds ?? canonicalActions.map((member: any) => member._id)) as Id<"actions">[],
+    messageId: updatedMessage?._id,
+  };
+  if (claim.clientSubmissionId && claim.claimOwner && claim.claimVersion !== undefined && result.messageId) {
+    await ctx.runMutation(internal.chat.linkResolvedTurnMessage, {
+      userId,
+      clientSubmissionId: claim.clientSubmissionId,
+      resolvedTurnMessageId: result.messageId as any,
+      claimOwner: claim.claimOwner,
+      claimVersion: claim.claimVersion,
+    });
+  }
+  return result;
+}
+
+async function terminalizeClarificationFailure(
+  ctx: ActionCtx,
+  userId: string,
+  groupId: string,
+  claim: TurnClaim,
+  error: unknown,
+) {
+  const members: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
+  const reason = error instanceof Error ? error.message : String(error);
+  for (const member of members) {
+    if (member.status === "pending" || member.status === "failed") {
+      await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, {
+        actionId: member._id,
+        error: reason,
+        claimSubmissionId: claim.clientSubmissionId,
+        claimOwner: claim.claimOwner,
+        claimVersion: claim.claimVersion,
+      });
+    }
+  }
+  await finalizeActionGroup(ctx, groupId, claim);
+  await waitForChatReconciliationBarrier();
+  return canonicalClarificationResult(ctx, userId, groupId, claim, [reason]);
+}
+
 async function executeClarificationResolution(ctx: any, userId: string, groupId: string, date: string, claim: TurnClaim = {}): Promise<ResolveClarificationResult> {
   const group = await ctx.runQuery(internal.ai.getActionGroupForClarification, { groupId: groupId as any });
   if (!group) throw new Error("Clarification group not found");
   if (group.userId !== userId) throw new Error("Not authorized");
   if (["pending", "partial", "failed"].includes(group.status) && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
-    await ctx.runMutation(internal.ai.expireActionGroup, { groupId: groupId as any });
-    await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, { userId, actionGroupId: groupId as any, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion, claimSubmissionId: claim.clientSubmissionId });
-    throw new Error("This confirmation has expired");
+    await ctx.runMutation(internal.ai.expireActionGroup, {
+      groupId: groupId as any,
+      claimSubmissionId: claim.clientSubmissionId,
+      claimOwner: claim.claimOwner,
+      claimVersion: claim.claimVersion,
+    });
+    return canonicalClarificationResult(ctx, userId, groupId, claim);
   }
   if (group.status === "expired") {
-    await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, { userId, actionGroupId: groupId as any, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion, claimSubmissionId: claim.clientSubmissionId });
-    throw new Error("This confirmation has expired");
+    return canonicalClarificationResult(ctx, userId, groupId, claim);
   }
-  if (!["pending", "partial", "failed"].includes(group.status)) throw new Error("Group is not pending clarification");
+  if (!["pending", "partial", "failed"].includes(group.status)) {
+    return canonicalClarificationResult(ctx, userId, groupId, claim);
+  }
   const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
   const dateCheck = resolveChatActionDate({ explicitDate: date, actionKind: "actual" }, settings?.timezoneOffsetMinutes ?? 0);
   if (dateCheck.status !== "resolved") {
@@ -526,6 +633,7 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
         clientLocalTime: group.clientLocalTime,
         clientTimeZone: group.clientTimeZone,
         createdAt: group.createdAt,
+        ...(claim.clientSubmissionId ? { claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion } : {}),
       };
       const memberInput = {
         memberIdempotencyKey: member.memberIdempotencyKey,
@@ -586,17 +694,26 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       errors.push(message);
-      await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, { actionId: member._id, error: message });
+      await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, {
+        actionId: member._id,
+        error: message,
+        claimSubmissionId: claim.clientSubmissionId,
+        claimOwner: claim.claimOwner,
+        claimVersion: claim.claimVersion,
+      });
       console.error("Failed to resolve clarification member:", err);
     }
   }
 
-  await finalizeActionGroup(ctx, groupId);
+  await finalizeActionGroup(ctx, groupId, claim);
   await waitForChatReconciliationBarrier();
 
   const reconciled = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
     userId,
     actionGroupId: groupId as any,
+    claimOwner: claim.claimOwner,
+    claimVersion: claim.claimVersion,
+    claimSubmissionId: claim.clientSubmissionId,
   });
   const updatedMessage = reconciled?.message;
   const canonicalActions = reconciled?.actions ?? await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
@@ -608,7 +725,7 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   if (errors.length > 0 && loggedItems.length === 0) {
     throw new Error(`Could not resolve clarification: ${errors.join("; ")}`);
   }
-  return {
+  const result = {
     groupId,
     loggedItems: loggedItemsFromCards((updatedMessage?.turnCards ?? []) as ChatTurnCard[], resolvedActionIds),
     memoryApprovals,
@@ -619,10 +736,25 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     actionIds: (updatedMessage?.actionIds ?? canonicalActions.map((member: any) => member._id)) as Id<"actions">[],
     messageId: updatedMessage?._id,
   };
+  if (claim.clientSubmissionId && claim.claimOwner && claim.claimVersion !== undefined && result.messageId) {
+    await ctx.runMutation(internal.chat.linkResolvedTurnMessage, {
+      userId,
+      clientSubmissionId: claim.clientSubmissionId,
+      resolvedTurnMessageId: result.messageId as any,
+      claimOwner: claim.claimOwner,
+      claimVersion: claim.claimVersion,
+    });
+  }
+  return result;
 }
 
-async function finalizeActionGroup(ctx: ActionCtx, groupId: string): Promise<ActionGroupStatus> {
-  const group: Doc<"actionGroups"> | null = await ctx.runMutation(internal.ai.finalizeConfirmationGroup, { groupId: groupId as any });
+async function finalizeActionGroup(ctx: ActionCtx, groupId: string, claim: TurnClaim = {}): Promise<ActionGroupStatus> {
+  const group: Doc<"actionGroups"> | null = await ctx.runMutation(internal.ai.finalizeConfirmationGroup, {
+    groupId: groupId as any,
+    claimSubmissionId: claim.clientSubmissionId,
+    claimOwner: claim.claimOwner,
+    claimVersion: claim.claimVersion,
+  });
   if (!group) throw new Error("Action group not found after finalization");
   return group.status;
 }
@@ -665,10 +797,19 @@ export const getPendingMembersForClarification = internalQuery({
 });
 
 export const expireActionGroup = internalMutation({
-  args: { groupId: v.id("actionGroups") },
-  handler: async (ctx, { groupId }) => {
+  args: {
+    groupId: v.id("actionGroups"),
+    claimSubmissionId: v.optional(v.string()),
+    claimOwner: v.optional(v.string()),
+    claimVersion: v.optional(v.number()),
+  },
+  handler: async (ctx, { groupId, claimSubmissionId, claimOwner, claimVersion }) => {
     const group = await ctx.db.get("actionGroups", groupId);
     if (!group || group.status === "expired") return group;
+    if (hasCompleteChatClaim({ claimSubmissionId, claimOwner, claimVersion })) {
+      if (!claimSubmissionId || !claimOwner || claimVersion === undefined) throw new Error("Chat turn claim is incomplete");
+      await assertCurrentChatClaim(ctx, group.userId, claimSubmissionId, claimOwner, claimVersion);
+    }
     const members = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
     for (const member of members) {
       if (member.status === "pending" || member.status === "failed") {
@@ -697,10 +838,20 @@ export const expireActionGroup = internalMutation({
 });
 
 export const recordConfirmationMemberFailure = internalMutation({
-  args: { actionId: v.id("actions"), error: v.string() },
-  handler: async (ctx, { actionId, error }) => {
+  args: {
+    actionId: v.id("actions"),
+    error: v.string(),
+    claimSubmissionId: v.optional(v.string()),
+    claimOwner: v.optional(v.string()),
+    claimVersion: v.optional(v.number()),
+  },
+  handler: async (ctx, { actionId, error, claimSubmissionId, claimOwner, claimVersion }) => {
     const member = await ctx.db.get(actionId);
     if (!member || member.status === "committed" || member.status === "discarded" || member.status === "expired" || member.status === "undone") return member;
+    if (hasCompleteChatClaim({ claimSubmissionId, claimOwner, claimVersion })) {
+      if (!claimSubmissionId || !claimOwner || claimVersion === undefined) throw new Error("Chat turn claim is incomplete");
+      await assertCurrentChatClaim(ctx, member.userId, claimSubmissionId, claimOwner, claimVersion);
+    }
     if (member.status === "failed") {
       assertTransition("failed", "pending");
       await ctx.db.patch(actionId, { status: "pending" });
@@ -732,10 +883,19 @@ export const recordConfirmationMemberFailure = internalMutation({
 });
 
 export const finalizeConfirmationGroup = internalMutation({
-  args: { groupId: v.id("actionGroups") },
-  handler: async (ctx, { groupId }) => {
+  args: {
+    groupId: v.id("actionGroups"),
+    claimSubmissionId: v.optional(v.string()),
+    claimOwner: v.optional(v.string()),
+    claimVersion: v.optional(v.number()),
+  },
+  handler: async (ctx, { groupId, claimSubmissionId, claimOwner, claimVersion }) => {
     const group = await ctx.db.get("actionGroups", groupId);
     if (!group) throw new Error("Action group not found");
+    if (hasCompleteChatClaim({ claimSubmissionId, claimOwner, claimVersion })) {
+      if (!claimSubmissionId || !claimOwner || claimVersion === undefined) throw new Error("Chat turn claim is incomplete");
+      await assertCurrentChatClaim(ctx, group.userId, claimSubmissionId, claimOwner, claimVersion);
+    }
     return finalizeActionGroupInMutation(ctx, groupId);
   },
 });
@@ -2041,6 +2201,7 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       parseFailures: parsedTurn.failedItems,
       turnFailure: extraction.failure,
       forceConfirmation: false,
+      claim: turnClaim,
     });
     const statusText = turnOutcomeText(turnResult);
     // Report turns use only the persisted outcome as user-facing status text.
@@ -2116,6 +2277,33 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       messageId: persistedMessage?._id ?? messageId,
     };
     } catch (error) {
+      if (clarificationGroupId) {
+        try {
+          const resolved = await terminalizeClarificationFailure(ctx, userId, String(clarificationGroupId), turnClaim, error);
+          const loggedItem = resolved.loggedItems.length === 1
+            ? resolved.loggedItems[0]
+            : resolved.loggedItems.length > 1
+              ? { type: "multiple", items: resolved.loggedItems }
+              : null;
+          return {
+            reply: resolved.content,
+            loggedItem,
+            memoryApprovals: resolved.memoryApprovals ?? [],
+            failedItems: [],
+            coachType: toLegacyPersona(coachType),
+            restricted: restrictedGuidance,
+            outcome: resolved.turnOutcome,
+            cards: resolved.turnCards,
+            messageId: resolved.messageId,
+            processingError: error instanceof Error ? error.message : String(error),
+          };
+        } catch (finalizeError) {
+          if (isChatClaimFenceError(error) || isChatClaimFenceError(finalizeError)) {
+            throw new Error("Chat submission was taken over; retry to retrieve the current result");
+          }
+          throw finalizeError;
+        }
+      }
       try {
           const finalized = await persistFailedChatTurn(
             ctx,
@@ -2141,9 +2329,10 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
             processingError: error instanceof Error ? error.message : String(error),
           };
       } catch (finalizeError) {
-          if (!(finalizeError instanceof Error && finalizeError.message === "Chat submission lease is no longer current")) {
-            console.error("Failed to persist terminal chat outcome:", finalizeError);
+          if (isChatClaimFenceError(error) || isChatClaimFenceError(finalizeError)) {
+            throw new Error("Chat submission was taken over; retry to retrieve the current result");
           }
+          console.error("Failed to persist terminal chat outcome:", finalizeError);
       }
       throw error;
     }
@@ -3424,6 +3613,7 @@ function turnMember(
       candidate.resolvedDate,
     ),
     resolvedTime: candidate.resolvedTime,
+    payload: { ...candidate.payload, _confirmationOrdinal: candidate.ordinal },
   };
 }
 
@@ -3438,9 +3628,10 @@ async function executeTurnPolicy(input: {
   parseFailures: FailedLogItem[];
   turnFailure?: StructuredExtraction["failure"];
   forceConfirmation: boolean;
+  claim?: TurnClaim;
 }): Promise<TurnPolicyResult> {
   const {
-    ctx, userId, rawInput, clientSubmissionId, today, model, candidates, parseFailures, turnFailure, forceConfirmation,
+    ctx, userId, rawInput, clientSubmissionId, today, model, candidates, parseFailures, turnFailure, forceConfirmation, claim = {},
   } = input;
   const groupKey = deriveGroupKey({ userId, sourceSurface: "chat", rawInput, clientSubmissionId });
   const groupInput = {
@@ -3466,6 +3657,9 @@ async function executeTurnPolicy(input: {
       model,
       clientLocalDate: today,
       createdAt: Date.now(),
+      claimSubmissionId: claim.clientSubmissionId,
+      claimOwner: claim.claimOwner,
+      claimVersion: claim.claimVersion,
       members: candidates.map((candidate) => ({
         ...turnMember(groupKey, candidate),
         actionType: candidate.actionType,
@@ -3481,6 +3675,9 @@ async function executeTurnPolicy(input: {
       model,
       clientLocalDate: today,
       createdAt: Date.now(),
+      claimSubmissionId: claim.clientSubmissionId,
+      claimOwner: claim.claimOwner,
+      claimVersion: claim.claimVersion,
     });
     groupId = failedGroup.groupId;
   }
@@ -3493,14 +3690,15 @@ async function executeTurnPolicy(input: {
         let rowId: string;
         let previous: unknown;
         if (candidate.actionType === "meal") {
-          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: groupInput, member }));
+          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member }));
         } else if (candidate.actionType === "workout") {
-          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: groupInput, member }));
+          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member }));
         } else {
-          const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: groupInput, member });
+          const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member });
           rowId = String(result?.id ?? result);
           previous = result?.previous;
         }
+        await waitForChatMemberWriteBarrier();
         const table = candidate.actionType === "meal"
           ? "meals"
           : candidate.actionType === "workout"
@@ -3530,11 +3728,17 @@ async function executeTurnPolicy(input: {
         const members: any[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId });
         const action = members.find((item) => confirmationOrdinal(item) === candidate.ordinal);
         if (action) {
-          await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, { actionId: action._id, error: message });
+          await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, {
+            actionId: action._id,
+            error: message,
+            claimSubmissionId: claim.clientSubmissionId,
+            claimOwner: claim.claimOwner,
+            claimVersion: claim.claimVersion,
+          });
         }
       }
     }
-    await finalizeActionGroup(ctx, String(groupId));
+    await finalizeActionGroup(ctx, String(groupId), claim);
   }
 
   const actions: Doc<"actions">[] = groupId
@@ -3831,6 +4035,10 @@ function chatResponseFromPersistedTurn(turn: any, coachType: string | undefined,
   };
 }
 
+function isChatClaimFenceError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Chat submission lease is no longer current";
+}
+
 function homepageResponseFromPersistedTurn(turn: any, activeSessionId: Id<"chat_sessions">, restricted: boolean) {
   const cards = (turn.turnCards ?? []) as ChatTurnCard[];
   return {
@@ -3878,6 +4086,9 @@ async function persistFailedChatTurn(
     model,
     clientLocalDate: today,
     createdAt: Date.now(),
+    claimSubmissionId: claim.clientSubmissionId,
+    claimOwner: claim.claimOwner,
+    claimVersion: claim.claimVersion,
   });
   const actionRows: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, {
     groupId: failedGroup.groupId,
@@ -4067,6 +4278,7 @@ export const homepageInput = action({
         parseFailures: [],
         turnFailure: extraction.failure,
         forceConfirmation: false,
+        claim: turnClaim,
       });
       const reply = turnOutcomeText(turnResult);
       await waitForChatReconciliationBarrier();
@@ -4242,6 +4454,7 @@ export const homepageInput = action({
         candidates: [],
         parseFailures: failedItems,
         forceConfirmation: false,
+        claim: turnClaim,
       });
       const reply = turnResult.outcome === "failed"
         ? turnOutcomeText(turnResult)
@@ -4302,6 +4515,7 @@ export const homepageInput = action({
       candidates,
       parseFailures: failedItems,
       forceConfirmation: !homeAutoCommitEnabled,
+      claim: turnClaim,
     });
     const tier1Summary = `${summaryParts.join(" · ")}${dateNote}. ${turnOutcomeText(turnResult)}${skippedNote}`.trim();
 
@@ -4344,17 +4558,25 @@ export const homepageInput = action({
       cards: persistedCards,
     };
     } catch (error) {
-      const finalized = await persistFailedChatTurn(
-        ctx,
-        userId,
-        activeSessionId,
-        image ? `${message}\n[image:${stableHash(image)}]` : message,
-        clientSubmissionId,
-        today,
-        settingsModel,
-        error,
-        turnClaim,
-      );
+      let finalized;
+      try {
+        finalized = await persistFailedChatTurn(
+          ctx,
+          userId,
+          activeSessionId,
+          image ? `${message}\n[image:${stableHash(image)}]` : message,
+          clientSubmissionId,
+          today,
+          settingsModel,
+          error,
+          turnClaim,
+        );
+      } catch (finalizeError) {
+        if (isChatClaimFenceError(error) || isChatClaimFenceError(finalizeError)) {
+          throw new Error("Chat submission was taken over; retry to retrieve the current result");
+        }
+        throw finalizeError;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       return {
         drafts: [],

@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { assertChatTurnCards } from "../../shared/src/chat-turn";
 import { stableHash } from "./validation";
 import { CONFIRMATION_TTL_MS } from "./actions_envelope";
+import { assertCurrentChatClaim } from "./chat_claim";
 
 const turnOutcomeValidator = v.union(
   v.literal("committed"),
@@ -189,7 +190,7 @@ export const addMessage = internalMutation({
       if (!args.clientSubmissionId || args.claimOwner === undefined || args.claimVersion === undefined) {
         throw new Error("Chat turn claim is incomplete");
       }
-      await assertCurrentTurnLease(ctx, args.userId, args.clientSubmissionId, args.claimOwner, args.claimVersion);
+      await assertCurrentChatClaim(ctx, args.userId, args.clientSubmissionId, args.claimOwner, args.claimVersion);
     }
     if (
       args.turnContractVersion !== undefined
@@ -513,7 +514,7 @@ export async function reconcileAssistantOutcomeInMutation(
     if (claimOwner === undefined || claimVersion === undefined) {
       throw new Error("Chat turn claim is incomplete");
     }
-    await assertCurrentTurnLease(ctx, userId, claimSubmissionId ?? message.clientSubmissionId ?? "", claimOwner, claimVersion);
+    await assertCurrentChatClaim(ctx, userId, claimSubmissionId ?? message.clientSubmissionId ?? "", claimOwner, claimVersion);
   }
   const actions = await ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", actionGroupId)).collect();
   const reconciled = reconcileCards(message, group, actions);
@@ -545,29 +546,6 @@ export const updateAssistantOutcomeForGroup = internalMutation({
   },
 });
 
-async function assertCurrentTurnLease(
-  ctx: MutationCtx,
-  userId: string,
-  clientSubmissionId: string,
-  claimOwner: string,
-  claimVersion: number,
-) {
-  const userMessage = await ctx.db
-    .query("chat_messages")
-    .withIndex("by_user_submission_and_role", (q) => q.eq("userId", userId).eq("clientSubmissionId", clientSubmissionId).eq("role", "user"))
-    .first();
-  const row = userMessage as any;
-  if (
-    !row
-    || row.processingLeaseOwner !== claimOwner
-    || row.processingLeaseVersion !== claimVersion
-    || typeof row.processingLeaseExpiresAt !== "number"
-    || row.processingLeaseExpiresAt <= Date.now()
-  ) {
-    throw new Error("Chat submission lease is no longer current");
-  }
-}
-
 export const claimTurn = internalMutation({
   args: {
     userId: v.string(),
@@ -594,19 +572,8 @@ export const claimTurn = internalMutation({
         throw new Error("Submission already belongs to different request details");
       }
     }
-    const assistant = await ctx.db
-      .query("chat_messages")
-      .withIndex("by_user_submission_and_role", (q) =>
-        q.eq("userId", args.userId).eq("clientSubmissionId", args.clientSubmissionId).eq("role", "ai"),
-      )
-      .first();
-    if (assistant) {
-      if (!sameOptionalId(assistant.sessionId, args.sessionId)) throw new Error("Submission already belongs to a different chat session");
-      if (userMessage && !(userMessage as any).submissionFingerprint) {
-        await ctx.db.patch(userMessage._id, { submissionFingerprint: args.submissionFingerprint } as any);
-      }
-      if (assistant.turnContractVersion === 1 && assistant.turnOutcome) {
-        return {
+    const turnFromAssistant = (assistant: any) => assistant && assistant.turnContractVersion === 1 && assistant.turnOutcome
+      ? {
           state: "terminal" as const,
           turn: {
             messageId: assistant._id,
@@ -619,8 +586,28 @@ export const claimTurn = internalMutation({
             clientSubmissionId: assistant.clientSubmissionId,
             turnCardsHash: turnCardsHash(assistant.turnCards),
           },
-        };
+        }
+      : null;
+
+    const referencedTurn = (userMessage as any)?.resolvedTurnMessageId
+      ? await ctx.db.get((userMessage as any).resolvedTurnMessageId)
+      : null;
+    const referencedTerminal = turnFromAssistant(referencedTurn);
+    if (referencedTerminal) return referencedTerminal;
+
+    const assistant = await ctx.db
+      .query("chat_messages")
+      .withIndex("by_user_submission_and_role", (q) =>
+        q.eq("userId", args.userId).eq("clientSubmissionId", args.clientSubmissionId).eq("role", "ai"),
+      )
+      .first();
+    if (assistant) {
+      if (!sameOptionalId(assistant.sessionId, args.sessionId)) throw new Error("Submission already belongs to a different chat session");
+      if (userMessage && !(userMessage as any).submissionFingerprint) {
+        await ctx.db.patch(userMessage._id, { submissionFingerprint: args.submissionFingerprint } as any);
       }
+      const terminal = turnFromAssistant(assistant);
+      if (terminal) return terminal;
       return { state: "in_progress" as const };
     }
     const now = Date.now();
@@ -653,6 +640,31 @@ export const claimTurn = internalMutation({
       await ctx.db.patch(args.sessionId, { previewTitle: args.content.slice(0, 40).trim() });
     }
     return { state: "claimed" as const, messageId: id, claimVersion: nextVersion };
+  },
+});
+
+export const linkResolvedTurnMessage = internalMutation({
+  args: {
+    userId: v.string(),
+    clientSubmissionId: v.string(),
+    resolvedTurnMessageId: v.id("chat_messages"),
+    claimOwner: v.string(),
+    claimVersion: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await assertCurrentChatClaim(ctx, args.userId, args.clientSubmissionId, args.claimOwner, args.claimVersion);
+    const userMessage = await ctx.db
+      .query("chat_messages")
+      .withIndex("by_user_submission_and_role", (q) =>
+        q.eq("userId", args.userId).eq("clientSubmissionId", args.clientSubmissionId).eq("role", "user"),
+      )
+      .first();
+    const resolved = await ctx.db.get(args.resolvedTurnMessageId);
+    if (!userMessage || !resolved || resolved.userId !== args.userId || resolved.role !== "ai" || resolved.turnContractVersion !== 1) {
+      throw new Error("Resolved chat turn was not found");
+    }
+    await ctx.db.patch(userMessage._id, { resolvedTurnMessageId: args.resolvedTurnMessageId });
+    return args.resolvedTurnMessageId;
   },
 });
 

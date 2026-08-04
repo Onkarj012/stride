@@ -207,6 +207,7 @@ export default defineSchema({
     processingLeaseOwner: v.optional(v.string()),
     processingLeaseVersion: v.optional(v.number()),
     processingLeaseExpiresAt: v.optional(v.number()),
+    resolvedTurnMessageId: v.optional(v.id("chat_messages")),
     turnContractVersion: v.optional(v.literal(1)),
     turnOutcome: v.optional(v.union(
       v.literal("committed"),

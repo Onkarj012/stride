@@ -362,10 +362,10 @@ describe("clarification flow", () => {
     }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
 
-    await asUser.action(api.ai.resolveClarification, { groupId: groupId as any, date: "2026-07-10" });
-    await expect(
-      asUser.action(api.ai.resolveClarification, { groupId: groupId as any, date: "2026-07-10" }),
-    ).rejects.toThrow("Group is not pending clarification");
+    const resolved = await asUser.action(api.ai.resolveClarification, { groupId: groupId as any, date: "2026-07-10" });
+    const retry = await asUser.action(api.ai.resolveClarification, { groupId: groupId as any, date: "2026-07-10" });
+    expect(retry).toMatchObject({ groupId, turnOutcome: "committed", messageId: resolved.messageId });
+    expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
   });
 
   test("free-text clarification answer resolves pending group", async () => {
@@ -415,12 +415,18 @@ describe("clarification flow", () => {
 
     const initial = await asUser.action(api.ai.chat, { message: "I ate pizza a while ago", today: "2026-07-16", clientSubmissionId: "typed-original" }) as any;
     const groupId = initial.clarification.groupId;
-    await asUser.action(api.ai.chat, { message: "2026-07-12", today: "2026-07-16", clarificationGroupId: groupId as any, clientSubmissionId: "typed-answer" });
+    const typedRequest = { message: "2026-07-12", today: "2026-07-16", clarificationGroupId: groupId as any, clientSubmissionId: "typed-answer" };
+    const typedResult = await asUser.action(api.ai.chat, typedRequest) as any;
+    const typedRetry = await asUser.action(api.ai.chat, typedRequest) as any;
+    expect(typedRetry).toMatchObject({ messageId: typedResult.messageId, outcome: typedResult.outcome, cards: typedResult.cards });
     const action = await t.run((ctx) => ctx.db.query("actions").first());
     await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
 
     const assistantMessages = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).filter((message) => message.role === "ai");
     expect(assistantMessages).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.query("chat_messages").collect())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", clientSubmissionId: "typed-answer", resolvedTurnMessageId: assistantMessages[0]._id }),
+    ]));
     expect(assistantMessages[0].turnCards).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "undo", data: expect.objectContaining({ items: [expect.objectContaining({ actionId: String(action!._id), state: "undone" })] }) }),
     ]));

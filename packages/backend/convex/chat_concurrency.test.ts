@@ -45,6 +45,27 @@ function installWaterMock() {
   return { started: startedPromise, release };
 }
 
+function installDivergentMealMock() {
+  let extractionCount = 0;
+  let waterParseCount = 0;
+  mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
+    const prompt = promptText(messages);
+    if (prompt.includes("Extract ALL loggable items")) {
+      const secondAmount = extractionCount++ === 0 ? 700 : 800;
+      return JSON.stringify({
+        isQuestion: false,
+        items: [
+          { type: "water", description: "500ml water", date: "2026-07-16" },
+          { type: "water", description: `${secondAmount}ml water`, date: "2026-07-16" },
+        ],
+      });
+    }
+    if (prompt.includes("Extract water amount in ml")) return String(waterParseCount++ % 2 === 0 ? 500 : 700);
+    if (prompt.includes("Generate a short, descriptive title")) return "Meal takeover";
+    return "Got it.";
+  });
+}
+
 async function waitFor<T>(read: () => Promise<T>, predicate: (value: T) => boolean): Promise<T> {
   for (let attempt = 0; attempt < 2_000; attempt += 1) {
     const value = await read();
@@ -120,6 +141,7 @@ async function publicAssistant(t: ReturnType<typeof convexTest>, sessionId: any)
 
 function clearTestBarriers() {
   delete process.env.HOME_CHAT_AUTO_COMMIT;
+  delete process.env.STRIDE_CHAT_MEMBER_WRITE_BARRIER;
   delete process.env.STRIDE_CHAT_RECONCILE_BARRIER;
   delete process.env.STRIDE_CHAT_CONTEXT_BARRIER;
 }
@@ -310,4 +332,75 @@ describe("chat logging concurrency invariants", () => {
     expect(expiredAssistant.turnCards).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "confirmation", data: expect.objectContaining({ state: "resolved" }) })]));
     expect(expiredAssistant.turnCards).not.toEqual(expect.arrayContaining([expect.objectContaining({ kind: "duplicate" })]));
   });
+
+  test("takeover after one member write resumes canonical ordinals despite divergent extraction", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "divergent-takeover-user" });
+    const { id: sessionId } = await asUser.mutation(api.chat.createSession, { title: "Divergent takeover" });
+    installDivergentMealMock();
+    process.env.STRIDE_CHAT_MEMBER_WRITE_BARRIER = "paused-once:divergent";
+    const request = { message: "I drank water twice", sessionId, today: "2026-07-16", clientSubmissionId: "divergent-takeover" };
+    const first = asUser.action(api.ai.chat, request);
+    await waitFor(() => t.run((ctx) => ctx.db.query("water_logs").collect()), (rows) => rows.length === 1);
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query("chat_messages").collect()).find((candidate) => candidate.clientSubmissionId === request.clientSubmissionId && candidate.role === "user");
+      if (!row) throw new Error("Missing claimed user row");
+      await ctx.db.patch(row._id, { processingLeaseExpiresAt: Date.now() - 1 } as any);
+    });
+    const takeover = asUser.action(api.ai.chat, request);
+    await waitFor(() => t.run((ctx) => ctx.db.query("water_logs").collect()), (rows) => rows.length === 2);
+    process.env.STRIDE_CHAT_MEMBER_WRITE_BARRIER = "released";
+    const [staleResult, takeoverResult] = await Promise.allSettled([first, takeover]);
+
+    expect(staleResult.status).toBe("rejected");
+    expect(takeoverResult.status).toBe("fulfilled");
+    expect(await t.run((ctx) => ctx.db.query("actions").collect())).toHaveLength(2);
+    expect(await t.run((ctx) => ctx.db.query("water_logs").collect())).toHaveLength(2);
+    expect(new Set(await t.run((ctx) => ctx.db.query("actions").collect()).then((rows) => rows.map((row) => row.payload._confirmationOrdinal)))).toEqual(new Set([0, 1]));
+    expect((await asUser.query(api.chat.getMessages, { sessionId })).filter((message) => message.role === "ai")).toHaveLength(1);
+    clearTestBarriers();
+  });
+
+  test("an owner may finish after the lease clock expires until a takeover fences it", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "slow-owner-user" });
+    const { id: sessionId } = await asUser.mutation(api.chat.createSession, { title: "Slow owner" });
+    const barrier = installWaterMock();
+    const request = { message: "I drank 500ml water", sessionId, today: "2026-07-16", clientSubmissionId: "slow-owner" };
+    const pending = asUser.action(api.ai.chat, request);
+    await barrier.started;
+    await waitFor(() => t.run((ctx) => ctx.db.query("chat_messages").collect()), (rows) => rows.some((row) => row.clientSubmissionId === request.clientSubmissionId && row.role === "user"));
+    await t.run(async (ctx) => {
+      const row = (await ctx.db.query("chat_messages").collect()).find((candidate) => candidate.clientSubmissionId === request.clientSubmissionId && candidate.role === "user");
+      if (!row) throw new Error("Missing claimed user row");
+      await ctx.db.patch(row._id, { processingLeaseExpiresAt: Date.now() - 120_001 } as any);
+    });
+    barrier.release();
+    await expect(pending).resolves.toMatchObject({ outcome: "committed" });
+    expect(await t.run((ctx) => ctx.db.query("water_logs").collect())).toHaveLength(1);
+    expect((await asUser.query(api.chat.getMessages, { sessionId })).filter((message) => message.role === "ai")).toHaveLength(1);
+  });
+
+  test("barrier environment strings are ignored outside verified Vitest runtime", async () => {
+    const previousVitest = process.env.VITEST;
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "production-barrier-user" });
+    process.env.VITEST = "false";
+    process.env.STRIDE_CHAT_CONTEXT_BARRIER = "paused";
+    process.env.STRIDE_CHAT_RECONCILE_BARRIER = "paused";
+    mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
+      const prompt = promptText(messages);
+      if (prompt.includes("Extract ALL loggable items")) return waterExtraction();
+      if (prompt.includes("Extract water amount in ml")) return "500";
+      return "Barrier test";
+    });
+    try {
+      await expect(asUser.action(api.ai.chat, { message: "I drank 500ml water", today: "2026-07-16", clientSubmissionId: "production-barrier" })).resolves.toMatchObject({ outcome: "committed" });
+    } finally {
+      if (previousVitest === undefined) delete process.env.VITEST;
+      else process.env.VITEST = previousVitest;
+      clearTestBarriers();
+    }
+  });
+
 });
