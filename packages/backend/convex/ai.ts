@@ -1414,7 +1414,7 @@ Rules:
     if (sessionId) {
       const [msgs, count] = await Promise.all([
         ctx.runQuery(internal.chat.getMessagesForContext, { userId, sessionId }),
-        ctx.runQuery(internal.chat.getMessageCount, { sessionId }),
+        ctx.runQuery(internal.chat.getMessageCount, { userId, sessionId }),
       ]);
       history = msgs;
       isFirstMessage = count === 0;
@@ -1441,7 +1441,7 @@ Rules:
           : `I couldn't save that. Please try again.`;
         await ctx.runMutation(internal.chat.addMessage, { userId, sessionId, role: "ai", content: resolvedReply });
         if (sessionId) {
-          await ctx.runMutation(internal.chat.touchSession, { sessionId });
+          await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
         }
         const loggedItem = resolved.loggedItems.length === 1
           ? resolved.loggedItems[0]
@@ -2180,12 +2180,12 @@ Rules:
             apiKey,
           );
           const cleanTitle = title.replace(/^["']|["']$/g, "").trim().slice(0, 60);
-          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { sessionId, title: cleanTitle || message.slice(0, 50) });
+          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { userId, sessionId, title: cleanTitle || message.slice(0, 50) });
         } catch {
-          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { sessionId, title: message.slice(0, 50) });
+          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { userId, sessionId, title: message.slice(0, 50) });
         }
       } else {
-        await ctx.runMutation(internal.chat.touchSession, { sessionId });
+        await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
       }
     }
 

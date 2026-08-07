@@ -1,10 +1,40 @@
-import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
+import {
+  query,
+  mutation,
+  internalQuery,
+  internalMutation,
+  type QueryCtx,
+  type MutationCtx,
+} from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 
-async function requireUserId(ctx: any): Promise<string> {
+type AuthCtx = Pick<QueryCtx, "auth"> | Pick<MutationCtx, "auth">;
+type SessionReadCtx = Pick<QueryCtx, "db"> | Pick<MutationCtx, "db">;
+
+async function requireUserId(ctx: AuthCtx): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("Unauthenticated");
   return identity.subject;
+}
+
+async function getOwnedSession(
+  ctx: SessionReadCtx,
+  userId: string,
+  sessionId: Id<"chat_sessions">,
+): Promise<Doc<"chat_sessions"> | null> {
+  const session = await ctx.db.get(sessionId);
+  return session?.userId === userId ? session : null;
+}
+
+async function requireOwnedSession(
+  ctx: SessionReadCtx,
+  userId: string,
+  sessionId: Id<"chat_sessions">,
+): Promise<Doc<"chat_sessions">> {
+  const session = await getOwnedSession(ctx, userId, sessionId);
+  if (!session) throw new Error("Not found");
+  return session;
 }
 
 export const getSessions = query({
@@ -53,8 +83,7 @@ export const deleteSession = mutation({
   args: { id: v.id("chat_sessions") },
   handler: async (ctx, { id }) => {
     const userId = await requireUserId(ctx);
-    const session = await ctx.db.get(id);
-    if (!session || session.userId !== userId) throw new Error("Not found");
+    await requireOwnedSession(ctx, userId, id);
 
     const messages = await ctx.db
       .query("chat_messages")
@@ -69,8 +98,7 @@ export const updateSessionTitle = mutation({
   args: { id: v.id("chat_sessions"), title: v.string() },
   handler: async (ctx, { id, title }) => {
     const userId = await requireUserId(ctx);
-    const session = await ctx.db.get(id);
-    if (!session || session.userId !== userId) throw new Error("Not found");
+    await requireOwnedSession(ctx, userId, id);
     await ctx.db.patch(id, { title: title.slice(0, 60), updatedAt: Date.now() });
   },
 });
@@ -79,8 +107,7 @@ export const getMessages = query({
   args: { sessionId: v.id("chat_sessions") },
   handler: async (ctx, { sessionId }) => {
     const userId = await requireUserId(ctx);
-    const session = await ctx.db.get(sessionId);
-    if (!session || session.userId !== userId) return [];
+    if (!(await getOwnedSession(ctx, userId, sessionId))) return [];
     const messages = await ctx.db
       .query("chat_messages")
       .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
@@ -108,8 +135,7 @@ export const clearAllMessages = mutation({
 export const getMessagesForContext = internalQuery({
   args: { userId: v.string(), sessionId: v.id("chat_sessions") },
   handler: async (ctx, { userId, sessionId }) => {
-    const session = await ctx.db.get(sessionId);
-    if (!session || session.userId !== userId) return [];
+    if (!(await getOwnedSession(ctx, userId, sessionId))) return [];
     const messages = await ctx.db
       .query("chat_messages")
       .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
@@ -122,8 +148,9 @@ export const getMessagesForContext = internalQuery({
 });
 
 export const getMessageCount = internalQuery({
-  args: { sessionId: v.id("chat_sessions") },
-  handler: async (ctx, { sessionId }) => {
+  args: { userId: v.string(), sessionId: v.id("chat_sessions") },
+  handler: async (ctx, { userId, sessionId }) => {
+    await requireOwnedSession(ctx, userId, sessionId);
     const messages = await ctx.db
       .query("chat_messages")
       .withIndex("by_session", (q) => q.eq("sessionId", sessionId))
@@ -140,11 +167,13 @@ export const addMessage = internalMutation({
     content: v.string(),
   },
   handler: async (ctx, args) => {
+    const session = args.sessionId
+      ? await requireOwnedSession(ctx, args.userId, args.sessionId)
+      : null;
     const id = await ctx.db.insert("chat_messages", args);
     // Cache first user message as previewTitle on homepage sessions (avoids N+1 in getSessions)
-    if (args.role === "user" && args.sessionId) {
-      const session = await ctx.db.get(args.sessionId);
-      if (session && isHomepageTitle(session.title) && !session.previewTitle) {
+    if (args.role === "user" && args.sessionId && session) {
+      if (isHomepageTitle(session.title) && !session.previewTitle) {
         await ctx.db.patch(args.sessionId, { previewTitle: args.content.slice(0, 40).trim() });
       }
     }
@@ -153,15 +182,17 @@ export const addMessage = internalMutation({
 });
 
 export const updateSessionTitleFromAI = internalMutation({
-  args: { sessionId: v.id("chat_sessions"), title: v.string() },
-  handler: async (ctx, { sessionId, title }) => {
+  args: { userId: v.string(), sessionId: v.id("chat_sessions"), title: v.string() },
+  handler: async (ctx, { userId, sessionId, title }) => {
+    await requireOwnedSession(ctx, userId, sessionId);
     await ctx.db.patch(sessionId, { title: title.slice(0, 60), updatedAt: Date.now() });
   },
 });
 
 export const touchSession = internalMutation({
-  args: { sessionId: v.id("chat_sessions") },
-  handler: async (ctx, { sessionId }) => {
+  args: { userId: v.string(), sessionId: v.id("chat_sessions") },
+  handler: async (ctx, { userId, sessionId }) => {
+    await requireOwnedSession(ctx, userId, sessionId);
     await ctx.db.patch(sessionId, { updatedAt: Date.now() });
   },
 });

@@ -217,6 +217,8 @@ export function CoachPage() {
   const pendingUndoIdsRef = useRef<Set<string>>(new Set());
   const pendingRetryIdsRef = useRef<Set<string>>(new Set());
   const pendingHydrateRef = useRef<Id<"chat_sessions"> | null>(null);
+  const activeSessionIdRef = useRef<Id<"chat_sessions"> | null>(null);
+  const sessionViewGenerationRef = useRef(0);
   const sendingRef = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -228,6 +230,12 @@ export function CoachPage() {
     setPendingConfirmIds(new Set());
     setClarifyDates({});
   }
+
+  const setSessionView = useCallback((sessionId: Id<"chat_sessions"> | null) => {
+    sessionViewGenerationRef.current += 1;
+    activeSessionIdRef.current = sessionId;
+    setActiveSessionId(sessionId);
+  }, []);
 
   const onTranscript = useCallback((t: string) => {
     setInput((prev) => (prev ? `${prev} ${t}` : t).trim());
@@ -332,12 +340,12 @@ export function CoachPage() {
   }, [activeSessionId, convexMessages]);
 
   const loadSession = useCallback((id: Id<"chat_sessions">) => {
-    if (id === activeSessionId) return;
+    if (id === activeSessionIdRef.current) return;
     resetClarificationState();
     pendingHydrateRef.current = id;
-    setActiveSessionId(id);
+    setSessionView(id);
     setMessages([{ kind: "text", id: "loading", role: "assistant", text: "Loading…", streamed: false }]);
-  }, [activeSessionId]);
+  }, [setSessionView]);
 
   // Load session from sidebar ?session= param, then clear the param from URL
   useEffect(() => {
@@ -534,9 +542,9 @@ export function CoachPage() {
   const newChat = useCallback(() => {
     pendingHydrateRef.current = null;
     resetClarificationState();
-    setActiveSessionId(null);
+    setSessionView(null);
     setMessages([{ kind: "text", id: "init", role: "assistant", text: GREETING[style], streamed: true }]);
-  }, [style]);
+  }, [setSessionView, style]);
 
   const removeSession = useCallback(async (id: Id<"chat_sessions">) => {
     setDeletingSessionId(id);
@@ -561,6 +569,11 @@ export function CoachPage() {
     sendingRef.current = true;
     const v = text.trim();
     if (!v && !image && !attachedLabel) { sendingRef.current = false; return; }
+    let requestGeneration = sessionViewGenerationRef.current;
+    let sessionId = activeSessionIdRef.current;
+    const isRequestViewCurrent = () =>
+      sessionViewGenerationRef.current === requestGeneration &&
+      activeSessionIdRef.current === sessionId;
     const labelForSend = attachedLabel;
     const messageText = labelForSend ? `[Nutrition label: ${labelForSend.name}]\n${labelForSend.content}\n\n${v}`.trim() : v;
     const userMeta = image
@@ -577,11 +590,16 @@ export function CoachPage() {
 
     setThinking(true);
     try {
-      let sessionId = activeSessionId;
       if (!sessionId) {
         const result = await createSession({ title: messageText.slice(0, 40) || "Image chat" });
         sessionId = result.id;
-        setActiveSessionId(sessionId);
+        if (
+          sessionViewGenerationRef.current === requestGeneration &&
+          activeSessionIdRef.current === null
+        ) {
+          setSessionView(sessionId);
+          requestGeneration = sessionViewGenerationRef.current;
+        }
       }
       const result = await sendToAI({
         message: messageText,
@@ -592,6 +610,7 @@ export function CoachPage() {
         clarificationGroupId: activeClarificationGroupId ?? undefined,
         clientSubmissionId: crypto.randomUUID(),
       });
+      if (!isRequestViewCurrent()) return;
       const r = result as Record<string, unknown>;
       const reply = typeof r.reply === "string" ? r.reply : String(result);
       const coachType = typeof r.coachType === "string" ? r.coachType : undefined;
@@ -670,6 +689,7 @@ export function CoachPage() {
       }
       if (labelForSend) setAttachedLabel(null);
     } catch (err) {
+      if (!isRequestViewCurrent()) return;
       if (labelForSend) setAttachedLabel(labelForSend);
       const raw = err instanceof Error ? err.message : "";
       const userMsg = getAIErrorMessage(err)
@@ -686,7 +706,7 @@ export function CoachPage() {
       sendingRef.current = false;
       setThinking(false);
     }
-  }, [activeMode, activeSessionId, activeClarificationGroupId, attachedLabel, createSession, sendToAI, scroll, toast]);
+  }, [activeMode, activeClarificationGroupId, attachedLabel, createSession, sendToAI, scroll, setSessionView, toast]);
 
   const attachItems: AttachItem[] = [
     { key: "photo", label: "Photo of meal", mode: "photo", icon: <ImagePlus className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => fileRef.current?.click() },
