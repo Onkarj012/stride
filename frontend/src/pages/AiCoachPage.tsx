@@ -2,8 +2,12 @@ import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-  Bot, Send, Loader2,
-  MessageSquarePlus, PanelLeftClose, PanelLeftOpen,
+  Bot,
+  Send,
+  Loader2,
+  MessageSquarePlus,
+  PanelLeftClose,
+  PanelLeftOpen,
   CheckCircle2,
 } from "lucide-react";
 import { useDashboard } from "./context/DashboardContext";
@@ -25,8 +29,6 @@ export default function AiCoachPage() {
     chatError,
     chatEndRef,
     handleNewSession,
-    handleDeleteSession,
-    handleClearChat,
     handleSendChat,
   } = useDashboard();
 
@@ -34,11 +36,11 @@ export default function AiCoachPage() {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="flex-1 min-h-0 flex overflow-hidden"
+      className="flex-1 h-full min-h-0 flex overflow-hidden"
     >
       {/* LEFT PANEL: Sessions sidebar */}
       <div
-        className="shrink-0 border-r-2 border-black dark:border-gray-700 flex flex-col overflow-hidden transition-[width] duration-200"
+        className="shrink-0 h-full min-h-0 border-r-2 border-black dark:border-gray-700 flex flex-col overflow-hidden transition-[width] duration-200"
         style={{ width: sessionsPanelOpen ? sidebarWidth : 0 }}
       >
         <div
@@ -63,7 +65,8 @@ export default function AiCoachPage() {
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto min-h-0">
+        {/* Independently scrollable sessions list */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
           {sessions.map((s: any) => (
             <button
               key={s.id}
@@ -76,9 +79,7 @@ export default function AiCoachPage() {
             >
               <div className="truncate">{s.title || "New Chat"}</div>
               <div className="text-[10px] text-neutral-400 dark:text-gray-500 mt-0.5">
-                {new Date(
-                  s.updatedAt || s.createdAt,
-                ).toLocaleDateString()}
+                {new Date(s.updatedAt || s.createdAt).toLocaleDateString()}
               </div>
             </button>
           ))}
@@ -102,7 +103,7 @@ export default function AiCoachPage() {
       )}
 
       {/* MAIN AREA */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+      <div className="flex-1 h-full min-h-0 flex flex-col min-w-0 overflow-hidden">
         {/* Header */}
         <div className="shrink-0 px-4 py-3 border-b-2 border-black dark:border-gray-700 flex items-center gap-3">
           {!sessionsPanelOpen && (
@@ -118,8 +119,8 @@ export default function AiCoachPage() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-black truncate">
-              {sessions.find((s: any) => s.id === activeSessionId)
-                ?.title || "STRIDE COACH"}
+              {sessions.find((s: any) => s.id === activeSessionId)?.title ||
+                "STRIDE COACH"}
             </div>
             <div className="flex items-center gap-1 text-xs font-bold text-red-600">
               <span className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse" />{" "}
@@ -128,8 +129,8 @@ export default function AiCoachPage() {
           </div>
         </div>
 
-        {/* Messages area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
+        {/* Independently scrollable messages area */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
           {!activeSessionId && (
             <div className="text-center py-16">
               <div className="text-sm font-bold text-neutral-500 dark:text-gray-400 mb-4">
@@ -149,8 +150,8 @@ export default function AiCoachPage() {
                 STRIDE COACH IS READY.
               </div>
               <div className="text-xs text-neutral-400 dark:text-gray-500">
-                Ask anything, or describe your meals/workouts to log
-                them directly.
+                Ask anything, or describe your meals/workouts to log them
+                directly.
               </div>
             </div>
           )}
@@ -183,9 +184,7 @@ export default function AiCoachPage() {
                         </h2>
                       ),
                       h3: ({ children }) => (
-                        <h3 className="text-sm font-black mb-1">
-                          {children}
-                        </h3>
+                        <h3 className="text-sm font-black mb-1">{children}</h3>
                       ),
                       ul: ({ children }) => (
                         <ul className="list-disc pl-5 my-1 space-y-0.5">
@@ -226,9 +225,7 @@ export default function AiCoachPage() {
                         <p className="mb-1 last:mb-0">{children}</p>
                       ),
                       strong: ({ children }) => (
-                        <strong className="font-black">
-                          {children}
-                        </strong>
+                        <strong className="font-black">{children}</strong>
                       ),
                       em: ({ children }) => (
                         <em className="italic">{children}</em>
@@ -266,24 +263,22 @@ export default function AiCoachPage() {
                     ? "MEAL LOGGED"
                     : "WORKOUT LOGGED"}
                 </div>
-                {chatLoggedItem.type === "meal" &&
-                  chatLoggedItem.data && (
-                    <div className="text-xs text-green-700 dark:text-green-400">
-                      {chatLoggedItem.data.name} ·{" "}
-                      {chatLoggedItem.data.calories} kcal · P:
-                      {chatLoggedItem.data.protein}g C:
-                      {chatLoggedItem.data.carbs}g F:
-                      {chatLoggedItem.data.fat}g
-                    </div>
-                  )}
-                {chatLoggedItem.type === "workout" &&
-                  chatLoggedItem.data && (
-                    <div className="text-xs text-green-700 dark:text-green-400">
-                      {chatLoggedItem.data.name} ·{" "}
-                      {chatLoggedItem.data.exercises?.length || 0}{" "}
-                      exercises · {chatLoggedItem.data.intensity}
-                    </div>
-                  )}
+                {chatLoggedItem.type === "meal" && chatLoggedItem.data && (
+                  <div className="text-xs text-green-700 dark:text-green-400">
+                    {chatLoggedItem.data.name} · {chatLoggedItem.data.calories}{" "}
+                    kcal · P:
+                    {chatLoggedItem.data.protein}g C:
+                    {chatLoggedItem.data.carbs}g F:
+                    {chatLoggedItem.data.fat}g
+                  </div>
+                )}
+                {chatLoggedItem.type === "workout" && chatLoggedItem.data && (
+                  <div className="text-xs text-green-700 dark:text-green-400">
+                    {chatLoggedItem.data.name} ·{" "}
+                    {chatLoggedItem.data.exercises?.length || 0} exercises ·{" "}
+                    {chatLoggedItem.data.intensity}
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
@@ -291,7 +286,7 @@ export default function AiCoachPage() {
         </div>
 
         {/* Input area */}
-        <div className="p-4 border-t-2 border-black dark:border-gray-700 shrink-0">
+        <div className="shrink-0 p-4 border-t-2 border-black dark:border-gray-700">
           {chatError && (
             <div className="mb-2 text-xs font-bold text-red-600">
               {chatError}
@@ -309,9 +304,7 @@ export default function AiCoachPage() {
             />
             <button
               onClick={handleSendChat}
-              disabled={
-                chatLoading || !chatInput.trim() || !activeSessionId
-              }
+              disabled={chatLoading || !chatInput.trim() || !activeSessionId}
               className="px-4 py-2 bg-black dark:bg-gray-100 text-white dark:text-gray-950 font-bold text-sm border-2 border-black dark:border-gray-700 hover:bg-red-600 dark:hover:bg-red-600 dark:hover:text-white transition-colors disabled:opacity-50"
             >
               {chatLoading ? (

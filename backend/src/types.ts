@@ -106,14 +106,7 @@ export interface UserRow {
   id: string;
   email: string;
   name: string;
-  password_hash: string;
-  created_at: string;
-}
-
-export interface TokenRow {
-  id: number;
-  user_id: string;
-  token: string;
+  password_hash: string | null;
   created_at: string;
 }
 

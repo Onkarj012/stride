@@ -5,14 +5,30 @@ import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 
+type SessionRow = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapSession(row: SessionRow) {
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 // GET /api/chat/sessions — list all sessions for user, newest first
 router.get("/sessions", requireAuth, (req: Request, res: Response) => {
   const sessions = db
     .prepare(
-      "SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC, created_at DESC"
+      "SELECT id, title, created_at, updated_at FROM chat_sessions WHERE user_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC",
     )
-    .all(req.user.userId);
-  res.json(sessions);
+    .all(req.user.userId) as SessionRow[];
+  res.json(sessions.map(mapSession));
 });
 
 // POST /api/chat/sessions — create a new session
@@ -22,12 +38,12 @@ router.post("/sessions", requireAuth, (req: Request, res: Response) => {
     const { title } = req.body as { title?: string };
     const sessionTitle = (title || "New Chat").slice(0, 60);
     db.prepare(
-      "INSERT INTO chat_sessions (id, user_id, title) VALUES (?, ?, ?)"
+      "INSERT INTO chat_sessions (id, user_id, title) VALUES (?, ?, ?)",
     ).run(id, req.user.userId, sessionTitle);
     const session = db
       .prepare("SELECT id, title, created_at, updated_at FROM chat_sessions WHERE id = ?")
-      .get(id);
-    res.json(session);
+      .get(id) as SessionRow;
+    res.json(mapSession(session));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -36,14 +52,14 @@ router.post("/sessions", requireAuth, (req: Request, res: Response) => {
 // DELETE /api/chat/sessions/:id — delete session and all its messages
 router.delete("/sessions/:id", requireAuth, (req: Request, res: Response) => {
   try {
-    // Delete messages first (session_id FK may not cascade if null)
+    // Delete messages first (session_id FK may not cascade on upgraded databases)
     db.prepare("DELETE FROM chat_messages WHERE session_id = ? AND user_id = ?").run(
       req.params.id,
-      req.user.userId
+      req.user.userId,
     );
     db.prepare("DELETE FROM chat_sessions WHERE id = ? AND user_id = ?").run(
       req.params.id,
-      req.user.userId
+      req.user.userId,
     );
     res.json({ ok: true });
   } catch (err) {
@@ -55,7 +71,7 @@ router.delete("/sessions/:id", requireAuth, (req: Request, res: Response) => {
 router.get("/sessions/:id/messages", requireAuth, (req: Request, res: Response) => {
   const messages = db
     .prepare(
-      "SELECT role, content, created_at FROM chat_messages WHERE user_id = ? AND session_id = ? ORDER BY created_at ASC"
+      "SELECT role, content, created_at FROM chat_messages WHERE user_id = ? AND session_id = ? ORDER BY created_at ASC, id ASC",
     )
     .all(req.user.userId, req.params.id);
   res.json(messages);
@@ -71,7 +87,7 @@ router.patch("/sessions/:id", requireAuth, (req: Request, res: Response) => {
     }
     const sessionTitle = title.slice(0, 60);
     db.prepare(
-      "UPDATE chat_sessions SET title = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
+      "UPDATE chat_sessions SET title = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?",
     ).run(sessionTitle, req.params.id, req.user.userId);
     res.json({ ok: true });
   } catch (err) {

@@ -274,6 +274,18 @@ router.post("/chat", requireAuth, async (req: Request, res: Response) => {
       res.status(400).json({ error: "Message required" });
       return;
     }
+    if (!sessionId) {
+      res.status(400).json({ error: "Session required" });
+      return;
+    }
+
+    const sessionExists = db
+      .prepare("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?")
+      .get(sessionId, req.user.userId);
+    if (!sessionExists) {
+      res.status(404).json({ error: "Session not found" });
+      return;
+    }
 
     const today = new Date().toISOString().split("T")[0];
 
@@ -338,28 +350,25 @@ Rules:
 - Your message text (before the block) should confirm what you logged and give a brief analysis
 - YOU MUST include the ⟦LOG_MEAL⟧...⟦/LOG_MEAL⟧ or ⟦LOG_WORKOUT⟧...⟦/LOG_WORKOUT⟧ markers exactly as shown. The server detects and parses these markers to log the item. Do not omit them.`;
 
-    // Load history for this session only (if sessionId provided)
-    let history: { role: string; content: string }[] = [];
-    if (sessionId) {
-      const sessionExists = db
-        .prepare("SELECT id FROM chat_sessions WHERE id = ? AND user_id = ?")
-        .get(sessionId, req.user.userId);
-      if (sessionExists) {
-        history = db
-          .prepare(
-            "SELECT role, content FROM chat_messages WHERE user_id = ? AND session_id = ? ORDER BY created_at ASC LIMIT 40",
-          )
-          .all(req.user.userId, sessionId) as { role: string; content: string }[];
-      }
-    }
+    const history = db
+      .prepare(`
+        SELECT role, content
+        FROM (
+          SELECT id, role, content, created_at
+          FROM chat_messages
+          WHERE user_id = ? AND session_id = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT 40
+        )
+        ORDER BY created_at ASC, id ASC
+      `)
+      .all(req.user.userId, sessionId) as { role: string; content: string }[];
 
-    // Check if this is the first message in the session (before saving)
-    const isFirstMessage = sessionId ? history.length === 0 : false;
+    const isFirstMessage = history.length === 0;
 
-    // Save the NEW user message to DB
     db.prepare(
       "INSERT INTO chat_messages (user_id, role, content, session_id) VALUES (?, ?, ?, ?)",
-    ).run(req.user.userId, "user", message, sessionId || null);
+    ).run(req.user.userId, "user", message, sessionId);
 
     // Build messages for LLM
     const messages: AIMessage[] = [
@@ -409,10 +418,10 @@ Rules:
     // Save AI reply (stored as "ai" for frontend compatibility)
     db.prepare(
       "INSERT INTO chat_messages (user_id, role, content, session_id) VALUES (?, ?, ?, ?)",
-    ).run(req.user.userId, "ai", cleanReply, sessionId || null);
+    ).run(req.user.userId, "ai", cleanReply, sessionId);
 
     // Update session title on first message using AI-generated title
-    if (sessionId && isFirstMessage) {
+    if (isFirstMessage) {
       try {
         const title = await callAI(
           [
@@ -431,7 +440,7 @@ Rules:
           "UPDATE chat_sessions SET title = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
         ).run(titleText, sessionId, req.user.userId);
       }
-    } else if (sessionId) {
+    } else {
       // Update updated_at on subsequent messages
       db.prepare(
         "UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ? AND user_id = ?"

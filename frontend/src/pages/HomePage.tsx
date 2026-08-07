@@ -77,9 +77,7 @@ export default function HomePage() {
             <div className="text-xs font-bold text-neutral-500 dark:text-gray-400 mb-1">
               MEALS TODAY
             </div>
-            <div className="text-3xl font-black">
-              {meals?.length || 0}
-            </div>
+            <div className="text-3xl font-black">{meals?.length || 0}</div>
             <div className="text-xs font-bold mt-2 text-neutral-500 dark:text-gray-400">
               ENTRIES
             </div>
@@ -88,9 +86,7 @@ export default function HomePage() {
             <div className="text-xs font-bold text-neutral-500 dark:text-gray-400 mb-1">
               WORKOUTS
             </div>
-            <div className="text-3xl font-black">
-              {workouts?.length || 0}
-            </div>
+            <div className="text-3xl font-black">{workouts?.length || 0}</div>
             <div className="text-xs font-bold mt-2 text-neutral-500 dark:text-gray-400">
               SESSIONS
             </div>
@@ -112,9 +108,7 @@ export default function HomePage() {
                     <span className="text-xs font-bold bg-black dark:bg-gray-100 text-white dark:text-gray-950 px-2 py-1">
                       {meal.time}
                     </span>
-                    <span className="text-sm font-bold">
-                      {meal.name}
-                    </span>
+                    <span className="text-sm font-bold">{meal.name}</span>
                   </div>
                   <span className="text-sm font-bold text-red-600">
                     {meal.calories} KCAL

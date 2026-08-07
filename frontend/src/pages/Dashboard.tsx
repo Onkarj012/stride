@@ -1,10 +1,20 @@
 import { lazy, Suspense } from "react";
 import {
-  Flame, Utensils, Dumbbell, Bot, Menu, X,
-  LogOut, Moon, Sun, User, Home,
-  CalendarDays, Loader2,
+  Flame,
+  Utensils,
+  Dumbbell,
+  Bot,
+  Menu,
+  X,
+  LogOut,
+  Moon,
+  Sun,
+  User,
+  Home,
+  CalendarDays,
+  Loader2,
 } from "lucide-react";
-import { useAuth, useUser, useClerk } from "@clerk/react";
+import { useAuth } from "@clerk/react";
 import { useTheme } from "../lib/theme";
 import { DashboardProvider, useDashboard } from "./context/DashboardContext";
 
@@ -35,20 +45,13 @@ function PageLoader() {
 }
 
 function DashboardInner() {
-  const { getToken, signOut } = useAuth();
-  const { user } = useUser();
-  const { openUserProfile } = useClerk();
+  const { signOut } = useAuth();
   const { isDark, toggleTheme } = useTheme();
-  const {
-    activeTab,
-    setActiveTab,
-    menuOpen,
-    setMenuOpen,
-    isLoading,
-  } = useDashboard();
+  const { activeTab, setActiveTab, menuOpen, setMenuOpen, isLoading } =
+    useDashboard();
 
   return (
-    <div className="min-h-screen flex flex-col bg-white dark:bg-gray-950 text-black dark:text-gray-100 font-mono selection:bg-red-600 selection:text-white transition-colors">
+    <div className="h-screen flex flex-col bg-white dark:bg-gray-950 text-black dark:text-gray-100 font-mono selection:bg-red-600 selection:text-white transition-colors">
       <nav className="sticky top-0 z-50 bg-white dark:bg-gray-950 border-b-2 border-black dark:border-gray-700 transition-colors">
         <div className="flex items-center px-4 py-3">
           <div className="flex items-center gap-3 shrink-0">
@@ -139,10 +142,10 @@ function DashboardInner() {
         <main
           className={`flex-1 min-h-0 ${
             activeTab === "AI COACH"
-              ? "flex flex-col overflow-hidden"
+              ? "flex flex-col overflow-hidden h-0" // ← add h-0
               : activeTab === "HISTORY"
-                ? "p-4 max-w-7xl mx-auto overflow-hidden flex flex-col"
-                : "p-4 max-w-7xl mx-auto overflow-auto"
+                ? "px-6 py-6 w-full overflow-hidden flex flex-col"
+                : "px-6 py-6 w-full overflow-auto"
           }`}
         >
           <Suspense fallback={<PageLoader />}>

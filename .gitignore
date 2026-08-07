@@ -59,10 +59,10 @@ Thumbs.db
 # Temporary / scratchpad
 temp/
 
-# Graphify cache
-graphify-out/cache/
+# Generated agent and graph reports
+.agents/clerk/
+graphify-out/
 .graphify_*
 
 # Convex local config
 .convex/local/
-

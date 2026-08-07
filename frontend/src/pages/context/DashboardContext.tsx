@@ -164,7 +164,7 @@ interface DashboardContextType {
   activeSessionId: string | null;
   setActiveSessionId: (id: string | null) => void;
   sessionsPanelOpen: boolean;
-  setSessionsPanelOpen: (open: boolean) => void;
+  setSessionsPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   sessionMessages: any[];
   chatLoggedItem: any;
   sidebarWidth: number;
@@ -249,6 +249,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   const [sessions, setSessions] = useState<any[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const activeSessionIdRef = useRef<string | null>(null);
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(true);
   const [sessionMessages, setSessionMessages] = useState<any[]>([]);
   const [chatLoggedItem, setChatLoggedItem] = useState<any>(null);
@@ -318,6 +319,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatRequestInFlightRef = useRef(false);
+  const sessionMessagesRequestRef = useRef(0);
 
   const [workoutSuggestion, setWorkoutSuggestion] = useState<any>(null);
   const [suggestionLoading, setSuggestionLoading] = useState(false);
@@ -390,15 +393,25 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     } catch {}
   }, [getToken]);
 
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
   const fetchSessionMessages = useCallback(
     async (sessionId: string) => {
+      const requestId = ++sessionMessagesRequestRef.current;
       try {
         const msgs = await apiFetch(
           `/api/chat/sessions/${sessionId}/messages`,
           {},
           getToken,
         );
-        setSessionMessages(msgs);
+        if (
+          sessionMessagesRequestRef.current === requestId &&
+          activeSessionIdRef.current === sessionId
+        ) {
+          setSessionMessages(msgs);
+        }
       } catch {}
     },
     [getToken],
@@ -726,18 +739,23 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
           { method: "DELETE" },
           getToken,
         );
-        setSessions((prev) => prev.filter((s) => s.id !== id));
+        const remaining = await fetchSessions();
         if (activeSessionId === id) {
-          const remaining = sessions.filter((s) => s.id !== id);
           if (remaining.length > 0) {
             setActiveSessionId(remaining[0].id);
           } else {
-            setActiveSessionId(null);
+            const replacement = await apiFetch(
+              "/api/chat/sessions",
+              { method: "POST", body: "{}" },
+              getToken,
+            );
+            setSessions([replacement]);
+            setActiveSessionId(replacement.id);
           }
         }
       } catch {}
     },
-    [getToken, activeSessionId, sessions],
+    [getToken, activeSessionId, fetchSessions],
   );
 
   const handleClearChat = useCallback(async () => {
@@ -749,11 +767,27 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         getToken,
       );
       setSessionMessages([]);
+      setChatLoggedItem(null);
+      const remaining = await fetchSessions();
+      if (remaining.length > 0) {
+        setActiveSessionId(remaining[0].id);
+      } else {
+        const replacement = await apiFetch(
+          "/api/chat/sessions",
+          { method: "POST", body: "{}" },
+          getToken,
+        );
+        setSessions([replacement]);
+        setActiveSessionId(replacement.id);
+      }
     } catch {}
-  }, [activeSessionId, getToken]);
+  }, [activeSessionId, getToken, fetchSessions]);
 
   const handleSendChat = useCallback(async () => {
-    if (!chatInput.trim() || !activeSessionId) return;
+    if (!chatInput.trim() || !activeSessionId || chatRequestInFlightRef.current) return;
+    chatRequestInFlightRef.current = true;
+    sessionMessagesRequestRef.current += 1;
+    const requestSessionId = activeSessionId;
     const userMsg = chatInput.trim();
     setChatInput("");
     setSessionMessages((prev) => [
@@ -769,26 +803,34 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
           method: "POST",
           body: JSON.stringify({
             message: userMsg,
-            sessionId: activeSessionId,
+            sessionId: requestSessionId,
           }),
         },
         getToken,
       );
-      setSessionMessages((prev) => [
-        ...prev,
-        { role: "ai", content: response.reply },
-      ]);
-      if (response.loggedItem) {
-        setChatLoggedItem(response.loggedItem);
-        fetchData();
-        setTimeout(() => setChatLoggedItem(null), 6000);
+      if (activeSessionIdRef.current === requestSessionId) {
+        setSessionMessages((prev) => [
+          ...prev,
+          { role: "ai", content: response.reply },
+        ]);
       }
+      if (response.loggedItem) {
+        fetchData();
+        if (activeSessionIdRef.current === requestSessionId) {
+          setChatLoggedItem(response.loggedItem);
+          setTimeout(() => setChatLoggedItem(null), 6000);
+        }
+      }
+      await fetchSessions();
     } catch (e: any) {
-      setChatError(e.message || "Failed to send message");
+      if (activeSessionIdRef.current === requestSessionId) {
+        setChatError(e.message || "Failed to send message");
+      }
     } finally {
+      chatRequestInFlightRef.current = false;
       setChatLoading(false);
     }
-  }, [chatInput, activeSessionId, getToken, fetchData]);
+  }, [chatInput, activeSessionId, getToken, fetchData, fetchSessions]);
 
   const handlePrevMonth = useCallback(() => {
     let newMonth = calendarMonth - 1;
