@@ -60,35 +60,39 @@ function isNumber(token: string): boolean {
   return /^\d/.test(token);
 }
 
-/** Unit words that can sit between a number and its food, as in "2 cups rice". */
-const UNIT_WORDS: ReadonlySet<string> = new Set(
+/** Known unit phrases in token form, such as "cup", "fl oz" and "fluid ounce". */
+const UNIT_PHRASES: ReadonlySet<string> = new Set(
   [
     ...Object.keys(MASS_UNITS_G),
     ...Object.keys(VOLUME_UNITS_ML),
     ...Object.keys(HOUSEHOLD_VESSELS),
     ...FOOD_SPECIFIC_MEASURES,
     ...Object.keys(UNIT_ALIASES),
-  ].flatMap(tokenize),
+  ].map((phrase) => tokenize(phrase).join(" ")),
 );
 
-/** Each number with its normalized unit phrase and first food word, sorted, so amount, unit and food stay together. */
+const MAX_UNIT_WORDS = Math.max(...[...UNIT_PHRASES].map((p) => p.split(" ").length));
+
+/** Word count of the longest known unit phrase starting at `start`, or 0 when none does. */
+function unitLength(tokens: readonly string[], start: number): number {
+  for (let len = MAX_UNIT_WORDS; len > 0; len--) {
+    if (start + len <= tokens.length && UNIT_PHRASES.has(tokens.slice(start, start + len).join(" "))) return len;
+  }
+  return 0;
+}
+
+/** Each number with its normalized unit and the food word after it, sorted, so amount, unit and food stay together. */
 function quantityKey(tokens: readonly string[]): string {
   return tokens
     .flatMap((t, i) => {
       if (!isNumber(t)) return [];
-      const units: string[] = [];
-      let food = "";
-      for (const word of tokens.slice(i + 1)) {
-        if (word === "of") continue;
-        if (!UNIT_WORDS.has(word)) {
-          food = word;
-          break;
-        }
-        units.push(word);
-      }
-      // Normalize the whole phrase, so "fluid ounce" and "fl oz" agree.
-      const unit = units.length > 0 ? normalizeUnit(units.join(" ")) : "";
-      return [[t, unit, food].join(" ")];
+      let at = i + 1;
+      const len = unitLength(tokens, at);
+      // One unit phrase only, so a food word that is also a unit alias ("whole milk") stays the food.
+      const unit = normalizeUnit(tokens.slice(at, at + len).join(" "));
+      at += len;
+      if (tokens[at] === "of") at++;
+      return [[t, unit, tokens[at] ?? ""].join(" ")];
     })
     .sort()
     .join("|");

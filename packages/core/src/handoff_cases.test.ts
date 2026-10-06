@@ -30,6 +30,9 @@ describe("HANDOFF #2: food memory respects quantity", () => {
     expect(selectMatch(rankCandidates("2 cups rice and 1 tbsp oil", [{ name: "1 tbsp oil and 2 cups rice" }]))).toMatchObject({ status: "matched" });
     expect(scoreName("2 fluid ounces milk with coffee and 1 cup cooked brown rice", "2 fl oz milk with coffee and 1 cup cooked brown rice"))
       .toBeGreaterThan(MATCH_MIN_SCORE);
+    expect(scoreName("2 tablespoons whole milk with coffee and 1 cup cooked brown rice", "2 tbsp whole milk with coffee and 1 cup cooked brown rice"))
+      .toBeCloseTo(11 / 13, 9);
+    expect(scoreName("2 tbsp whole milk", "1 tbsp whole milk")).toBe(0);
   });
 });
 
