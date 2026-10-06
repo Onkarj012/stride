@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { inflateRawSync } from "node:zlib";
 
 /** Gitignored folders for downloads and import output. */
-export const DATA_DIR = new URL("../data/", import.meta.url).pathname;
+export const DATA_DIR = fileURLToPath(new URL("../data/", import.meta.url));
 export const CACHE_DIR = join(DATA_DIR, "cache");
 export const OUT_DIR = join(DATA_DIR, "out");
 

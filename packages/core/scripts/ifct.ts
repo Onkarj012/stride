@@ -1,6 +1,12 @@
 import type { FoodRecord } from "../src/nutrition/types.ts";
 import { csvRecords, num } from "./lib.ts";
 
+/** Parses a nutrient cell. Negative values are bad data, so they read as missing. */
+function nutrient(cell: string | undefined): number | null {
+  const value = num(cell);
+  return value !== null && value >= 0 ? value : null;
+}
+
 /** Columns the IFCT 2017 CSV must have. Units per 100 g edible portion: enerc in kJ, na in g, the rest in g. */
 export const IFCT_COLUMNS = ["code", "name", "lang", "enerc", "protcnt", "fatce", "choavldf", "fibtg", "fsugar", "na"] as const;
 
@@ -44,15 +50,15 @@ export function mapIfct(csv: string): IfctResult {
   for (const row of rows) {
     const name = (row["name"] ?? "").trim();
     const code = (row["code"] ?? "").trim();
-    const kJ = num(row["enerc"]);
-    const protein = num(row["protcnt"]);
-    const fat = num(row["fatce"]);
-    const carbs = num(row["choavldf"]);
+    const kJ = nutrient(row["enerc"]);
+    const protein = nutrient(row["protcnt"]);
+    const fat = nutrient(row["fatce"]);
+    const carbs = nutrient(row["choavldf"]);
     if (name === "" || code === "" || kJ === null || protein === null || fat === null || carbs === null) {
       skippedFoods++;
       continue;
     }
-    const sodiumG = num(row["na"]);
+    const sodiumG = nutrient(row["na"]);
     foods.push({
       name,
       aliases: ifctAliases(row["lang"] ?? "", name),
@@ -61,8 +67,8 @@ export function mapIfct(csv: string): IfctResult {
         protein,
         carbs,
         fat,
-        fiber: num(row["fibtg"]),
-        sugar: num(row["fsugar"]),
+        fiber: nutrient(row["fibtg"]),
+        sugar: nutrient(row["fsugar"]),
         sodiumMg: sodiumG === null ? null : sodiumG * 1000,
       },
       source: "ifct",
