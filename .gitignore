@@ -86,3 +86,7 @@ apps/web/docs/
 
 # Generated design tokens (run `pnpm build:tokens`)
 apps/web/src/styles/tokens.generated.css
+
+# Local agent scratch and reports
+.scratch/
+reports/
