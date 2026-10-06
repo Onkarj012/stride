@@ -1,5 +1,14 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import {
+  createdByValidator,
+  entrySourceValidator,
+  foodSourceValidator,
+  mealSlotValidator,
+  nutrientsValidator,
+  revisionOpValidator,
+  revisionStatusValidator,
+} from "./ledger_validators";
 
 export default defineSchema({
   ai_usage_buckets: defineTable({
@@ -186,6 +195,21 @@ export default defineSchema({
     coachingStyle: v.optional(v.string()), // gentle | motivating | analytical
     reduceMotion: v.optional(v.boolean()),
     timezoneOffsetMinutes: v.optional(v.number()), // new Date().getTimezoneOffset() from browser
+    // Plan 007 section 3.2 profile fields. Optional so pre-restart rows stay valid.
+    timeZone: v.optional(v.string()), // IANA zone, the only input to local dates (D15)
+    goal: v.optional(v.union(v.literal("lose"), v.literal("maintain"), v.literal("gain"))),
+    sex: v.optional(v.union(v.literal("male"), v.literal("female"))),
+    heightCm: v.optional(v.number()),
+    dob: v.optional(v.string()), // YYYY-MM-DD
+    activity: v.optional(
+      v.union(
+        v.literal("sedentary"),
+        v.literal("light"),
+        v.literal("moderate"),
+        v.literal("active"),
+        v.literal("very_active"),
+      ),
+    ),
   }).index("by_user", ["userId"]),
 
   chat_sessions: defineTable({
@@ -635,4 +659,199 @@ export default defineSchema({
     .index("by_group", ["groupId"])
     .index("by_action", ["actionId"])
     .index("by_user_created_at", ["userId", "createdAt"]),
+
+  // ─── Restart ledger (plan 007 section 3.2) ─────────────────────────────────
+  // userId is the Clerk subject, matching user_settings and the older tables.
+
+  foods: defineTable({
+    name: v.string(),
+    aliases: v.array(v.string()),
+    searchText: v.string(), // name and aliases joined, so "chawal" finds rice
+    per100g: nutrientsValidator, // unrounded
+    source: foodSourceValidator,
+    sourceId: v.string(),
+    verified: v.boolean(),
+  })
+    .index("by_source_and_sourceId", ["source", "sourceId"])
+    .searchIndex("search_text", { searchField: "searchText", filterFields: ["source", "verified"] }),
+
+  food_portions: defineTable({
+    foodId: v.id("foods"),
+    source: foodSourceValidator,
+    measure: v.string(), // normalized unit, e.g. "cup"
+    description: v.string(), // source label, e.g. "cup, chopped"
+    gramsPerMeasure: v.number(),
+  }).index("by_foodId_and_description", ["foodId", "description"]),
+
+  user_measures: defineTable({
+    userId: v.string(),
+    measure: v.string(),
+    ml: v.optional(v.number()),
+    grams: v.optional(v.number()),
+  }).index("by_userId_and_measure", ["userId", "measure"]),
+
+  // Append-only: every change inserts a revision row. Only `status` changes on older rows.
+  entries: defineTable({
+    userId: v.string(),
+    localDate: v.string(),
+    timeZone: v.string(),
+    slot: mealSlotValidator,
+    loggedAt: v.number(), // instant the food was eaten
+    foodId: v.id("foods"),
+    foodName: v.string(),
+    grams: v.number(),
+    nutrients: nutrientsValidator, // unrounded snapshot of foods.per100g × grams
+    source: entrySourceValidator,
+    confidence: v.number(),
+    flags: v.array(v.string()),
+    revision: v.number(),
+    supersedes: v.optional(v.id("entries")),
+    op: revisionOpValidator,
+    status: revisionStatusValidator,
+    createdBy: createdByValidator,
+    chatId: v.optional(v.id("chats")),
+    messageId: v.optional(v.id("messages")),
+    submissionId: v.string(),
+    deletedAt: v.optional(v.number()),
+  })
+    .index("by_userId_and_localDate_and_status", ["userId", "localDate", "status"])
+    .index("by_userId_and_submissionId", ["userId", "submissionId"]),
+
+  // Unrounded running sums of live entries per day. Unknown counts keep null fiber/sugar/sodium reversible.
+  day_totals: defineTable({
+    userId: v.string(),
+    localDate: v.string(),
+    entryCount: v.number(),
+    kcal: v.number(),
+    protein: v.number(),
+    carbs: v.number(),
+    fat: v.number(),
+    fiber: v.number(),
+    sugar: v.number(),
+    sodiumMg: v.number(),
+    fiberUnknown: v.number(),
+    sugarUnknown: v.number(),
+    sodiumMgUnknown: v.number(),
+  }).index("by_userId_and_localDate", ["userId", "localDate"]),
+
+  // Plan 3.2 calls this `workouts`; that name is still the pre-restart table.
+  workout_sessions: defineTable({
+    userId: v.string(),
+    localDate: v.string(),
+    timeZone: v.string(),
+    name: v.optional(v.string()),
+    startedAt: v.number(),
+    endedAt: v.optional(v.number()),
+    notes: v.optional(v.string()),
+    submissionId: v.string(),
+    deletedAt: v.optional(v.number()),
+  })
+    .index("by_userId_and_localDate", ["userId", "localDate"])
+    .index("by_userId_and_submissionId", ["userId", "submissionId"]),
+
+  sets: defineTable({
+    userId: v.string(),
+    sessionId: v.id("workout_sessions"),
+    exerciseId: v.id("exercises"),
+    setIndex: v.number(),
+    reps: v.number(),
+    weightKg: v.number(),
+    rpe: v.optional(v.number()),
+    revision: v.number(),
+    supersedes: v.optional(v.id("sets")),
+    status: revisionStatusValidator,
+    submissionId: v.string(),
+    deletedAt: v.optional(v.number()),
+  })
+    .index("by_sessionId_and_status", ["sessionId", "status"])
+    .index("by_userId_and_exerciseId_and_status", ["userId", "exerciseId", "status"]),
+
+  exercises: defineTable({
+    sourceId: v.string(),
+    name: v.string(),
+    category: v.string(),
+    equipment: v.union(v.string(), v.null()),
+    mechanic: v.union(v.string(), v.null()),
+    level: v.union(v.string(), v.null()),
+    primaryMuscles: v.array(v.string()),
+    secondaryMuscles: v.array(v.string()),
+  })
+    .index("by_sourceId", ["sourceId"])
+    .searchIndex("search_name", { searchField: "name", filterFields: ["category"] }),
+
+  // One row per user while clearAllData's scheduled ledger deletion runs. Ledger writes refuse meanwhile.
+  ledger_clears: defineTable({ userId: v.string() }).index("by_userId", ["userId"]),
+
+  weights: defineTable({
+    userId: v.string(),
+    localDate: v.string(),
+    kg: v.number(),
+    loggedAt: v.number(),
+  }).index("by_userId_and_localDate", ["userId", "localDate"]),
+
+  tdee_snapshots: defineTable({
+    userId: v.string(),
+    localDate: v.string(),
+    estimateKcal: v.number(),
+    trendKg: v.number(),
+    windowDays: v.number(),
+    confidence: v.number(), // logged-day fraction of the window
+  }).index("by_userId_and_localDate", ["userId", "localDate"]),
+
+  chats: defineTable({
+    userId: v.string(),
+    title: v.string(),
+    updatedAt: v.number(),
+    deletedAt: v.optional(v.number()),
+  }).index("by_userId_and_updatedAt", ["userId", "updatedAt"]),
+
+  messages: defineTable({
+    userId: v.string(),
+    chatId: v.id("chats"),
+    role: v.union(v.literal("user"), v.literal("assistant"), v.literal("tool")),
+    text: v.string(),
+    attachments: v.array(
+      v.object({
+        kind: v.union(v.literal("image"), v.literal("audio")),
+        storageId: v.id("_storage"),
+      }),
+    ),
+    toolCalls: v.array(
+      v.object({
+        name: v.string(),
+        argsJson: v.string(),
+        resultJson: v.optional(v.string()),
+      }),
+    ),
+    draftIds: v.array(v.id("drafts")),
+    submissionId: v.optional(v.string()),
+  })
+    .index("by_chatId", ["chatId"])
+    .index("by_userId_and_submissionId", ["userId", "submissionId"]),
+
+  // Extracted items awaiting confirmation (D7). Matcher output only; nutrients are computed on commit.
+  drafts: defineTable({
+    userId: v.string(),
+    chatId: v.optional(v.id("chats")),
+    messageId: v.optional(v.id("messages")),
+    submissionId: v.string(),
+    status: v.union(v.literal("pending"), v.literal("committed"), v.literal("discarded"), v.literal("expired")),
+    items: v.array(
+      v.object({
+        text: v.string(),
+        quantity: v.optional(v.number()),
+        unit: v.optional(v.string()),
+        slot: v.optional(mealSlotValidator),
+        localDate: v.optional(v.string()),
+        foodId: v.optional(v.id("foods")),
+        grams: v.optional(v.number()),
+        score: v.optional(v.number()),
+        unresolved: v.optional(v.string()),
+      }),
+    ),
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+  })
+    .index("by_userId_and_status", ["userId", "status"])
+    .index("by_userId_and_submissionId", ["userId", "submissionId"]),
 });

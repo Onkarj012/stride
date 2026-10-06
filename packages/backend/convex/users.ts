@@ -1,5 +1,64 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
+
+/** Restart ledger tables (plan 007) that clearAllData empties in scheduled batches. */
+const LEDGER_TABLES = ["entries", "day_totals", "weights"] as const;
+
+/** Rows deleted per clearLedgerRows transaction. */
+export const CLEAR_LEDGER_BATCH = 200;
+
+/** Reads up to one batch of a user's rows from one ledger table. */
+async function ledgerBatch(ctx: MutationCtx, table: (typeof LEDGER_TABLES)[number], userId: string) {
+  switch (table) {
+    case "entries":
+      return await ctx.db.query("entries").withIndex("by_userId_and_localDate_and_status", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "day_totals":
+      return await ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "weights":
+      return await ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+  }
+}
+
+/** The user's in-progress ledger clear marker, or null when no clear is running. */
+async function pendingLedgerClear(ctx: QueryCtx | MutationCtx, userId: string) {
+  return await ctx.db.query("ledger_clears").withIndex("by_userId", (q) => q.eq("userId", userId)).unique();
+}
+
+/** Throws while clearAllData is still deleting the user's ledger rows, so no new write is lost or left half-counted. */
+export async function assertLedgerWritable(ctx: MutationCtx, userId: string): Promise<void> {
+  if ((await pendingLedgerClear(ctx, userId)) !== null) throw new Error("Your data is being cleared. Try again in a moment.");
+}
+
+/** Deletes one batch of a user's ledger rows and schedules itself until every ledger table is empty, then drops the marker. */
+export const clearLedgerRows = internalMutation({
+  args: { userId: v.string(), tableIndex: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { userId, tableIndex }) => {
+    const table = LEDGER_TABLES[tableIndex];
+    const rows = table === undefined ? [] : await ledgerBatch(ctx, table, userId);
+    for (const row of rows) await ctx.db.delete(row._id);
+    const next = rows.length === CLEAR_LEDGER_BATCH ? tableIndex : tableIndex + 1;
+    if (next < LEDGER_TABLES.length) {
+      await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: next });
+      return null;
+    }
+    const marker = await pendingLedgerClear(ctx, userId);
+    if (marker !== null) await ctx.db.delete(marker._id);
+    return null;
+  },
+});
+
+/** True while the caller's ledger rows are still being cleared. Clients wait for false before logging again. */
+export const ledgerClearPending = query({
+  args: {},
+  returns: v.boolean(),
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    return (await pendingLedgerClear(ctx, identity.subject)) !== null;
+  },
+});
 
 export const ensureUser = mutation({
   args: {
@@ -45,7 +104,7 @@ export const clearAllData = mutation({
     }
 
     const byUser = [
-      "chat_messages", "chat_sessions", "user_behavior", "nudges",
+      "chat_messages", "chat_sessions", "user_behavior",
       "recipes", "food_memory", "workout_memory", "user_ingredients",
       "user_profiles", "user_settings", "user_metabolic_profiles", "calorie_feedback",
       "check_in_template_settings",
@@ -57,6 +116,12 @@ export const clearAllData = mutation({
       await Promise.all(rows.map((r: any) => ctx.db.delete(r._id)));
     }
 
+    // nudges only has by_user_status, whose userId prefix covers every status.
+    const nudges = await ctx.db.query("nudges")
+      .withIndex("by_user_status", (q) => q.eq("userId", userId))
+      .collect();
+    await Promise.all(nudges.map((r) => ctx.db.delete(r._id)));
+
     // weekly_summaries uses by_user_week index
     const weeklies = await ctx.db.query("weekly_summaries")
       .withIndex("by_user_week", (q) => q.eq("userId", userId))
@@ -66,6 +131,12 @@ export const clearAllData = mutation({
     // user_gamification
     const gam = await ctx.db.query("user_gamification").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (gam) await ctx.db.delete(gam._id);
+
+    // Ledger rows grow with every revision, so they go in scheduled batches. The marker blocks ledger writes until done.
+    if ((await pendingLedgerClear(ctx, userId)) === null) {
+      await ctx.db.insert("ledger_clears", { userId });
+      await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: 0 });
+    }
   },
 });
 
@@ -119,6 +190,12 @@ export const exportAllData = query({
       ctx.db.query("check_in_template_settings").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
     ]);
 
+    const [entries, day_totals, weights] = await Promise.all([
+      ctx.db.query("entries").withIndex("by_userId_and_localDate_and_status", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).collect(),
+    ]);
+
     return {
       exportedAt: Date.now(),
       meals, workouts, daily_goals, insights,
@@ -129,6 +206,7 @@ export const exportAllData = query({
       user_profiles, user_behavior, nudges,
       user_settings, user_metabolic_profiles, calorie_feedback,
       gamification: user_gamification ?? null,
+      entries, day_totals, weights,
     };
   },
 });
