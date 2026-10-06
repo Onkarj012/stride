@@ -182,6 +182,8 @@ export function CoachPage() {
   const labelFileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const submissionIds = useSubmissionId();
+  // A retained retry id belongs to the chat it failed in; switching chats drops it.
+  const clearSubmissionId = submissionIds.clear;
 
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
 
@@ -313,7 +315,8 @@ export function CoachPage() {
     setNotes([]);
     setPendingSend(null);
     setFreshSubmissionId(null);
-  }, [activeSessionId]);
+    clearSubmissionId();
+  }, [activeSessionId, clearSubmissionId]);
 
   // Load session from sidebar ?session= param, then clear the param from URL
   useEffect(() => {
@@ -343,7 +346,8 @@ export function CoachPage() {
     setNotes([]);
     setPendingSend(null);
     setFreshSubmissionId(null);
-  }, []);
+    clearSubmissionId();
+  }, [clearSubmissionId]);
 
   const removeSession = useCallback(async (id: Id<"chat_sessions">) => {
     setDeletingSessionId(id);

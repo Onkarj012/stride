@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ChatTurnCard, ConfirmationCardData } from "@stride/shared";
 import { ChatTurnCards, type ChatCardHandlers } from "./ChatTurnCards";
@@ -6,8 +6,9 @@ import { ChatTurnMessage, type PersistedChatMessage } from "./ChatTurnMessage";
 import { hasMinimumTouchTarget } from "./cardSizing";
 import { useChatCardActions } from "./useChatCardActions";
 
-const { logAnywayForAction, undoAction, undoGroup, toastError, toastSuccess } = vi.hoisted(() => ({
+const { logAnywayForAction, resolveClarification, undoAction, undoGroup, toastError, toastSuccess } = vi.hoisted(() => ({
   logAnywayForAction: vi.fn(),
+  resolveClarification: vi.fn(),
   undoAction: vi.fn(),
   undoGroup: vi.fn(),
   toastError: vi.fn(),
@@ -24,7 +25,11 @@ vi.mock("@convex/_generated/api", () => {
 });
 
 vi.mock("convex/react", () => ({
-  useAction: (ref: unknown) => String(ref) === "ai.logAnywayForAction" ? logAnywayForAction : vi.fn(),
+  useAction: (ref: unknown) => String(ref) === "ai.logAnywayForAction"
+    ? logAnywayForAction
+    : String(ref) === "ai.resolveClarification"
+      ? resolveClarification
+      : vi.fn(),
   useMutation: (ref: unknown) => String(ref) === "actions_undo.undoAction"
     ? undoAction
     : String(ref) === "actions_undo.undoGroup"
@@ -337,6 +342,26 @@ describe("chat turn cards", () => {
     expect(toastError).toHaveBeenCalledWith("Couldn't undo", "Workout row changed");
     expect(screen.getByRole("button", { name: "Oatmeal reversed" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Undo 5k run" })).toBeEnabled();
+  });
+
+  it("shows an error instead of Saved when a clarification comes back expired", async () => {
+    toastError.mockClear();
+    toastSuccess.mockClear();
+    resolveClarification.mockResolvedValue({
+      groupId: "group-expired",
+      loggedItems: [],
+      memoryApprovals: [],
+      content: "This confirmation expired. Nothing was saved.",
+      turnOutcome: "no_action",
+      turnCards: [],
+      actionIds: [],
+    });
+
+    const { result } = renderHook(() => useChatCardActions());
+    result.current.handlers.onClarify?.("group-expired", "2026-07-30");
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't save", "This confirmation expired. Nothing was saved."));
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("renders the expected structure for every card kind in the contract", () => {

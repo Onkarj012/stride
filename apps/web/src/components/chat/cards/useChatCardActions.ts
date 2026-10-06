@@ -103,8 +103,10 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     });
     if (alreadyPending) return;
     try {
-      await resolveClarification({ groupId: groupId as never, date });
-      toast.success("Saved", date);
+      const result = await resolveClarification({ groupId: groupId as never, date });
+      // Expired or failed groups come back as a result, not a throw.
+      if (result.turnOutcome === "committed") toast.success("Saved", date);
+      else toast.error("Couldn't save", result.content);
       onSettled?.();
     } catch (error) {
       toast.error("Couldn't save", error instanceof Error ? error.message : "Try again");
