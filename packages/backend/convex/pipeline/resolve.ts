@@ -437,6 +437,11 @@ export const commitLog = internalMutation({
     await assertLedgerWritable(ctx, userId);
     const existing = await existingLog(ctx, userId, submissionId);
     if (existing !== null) return existing;
+    // A chat turn can outlive its chat (deleted, or cleared with the account). Its late writes must not reappear.
+    if (args.chatId !== undefined && (await ctx.db.get("chats", args.chatId))?.userId !== userId) throw new Error("Chat not found");
+    if (args.messageId !== undefined && (await ctx.db.get("messages", args.messageId))?.userId !== userId) {
+      throw new Error("Message not found");
+    }
     if (items.length === 0) return { kind: "empty", submissionId, lines: [] };
     const links = {
       ...(args.chatId === undefined ? {} : { chatId: args.chatId }),

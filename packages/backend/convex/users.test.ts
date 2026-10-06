@@ -197,6 +197,25 @@ describe("clearAllData", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     await expect(user.mutation(api.chats.createChat, {})).resolves.toBeDefined();
   });
+  test("a chat turn that finishes after the clear writes no draft for the deleted chat", async () => {
+    vi.useFakeTimers();
+    const { t, sharedFood, a, user } = await setup();
+    const messageId = await t.run(async (ctx) => {
+      const message = await ctx.db.query("messages").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", "user_a").eq("submissionId", "m0")).unique();
+      if (message === null) throw new Error("missing message");
+      return message._id;
+    });
+    await user.mutation(api.users.clearAllData, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    // The model reply lands only now, after the marker is gone.
+    const item = { food: "rice", quantity: 1, unit: "cup", slot: null, date: null, fromPhoto: false, portionScale: null, cookingOil: false, confidence: 1 };
+    const late = { userId: "user_a", inputKind: "chat" as const, items: [item], picks: [{ index: 0, foodId: sharedFood }] };
+    await expect(t.mutation(internal.pipeline.resolve.commitLog, { ...late, submissionId: "m0:log", chatId: a.chatId, messageId })).rejects.toThrow(/Chat not found/);
+    await expect(t.mutation(internal.pipeline.resolve.commitLog, { ...late, submissionId: "m0:log2", messageId })).rejects.toThrow(/Message not found/);
+    expect(await user.query(api.pipeline.drafts.listPendingDrafts, {})).toEqual([]);
+    expect((await remaining(t)).drafts).toEqual(["user_b"]);
+  });
 });
 
 describe("exportAllData", () => {
