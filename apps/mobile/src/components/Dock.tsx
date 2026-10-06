@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { BottomTabBarProps } from 'expo-router/js-tabs'
 import { layout, motion, radii } from '@stride/ui-tokens'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Icon, type IconName } from './Icon'
+import { useLog } from './LogProvider'
 import { Polo } from './Polo'
 import { Tap } from './Tap'
 
@@ -50,7 +51,7 @@ function DockTab({ icon, label, active, onPress }: { icon: IconName; label: stri
   )
 }
 
-// The v5 dock: four tabs with a springy pill, Polo perched above the active tab, and the input bar stub.
+// The v5 dock: four tabs with a springy pill, Polo perched above the active tab, and the input bar. Slides away under a sheet.
 export function Dock({ state, navigation }: BottomTabBarProps) {
   const t = useTheme()
   const s = useStyles()
@@ -58,6 +59,13 @@ export function Dock({ state, navigation }: BottomTabBarProps) {
   const index = state.index
   const [hops, setHops] = useState(0)
   const [night] = useState(() => isNight(new Date()))
+  const { compose, sheetOpen } = useLog()
+  const away = useSharedValue(0)
+
+  useEffect(() => {
+    away.value = withSpring(sheetOpen ? 1 : 0, motion.spring.smooth)
+  }, [sheetOpen, away])
+  const awayStyle = useAnimatedStyle(() => ({ opacity: 1 - away.value, transform: [{ translateY: away.value * 130 }] }))
 
   const pill = useSharedValue(index * layout.dockButton)
   const perch = useSharedValue(index * layout.dockButton + PERCH_OFFSET)
@@ -72,7 +80,13 @@ export function Dock({ state, navigation }: BottomTabBarProps) {
   const perchStyle = useAnimatedStyle(() => ({ transform: [{ translateX: perch.value }] }))
 
   return (
-    <View style={[s.wrap, { bottom: Math.max(layout.dockInsetBottom, insets.bottom + 8) }]}>
+    <Animated.View
+      style={[
+        s.wrap,
+        { bottom: Math.max(layout.dockInsetBottom, insets.bottom + 8), pointerEvents: sheetOpen ? 'none' : 'box-none' },
+        awayStyle,
+      ]}
+    >
       <Animated.View style={[s.perch, perchStyle]}>
         <Polo size={layout.perchSize} mood={night ? 'sleep' : 'idle'} hop={hops} />
       </Animated.View>
@@ -97,21 +111,33 @@ export function Dock({ state, navigation }: BottomTabBarProps) {
             )
           })}
         </View>
-        <Tap style={s.field} scale={motion.press.rowScale} accessibilityRole="button" accessibilityLabel="Log anything">
+        <Tap
+          style={s.field}
+          scale={motion.press.rowScale}
+          onPress={() => compose('text')}
+          accessibilityRole="button"
+          accessibilityLabel="Log anything"
+        >
           <Text style={s.placeholder} numberOfLines={1}>
             Log anything
           </Text>
-          <Pressable style={s.mic} accessibilityRole="button" accessibilityLabel="Voice">
+          <Tap
+            style={s.mic}
+            scale={motion.press.iconScale}
+            onPress={() => compose('voice')}
+            accessibilityRole="button"
+            accessibilityLabel="Log by voice"
+          >
             <Icon name="mic" color={t.c.dockInk} />
-          </Pressable>
+          </Tap>
         </Tap>
       </View>
-    </View>
+    </Animated.View>
   )
 }
 
 const useStyles = themedStyles((t) => ({
-  wrap: { position: 'absolute', left: layout.dockInsetX, right: layout.dockInsetX, pointerEvents: 'box-none' },
+  wrap: { position: 'absolute', left: layout.dockInsetX, right: layout.dockInsetX },
   perch: {
     position: 'absolute',
     left: 0,
