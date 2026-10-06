@@ -11,6 +11,7 @@ import {
   revisionOpValidator,
 } from "./ledger_validators";
 import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
+import { assertLedgerWritable } from "./users";
 
 /** Most items one `addEntries` call may write. */
 export const MAX_BATCH = 50;
@@ -103,6 +104,7 @@ export async function insertEntries(
   author: EntryAuthor,
 ): Promise<Id<"entries">[]> {
   checkSubmissionId(submissionId);
+  await assertLedgerWritable(ctx, userId);
   const prior = await submissionRows(ctx, userId, submissionId, MAX_BATCH);
   if (prior.length > 0) {
     if (prior.some((row) => row.op !== "add")) throw new Error("submissionId already used for a different change");
@@ -202,6 +204,7 @@ async function writeRevision(
   submissionId: string,
   createdBy: CreatedBy,
 ): Promise<Id<"entries">> {
+  await assertLedgerWritable(ctx, head.userId);
   const row: EntryRow = {
     ...content,
     userId: head.userId,

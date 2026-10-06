@@ -342,7 +342,7 @@ describe("account data", () => {
     const { t, user, rice } = await setup();
     const other = t.withIdentity({ subject: "user_b" });
     await other.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
-    await user.mutation(api.entries.addEntries, { submissionId: "s1", items: [{ foodId: rice, grams: 100, source: "db", loggedAt: IST_LUNCH }] });
+    const [entryId] = await user.mutation(api.entries.addEntries, { submissionId: "s1", items: [{ foodId: rice, grams: 100, source: "db", loggedAt: IST_LUNCH }] });
     await user.mutation(api.weights.logWeight, { kg: 72, localDate: "2026-10-05" });
     await other.mutation(api.entries.addEntries, { submissionId: "s1", items: [{ foodId: rice, grams: 50, source: "db", loggedAt: IST_LUNCH }] });
     await other.mutation(api.weights.logWeight, { kg: 60, localDate: "2026-10-05" });
@@ -361,7 +361,17 @@ describe("account data", () => {
         }
       });
       await user.mutation(api.users.clearAllData, {});
+
+      // Ledger writes wait until the scheduled batches finish.
+      expect(await user.query(api.users.ledgerClearPending, {})).toBe(true);
+      await expect(user.mutation(api.weights.logWeight, { kg: 71, localDate: "2026-10-06" })).rejects.toThrow(/being cleared/);
+      await expect(
+        user.mutation(api.entries.editEntry, { submissionId: "s2", entryId, grams: 150 }),
+      ).rejects.toThrow(/being cleared/);
+      expect(await other.query(api.users.ledgerClearPending, {})).toBe(false);
+
       await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await user.query(api.users.ledgerClearPending, {})).toBe(false);
     } finally {
       vi.useRealTimers();
     }

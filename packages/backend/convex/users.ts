@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -20,18 +20,43 @@ async function ledgerBatch(ctx: MutationCtx, table: (typeof LEDGER_TABLES)[numbe
   }
 }
 
-/** Deletes one batch of a user's ledger rows and schedules itself until every ledger table is empty for them. */
+/** The user's in-progress ledger clear marker, or null when no clear is running. */
+async function pendingLedgerClear(ctx: QueryCtx | MutationCtx, userId: string) {
+  return await ctx.db.query("ledger_clears").withIndex("by_userId", (q) => q.eq("userId", userId)).unique();
+}
+
+/** Throws while clearAllData is still deleting the user's ledger rows, so no new write is lost or left half-counted. */
+export async function assertLedgerWritable(ctx: MutationCtx, userId: string): Promise<void> {
+  if ((await pendingLedgerClear(ctx, userId)) !== null) throw new Error("Your data is being cleared. Try again in a moment.");
+}
+
+/** Deletes one batch of a user's ledger rows and schedules itself until every ledger table is empty, then drops the marker. */
 export const clearLedgerRows = internalMutation({
   args: { userId: v.string(), tableIndex: v.number() },
   returns: v.null(),
   handler: async (ctx, { userId, tableIndex }) => {
     const table = LEDGER_TABLES[tableIndex];
-    if (table === undefined) return null;
-    const rows = await ledgerBatch(ctx, table, userId);
+    const rows = table === undefined ? [] : await ledgerBatch(ctx, table, userId);
     for (const row of rows) await ctx.db.delete(row._id);
     const next = rows.length === CLEAR_LEDGER_BATCH ? tableIndex : tableIndex + 1;
-    if (next < LEDGER_TABLES.length) await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: next });
+    if (next < LEDGER_TABLES.length) {
+      await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: next });
+      return null;
+    }
+    const marker = await pendingLedgerClear(ctx, userId);
+    if (marker !== null) await ctx.db.delete(marker._id);
     return null;
+  },
+});
+
+/** True while the caller's ledger rows are still being cleared. Clients wait for false before logging again. */
+export const ledgerClearPending = query({
+  args: {},
+  returns: v.boolean(),
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    return (await pendingLedgerClear(ctx, identity.subject)) !== null;
   },
 });
 
@@ -107,8 +132,11 @@ export const clearAllData = mutation({
     const gam = await ctx.db.query("user_gamification").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (gam) await ctx.db.delete(gam._id);
 
-    // Ledger rows grow with every revision, so they go in scheduled batches.
-    await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: 0 });
+    // Ledger rows grow with every revision, so they go in scheduled batches. The marker blocks ledger writes until done.
+    if ((await pendingLedgerClear(ctx, userId)) === null) {
+      await ctx.db.insert("ledger_clears", { userId });
+      await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: 0 });
+    }
   },
 });
 

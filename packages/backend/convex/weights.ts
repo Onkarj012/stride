@@ -2,6 +2,7 @@ import { daysBetween, isLocalDate } from "@stride/core";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { localDateOrToday, requireUserId } from "./time_zone";
+import { assertLedgerWritable } from "./users";
 
 /** Plausible adult body weight bounds in kg. Outside them the input is a typo or wrong unit. */
 export const WEIGHT_KG_RANGE = { min: 20, max: 400 } as const;
@@ -14,6 +15,7 @@ export const logWeight = mutation({
   returns: v.id("weights"),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
     if (!Number.isFinite(args.kg) || args.kg < WEIGHT_KG_RANGE.min || args.kg > WEIGHT_KG_RANGE.max) {
       throw new Error(`kg must be within ${WEIGHT_KG_RANGE.min}-${WEIGHT_KG_RANGE.max}, got ${args.kg}`);
     }
