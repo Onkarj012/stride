@@ -71,7 +71,7 @@ const UNIT_WORDS: ReadonlySet<string> = new Set(
   ].flatMap(tokenize),
 );
 
-/** Each number with its normalized units and first food word, sorted, so amount, unit and food stay together. */
+/** Each number with its normalized unit phrase and first food word, sorted, so amount, unit and food stay together. */
 function quantityKey(tokens: readonly string[]): string {
   return tokens
     .flatMap((t, i) => {
@@ -84,9 +84,11 @@ function quantityKey(tokens: readonly string[]): string {
           food = word;
           break;
         }
-        units.push(normalizeUnit(word));
+        units.push(word);
       }
-      return [[t, ...units, food].join(" ")];
+      // Normalize the whole phrase, so "fluid ounce" and "fl oz" agree.
+      const unit = units.length > 0 ? normalizeUnit(units.join(" ")) : "";
+      return [[t, unit, food].join(" ")];
     })
     .sort()
     .join("|");

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { budgetAdjustmentKcal, plannedPerTrainingDayKcal, sessionBurnKcal } from "./energy/workout_burn.ts";
 import { atwaterKcal, roundNutrients, scaleNutrients, sumNutrients, totalNutrients } from "./nutrition/compute.ts";
 import { clampFlags, combineConfidence, evaluateGate } from "./nutrition/gate.ts";
-import { rankCandidates, selectMatch } from "./nutrition/match.ts";
+import { MATCH_MIN_SCORE, rankCandidates, scoreName, selectMatch } from "./nutrition/match.ts";
 import type { Nutrients } from "./nutrition/types.ts";
 import { PORTION_CONFIDENCE, resolvePortion } from "./nutrition/units.ts";
 
@@ -28,6 +28,8 @@ describe("HANDOFF #2: food memory respects quantity", () => {
     expect(selectMatch(rankCandidates("2 cups of rice and 1 cup dal", [{ name: "1 cup rice and 2 cups dal" }]))).toEqual({ status: "no_match" });
     expect(selectMatch(rankCandidates("2 cups rice and 1 tbsp oil", [{ name: "2 tbsp rice and 1 cup oil" }]))).toEqual({ status: "no_match" });
     expect(selectMatch(rankCandidates("2 cups rice and 1 tbsp oil", [{ name: "1 tbsp oil and 2 cups rice" }]))).toMatchObject({ status: "matched" });
+    expect(scoreName("2 fluid ounces milk with coffee and 1 cup cooked brown rice", "2 fl oz milk with coffee and 1 cup cooked brown rice"))
+      .toBeGreaterThan(MATCH_MIN_SCORE);
   });
 });
 
