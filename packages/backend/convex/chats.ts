@@ -13,13 +13,14 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
+import { transcribeAudio } from "./ai";
 import { AI_INPUT_LIMITS, assertMaxChars } from "./ai_guard";
 import { MAX_DAY_ENTRIES } from "./day_totals";
 import { deleteEntryAs, editEntryAs } from "./entries";
 import { isVisibleFood } from "./foods_db";
 import { mealSlotValidator } from "./ledger_validators";
 import { extractItems, ITEM_JSON_SCHEMA, PARSE_RULES, parseItem } from "./pipeline/extract";
-import { imageUrl, runPipeline, transcribe } from "./pipeline/log";
+import { imageUrl, runPipeline } from "./pipeline/log";
 import { callOpenRouter, PIPELINE_MODEL, type ChatMessage, type JsonValue, type ToolDefinition } from "./pipeline/openrouter";
 import { resolveFoodPortion, userFoodsOf, userMeasuresOf, type LogResult } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
@@ -649,7 +650,7 @@ export const sendMessage = action({
     if (prior !== null) return prior;
 
     let text = (args.text ?? "").trim();
-    if (args.audio !== undefined) text = [text, await transcribe(ctx, args.audio.data, args.audio.mimeType)].join(" ").trim();
+    if (args.audio !== undefined) text = [text, await transcribeAudio(ctx, userId, args.audio.data, args.audio.mimeType)].join(" ").trim();
     assertMaxChars(text, AI_INPUT_LIMITS.messageChars, "message");
     if (text === "" && args.imageStorageId === undefined) throw new Error("Message is empty");
 

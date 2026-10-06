@@ -1,7 +1,8 @@
 import { v } from "convex/values";
-import { api, internal } from "../_generated/api";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { action, internalQuery, type ActionCtx } from "../_generated/server";
+import { transcribeAudio } from "../ai";
 import { AI_INPUT_LIMITS, assertMaxChars } from "../ai_guard";
 import { extractItems, type ExtractedItem } from "./extract";
 import { logResultValidator, type InputKind, type LogResult, type UnresolvedItem } from "./resolve";
@@ -39,14 +40,6 @@ export async function runPipeline(ctx: ActionCtx, userId: string, run: PipelineR
   });
 }
 
-/** Turns base64 audio into text with Groq Whisper, through the existing `ai.transcribe` action and its budget guard. */
-export async function transcribe(ctx: ActionCtx, audio: string, mimeType: string | undefined): Promise<string> {
-  const { transcript }: { transcript: string } = await ctx.runAction(api.ai.transcribe, {
-    audio,
-    ...(mimeType === undefined ? {} : { mimeType }),
-  });
-  return transcript;
-}
 
 /** Size and type of an uploaded file, from the `_storage` system table. Null when it does not exist. */
 export const photoInfo = internalQuery({
@@ -99,7 +92,7 @@ export const logInput = action({
     let text: string;
     let photoUrl: string | undefined;
     if (input.kind === "text") text = input.text;
-    else if (input.kind === "voice") text = await transcribe(ctx, input.audio, input.mimeType);
+    else if (input.kind === "voice") text = await transcribeAudio(ctx, userId, input.audio, input.mimeType);
     else {
       text = input.text ?? "";
       photoUrl = await imageUrl(ctx, input.storageId);
