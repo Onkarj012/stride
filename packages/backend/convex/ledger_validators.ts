@@ -64,3 +64,14 @@ export const exerciseRecordValidator = v.object({
   primaryMuscles: v.array(v.string()),
   secondaryMuscles: v.array(v.string()),
 });
+
+/** How the pipeline input reached the server. Chat turns that log food use "chat". */
+export const inputKindValidator = v.union(v.literal("text"), v.literal("voice"), v.literal("photo"), v.literal("chat"));
+
+/** Which matcher tier chose a draft item's food. */
+export const matchSourceValidator = v.union(
+  v.literal("user_food"),
+  v.literal("memory"),
+  v.literal("db"),
+  v.literal("tool"),
+);

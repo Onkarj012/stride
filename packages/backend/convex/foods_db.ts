@@ -1,5 +1,7 @@
+import { hasAtwaterMismatch, normalizeText } from "@stride/core";
 import { v } from "convex/values";
-import { internalMutation, query } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import { internalMutation, mutation, query } from "./_generated/server";
 import {
   exerciseRecordValidator,
   foodPortionRecordValidator,
@@ -13,6 +15,13 @@ import { requireUserId } from "./time_zone";
 export const MAX_IMPORT_BATCH = 500;
 /** Most results `searchFoods` returns. */
 export const MAX_SEARCH_RESULTS = 25;
+/** Most personal foods one user may keep. Keeps every per-user read bounded. */
+export const MAX_USER_FOODS = 200;
+
+/** True when a user may see and log this food: shared records, or personal records they own. */
+export function isVisibleFood(food: Pick<Doc<"foods">, "ownerUserId">, userId: string): boolean {
+  return food.ownerUserId === undefined || food.ownerUserId === userId;
+}
 
 const upsertCounts = v.object({ inserted: v.number(), updated: v.number(), unchanged: v.number() });
 
@@ -153,22 +162,86 @@ export const searchFoods = query({
     }),
   ),
   handler: async (ctx, args) => {
-    await requireUserId(ctx);
+    const userId = await requireUserId(ctx);
     const text = args.query.trim();
     if (text === "") return [];
     const requested = args.limit !== undefined && Number.isFinite(args.limit) ? Math.floor(args.limit) : 10;
     const limit = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
+    // Over-fetch so other users' personal foods can be dropped without shrinking the page much.
     const rows = await ctx.db
       .query("foods")
       .withSearchIndex("search_text", (q) => q.search("searchText", text))
-      .take(limit);
-    return rows.map((row) => ({
-      _id: row._id,
-      name: row.name,
-      aliases: row.aliases,
-      source: row.source,
-      verified: row.verified,
-      per100g: row.per100g,
-    }));
+      .take(limit + 10);
+    return rows
+      .filter((row) => isVisibleFood(row, userId))
+      .slice(0, limit)
+      .map((row) => ({
+        _id: row._id,
+        name: row.name,
+        aliases: row.aliases,
+        source: row.source,
+        verified: row.verified,
+        per100g: row.per100g,
+      }));
+  },
+});
+
+const userFoodValidator = v.object({
+  _id: v.id("foods"),
+  name: v.string(),
+  aliases: v.array(v.string()),
+  per100g: nutrientsValidator,
+});
+
+/** Saves a personal food (e.g. homemade paneer) with user-stated per-100 g values. Same name again updates it. */
+export const createUserFood = mutation({
+  args: { name: v.string(), aliases: v.optional(v.array(v.string())), per100g: nutrientsValidator },
+  returns: v.id("foods"),
+  handler: async (ctx, { name, aliases, per100g }): Promise<Id<"foods">> => {
+    const userId = await requireUserId(ctx);
+    const key = normalizeText(name);
+    if (key === "" || name.length > 120) throw new Error("Food name must be 1-120 characters");
+    const cleanAliases = (aliases ?? []).map((a) => a.trim()).filter((a) => a !== "").slice(0, 10);
+    const numbers = [per100g.kcal, per100g.protein, per100g.carbs, per100g.fat, per100g.fiber, per100g.sugar, per100g.sodiumMg];
+    if (numbers.some((n) => n !== null && (!Number.isFinite(n) || n < 0))) throw new Error("Nutrients must be finite and not negative");
+    if (per100g.protein + per100g.carbs + per100g.fat > 100) throw new Error("Macros cannot exceed 100 g per 100 g");
+    const row: Omit<Doc<"foods">, "_id" | "_creationTime"> = {
+      name: name.trim(),
+      aliases: cleanAliases,
+      searchText: [name.trim(), ...cleanAliases].join(" "),
+      per100g,
+      source: "user",
+      sourceId: `${userId}:${key}`,
+      verified: !hasAtwaterMismatch(per100g),
+      ownerUserId: userId,
+    };
+    const existing = await ctx.db
+      .query("foods")
+      .withIndex("by_source_and_sourceId", (q) => q.eq("source", "user").eq("sourceId", row.sourceId))
+      .unique();
+    if (existing !== null) {
+      await ctx.db.replace("foods", existing._id, row);
+      return existing._id;
+    }
+    const owned = await ctx.db
+      .query("foods")
+      .withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId))
+      .take(MAX_USER_FOODS);
+    if (owned.length >= MAX_USER_FOODS) throw new Error(`You can keep at most ${MAX_USER_FOODS} personal foods`);
+    return await ctx.db.insert("foods", row);
+  },
+});
+
+/** The caller's personal foods, at most `MAX_USER_FOODS`. */
+export const listUserFoods = query({
+  args: {},
+  returns: v.array(userFoodValidator),
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const rows = await ctx.db
+      .query("foods")
+      .withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId))
+      .take(MAX_USER_FOODS);
+    return rows.map((row) => ({ _id: row._id, name: row.name, aliases: row.aliases, per100g: row.per100g }));
   },
 });

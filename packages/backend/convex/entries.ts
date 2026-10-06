@@ -79,10 +79,12 @@ function checkGrams(grams: number): void {
   }
 }
 
-/** Loads a food or throws, so an entry never points at a missing row. */
-async function requireFood(ctx: MutationCtx, foodId: Id<"foods">): Promise<Doc<"foods">> {
+/** Loads a food the user may log or throws, so an entry never points at a missing row or another user's food. */
+async function requireFood(ctx: MutationCtx, foodId: Id<"foods">, userId: string): Promise<Doc<"foods">> {
   const food = await ctx.db.get("foods", foodId);
-  if (food === null) throw new Error(`Unknown food: ${foodId}`);
+  if (food === null || (food.ownerUserId !== undefined && food.ownerUserId !== userId)) {
+    throw new Error(`Unknown food: ${foodId}`);
+  }
   return food;
 }
 
@@ -121,7 +123,7 @@ export async function insertEntries(
     }
     const loggedAt = item.loggedAt ?? now;
     if (!Number.isFinite(loggedAt)) throw new Error("loggedAt must be a finite timestamp");
-    const food = await requireFood(ctx, item.foodId);
+    const food = await requireFood(ctx, item.foodId, userId);
     const day = await resolveLocalDay(ctx, userId, loggedAt);
     const row: EntryRow = {
       userId,
@@ -254,7 +256,7 @@ export const editEntry = mutation({
 
     const content = contentOf(head);
     if (grams !== undefined || foodId !== undefined) {
-      const food = await requireFood(ctx, foodId ?? head.foodId);
+      const food = await requireFood(ctx, foodId ?? head.foodId, userId);
       content.foodId = food._id;
       content.foodName = food.name;
       content.grams = grams ?? head.grams;
