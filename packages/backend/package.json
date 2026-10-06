@@ -4,10 +4,11 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts",
     "convex": "npx convex dev",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "data:load": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/load-foods.ts"
   },
   "dependencies": {
     "@stride/core": "workspace:*",

@@ -1,6 +1,6 @@
 # Food and exercise import scripts
 
-These scripts turn public food and exercise datasets into NDJSON rows shaped for the `foods`, `food_portions` and `exercises` tables in plan 007 section 3.2. They only write local files. Loading the rows into Convex is slice 3's job.
+These scripts turn public food and exercise datasets into NDJSON rows shaped for the `foods`, `food_portions` and `exercises` tables in plan 007 section 3.2. They only write local files. See [Load into Convex](#load-into-convex) for the next step.
 
 They use Node built-ins only and need Node 22.6 or newer, which runs TypeScript directly. CI does not run them.
 
@@ -25,6 +25,17 @@ Downloads are cached in `packages/core/data/cache/`. Delete that folder to downl
 | `exercises.ndjson` | `exercises` | free-exercise-db, pinned commit |
 
 Each line is one JSON object. The types are `FoodRecord`, `FoodPortionRecord` and `ExerciseRecord` in `src/nutrition/types.ts`. Nutrients are per 100 g and unrounded.
+
+## Load into Convex
+
+`packages/backend/scripts/load-foods.ts` reads the NDJSON files above and upserts them in batches of 200 through `npx convex run`. It loads `fdc_foods`, then `ifct_foods` if present, then `fdc_food_portions` and `exercises`. Rows are keyed on source and source id, so a rerun only writes what changed. Portions whose food is not loaded are counted as `missingFood` and skipped.
+
+```sh
+pnpm --filter stride-backend data:load          # dev deployment from packages/backend/.env.local
+pnpm --filter stride-backend data:load --prod   # production; extra flags go to `convex run`
+```
+
+It needs the schema deployed first (`pnpm dev:convex` or `npx convex deploy`). CI does not run it.
 
 ## USDA FoodData Central
 
