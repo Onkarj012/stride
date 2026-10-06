@@ -335,6 +335,42 @@ describe("day totals", () => {
       nutrients: { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodiumMg: 0 },
     });
   });
+
+  test("dayTotalsInRange lists only the caller's logged days in range and skips emptied days", async () => {
+    const { t, user, rice, dal } = await setup();
+    const other = t.withIdentity({ subject: "user_b" });
+    await other.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
+    await user.mutation(api.entries.addEntries, {
+      submissionId: "a",
+      items: [
+        { foodId: rice, grams: 150, source: "db", localDate: "2026-10-01" },
+        { foodId: dal, grams: 120, source: "db", localDate: "2026-10-03" },
+        { foodId: rice, grams: 90, source: "db", localDate: "2026-09-20" },
+      ],
+    });
+    const [gone] = await user.mutation(api.entries.addEntries, {
+      submissionId: "b",
+      items: [{ foodId: dal, grams: 50, source: "db", localDate: "2026-10-02" }],
+    });
+    await user.mutation(api.entries.deleteEntry, { submissionId: "b-del", entryId: gone });
+    await other.mutation(api.entries.addEntries, {
+      submissionId: "c",
+      items: [{ foodId: rice, grams: 100, source: "db", localDate: "2026-10-01" }],
+    });
+
+    const rows = await user.query(api.day_totals.dayTotalsInRange, { from: "2026-10-01", to: "2026-10-31" });
+    expect(rows).toEqual([
+      { localDate: "2026-10-01", entryCount: 1, nutrients: totalNutrients([{ per100g: RICE, grams: 150 }]) },
+      { localDate: "2026-10-03", entryCount: 1, nutrients: totalNutrients([{ per100g: DAL, grams: 120 }]) },
+    ]);
+  });
+
+  test("dayTotalsInRange rejects bad and oversized ranges", async () => {
+    const { user } = await setup();
+    await expect(user.query(api.day_totals.dayTotalsInRange, { from: "2026-10-31", to: "2026-10-01" })).rejects.toThrow("Range");
+    await expect(user.query(api.day_totals.dayTotalsInRange, { from: "2026-01-01", to: "2026-12-31" })).rejects.toThrow("Range");
+    await expect(user.query(api.day_totals.dayTotalsInRange, { from: "Oct 1", to: "2026-10-31" })).rejects.toThrow("YYYY-MM-DD");
+  });
 });
 
 describe("account data", () => {

@@ -62,6 +62,7 @@ import type * as telemetry from "../telemetry.js";
 import type * as time_resolve from "../time_resolve.js";
 import type * as time_zone from "../time_zone.js";
 import type * as unit_converter from "../unit_converter.js";
+import type * as uploads from "../uploads.js";
 import type * as user_ingredients from "../user_ingredients.js";
 import type * as users from "../users.js";
 import type * as validation from "../validation.js";
@@ -134,6 +135,7 @@ declare const fullApi: ApiFromModules<{
   time_resolve: typeof time_resolve;
   time_zone: typeof time_zone;
   unit_converter: typeof unit_converter;
+  uploads: typeof uploads;
   user_ingredients: typeof user_ingredients;
   users: typeof users;
   validation: typeof validation;
