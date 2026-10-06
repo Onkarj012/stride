@@ -1,116 +1,80 @@
 # Stride
 
-Track daily nutrition, workouts, and fitness progress with AI-powered insights.
+Stride is an AI nutrition and strength tracker for Android, being rebuilt for v1. You type, say, photograph, or scan what you ate. The AI turns that into food names and portions. Calories and macros come from verified food databases (USDA FoodData Central, IFCT 2017, Open Food Facts), never from the model's guess. It also logs workouts, tracks a weight trend, and estimates your real energy expenditure from your own data.
 
-## Features
+## Status
 
-- **Meal Tracking** — Log meals with macros. AI estimates nutrition from meal names, images, and voice.
-- **Workout Tracking** — Log sets, reps, weight, and intensity. AI suggests workouts and calculates calorie burn.
-- **Dashboard** — Calories, macros, workout stats, 7-day history with charts.
-- **AI Coach (Stry)** — Context-aware chat with real-time meal & workout data, 7 specialist coaches.
-- **Daily Insights & Weekly Summaries** — AI-generated reports and trends, delivered via cron.
-- **Adaptive Memory** — Auto-learns your foods, workouts, and custom ingredients for better accuracy over time.
-- **Light/Dark Theme** — Toggle with system preference detection.
-- **Voice, Image, Barcode** — Multi-modal input for effortless logging.
+Restart in progress. v1 is being rebuilt in slices per [`plans/007-restart.md`](plans/007-restart.md).
 
-## Tech Stack
+- Slice 1 (current) cleans up the repo: old features removed, old docs archived, CI added.
+- The Android app is the main target. The current mobile app will be replaced.
+- The web app is frozen. It comes back later as a desktop view for logs and progress.
+- Expect breaking changes and data resets until v1 ships. It is built for the author first, then a few family members.
 
-| Layer | Technology |
+## Stack
+
+| Layer | Tech |
 |---|---|
-| Frontend | React 19, TypeScript, Vite 8, Tailwind CSS v4, Framer Motion |
-| Charts | Recharts |
-| Backend | [Convex](https://convex.dev) (real-time DB + serverless functions) |
-| Auth | Clerk (`@clerk/react`) |
-| AI | OpenRouter — GPT-4o-mini (parsing) + Claude Sonnet 4.6 (chat) + Groq Whisper (voice) |
+| Mobile | Expo, React Native, expo-router |
+| Web | React 19, Vite, Tailwind CSS v4 |
+| Backend | [Convex](https://convex.dev) |
+| Auth | [Clerk](https://clerk.com) |
+| AI | OpenRouter for parsing and chat, Groq Whisper for voice |
 
-## Getting Started
+## Quick start
 
-### Prerequisites
-
-- Node.js 18+
-- An [OpenRouter](https://openrouter.ai/keys) API key (for AI features)
-- A [Clerk](https://clerk.dev) account (for auth)
-- A [Convex](https://convex.dev) account (for backend)
-
-### Setup
+Needs Node 20+, pnpm 10, a Convex account, and a Clerk app. The mobile app also needs the Android SDK and either a USB device or an emulator.
 
 ```bash
-# Install dependencies
-# (Note: project uses bun, but npm works too)
-cd backend && bun install && cd ../frontend && bun install
+pnpm install
 
-# Configure environment
-cp backend/.env.example backend/.env.local
-cp frontend/.env.example frontend/.env.local
+# Terminal 1: Convex backend (first run links or creates a deployment)
+pnpm dev:convex
+
+# Terminal 2: web app
+pnpm dev
+
+# Mobile: build the dev client once, then start Metro
+pnpm --filter @stride/mobile android
+pnpm dev:mobile
 ```
 
-Edit `backend/.env.local` and add your API keys:
-
-```
-OPENROUTER_API_KEY=sk-or-v1-your-key-here
-GROQ_API_KEY=gsk-your-key-here
-```
-
-Edit `frontend/.env.local` and add your Convex URL and Clerk key:
-
-```
-VITE_CONVEX_URL=https://your-convex-deployment.convex.cloud
-VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
-```
-
-Configure Clerk JWT issuer in the Convex dashboard for `auth.config.ts`.
-
-### Development
-
-Run each service in its own terminal:
+Checks:
 
 ```bash
-# Terminal 1 — Convex backend
-cd backend && npx convex dev
-
-# Terminal 2 — Vite frontend
-cd frontend && bun run dev
+pnpm typecheck
+pnpm test
 ```
 
-This starts:
-- `backend/` — Convex dev server (typically at `http://127.0.0.1:3210`)
-- `frontend/` — Vite dev server at `http://localhost:5173`
+## Environment variables
 
-### Other Commands
+Set backend variables in the Convex dashboard. Set client variables in each app's `.env.local`.
 
-```bash
-cd frontend && bun run build   # Build frontend for production
-cd backend && npx convex deploy   # Deploy Convex functions
-cd backend && bun run typecheck   # TypeScript check
+| Name | Where |
+|---|---|
+| `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `CLERK_JWT_ISSUER_DOMAIN`, `USDA_API_KEY` | Convex dashboard |
+| `CONVEX_DEPLOYMENT`, `CONVEX_URL` | `packages/backend/.env.local` (written by `convex dev`, see `.env.example`) |
+| `VITE_CONVEX_URL`, `VITE_CLERK_PUBLISHABLE_KEY` | `apps/web/.env.local` |
+| `EXPO_PUBLIC_CONVEX_URL`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | `apps/mobile/.env.local` |
+
+## Repo layout
+
+```
+apps/mobile        Expo app (Android first)
+apps/web           Web app (frozen)
+packages/backend   Convex schema, functions, tests
+packages/shared    Design tokens and shared types
+plans/             The restart plan and its research
 ```
 
-## Project Structure
+## Contributing
 
-```
-├── backend/          # Convex backend
-│   └── convex/       # Schema, mutations, queries, AI actions
-├── frontend/         # React + Vite + Tailwind
-│   └── src/          # Pages, components, lib
-└── README.md
-```
+Read [`AGENTS.md`](AGENTS.md) for commands, conventions, and how work is split into slices. CI runs typecheck and tests on every pull request.
 
-## Environment Variables
+## Data note
 
-| Variable | Location | Description |
-|---|---|---|
-| `VITE_CONVEX_URL` | `frontend/.env.local` | Convex backend URL |
-| `VITE_CLERK_PUBLISHABLE_KEY` | `frontend/.env.local` | Clerk frontend key |
-| `OPENROUTER_API_KEY` | `backend/.env.local` + Convex dashboard | OpenRouter API key for AI |
-| `GROQ_API_KEY` | `backend/.env.local` + Convex dashboard | Groq API key for voice transcription |
-| `CLERK_JWT_ISSUER_DOMAIN` | Convex dashboard | JWT issuer for auth |
-| `CONVEX_DEPLOYMENT` | `backend/.env.local` | Convex deployment identifier |
+The IFCT 2017 food table is licensed for personal use only. Do not commit or redistribute the dataset.
 
-## Documentation
+## License
 
-- `docs/SYSTEM.md` — Comprehensive system reference (as implemented)
-- `docs/TECH_STACK.md` — Architecture and tech stack details
-- `docs/FEATURE_AUDIT.md` — Feature-by-feature audit of what's working
-- `docs/ASSESSMENT.md` — System assessment and strategic direction
-- `docs/VISION.md` — Long-term product vision
-- `docs/UX-DAILY-EXPERIENCE.md` — Daily user experience design
-
+[MIT](LICENSE)

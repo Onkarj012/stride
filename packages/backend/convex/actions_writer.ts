@@ -30,6 +30,7 @@ import { writeRecoveryDomain, writeWeightDomain } from "./wellness";
 import { buildRecoveryDraft, recoveryPayloadFromDraft } from "./recovery_draft";
 import { recomputeForAction } from "./derived_state";
 import { insertActionTelemetry } from "./telemetry";
+import { assertCurrentChatClaim, hasCompleteChatClaim } from "./chat_claim";
 
 const groupValidator = v.object({
   userId: v.string(),
@@ -42,6 +43,9 @@ const groupValidator = v.object({
   clientLocalTime: v.optional(v.string()),
   clientTimeZone: v.optional(v.string()),
   createdAt: v.optional(v.number()),
+  claimSubmissionId: v.optional(v.string()),
+  claimOwner: v.optional(v.string()),
+  claimVersion: v.optional(v.number()),
 });
 
 const memberValidator = v.object({
@@ -67,6 +71,9 @@ type WriterArgs = {
     clientLocalTime?: string;
     clientTimeZone?: string;
     createdAt?: number;
+    claimSubmissionId?: string;
+    claimOwner?: string;
+    claimVersion?: number;
   };
   member: {
     memberIdempotencyKey?: string;
@@ -81,6 +88,12 @@ type WriterArgs = {
 };
 
 async function prepareMember(ctx: MutationCtx, actionType: ActionType, args: WriterArgs) {
+  if (hasCompleteChatClaim(args.group)) {
+    if (!args.group.claimSubmissionId || !args.group.claimOwner || args.group.claimVersion === undefined) {
+      throw new Error("Chat turn claim is incomplete");
+    }
+    await assertCurrentChatClaim(ctx, args.group.userId, args.group.claimSubmissionId, args.group.claimOwner, args.group.claimVersion);
+  }
   const groupIdempotencyKey = args.group.groupIdempotencyKey ?? deriveGroupKey({
     userId: args.group.userId,
     sourceSurface: args.group.sourceSurface,
@@ -128,11 +141,22 @@ async function prepareMember(ctx: MutationCtx, actionType: ActionType, args: Wri
     }],
   })[0];
   assertValidActionEnvelope(member);
+  const existingCanonicalMember = groupResult.members.find((candidate) =>
+    candidate.memberIdempotencyKey === memberIdempotencyKey
+    || (hasCompleteChatClaim(args.group)
+      && candidate.actionType === actionType
+      && candidate.payload?._confirmationOrdinal === member.payload?._confirmationOrdinal),
+  );
+  // Claimed turn retries must execute the persisted member, never overwrite it
+  // with a fresh extraction that happens to have the same logical ordinal.
+  const canonicalMember = existingCanonicalMember && hasCompleteChatClaim(args.group)
+    ? existingCanonicalMember
+    : member;
   if (["committed", "discarded", "expired"].includes(groupResult.group.status)) {
-    const existingMember = groupResult.members.find((candidate) => candidate.memberIdempotencyKey === member.memberIdempotencyKey);
+    const existingMember = groupResult.members.find((candidate) => candidate.memberIdempotencyKey === canonicalMember.memberIdempotencyKey);
     if (!existingMember) throw new Error("Cannot add an action member to a terminal action group");
   }
-  const ensured = await ensureMember(ctx, member);
+  const ensured = await ensureMember(ctx, canonicalMember);
   if (!ensured.shouldExecute) {
     if (ensured.state === "already_committed" || ensured.state === "already_terminal") {
       await ctx.db.patch(ensured.member._id, { retryCount: ((ensured.member as any).retryCount ?? 0) + 1 });
@@ -144,7 +168,7 @@ async function prepareMember(ctx: MutationCtx, actionType: ActionType, args: Wri
   if (ensured.state === "reexecute") {
     if (ensured.member.status === "failed") assertTransition(ensured.member.status, "pending");
     await ctx.db.patch(ensured.member._id, {
-      ...member,
+      ...canonicalMember,
       status: "pending",
       retryCount: ((ensured.member as any).retryCount ?? 0) + 1,
       // Confirmation edits change the executable payload, but never the
@@ -204,7 +228,6 @@ export const writeMealAction = internalMutation({
     const payload = prepared.member.payload as Record<string, any>;
     const id = await writeMealDomain(ctx, { ...payload, userId: prepared.group.userId }, {
       emitBehavior: true,
-      emitGamification: true,
       recomputeDerived: false,
       sourceActionId: String(prepared.member._id),
     });
@@ -226,7 +249,6 @@ export const writeWorkoutAction = internalMutation({
     const payload = prepared.member.payload as Record<string, any>;
     const id = await writeWorkoutDomain(ctx, { ...payload, userId: prepared.group.userId }, {
       emitBehavior: true,
-      emitGamification: true,
       recomputeDerived: false,
       sourceActionId: String(prepared.member._id),
     });

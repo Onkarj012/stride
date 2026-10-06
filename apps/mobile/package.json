@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@stride/shared": "workspace:*",
     "@clerk/clerk-expo": "2.19.42",
     "@expo-google-fonts/manrope": "^0.4.2",
     "@expo/metro-runtime": "~56.0.15",
@@ -22,7 +23,6 @@
     "expo-linking": "~56.0.14",
     "expo-router": "~56.2.11",
     "expo-status-bar": "~56.0.4",
-    "moti": "^0.30.0",
     "nativewind": "^4.2.6",
     "react": "19.2.3",
     "react-native": "0.85.3",

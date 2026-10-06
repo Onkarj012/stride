@@ -2,6 +2,7 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "allowImportingTsExtensions": true,
     "paths": {
       "@/*": [
         "./*"
@@ -11,6 +12,9 @@
       ],
       "@convex/*": [
         "../../packages/backend/convex/*"
+      ],
+      "@stride/shared": [
+        "../../packages/shared/src/index.ts"
       ]
     }
   },

@@ -1,25 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useNavigate } from "react-router-dom";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Doc, Id } from "@convex/_generated/dataModel";
 import { useUser } from "@clerk/react";
-import { AssistantConsole } from "@/components/home/AssistantConsole";
 import { MacroSummary, MobileIcon, ScreenHeader } from "@/components/mobile/MobileKit";
-import { AgentBadge, NarrativeCard, StatChip, StreakCard, StrideMark, WaterTracker } from "@/components/ui-kit";
+import { NarrativeCard, StatChip, StrideMark, WaterTracker } from "@/components/ui-kit";
 import { Skeleton } from "@/components/primitives/Skeleton";
-import { useShortcut } from "@/hooks/useShortcut";
 import { useDailyWindow } from "@/hooks/useDailyWindow";
 import { submitWaterIntent } from "@/hooks/useLogs";
 import { localDateStr } from "@/lib/utils";
-
-const LOG_PROMPTS: Record<string, string> = {
-  breakfast: "Log breakfast: ",
-  lunch: "Log lunch: ",
-  dinner: "Log dinner: ",
-  snack: "Log a snack: ",
-  workout: "Log a workout: ",
-};
 
 type TodayBrief = {
   window: "morning" | "day" | "evening" | "night";
@@ -33,28 +22,6 @@ type TodayBrief = {
     why: string;
     tone: "steady" | "recovery" | "momentum" | "light";
   };
-  checkIn?: {
-    type: "quick_question";
-    id: string;
-    source?: "registry" | "llm" | "template";
-    templateId?: string;
-    title: string;
-    body?: string;
-    answerType?: "choice" | "number" | "scale" | "yes_no";
-    options: Array<{ label: string; value: string; prompt?: string }>;
-    unit?: string;
-    min?: number;
-    max?: number;
-    step?: number;
-    placeholder?: string;
-    window?: "morning" | "day" | "evening" | "night";
-    queue?: Array<{
-      id: string;
-      title: string;
-      body?: string;
-      options: Array<{ label: string; value: string; prompt?: string }>;
-    }>;
-  } | null;
   stats?: {
     todayCals: number;
     calorieTarget: number;
@@ -88,48 +55,14 @@ function greetingFor(firstName: string, window?: TodayBrief["window"]): string {
 }
 
 export function HomePage() {
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
-  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useUser();
   const today = localDateStr();
   const dailyWindow = useDailyWindow();
   const brief = useQuery(api.insights.getTodayBrief, { today, window: dailyWindow }) as TodayBrief | undefined;
   const waterLogs = useQuery(api.wellness.getWater, { date: today });
-  const ensureDailyLlmQuestions = useAction(api.checkins.ensureDailyLlmQuestions);
   const addWater = useMutation(api.wellness.addWater);
   const deleteWater = useMutation(api.wellness.deleteWater);
-  useShortcut("k", () => inputRef.current?.focus(), { meta: true });
-
-  useEffect(() => {
-    if (!brief?.window) return;
-    const key = `stride_llm_checkins:${today}`;
-    try {
-      if (sessionStorage.getItem(key)) return;
-    } catch {}
-    void ensureDailyLlmQuestions({ date: today, window: brief.window })
-      .then((result) => {
-        if (result.ok) {
-          try {
-            sessionStorage.setItem(key, "1");
-          } catch {}
-        }
-      })
-      .catch(() => {});
-  }, [brief?.window, ensureDailyLlmQuestions, today]);
-
-  // Deep-link queue: ?log=<section> pre-starts the composer
-  useEffect(() => {
-    const logParam = searchParams.get("log");
-    if (!logParam) return;
-    setQueuedPrompt(LOG_PROMPTS[logParam] ?? `Log ${logParam}: `);
-    setSearchParams({}, { replace: true });
-  }, [searchParams, setSearchParams]);
-
-  const presenceLine = brief?.command?.doToday
-    ? `I'm watching today for: ${brief.command.doToday.title.toLowerCase()}.`
-    : undefined;
   const stats = brief?.stats;
   const totals = {
     kcal: Math.round(stats?.todayCals ?? 0),
@@ -165,7 +98,7 @@ export function HomePage() {
   if (brief === undefined) {
     return (
       <>
-        <div className="lg:hidden px-5 pt-4 pb-6">
+        <div className="px-5 pt-4 pb-6">
           <ScreenHeader
             title={`Hi, ${firstName}.`}
             sub={todayLabel}
@@ -183,28 +116,13 @@ export function HomePage() {
             <Skeleton className="h-24 w-full rounded-[20px]" />
           </div>
         </div>
-        <div className="hidden lg:flex lg:-mx-10 lg:-mt-10 lg:-mb-12 lg:h-dvh lg:flex-col">
-          <div className="px-6 pt-5 pb-3 shrink-0">
-            <div className="flex items-center gap-2">
-              <h1 className="text-[22px] font-extrabold text-ink dark:text-surface tracking-[-0.5px]">Today</h1>
-              <AgentBadge type="overall" />
-            </div>
-            <p className="text-[13px] font-medium text-ink/45 dark:text-white/45 mt-0.5">{todayLabel} · your day, in conversation</p>
-          </div>
-          <div className="flex-1 min-w-0 flex flex-col min-h-0 px-6 pt-4">
-            <div className="space-y-3 w-full max-w-3xl">
-              <Skeleton className="h-40 w-full rounded-[20px]" />
-              <Skeleton className="h-24 w-full rounded-[20px]" />
-            </div>
-          </div>
-        </div>
       </>
     );
   }
 
   return (
     <>
-      <div className="lg:hidden px-5 pt-4 pb-6">
+      <div className="px-5 pt-4 pb-6">
         <ScreenHeader
           title={greetingFor(firstName, brief?.window)}
           sub={todayLabel}
@@ -230,7 +148,6 @@ export function HomePage() {
             <StatChip label="Workouts" value={String(stats?.workoutsLogged ?? 0)} color="lavender" />
             <StatChip label="Water" value={String(Math.round(waterMl / 100) / 10)} unit="L" color="sky" />
           </div>
-          <StreakCard />
           <WaterTracker current={waterMl} target={stats?.waterTarget ?? 2500} unit="ml" onAdd={handleAddWater} onRemove={handleRemoveWater} />
           <button
             onClick={() => navigate("/coach")}
@@ -247,27 +164,6 @@ export function HomePage() {
               <span className="ml-auto text-white/60 dark:text-ink/60"><MobileIcon size={20}><path d="M9 6l6 6-6 6" /></MobileIcon></span>
             </div>
           </button>
-        </div>
-      </div>
-
-      <div
-        className="hidden lg:flex lg:-mx-10 lg:-mt-10 lg:-mb-12 lg:h-dvh lg:flex-col"
-      >
-        <div className="px-6 pt-5 pb-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <h1 className="text-[22px] font-extrabold text-ink dark:text-surface tracking-[-0.5px]">Today</h1>
-            <AgentBadge type="overall" />
-          </div>
-          <p className="text-[13px] font-medium text-ink/45 dark:text-white/45 mt-0.5">{todayLabel} · your day, in conversation</p>
-        </div>
-        <div className="flex-1 min-w-0 flex flex-col min-h-0">
-          <AssistantConsole
-            inputRef={inputRef}
-            queuedPrompt={queuedPrompt}
-            onPromptConsumed={() => setQueuedPrompt(null)}
-            presenceLine={presenceLine}
-            initialActions={brief?.checkIn ? [brief.checkIn] : []}
-          />
         </div>
       </div>
     </>

@@ -84,6 +84,20 @@ export function deriveMemberKey(input: {
   ]))}`;
 }
 
+/** Stable identity for a logical turn member. Payload changes must not create
+ * a second member when a transport retry takes over an existing group. */
+export function deriveLogicalMemberKey(input: {
+  groupKey: string;
+  actionType: ActionEnvelope["actionType"];
+  ordinal: number;
+}): string {
+  return `logical_member_${stableHash(JSON.stringify([
+    input.groupKey,
+    input.actionType,
+    input.ordinal,
+  ]))}`;
+}
+
 async function membersForGroup(ctx: MutationCtx, groupId: Doc<"actionGroups">["_id"]): Promise<Doc<"actions">[]> {
   return ctx.db.query("actions").withIndex("by_group", (q) => q.eq("groupId", groupId)).collect();
 }

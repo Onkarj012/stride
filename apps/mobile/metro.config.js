@@ -18,6 +18,7 @@ config.resolver.nodeModulesPaths = [
 
 config.resolver.extraNodeModules = {
   '@convex': path.resolve(workspaceRoot, 'packages/backend/convex'),
+  '@stride/shared': path.resolve(workspaceRoot, 'packages/shared'),
   'nativewind': path.resolve(projectRoot, 'node_modules/nativewind'),
   'react-native-css-interop': path.resolve(projectRoot, 'node_modules/react-native-css-interop'),
 };

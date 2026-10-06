@@ -8,7 +8,6 @@ import { api } from '@convex/_generated/api'
 import { MacroSummary } from '../../components/MacroSummary'
 import { NarrativeCard } from '../../components/NarrativeCard'
 import { StatChip } from '../../components/StatChip'
-import { StreakCard } from '../../components/StreakCard'
 import { WaterTracker } from '../../components/WaterTracker'
 import { StrideMark } from '../../components/StrideMark'
 import { Icon } from '../../components/Icon'
@@ -62,7 +61,6 @@ export default function TodayScreen() {
   const today = localDateStr()
   const brief = useQuery(api.insights.getTodayBrief, { today, window: dailyWindow() }) as TodayBrief | undefined
   const waterLogs = useQuery(api.wellness.getWater, { date: today }) as Array<{ ml: number; _creationTime?: number; _id: string }> | undefined
-  const streak = useQuery(api.history.getStreak, { today }) as { streak: number } | undefined
   const addWater = useMutation(api.wellness.addWater)
   const deleteWater = useMutation(api.wellness.deleteWater)
   const stats = brief?.stats
@@ -116,7 +114,6 @@ export default function TodayScreen() {
             <StatChip label="Workouts" value={String(stats?.workoutsLogged ?? 0)} color="sky" />
             <StatChip label="Water" value={`${(waterMl / 1000).toFixed(1)}L`} color="mint" />
           </View>
-          <StreakCard days={streak?.streak ?? 0} quote="Small, consistent logs make the pattern visible." />
           <WaterTracker
             current={waterMl}
             target={stats?.waterTarget ?? 2500}

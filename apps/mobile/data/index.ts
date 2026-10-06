@@ -12,17 +12,6 @@ export interface MealLogCardProps {
   confirmed: boolean
 }
 
-export interface Recipe {
-  name: string
-  tag: string
-  macros: MacroData
-  prepMin: number
-  servings: number
-  blurb: string
-  ingredients: string[]
-  steps: string[]
-}
-
 export interface ExerciseSet { weight: string; reps: number }
 export interface Exercise { name: string; sets: ExerciseSet[] }
 export interface WorkoutSession {
@@ -32,8 +21,6 @@ export interface WorkoutSession {
   burnKcal: number
   exercises: Exercise[]
 }
-
-export interface Milestone { label: string; achieved: boolean }
 
 export type AgentType = 'diet' | 'workout' | 'sleep' | 'hydration' | 'habits' | 'mental' | 'overall'
 
@@ -45,37 +32,6 @@ export const TODAY_MEALS: MealLogCardProps[] = [
   { meal: 'Chicken salad', time: 'Lunch · 1:02 PM',       macros: { kcal: 520, protein: 44, carbs: 18, fat: 22 }, confirmed: true },
   { meal: 'Protein shake', time: 'Post-workout · 5:30 PM', macros: { kcal: 180, protein: 30, carbs: 12, fat: 3 },  confirmed: true },
   { meal: 'Greek yogurt',  time: 'Snack · 10:20 AM',      macros: { kcal: 150, protein: 17, carbs: 10, fat: 4 },  confirmed: false },
-]
-
-export const RECIPES: Recipe[] = [
-  {
-    name: 'High-protein oats', tag: 'Breakfast', macros: { kcal: 420, protein: 28, carbs: 55, fat: 10 },
-    prepMin: 8, servings: 1,
-    blurb: 'Creamy overnight-style oats with whey and berries. Hits 28g protein before noon.',
-    ingredients: ['60g rolled oats', '1 scoop whey (vanilla)', '200ml milk', '1 tbsp chia seeds', '80g mixed berries', '1 tsp honey'],
-    steps: ['Stir oats, whey and chia into the milk.', 'Rest 5 min (or overnight) to thicken.', 'Top with berries and a drizzle of honey.'],
-  },
-  {
-    name: 'Chicken burrito bowl', tag: 'Lunch', macros: { kcal: 640, protein: 52, carbs: 60, fat: 18 },
-    prepMin: 20, servings: 2,
-    blurb: 'Meal-prep friendly bowl — high protein, big volume, reheats well.',
-    ingredients: ['300g chicken breast', '150g cooked rice', '1 can black beans', '1 avocado', 'Salsa', 'Lime + coriander'],
-    steps: ['Season and grill the chicken, then slice.', 'Warm beans and rice.', 'Build the bowl, top with avocado, salsa and lime.'],
-  },
-  {
-    name: 'Salmon & greens', tag: 'Dinner', macros: { kcal: 540, protein: 46, carbs: 12, fat: 30 },
-    prepMin: 18, servings: 1,
-    blurb: 'Low-carb, omega-rich dinner that comes together on one tray.',
-    ingredients: ['1 salmon fillet', '200g tenderstem broccoli', '1 tbsp olive oil', '1 lemon', 'Garlic + chilli flakes'],
-    steps: ['Heat oven to 200°C.', 'Toss greens in oil, roast 8 min.', 'Add salmon, roast 10 min, finish with lemon.'],
-  },
-  {
-    name: 'Casein pudding', tag: 'Snack', macros: { kcal: 220, protein: 32, carbs: 14, fat: 4 },
-    prepMin: 5, servings: 1,
-    blurb: 'Thick slow-protein pudding — ideal before bed.',
-    ingredients: ['1 scoop casein', '120g Greek yogurt', '50ml milk', 'Cinnamon', 'Cocoa nibs'],
-    steps: ['Whisk casein into the yogurt and milk.', 'Chill 10 min until set.', 'Top with cinnamon and nibs.'],
-  },
 ]
 
 export const TODAY_SESSION: WorkoutSession = {
@@ -102,21 +58,6 @@ export const STATS: { label: string; value: string; color: 'mint' | 'sky' | 'pea
   { label: 'Goal',   value: 'Fat loss', color: 'sky' },
   { label: 'Daily',  value: '1 800',    color: 'peach' },
 ]
-
-export const STREAK = { days: 12, quote: 'Strong, steady week. The streak is the story.' }
-
-export const MILESTONES: Milestone[] = [
-  { label: 'First log', achieved: true }, { label: '3-day streak', achieved: true },
-  { label: '7-day streak', achieved: true }, { label: '110g protein', achieved: true },
-  { label: '30-day streak', achieved: false }, { label: '10 kg lost', achieved: false },
-  { label: '100 workouts', achieved: false }, { label: 'Goal weight', achieved: false },
-]
-
-export const INSIGHTS: Record<'today' | 'week' | 'month', { type: 'daily' | 'weekly'; narrative: string; date: string }> = {
-  today: { type: 'daily',  narrative: 'Strong, steady day — protein gap closing and you moved well. Watch the evening carb drift.', date: 'Today' },
-  week:  { type: 'weekly', narrative: 'Best week in a month. 5 workouts, protein target hit 6/7 days, and the streak is real.', date: 'This week' },
-  month: { type: 'weekly', narrative: 'Down 1.8 kg over 4 weeks at a clean rate. Training volume up 14%. Sleep is the lever for next month.', date: 'This month' },
-}
 
 export const HISTORY_DAYS: { day: number; score: number }[] = Array.from({ length: 35 }, (_, i) => ({
   day: i + 1,

@@ -268,8 +268,6 @@ export const getSettings = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
     return {
-      // openRouterKey is write-only — never returned to client
-      hasOpenRouterKey: !!(s?.openRouterKey),
       openRouterModel: s?.openRouterModel ?? "openai/gpt-4o-mini",
       units: s?.units ?? "metric",
       notifications: s?.notifications ?? true,
@@ -285,7 +283,6 @@ const COACHING_STYLES = ["gentle", "motivating", "analytical"];
 
 export const upsertSettings = mutation({
   args: {
-    openRouterKey: v.optional(v.string()),
     openRouterModel: v.optional(v.string()),
     units: v.optional(v.string()),
     notifications: v.optional(v.boolean()),
@@ -304,7 +301,6 @@ export const upsertSettings = mutation({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .first();
     const patch: any = {};
-    if (args.openRouterKey !== undefined) patch.openRouterKey = args.openRouterKey || undefined;
     if (args.openRouterModel !== undefined) patch.openRouterModel = args.openRouterModel;
     if (args.units !== undefined) patch.units = args.units;
     if (args.notifications !== undefined) patch.notifications = args.notifications;

@@ -2,7 +2,7 @@
  * ai/llm.ts — canonical OpenRouter client + model config.
  *
  * Single source of truth for callAI (previously duplicated in ai.ts and
- * ai_utils.ts). Imported by ai.ts, agents.ts, and anything needing an LLM call.
+ * ai_utils.ts). Imported by ai.ts and anything needing an LLM call.
  */
 
 import { internal } from "../_generated/api";
@@ -17,8 +17,8 @@ import {
 export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 // Split-model strategy: cheap model for high-volume parsing/extraction,
 // upgraded model for chat replies users actually read.
-export const DEFAULT_MODEL = "openai/gpt-4o-mini";       // parsing, extraction, titles
-export const CHAT_MODEL = "anthropic/claude-sonnet-4.6"; // coach + homepage chat replies
+export const DEFAULT_MODEL = "openai/gpt-4o-mini";       // parsing, extraction
+export const CHAT_MODEL = "anthropic/claude-sonnet-4.6"; // coach chat replies
 export const FALLBACK_MODEL = "anthropic/claude-haiku-4.5"; // retry fallback when primary fails
 
 export const VISION_MODELS = new Set([
@@ -43,13 +43,10 @@ export interface AIMessage {
  * Call OpenRouter with retry + fallback. Up to 3 attempts; the final attempt
  * uses FALLBACK_MODEL. Only transient provider failures are retried.
  */
-export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage[], maxTokens = 500, model?: string, apiKey?: string): Promise<string> {
-  const primaryModel = model || DEFAULT_MODEL;
-  const byokKey = apiKey?.trim();
-  if (!byokKey && !hasDeploymentPricing(primaryModel)) {
-    throw new Error(`MODEL_NOT_ALLOWED_WITH_DEPLOYMENT_KEY:${primaryModel}`);
-  }
-  const key = byokKey || process.env.OPENROUTER_API_KEY;
+export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage[], maxTokens = 500, model?: string): Promise<string> {
+  // A saved model without deployment pricing (left over from BYOK) falls back to the default.
+  const primaryModel = model && hasDeploymentPricing(model) ? model : DEFAULT_MODEL;
+  const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
 
   const estimatedInputTokens = estimateMessageTokens(messages);
@@ -59,9 +56,7 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
   for (let attempt = 0; attempt < 3; attempt++) {
     const backoffMs = 250 * 2 ** attempt;
     const currentModel = attempt >= 2 ? FALLBACK_MODEL : primaryModel;
-    const estimatedCostUsd = byokKey
-      ? 0
-      : estimateCostUsd(currentModel, estimatedInputTokens, estimatedOutputTokens);
+    const estimatedCostUsd = estimateCostUsd(currentModel, estimatedInputTokens, estimatedOutputTokens);
     const reservation = await ctx.runMutation(internal.ai_guard.checkAndReserve, {
       userId,
       model: currentModel,
@@ -132,8 +127,11 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
         releaseCurrentReservation = true;
         throw new Error(`OpenRouter API error: ${data.error.message}`);
       }
+      const finishReason = data.choices?.[0]?.finish_reason;
+      // The provider bills incomplete replies, so they settle usage before being rejected.
+      const incomplete = finishReason === "length" || finishReason === "content_filter";
       const content = data.choices?.[0]?.message?.content;
-      if (!content) {
+      if (!incomplete && !content) {
         releaseCurrentReservation = true;
         throw new Error("OpenRouter returned empty response");
       }
@@ -142,16 +140,17 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
       const usage = usageFromResponse(
         data.usage,
         estimatedInputTokens,
-        Math.min(maxTokens, Math.max(1, Math.ceil(String(content).length / 3))),
+        incomplete ? maxTokens : Math.min(maxTokens, Math.max(1, Math.ceil(String(content).length / 3))),
       );
       await ctx.runMutation(internal.ai_guard.settleUsage, {
         reservationId: reservation.reservationId,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
-        actualCostUsd: byokKey
-          ? 0
-          : estimateCostUsd(currentModel, usage.inputTokens, usage.outputTokens),
+        actualCostUsd: estimateCostUsd(currentModel, usage.inputTokens, usage.outputTokens),
       });
+      if (incomplete) {
+        throw new Error(`OpenRouter incomplete response (finish_reason: ${finishReason}); retry the request`);
+      }
       return content;
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
@@ -210,9 +209,26 @@ export function tryParseJSON<T>(text: string): T | null {
   return null;
 }
 
+type JSONParseDiagnostics = {
+  context: string;
+  maxTokens?: number;
+};
+
 /** Extract and parse the first JSON object/array from LLM text, or fallback. */
-export function parseJSON<T>(text: string, fallback: T): T {
+export function parseJSON<T>(text: string, fallback: T, diagnostics?: JSONParseDiagnostics): T {
   const parsed = tryParseJSON<T>(text);
-  if (parsed == null) return fallback;
+  if (parsed == null) {
+    if (diagnostics) {
+      const trimmed = text.trim();
+      console.warn(JSON.stringify({
+        event: "ai_json_parse_failed",
+        context: diagnostics.context,
+        maxTokens: diagnostics.maxTokens,
+        rawResponseLength: text.length,
+        responseEndedWithJsonDelimiter: /[}\]]$/.test(trimmed),
+      }));
+    }
+    return fallback;
+  }
   return parsed;
 }

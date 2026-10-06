@@ -175,7 +175,6 @@ walking: 5 min, 11 incline, then 5min of normal walking`, testCtx, testUserId);
       undefined,
       undefined,
       undefined,
-      undefined,
       { weight: 80, age: 30, sex: "male", fitnessLevel: "intermediate" },
     );
 
@@ -194,7 +193,7 @@ walking: 5 min, 11 incline, then 5min of normal walking`, testCtx, testUserId);
     });
     mockedCallAI.mockResolvedValue(aiResult);
 
-    const result = await parseWorkoutDescription("bench press", testCtx, testUserId, "30 min", undefined, undefined, undefined, { weight: 80, age: 30, sex: "male" });
+    const result = await parseWorkoutDescription("bench press", testCtx, testUserId, "30 min", undefined, undefined, { weight: 80, age: 30, sex: "male" });
 
     expect(result.duration).toBe("30 min");
     expect(result.calorieResult).toEqual(expect.objectContaining({ total_kcal: expect.any(Number) }));

@@ -25,9 +25,10 @@
       "@/*": ["./src/*"],
       "@convex/_generated/api": ["./src/lib/convex-api-shim.ts"],
       "@convex/_generated/dataModel": ["../../packages/backend/convex/_generated/dataModel.d.ts"],
-      "@convex/*": ["../../packages/backend/convex/*"]
+      "@convex/*": ["../../packages/backend/convex/*"],
+      "@stride/shared": ["../../packages/shared/src/index.ts"]
     }
   },
   "include": ["src"],
-  "exclude": ["../backend", "src/components/landing/_backup"]
+  "exclude": ["../backend"]
 }

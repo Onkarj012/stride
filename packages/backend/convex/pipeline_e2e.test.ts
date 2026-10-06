@@ -6,9 +6,12 @@ import { callAI } from "./ai/llm";
 import { buildMealDraft } from "./nutrition_draft";
 import { hasRestrictedRecoverySignal } from "./ai";
 import { resolveActionDate, resolveIntervalDay } from "./time_resolve";
-import { getCoach } from "./coaches";
-import { toCanonicalPersona, toLegacyPersona } from "./personas";
 import { ensureGroup, ensureMember } from "./actions_idempotency";
+import {
+  legacyConversationText,
+  legacyMarkerValue,
+  structuredExtractionFromLegacyMarkers,
+} from "./chat_turn_test_helpers";
 
 vi.mock("./ai/llm", async () => {
   const actual = await vi.importActual<typeof import("./ai/llm")>("./ai/llm");
@@ -56,6 +59,9 @@ function mockChatReply(reply: string) {
   mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
     const prompt = promptText(messages);
     if (prompt.includes("Generate a short, descriptive title")) return "E2E chat";
+    if (prompt.includes("Extract ALL loggable items")) {
+      return structuredExtractionFromLegacyMarkers(reply) ?? reply;
+    }
     if (prompt.includes("You are a professional nutritionist")) {
       return JSON.stringify({
         name: "Oats",
@@ -79,7 +85,16 @@ function mockChatReply(reply: string) {
         rationale: "Keep it steady.",
       });
     }
-    return reply;
+    if (prompt.includes("Extract water amount in ml")) return String(legacyMarkerValue(reply, "WATER", "ml") ?? "");
+    if (prompt.includes("Extract sleep data")) {
+      return JSON.stringify({
+        hours: legacyMarkerValue(reply, "SLEEP", "hours"),
+        quality: legacyMarkerValue(reply, "SLEEP", "quality"),
+      });
+    }
+    if (prompt.includes("Extract mood rating")) return String(legacyMarkerValue(reply, "MOOD", "rating") ?? "");
+    if (prompt.includes("Extract step count")) return String(legacyMarkerValue(reply, "STEPS", "count") ?? "");
+    return legacyConversationText(reply);
   });
 }
 
@@ -365,16 +380,5 @@ describe("canonical pipeline end-to-end contract", () => {
     mockChatReply("⟦LOG_MEAL⟧{broken⟦/LOG_MEAL⟧");
     const failed = await asUser.action(api.ai.chat, { message: "bad parse", today: "2026-07-16" }) as any;
     expect(failed.reply).toMatch(/couldn't parse|couldn't save/i);
-  });
-
-  test("legacy and canonical coach IDs map bidirectionally and backend context accepts both", () => {
-    expect(toCanonicalPersona("overall")).toBe("general");
-    expect(toCanonicalPersona("diet")).toBe("nutrition");
-    expect(toCanonicalPersona("water")).toBe("hydration");
-    expect(toCanonicalPersona("mindset")).toBe("wellness");
-    expect(toLegacyPersona("general")).toBe("overall");
-    expect(toLegacyPersona("nutrition")).toBe("diet");
-    expect(getCoach("nutrition").id).toBe("diet");
-    expect(getCoach("wellness").id).toBe("mindset");
   });
 });

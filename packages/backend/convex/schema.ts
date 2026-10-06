@@ -200,9 +200,31 @@ export default defineSchema({
     sessionId: v.optional(v.id("chat_sessions")),
     role: v.string(),
     content: v.string(),
+    clientSubmissionId: v.optional(v.string()),
+    // Optional durable claim metadata. Older chat rows intentionally omit these
+    // fields and remain readable/retriable through the legacy path.
+    submissionFingerprint: v.optional(v.string()),
+    processingLeaseOwner: v.optional(v.string()),
+    processingLeaseVersion: v.optional(v.number()),
+    processingLeaseExpiresAt: v.optional(v.number()),
+    resolvedTurnMessageId: v.optional(v.id("chat_messages")),
+    turnContractVersion: v.optional(v.literal(1)),
+    turnOutcome: v.optional(v.union(
+      v.literal("committed"),
+      v.literal("confirmation_required"),
+      v.literal("failed"),
+      v.literal("no_action"),
+    )),
+    // Validated against @stride/shared's versioned ChatTurnCard union on write.
+    turnCards: v.optional(v.any()),
+    actionGroupId: v.optional(v.id("actionGroups")),
+    actionIds: v.optional(v.array(v.id("actions"))),
   })
     .index("by_session", ["sessionId"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    .index("by_action_group", ["actionGroupId"])
+    .index("by_action_group_role", ["actionGroupId", "role"])
+    .index("by_user_submission_and_role", ["userId", "clientSubmissionId", "role"]),
 
   food_cache: defineTable({
     barcode: v.optional(v.string()),

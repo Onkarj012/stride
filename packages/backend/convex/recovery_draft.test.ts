@@ -89,19 +89,6 @@ describe("canonical recovery draft", () => {
     expect(draft.sleep?.intervalDay).toBe("2026-07-17");
   });
 
-  test("submitAnswer rejects a value outside the server question definition", async () => {
-    const t = convexTest(schema, modules);
-    const asUser = t.withIdentity({ subject: "recovery-user" });
-    await expect(asUser.mutation(api.checkins.submitAnswer, {
-      questionId: "sleep_quality_morning",
-      date: "2026-07-16",
-      window: "morning",
-      source: "registry",
-      answerType: "choice",
-      value: "made_up_value",
-    })).rejects.toThrow("server-defined options");
-  });
-
   test("getRecoveryState reports missing required inputs", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "recovery-user" });

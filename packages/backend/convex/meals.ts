@@ -2,7 +2,6 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { recordBehaviorRow } from "./behavior";
-import { recordActivityForUser } from "./gamification";
 import { recomputeForAction } from "./derived_state";
 import { recordFoodMemoryRow } from "./food_memory";
 import { deriveGroupKey, deriveMemberKey } from "./actions_idempotency";
@@ -68,7 +67,7 @@ async function assertNoNearDuplicateMeal(ctx: any, userId: string, date: string,
 export async function writeMealDomain(
   ctx: any,
   args: any,
-  options: { emitBehavior?: boolean; emitGamification?: boolean; recomputeDerived?: boolean; sourceActionId?: string } = {},
+  options: { emitBehavior?: boolean; recomputeDerived?: boolean; sourceActionId?: string } = {},
 ) {
   const canonical = args.draft?.kind === "meal"
     ? mealPayloadFromDraft({
@@ -119,9 +118,6 @@ export async function writeMealDomain(
     sourceActionId: options.sourceActionId,
   });
   if (options.emitBehavior) await recordBehaviorRow(ctx, canonical.userId, "log", "meal", undefined, date);
-  if (options.emitGamification && date === new Date().toISOString().split("T")[0]) {
-    await recordActivityForUser(ctx, canonical.userId, { type: "meal", date });
-  }
   if (!canonical.foodMemoryId) {
     await recordFoodMemoryRow(ctx, {
       userId: canonical.userId,
@@ -456,7 +452,7 @@ export const addMealFromAI = internalMutation({
   },
   handler: async (ctx, args) => {
     const draft = buildDirectMealDraft(args);
-    return writeMealDomain(ctx, mealPayloadFromDraft(draft, args), { emitBehavior: false, emitGamification: false });
+    return writeMealDomain(ctx, mealPayloadFromDraft(draft, args), { emitBehavior: false });
   },
 });
 

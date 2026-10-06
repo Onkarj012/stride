@@ -6,6 +6,7 @@ import { recomputeForAction, type DerivedActionType } from "./derived_state";
 import { assertTransition } from "./actions_envelope";
 import { insertActionTelemetry } from "./telemetry";
 import { normalizeName } from "./food_memory_match";
+import { reconcileAssistantOutcomeInMutation } from "./chat";
 
 type DomainTable = "meals" | "workouts" | "water_logs" | "sleep_logs" | "mood_logs" | "steps_logs" | "weight_logs";
 
@@ -40,6 +41,19 @@ type UndoResult = {
   date?: string;
   actionType?: DerivedActionType;
 };
+
+/** Copies a persisted assistant message into the turn shape clients render after undo. */
+function canonicalTurnSnapshot(message: Doc<"chat_messages"> | null, groupId: Doc<"actionGroups">["_id"]) {
+  if (!message) return undefined;
+  return {
+    content: message.content,
+    turnContractVersion: 1 as const,
+    turnOutcome: message.turnOutcome,
+    turnCards: message.turnCards ?? [],
+    actionGroupId: groupId,
+    actionIds: message.actionIds ?? [],
+  };
+}
 
 async function recordUndoTelemetry(
   ctx: MutationCtx,
@@ -337,7 +351,8 @@ export const undoAction = mutation({
     }
     const group = await ctx.db.get(action.groupId);
     if (group) await recordUndoTelemetry(ctx, group, action, result, derivedStateVersion);
-    return result;
+    const reconciled = await reconcileAssistantOutcomeInMutation(ctx, userId, action.groupId);
+    return { ...result, turn: canonicalTurnSnapshot(reconciled.message, action.groupId) };
   },
 });
 
@@ -384,7 +399,8 @@ export const undoGroup = mutation({
         : undefined;
       await recordUndoTelemetry(ctx, group, action, result, derived?.version);
     }
-    return { groupId, results };
+    const reconciled = await reconcileAssistantOutcomeInMutation(ctx, userId, groupId);
+    return { groupId, results, turn: canonicalTurnSnapshot(reconciled.message, groupId) };
   },
 });
 

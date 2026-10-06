@@ -1,28 +1,26 @@
 import { useState } from "react";
 import {
-  Dumbbell, Flame, TrendingUp, Sparkles,
-  UtensilsCrossed, Lightbulb, Pencil, RotateCcw, Trash2, RefreshCw,
+  Dumbbell, TrendingUp, Sparkles,
+  UtensilsCrossed, Lightbulb, Pencil, RotateCcw, Trash2,
 } from "lucide-react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Card } from "@/components/primitives/Card";
 import { Skeleton } from "@/components/primitives/Skeleton";
 import { Pill } from "@/components/primitives/Pill";
-import { MacroCard, MilestoneCard, NarrativeCard, StatChip, StreakCard } from "@/components/ui-kit";
+import { MacroCard, NarrativeCard, StatChip } from "@/components/ui-kit";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { ScreenHeader } from "@/components/mobile/MobileKit";
 import { MacroDonut } from "@/components/charts/MacroDonut";
 import { MacroBars } from "@/components/charts/MacroBars";
-import { MilestoneList } from "@/components/insights/MilestoneList";
 import { PeriodSwitcher, type Period } from "@/components/insights/PeriodSwitcher";
 import { EditLogModal, type EditableMeal, type EditableWorkout } from "@/components/coach/EditLogModal";
 import { useToast } from "@/context/ToastContext";
 import { useLogs } from "@/hooks/useLogs";
 import { localDateStr } from "@/lib/utils";
 import { localDateTime } from "@/lib/localDateTime";
-import { getAIErrorMessage } from "@/lib/ai-errors";
 import { NutritionSourceBadge } from "@/components/ui-kit/NutritionSourceBadge";
 
 function periodDays(period: Period): number {
@@ -238,112 +236,15 @@ function TodaysWorkoutsCard({ date }: { date: string }) {
   );
 }
 
-/* ── Today's AI insights & tips card ── */
-export function TodaysInsightsCard({ date }: { date: string }) {
-  const insightsData = useQuery(api.insights.getDailyInsights, { date });
-  const brief = useQuery(api.insights.getTodayBrief, { today: date });
-  const generate = useAction(api.ai.generateDailyInsights);
-  const toast = useToast();
-  const [generating, setGenerating] = useState(false);
-
-  const insights = (insightsData?.insights ?? []) as string[];
-
-  async function handleGenerate() {
-    setGenerating(true);
-    try {
-      await generate({ date });
-      toast.success("Insights refreshed");
-    } catch (err) {
-      toast.error("Couldn't refresh", getAIErrorMessage(err) ?? (err instanceof Error ? err.message : "Try again"));
-    } finally {
-      setGenerating(false);
-    }
-  }
-
-  const hasContent = insights.length > 0 || (brief && brief.priority);
-
-  return (
-    <Card tone="lavender" radius="xl" padding="lg" className="space-y-3">
-      <div className="flex items-center justify-between">
-        <Pill tone="ink" size="sm" className="gap-1.5">
-          <Sparkles className="h-3 w-3" strokeWidth={2.25} />
-          Today's insights
-        </Pill>
-        <button
-          type="button"
-          onClick={handleGenerate}
-          disabled={generating}
-          className="inline-flex items-center gap-1 text-[12px] font-semibold text-ink/70 hover:text-ink disabled:opacity-50"
-          aria-label="Refresh insights"
-        >
-          <RefreshCw className={`h-3 w-3 ${generating ? "animate-spin" : ""}`} strokeWidth={2.25} />
-          {generating ? "Generating…" : "Refresh"}
-        </button>
-      </div>
-
-      {brief && brief.priority && (
-        <div>
-          <p className="text-[13px] font-bold text-ink uppercase tracking-wider">{brief.headline}</p>
-          <p className="text-[14.5px] leading-relaxed text-ink/85 mt-1">{brief.priority}</p>
-        </div>
-      )}
-
-      {brief && brief.nudge && brief.nudge.action && (
-        <div className="flex items-start gap-2 rounded-2xl bg-ink/5 px-3 py-2">
-          <Lightbulb className="h-4 w-4 text-ink/70 mt-0.5 shrink-0" strokeWidth={2} />
-          <div className="min-w-0">
-            <p className="text-[13px] font-bold text-ink">{brief.nudge.action}</p>
-            <p className="text-[12px] text-ink/70">{brief.nudge.reason}</p>
-          </div>
-        </div>
-      )}
-
-      {insights.length > 0 && (
-        <ul className="space-y-1.5 pt-1">
-          {insights.map((insight, i) => (
-            <li key={i} className="text-[14px] leading-relaxed text-ink/85">• {insight}</li>
-          ))}
-        </ul>
-      )}
-
-      {!hasContent && (
-        <p className="text-[13px] text-ink/70">Tap refresh to get today's coaching tips.</p>
-      )}
-    </Card>
-  );
-}
-
 /** Compact insights card for the sidebar slot in the Insights grid. */
 function TodaysInsightsMini({ date }: { date: string }) {
-  const insightsData = useQuery(api.insights.getDailyInsights, { date });
   const brief = useQuery(api.insights.getTodayBrief, { today: date });
-  const generate = useAction(api.ai.generateDailyInsights);
-  const toast = useToast();
-  const insights = (insightsData?.insights ?? []) as string[];
-  const [generating, setGenerating] = useState(false);
-
-  async function refresh() {
-    setGenerating(true);
-    try {
-      await generate({ date });
-    } catch (err) {
-      toast.error("Couldn't refresh", getAIErrorMessage(err) ?? (err instanceof Error ? err.message : "Try again"));
-    } finally {
-      setGenerating(false);
-    }
-  }
 
   return (
     <Card tone="lavender" radius="lg" padding="lg" className="space-y-3 overflow-y-auto max-h-[280px]">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-ink/70" strokeWidth={2} />
-          <span className="text-[13px] font-bold uppercase tracking-wider text-ink/70">Today's insights</span>
-        </div>
-        <button type="button" onClick={refresh} disabled={generating}
-          className="inline-flex items-center gap-1 text-[11px] font-semibold text-ink/60 hover:text-ink disabled:opacity-40">
-          <RefreshCw className={`h-3 w-3 ${generating ? "animate-spin" : ""}`} strokeWidth={2.25} />
-        </button>
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-ink/70" strokeWidth={2} />
+        <span className="text-[13px] font-bold uppercase tracking-wider text-ink/70">Today's insights</span>
       </div>
       {brief?.priority && (
         <p className="text-[13.5px] leading-relaxed text-ink/85">{brief.priority}</p>
@@ -354,15 +255,8 @@ function TodaysInsightsMini({ date }: { date: string }) {
           <p className="text-[12.5px] text-ink/75">{brief.nudge.action}</p>
         </div>
       )}
-      {insights.length > 0 && (
-        <ul className="space-y-1">
-          {insights.map((s, i) => (
-            <li key={i} className="text-[12.5px] text-ink/80">• {s}</li>
-          ))}
-        </ul>
-      )}
-      {!brief?.priority && insights.length === 0 && (
-        <p className="text-[12.5px] text-ink/60">Log meals and workouts, then tap refresh.</p>
+      {!brief?.priority && (
+        <p className="text-[12.5px] text-ink/60">Log meals and workouts to see today's guidance.</p>
       )}
     </Card>
   );
@@ -410,7 +304,7 @@ export function InsightsPage() {
     fatGoal?: number;
   }>;
 
-  // Today's logs (used for "today" macros and milestones)
+  // Today's logs (used for "today" macros)
   const { logs } = useLogs();
   const mealsResult = useQuery(api.meals.getMeals, { date: today });
   const workoutsResult = useQuery(api.workouts.getWorkouts, { date: today });
@@ -447,7 +341,6 @@ export function InsightsPage() {
     progressRows.filter((r) => r.calories > 0 || r.workouts > 0).map((r) => r.date),
   ).size;
 
-  const weeklySummary = useQuery(api.insights.getWeeklySummary);
   const profile = useQuery(api.profile.getProfile);
 
   if (progressRowsResult === undefined || brief === undefined || logsLoading) {
@@ -479,7 +372,7 @@ export function InsightsPage() {
     );
   }
 
-  // Wait for real targets so milestone thresholds do not flash from fallback values.
+  // Wait for real targets so goal values do not flash from fallback values.
   const profileLoaded = profile !== undefined;
   const targetsLoaded = brief !== undefined;
   const dailyTargets = brief?.stats;
@@ -494,14 +387,7 @@ export function InsightsPage() {
     }),
     { kcal: 0, protein: 0, carbs: 0, fat: 0 },
   );
-  const milestoneItems = [
-    { label: "Protein", achieved: todayProtein >= macroTarget.protein * 0.7 },
-    { label: "Training", achieved: period === "today" ? workoutMin > 0 : totalWorkouts > 0 },
-    { label: "Active days", achieved: activeDays >= Math.min(days, 3) },
-  ];
-  const mobileNarrative = period !== "today" && weeklySummary
-    ? weeklySummary.content
-    : `You have logged ${Math.round(todayKcal).toLocaleString()} kcal and ${Math.round(todayProtein)}g protein for this ${period === "today" ? "day" : period}.`;
+  const mobileNarrative = `You have logged ${Math.round(todayKcal).toLocaleString()} kcal and ${Math.round(todayProtein)}g protein for this ${period === "today" ? "day" : period}.`;
 
   return (
     <>
@@ -525,8 +411,6 @@ export function InsightsPage() {
       <div className="space-y-4">
         <NarrativeCard type={period === "today" ? "daily" : "weekly"} narrative={mobileNarrative} date={period === "today" ? "Today" : period === "week" ? "Last 7 days" : "Last 30 days"} />
         <MacroCard kcal={Math.round(todayKcal)} protein={Math.round(todayProtein)} carbs={Math.round(todayCarbs)} fat={Math.round(todayFat)} />
-        <StreakCard />
-        {profileLoaded && targetsLoaded && <MilestoneCard milestones={milestoneItems} />}
       </div>
     </div>
 
@@ -549,15 +433,6 @@ export function InsightsPage() {
 
       {/* Correlation / pattern insights */}
       <PatternsCard />
-
-      {/* Weekly/monthly AI summary */}
-      {period !== "today" && weeklySummary && (
-        <NarrativeCard
-          type="weekly"
-          narrative={weeklySummary.content}
-          date={period === "week" ? "Last 7 days" : "Last 30 days"}
-        />
-      )}
 
       {/* Nutrition + Today's Insights (replaces Active Days) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -601,9 +476,8 @@ export function InsightsPage() {
         )}
       </div>
 
-      {/* Streak + key stats */}
+      {/* Key stats */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <StreakCard />
         <div className="flex flex-wrap gap-3 content-start">
           <StatChip
             className="flex-1"
@@ -638,15 +512,6 @@ export function InsightsPage() {
           <TodaysWorkoutsCard date={today} />
         </div>
       )}
-
-      {/* Milestones */}
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Flame className="h-5 w-5 text-text-muted" strokeWidth={1.75} />
-          <h2 className="text-h2 text-text">Milestones</h2>
-        </div>
-        <MilestoneList logs={logs} />
-      </section>
     </div>
     </>
   );

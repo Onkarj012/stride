@@ -28,12 +28,12 @@ function member(payload: any, key: string, provenance: "user_reported" | "ai_ext
 }
 
 describe("canonical action writers", () => {
-  test("guards the AI action against public wellness and gamification calls", () => {
+  test("guards the AI action against public wellness calls", () => {
     const source = readFileSync(new URL("./ai.ts", import.meta.url), "utf8");
-    expect(source).not.toMatch(/runMutation\s*\(\s*api\.(wellness|gamification)\./);
+    expect(source).not.toMatch(/runMutation\s*\(\s*api\.wellness\./);
   });
 
-  test("writes a meal, action envelope, behavior, and gamification exactly once on retry", async () => {
+  test("writes a meal, action envelope, and behavior exactly once on retry", async () => {
     const t = convexTest(schema, modules);
     const args = {
       group: group("writer meal", "writer-meal-group"),

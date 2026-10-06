@@ -4,6 +4,11 @@ import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import { callAI } from "./ai/llm";
 import { AUTO_WRITE_MAX_ACTIONS, CONFIRMATION_TTL_MS } from "./actions_envelope";
+import {
+  legacyConversationText,
+  legacyMarkerValue,
+  structuredExtractionFromLegacyMarkers,
+} from "./chat_turn_test_helpers";
 
 vi.mock("./ai/llm", async () => {
   const actual = await vi.importActual<typeof import("./ai/llm")>("./ai/llm");
@@ -17,6 +22,23 @@ const modules = (import.meta as ImportMeta & {
 
 function waterMarker(count: number) {
   return `⟦LOG_WATER⟧${JSON.stringify({ ml: count, date: "2026-07-16" })}⟦/LOG_WATER⟧`;
+}
+
+function mockChatReply(reply: string) {
+  mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
+    const prompt = typeof messages?.[0]?.content === "string" ? messages[0].content : "";
+    if (prompt.includes("Extract ALL loggable items")) return structuredExtractionFromLegacyMarkers(reply) ?? reply;
+    if (prompt.includes("Extract water amount in ml")) return String(legacyMarkerValue(reply, "WATER", "ml") ?? "");
+    if (prompt.includes("Extract sleep data")) {
+      return JSON.stringify({
+        hours: legacyMarkerValue(reply, "SLEEP", "hours"),
+        quality: legacyMarkerValue(reply, "SLEEP", "quality"),
+      });
+    }
+    if (prompt.includes("Extract mood rating")) return String(legacyMarkerValue(reply, "MOOD", "rating") ?? "");
+    if (prompt.includes("Extract step count")) return String(legacyMarkerValue(reply, "STEPS", "count") ?? "");
+    return legacyConversationText(reply);
+  });
 }
 
 function mealPayload(name: string, date = "2026-07-16") {
@@ -50,7 +72,7 @@ describe("large-batch confirmation", () => {
   test("writes exactly the four-action boundary automatically", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "confirm-user" });
-    mockedCallAI.mockResolvedValue([
+    mockChatReply([
       "Logged it.",
       waterMarker(500),
       "⟦LOG_SLEEP⟧{\"hours\":7,\"quality\":\"good\",\"date\":\"2026-07-16\"}⟦/LOG_SLEEP⟧",
@@ -68,7 +90,7 @@ describe("large-batch confirmation", () => {
   test("stages five valid actions without writing any domain rows", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "confirm-user" });
-    mockedCallAI.mockResolvedValue(Array.from({ length: AUTO_WRITE_MAX_ACTIONS + 1 }, (_, i) => waterMarker(500 + i)).join(""));
+    mockChatReply(Array.from({ length: AUTO_WRITE_MAX_ACTIONS + 1 }, (_, i) => waterMarker(500 + i)).join(""));
 
     const result = await asUser.action(api.ai.chat, { message: "five logs", today: "2026-07-16" }) as any;
     expect(result.confirmation.items).toHaveLength(AUTO_WRITE_MAX_ACTIONS + 1);
@@ -90,6 +112,66 @@ describe("large-batch confirmation", () => {
     expect(result.status).toBe("committed");
     expect(result.results.map((item: any) => item.status)).toEqual(["committed", "committed"]);
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(2);
+  });
+
+  test("canonical loggedItems hydrate complete meal, workout, and water rows and exclude undone records", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "confirm-user" });
+    const { id: sessionId } = await asUser.mutation(api.chat.createSession, { title: "Hydrated result" });
+    const staged = await t.mutation(internal.ai.stageClarificationGroup, {
+      userId: "confirm-user",
+      groupIdempotencyKey: "hydrated-logged-items",
+      sourceSurface: "chat",
+      rawInput: "meal workout water",
+      createdAt: Date.now(),
+      members: [
+        { actionType: "meal", memberIdempotencyKey: "hydrated-meal", payload: mealPayload("Dal bowl"), provenance: "ai_extracted", validation: { status: "valid", messages: [] }, reversible: true, resolvedDate: "2026-07-16", resolvedTime: "08:00", ordinal: 0 },
+        { actionType: "workout", memberIdempotencyKey: "hydrated-workout", payload: { name: "Run", sets: "1", duration: "35 min", intensity: "MODERATE", caloriesBurned: 280, date: "2026-07-16", timestamp: "09:00", logSource: "chat" }, provenance: "ai_extracted", validation: { status: "valid", messages: [] }, reversible: true, resolvedDate: "2026-07-16", resolvedTime: "09:00", ordinal: 1 },
+        { actionType: "recovery", memberIdempotencyKey: "hydrated-water", payload: { kind: "water", ml: 650, date: "2026-07-16", time: "10:00", source: "ai_extracted" }, provenance: "ai_extracted", validation: { status: "valid", messages: [] }, reversible: true, resolvedDate: "2026-07-16", resolvedTime: "10:00", ordinal: 2 },
+      ],
+    });
+    const actions = await t.run((ctx) => ctx.db.query("actions").collect())
+      .then((rows) => rows.filter((row) => row.groupId === staged.groupId).sort((a, b) => (a.payload._confirmationOrdinal ?? 0) - (b.payload._confirmationOrdinal ?? 0)));
+    await t.mutation(internal.chat.addMessage, {
+      userId: "confirm-user",
+      sessionId,
+      role: "ai",
+      content: "3 items need review.",
+      turnContractVersion: 1,
+      turnOutcome: "confirmation_required",
+      turnCards: [{
+        version: 1,
+        kind: "confirmation",
+        data: {
+          groupId: String(staged.groupId),
+          expiresAt: Date.now() + CONFIRMATION_TTL_MS,
+          items: actions.map((action, ordinal) => ({
+            ordinal,
+            actionType: action.actionType,
+            title: action.payload.name ?? (action.payload.kind === "water" ? `Water ${action.payload.ml}ml` : action.actionType),
+            actionId: String(action._id),
+            validationMessages: [],
+          })),
+        },
+      }],
+      actionGroupId: staged.groupId,
+      actionIds: actions.map((action) => action._id),
+    });
+
+    const confirmed = await asUser.action(api.ai.confirmGroup, {
+      groupId: staged.groupId,
+      decisions: [0, 1, 2].map((ordinal) => ({ ordinal, action: "confirm" as const })),
+    }) as any;
+    const byType = new Map(confirmed.loggedItems.map((item: any) => [item.type, item.data]));
+    expect(byType.get("meal")).toMatchObject({ name: "Dal bowl", calories: 400, protein: 20 });
+    expect(byType.get("workout")).toMatchObject({ name: "Run", duration: "35 min", caloriesBurned: 280 });
+    expect(byType.get("water")).toMatchObject({ ml: 650 });
+    expect(JSON.stringify(confirmed.loggedItems)).not.toMatch(/undefined|NaN/);
+
+    await asUser.mutation(api.actions_undo.undoAction, { actionId: actions[0]._id });
+    const reloaded = await asUser.action(api.ai.confirmGroup, { groupId: staged.groupId, decisions: [] }) as any;
+    expect(reloaded.loggedItems.map((item: any) => item.type).sort()).toEqual(["water", "workout"]);
+    expect(reloaded.loggedItems.some((item: any) => item.data.actionId === actions[0]._id)).toBe(false);
   });
 
   test("supports partial confirmation and discard decisions", async () => {
@@ -152,12 +234,12 @@ describe("large-batch confirmation", () => {
       userId: "confirm-user",
       groupIdempotencyKey: "forged-previous",
       sourceSurface: "chat",
-      rawInput: "water",
+      rawInput: "meal",
       createdAt: Date.now(),
       members: [{
-        actionType: "recovery",
+        actionType: "meal",
         memberIdempotencyKey: "forged-previous-member",
-        payload: { kind: "water", ml: 500, time: "08:00", date: "2026-07-16" },
+        payload: { name: "oats", calories: 400, protein: 20, carbs: 40, fat: 15, time: "08:00", date: "2026-07-16", logSource: "test" },
         provenance: "ai_extracted",
         validation: { status: "valid", messages: [] },
         reversible: true,
@@ -174,15 +256,28 @@ describe("large-batch confirmation", () => {
             ml: 750,
             previous: { userId: "confirm-user", date: "2026-07-16", ml: 999, time: "00:00", source: "forged" },
           },
+          macros: { calories: 260, protein: 30, carbs: 12, fat: 6 },
         },
       }],
     }) as any;
     expect(result.status).toBe("committed");
     const action = await t.run((ctx) => ctx.db.query("actions").first());
     expect(action?.payload?.previous).toBeUndefined();
+    expect(await t.run((ctx) => ctx.db.query("meals").first())).toMatchObject({
+      calories: 260,
+      protein: 30,
+      carbs: 12,
+      fat: 6,
+    });
     const undone = await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
     expect(undone.status).toBe("undone");
-    expect(await t.run((ctx) => ctx.db.query("water_logs").first())).toMatchObject({ ml: 750, undoneAt: expect.any(Number) });
+    expect(await t.run((ctx) => ctx.db.query("meals").first())).toMatchObject({
+      calories: 260,
+      protein: 30,
+      carbs: 12,
+      fat: 6,
+      undoneAt: expect.any(Number),
+    });
   });
 
   test("expires stale confirmation groups and refuses commits", async () => {
@@ -209,10 +304,11 @@ describe("large-batch confirmation", () => {
     });
     await t.run((ctx) => ctx.db.patch(staged.groupId, { createdAt: Date.now() - CONFIRMATION_TTL_MS - 1 }));
 
-    await expect(asUser.action((api as any).ai.resolveClarification, {
+    const result = await asUser.action(api.ai.resolveClarification, {
       groupId: staged.groupId,
       date: "2026-07-16",
-    })).rejects.toThrow("This confirmation has expired");
+    }) as any;
+    expect(result.turnOutcome).toBe("failed");
     expect(await t.run((ctx) => ctx.db.get(staged.groupId))).toMatchObject({ status: "expired" });
     expect((await t.run((ctx) => ctx.db.query("actions").collect())).map((action) => action.status).sort()).toEqual(["committed", "expired"]);
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);

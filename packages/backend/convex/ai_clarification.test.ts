@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import { callAI } from "./ai/llm";
+import {
+  legacyConversationText,
+  legacyMarkerValue,
+  structuredExtractionFromLegacyMarkers,
+} from "./chat_turn_test_helpers";
 
 vi.mock("./ai/llm", async () => {
   const actual = await vi.importActual<typeof import("./ai/llm")>("./ai/llm");
@@ -30,7 +35,11 @@ function isMealParsePrompt(messages: any[]): boolean {
 
 function mockChatReply(reply: string) {
   mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
+    const prompt = promptText(messages);
     if (isTitlePrompt(messages)) return "Chat";
+    if (prompt.includes("Extract ALL loggable items")) {
+      return structuredExtractionFromLegacyMarkers(reply) ?? reply;
+    }
     if (isMealParsePrompt(messages)) {
       return JSON.stringify({
         name: "Pizza",
@@ -46,7 +55,18 @@ function mockChatReply(reply: string) {
         total_recipe_servings: 1,
       });
     }
-    return reply;
+    if (prompt.includes("Extract water amount in ml")) {
+      return String(legacyMarkerValue(reply, "WATER", "ml") ?? "");
+    }
+    if (prompt.includes("Extract sleep data")) {
+      return JSON.stringify({
+        hours: legacyMarkerValue(reply, "SLEEP", "hours"),
+        quality: legacyMarkerValue(reply, "SLEEP", "quality"),
+      });
+    }
+    if (prompt.includes("Extract mood rating")) return String(legacyMarkerValue(reply, "MOOD", "rating") ?? "");
+    if (prompt.includes("Extract step count")) return String(legacyMarkerValue(reply, "STEPS", "count") ?? "");
+    return legacyConversationText(reply);
   });
 }
 
@@ -65,7 +85,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "I ate pizza a while ago",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
 
@@ -95,7 +114,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "I drank 500ml water",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
 
@@ -117,7 +135,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "pizza and sleep",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as any;
     const groupId = result.clarification.groupId;
@@ -161,6 +178,9 @@ describe("clarification flow", () => {
     const reply = 'Two similar entries.⟦LOG_WORKOUT⟧{"description":"running","date":"2026-07-16"}⟦/LOG_WORKOUT⟧⟦LOG_WORKOUT⟧{"description":"running variation","date":"2026-07-16"}⟦/LOG_WORKOUT⟧';
     mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
       if (isTitlePrompt(messages)) return "Chat";
+      if (promptText(messages).includes("Extract ALL loggable items")) {
+        return structuredExtractionFromLegacyMarkers(reply)!;
+      }
       if (promptText(messages).includes("professional fitness trainer")) {
         const prompt = messages.at(-1)?.content;
         return JSON.stringify({
@@ -172,7 +192,7 @@ describe("clarification flow", () => {
           rationale: "Keep it steady.",
         });
       }
-      return reply;
+      return legacyConversationText(reply);
     });
 
     await t.run((ctx) => ctx.db.insert("user_profiles", { userId: "user1", activityLevel: "moderate", weight: 75, age: 30, sex: "male" }));
@@ -188,6 +208,10 @@ describe("clarification flow", () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "user1" });
     mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
+      const reply = 'I am not sure about this entry.⟦LOG_MEAL⟧{"description":"mystery food","date":"2026-07-16"}⟦/LOG_MEAL⟧';
+      if (promptText(messages).includes("Extract ALL loggable items")) {
+        return structuredExtractionFromLegacyMarkers(reply)!;
+      }
       if (isTitlePrompt(messages)) return "Chat";
       if (isMealParsePrompt(messages)) {
         return JSON.stringify({
@@ -204,13 +228,12 @@ describe("clarification flow", () => {
           total_recipe_servings: 1,
         });
       }
-      return 'I am not sure about this entry.⟦LOG_MEAL⟧{"description":"mystery food","date":"2026-07-16"}⟦/LOG_MEAL⟧';
+      return legacyConversationText(reply);
     });
 
     const result = await asUser.action(api.ai.chat, {
       message: "I ate something weird",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
 
@@ -233,7 +256,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "I had pizza",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
 
@@ -288,7 +310,6 @@ describe("clarification flow", () => {
     const chatResult = await asUser.action(api.ai.chat, {
       message: "I ate pizza a while ago",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
@@ -307,6 +328,17 @@ describe("clarification flow", () => {
 
     const actions = await t.run((ctx) => ctx.db.query("actions").collect());
     expect(actions[0]).toMatchObject({ status: "committed", committedRowRef: { table: "meals" } });
+    const assistantMessages = await t.run((ctx) => ctx.db.query("chat_messages").collect());
+    const assistant = assistantMessages.find((message) => message.role === "ai");
+    expect(assistantMessages.filter((message) => message.role === "ai")).toHaveLength(1);
+    expect(assistant).toMatchObject({ turnOutcome: "committed", actionGroupId: groupId });
+    expect(assistant?.turnCards).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "result" }),
+      expect.objectContaining({ kind: "undo" }),
+    ]));
+    expect(assistant?.turnCards).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "clarification" }),
+    ]));
   });
 
   test("resolved group cannot be double-committed", async () => {
@@ -319,15 +351,14 @@ describe("clarification flow", () => {
     const chatResult = await asUser.action(api.ai.chat, {
       message: "I ate pizza a while ago",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
 
-    await asUser.action(api.ai.resolveClarification, { groupId: groupId as any, date: "2026-07-10" });
-    await expect(
-      asUser.action(api.ai.resolveClarification, { groupId: groupId as any, date: "2026-07-10" }),
-    ).rejects.toThrow("Group is not pending clarification");
+    const resolved = await asUser.action(api.ai.resolveClarification, { groupId: groupId as any, date: "2026-07-10" });
+    const retry = await asUser.action(api.ai.resolveClarification, { groupId: groupId as any, date: "2026-07-10" });
+    expect(retry).toMatchObject({ groupId, turnOutcome: "committed", messageId: resolved.messageId });
+    expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
   });
 
   test("free-text clarification answer resolves pending group", async () => {
@@ -340,7 +371,6 @@ describe("clarification flow", () => {
     const chatResult = await asUser.action(api.ai.chat, {
       message: "I ate pizza a while ago",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
@@ -348,7 +378,6 @@ describe("clarification flow", () => {
     const followUp = await asUser.action(api.ai.chat, {
       message: "2026-07-12",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
       clarificationGroupId: groupId as any,
     }) as Record<string, unknown>;
@@ -357,6 +386,61 @@ describe("clarification flow", () => {
     const meals = await t.run((ctx) => ctx.db.query("meals").collect());
     expect(meals).toHaveLength(1);
     expect(meals[0]).toMatchObject({ date: "2026-07-12", name: "Pizza" });
+    const assistantMessages = await t.run((ctx) => ctx.db.query("chat_messages").collect());
+    expect(assistantMessages.filter((message) => message.role === "ai")).toHaveLength(1);
+    expect(assistantMessages.find((message) => message.role === "ai")).toMatchObject({
+      turnOutcome: "committed",
+      actionGroupId: groupId,
+    });
+    expect(assistantMessages.find((message) => message.role === "ai")?.turnCards).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "clarification" }),
+    ]));
+  });
+
+  test("undo after typed clarification patches the one persisted outcome message", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    mockChatReply(
+      'I need the exact date.⟦LOG_MEAL⟧{"description":"pizza","date":"UNKNOWN_VAGUE","question":"Which date did you eat this?"}⟦/LOG_MEAL⟧',
+    );
+
+    const initial = await asUser.action(api.ai.chat, { message: "I ate pizza a while ago", today: "2026-07-16", clientSubmissionId: "typed-original" }) as any;
+    const groupId = initial.clarification.groupId;
+    const typedRequest = { message: "2026-07-12", today: "2026-07-16", clarificationGroupId: groupId as any, clientSubmissionId: "typed-answer" };
+    const typedResult = await asUser.action(api.ai.chat, typedRequest) as any;
+    const typedRetry = await asUser.action(api.ai.chat, typedRequest) as any;
+    expect(typedRetry).toMatchObject({ messageId: typedResult.messageId, outcome: typedResult.outcome, cards: typedResult.cards });
+    const action = await t.run((ctx) => ctx.db.query("actions").first());
+    await asUser.mutation(api.actions_undo.undoAction, { actionId: action!._id });
+
+    const assistantMessages = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).filter((message) => message.role === "ai");
+    expect(assistantMessages).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.query("chat_messages").collect())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", clientSubmissionId: "typed-answer", resolvedTurnMessageId: assistantMessages[0]._id }),
+    ]));
+    expect(assistantMessages[0].turnCards).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "undo", data: expect.objectContaining({ items: [expect.objectContaining({ actionId: String(action!._id), state: "undone" })] }) }),
+    ]));
+    expect(await t.run((ctx) => ctx.db.get(action!.committedRowRef!.id as any))).toMatchObject({ undoneAt: expect.any(Number) });
+  });
+
+  test("discard all persists a resolved confirmation outcome instead of a retriable failure", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "user1" });
+    mockChatReply(Array.from({ length: 5 }, (_, index) => `⟦LOG_WATER⟧{"ml":${500 + index},"date":"2026-07-16"}⟦/LOG_WATER⟧`).join(""));
+    const initial = await asUser.action(api.ai.chat, { message: "five glasses", today: "2026-07-16" }) as any;
+    const discarded = await asUser.action(api.ai.confirmGroup, {
+      groupId: initial.confirmation.groupId,
+      decisions: initial.confirmation.items.map((item: any) => ({ ordinal: item.ordinal, action: "discard" })),
+    }) as any;
+
+    expect(discarded.status).toBe("discarded");
+    expect(await t.run((ctx) => ctx.db.query("water_logs").collect())).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("actions").collect())).toEqual(expect.arrayContaining([expect.objectContaining({ status: "discarded" })]));
+    const assistant = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).find((message) => message.role === "ai");
+    expect(assistant).toMatchObject({ turnOutcome: "no_action", content: "Discarded. Nothing was saved." });
+    expect(assistant?.content).not.toMatch(/couldn't save|try again/i);
+    expect(assistant?.turnCards).toEqual([expect.objectContaining({ kind: "confirmation", data: expect.objectContaining({ state: "resolved" }) })]);
   });
 
   test("confirming with a future date edit fails the member and writes nothing", async () => {
@@ -365,7 +449,7 @@ describe("clarification flow", () => {
     mockChatReply(
       'Please confirm.⟦LOG_MEAL⟧{"description":"pizza","date":"2026-07-16","validation":{"status":"warning","messages":["unclear portion"]}}⟦/LOG_MEAL⟧',
     );
-    const result = await asUser.action(api.ai.chat, { message: "I had pizza", sessionId: undefined, coachType: "auto", today: "2026-07-16" }) as Record<string, unknown>;
+    const result = await asUser.action(api.ai.chat, { message: "I had pizza", sessionId: undefined, today: "2026-07-16" }) as Record<string, unknown>;
     const groupId = (result.clarification as { groupId: string }).groupId;
     const confirmed = await asUser.action(api.ai.confirmGroup, {
       groupId: groupId as any,
@@ -383,7 +467,7 @@ describe("clarification flow", () => {
     mockChatReply(
       'I need the exact date.⟦LOG_MEAL⟧{"description":"pizza","date":"UNKNOWN_VAGUE","question":"Which date did you eat this?"}⟦/LOG_MEAL⟧',
     );
-    const chatResult = await asUser.action(api.ai.chat, { message: "I ate pizza", sessionId: undefined, coachType: "auto", today: "2026-07-16" }) as Record<string, unknown>;
+    const chatResult = await asUser.action(api.ai.chat, { message: "I ate pizza", sessionId: undefined, today: "2026-07-16" }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
     const group = await t.run((ctx) => ctx.db.get("actionGroups", groupId as any));
     expect(group?.clientLocalDate).toBe("2026-07-16");
