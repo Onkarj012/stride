@@ -32,3 +32,6 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm test
+
+      # Catches Metro bundling errors that tsc misses. Needs no device or secrets.
+      - run: pnpm --filter @stride/mobile exec expo export --platform android

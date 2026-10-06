@@ -3,5 +3,5 @@ packages:
   - 'packages/*'
 allowBuilds:
   esbuild: true
-  react-native-svg: set this to true or false
+  react-native-svg: false
   react-native-worklets: true
