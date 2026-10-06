@@ -27,6 +27,7 @@ pnpm workspaces (`pnpm-workspace.yaml`: `apps/*`, `packages/*`).
 | `apps/mobile` | `@stride/mobile` | Expo app (expo-router, NativeWind, Clerk). Will be rebuilt in slices 5-9. |
 | `apps/web` | `@stride/web` | React 19 + Vite + Tailwind v4 web app. Frozen until slice 10. |
 | `packages/backend` | `stride-backend` | Convex functions, schema, and tests in `convex/`. |
+| `packages/core` | `@stride/core` | Pure TS math (nutrition, energy, strength, local dates), zero runtime deps. Food and exercise import scripts in `scripts/`. Not wired into backend or web yet. |
 | `packages/shared` | `@stride/shared` | Design tokens (`tokens.ts`) and chat-turn contracts. Folds into `core` (D19). |
 | `plans/` | | `007-restart.md` plus its codebase report and stack research. |
 
@@ -48,9 +49,10 @@ Run from the repo root. Node 20+, pnpm 10.
 | `pnpm dev:mobile` | `expo start` in `apps/mobile` |
 | `pnpm --filter @stride/mobile android` | Build and install the Android dev client on a USB device or emulator |
 | `pnpm typecheck` | `tsc` in every workspace |
-| `pnpm test` | Vitest in every workspace that has tests (backend, web) |
+| `pnpm test` | Vitest in every workspace that has tests (backend, web, core) |
 | `pnpm --filter stride-backend test` | Backend tests only |
 | `pnpm build` | Production web build. Fails if web env vars are missing. |
+| `pnpm --filter @stride/core data:import` | Download and map FDC and exercise data into `packages/core/data/out/` (gitignored). See `packages/core/scripts/README.md`. Not run in CI. |
 | `pnpm build:tokens` | Regenerate `apps/web/src/styles/tokens.generated.css` from `packages/shared` |
 
 ## Environment variables
