@@ -1,9 +1,10 @@
 import { roundNutrients, scaleNutrients, sumNutrients, totalNutrients, type Nutrients } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import schema from "./schema";
+import { CLEAR_LEDGER_BATCH } from "./users";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -351,7 +352,19 @@ describe("account data", () => {
     expect(exported.day_totals.map((d) => d.localDate)).toEqual(["2026-10-05"]);
     expect(exported.weights.map((w) => w.kg)).toEqual([72]);
 
-    await user.mutation(api.users.clearAllData, {});
+    vi.useFakeTimers();
+    try {
+      // More weights than one batch, so clearing has to reschedule itself.
+      await t.run(async (ctx) => {
+        for (let i = 0; i <= CLEAR_LEDGER_BATCH; i++) {
+          await ctx.db.insert("weights", { userId: "user_a", localDate: `2025-01-01#${i}`, kg: 72, loggedAt: 0 });
+        }
+      });
+      await user.mutation(api.users.clearAllData, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+    } finally {
+      vi.useRealTimers();
+    }
     const left = await t.run(async (ctx) => ({
       entries: await ctx.db.query("entries").take(100),
       dayTotals: await ctx.db.query("day_totals").take(100),

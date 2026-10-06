@@ -1,5 +1,39 @@
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
+
+/** Restart ledger tables (plan 007) that clearAllData empties in scheduled batches. */
+const LEDGER_TABLES = ["entries", "day_totals", "weights"] as const;
+
+/** Rows deleted per clearLedgerRows transaction. */
+export const CLEAR_LEDGER_BATCH = 200;
+
+/** Reads up to one batch of a user's rows from one ledger table. */
+async function ledgerBatch(ctx: MutationCtx, table: (typeof LEDGER_TABLES)[number], userId: string) {
+  switch (table) {
+    case "entries":
+      return await ctx.db.query("entries").withIndex("by_userId_and_localDate_and_status", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "day_totals":
+      return await ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "weights":
+      return await ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+  }
+}
+
+/** Deletes one batch of a user's ledger rows and schedules itself until every ledger table is empty for them. */
+export const clearLedgerRows = internalMutation({
+  args: { userId: v.string(), tableIndex: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { userId, tableIndex }) => {
+    const table = LEDGER_TABLES[tableIndex];
+    if (table === undefined) return null;
+    const rows = await ledgerBatch(ctx, table, userId);
+    for (const row of rows) await ctx.db.delete(row._id);
+    const next = rows.length === CLEAR_LEDGER_BATCH ? tableIndex : tableIndex + 1;
+    if (next < LEDGER_TABLES.length) await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: next });
+    return null;
+  },
+});
 
 export const ensureUser = mutation({
   args: {
@@ -73,13 +107,8 @@ export const clearAllData = mutation({
     const gam = await ctx.db.query("user_gamification").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (gam) await ctx.db.delete(gam._id);
 
-    // Restart ledger tables (plan 007).
-    const [entries, dayTotals, weights] = await Promise.all([
-      ctx.db.query("entries").withIndex("by_userId_and_localDate_and_status", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).collect(),
-    ]);
-    await Promise.all([...entries, ...dayTotals, ...weights].map((r) => ctx.db.delete(r._id)));
+    // Ledger rows grow with every revision, so they go in scheduled batches.
+    await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: 0 });
   },
 });
 
