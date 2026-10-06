@@ -14,10 +14,9 @@ import { ProgressBar } from "@/components/primitives/ProgressBar";
 import { Skeleton } from "@/components/primitives/Skeleton";
 import { MealLogCard } from "@/components/ui-kit";
 import { MacroCard, MealLogCardEmpty } from "@/components/ui-kit";
-import { MobileIcon, ScreenHeader, SegToggle } from "@/components/mobile/MobileKit";
+import { MobileIcon, ScreenHeader } from "@/components/mobile/MobileKit";
 import { useToast } from "@/context/ToastContext";
-import { localDateStr, cn } from "@/lib/utils";
-import { RecipesContent } from "@/pages/RecipesPage";
+import { localDateStr } from "@/lib/utils";
 
 const SECTIONS = ["Breakfast", "Lunch", "Snack", "Dinner"] as const;
 type Section = (typeof SECTIONS)[number];
@@ -47,13 +46,6 @@ function mealDetail(meal: { ingredientBreakdown?: string }) {
     return undefined;
   }
 }
-
-const SECTION_LOG_KEY: Record<Section, string> = {
-  Breakfast: "breakfast",
-  Lunch: "lunch",
-  Snack: "snack",
-  Dinner: "dinner",
-};
 
 const MODALITIES = [
   { id: "type", label: "Type it", icon: <path d="M21 12a8 8 0 0 1-11.5 7.2L4 21l1.8-4.5A8 8 0 1 1 21 12z" /> },
@@ -97,7 +89,6 @@ export function NutritionPage() {
   const deleteMeal = useMutation(api.meals.deleteMeal);
   const toast = useToast();
 
-  const [activeTab, setActiveTab] = useState<"log" | "recipes">("log");
   const [adding, setAdding] = useState(false);
   const [editEntry, setEditEntry] = useState<EditableMeal | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Id<"meals"> | null>(null);
@@ -132,7 +123,7 @@ export function NutritionPage() {
     return (
       <>
         <div className="lg:hidden px-5 pt-4 pb-6 relative">
-          <ScreenHeader title="Nutrition" sub="Today's meals & recipes" />
+          <ScreenHeader title="Nutrition" sub="Today's meals" />
           <div className="space-y-3">
             <Skeleton className="h-40 w-full rounded-[20px]" />
             <Skeleton className="h-24 w-full rounded-[20px]" />
@@ -185,37 +176,28 @@ export function NutritionPage() {
       </AnimatePresence>
 
       <div className="lg:hidden px-5 pt-4 pb-6 relative">
-        <ScreenHeader title="Nutrition" sub="Today's meals & recipes" />
-        <div className="mb-5">
-          <SegToggle value={activeTab} onChange={setActiveTab} layoutId="m-nutri-seg" options={[{ id: "log", label: "Today's meals" }, { id: "recipes", label: "Recipes" }]} />
+        <ScreenHeader title="Nutrition" sub="Today's meals" />
+        <div className="space-y-4">
+          <MacroCard kcal={kcal} protein={protein} carbs={carbs} fat={fat} />
+          {meals.map((m: any) => (
+            <MealLogCard
+              key={m._id}
+              meal={m.name}
+              time={m.time || m.mealType || "Meal"}
+              macros={{ kcal: Math.round(m.calories), protein: Math.round(m.protein), carbs: Math.round(m.carbs ?? 0), fat: Math.round(m.fat ?? 0) }}
+              confirmed={false}
+              detail={mealDetail(m)}
+            />
+          ))}
+          <MealLogCardEmpty />
         </div>
-        {activeTab === "recipes" ? (
-          <RecipesContent embedded />
-        ) : (
-          <div className="space-y-4">
-            <MacroCard kcal={kcal} protein={protein} carbs={carbs} fat={fat} />
-            {meals.map((m: any) => (
-              <MealLogCard
-                key={m._id}
-                meal={m.name}
-                time={m.time || m.mealType || "Meal"}
-                macros={{ kcal: Math.round(m.calories), protein: Math.round(m.protein), carbs: Math.round(m.carbs ?? 0), fat: Math.round(m.fat ?? 0) }}
-                confirmed={false}
-                detail={mealDetail(m)}
-              />
-            ))}
-            <MealLogCardEmpty />
-          </div>
-        )}
-        {activeTab === "log" && (
-          <button
-            onClick={() => setAdding(true)}
-            aria-label="Log meal"
-            className="fixed right-5 bottom-28 z-20 w-14 h-14 rounded-full bg-ink dark:bg-lavender text-white dark:text-ink flex items-center justify-center shadow-[0_16px_40px_rgba(13,16,27,0.3)] active:scale-90 transition-transform"
-          >
-            <MobileIcon size={26} sw={2.6}><path d="M12 5v14M5 12h14" /></MobileIcon>
-          </button>
-        )}
+        <button
+          onClick={() => setAdding(true)}
+          aria-label="Log meal"
+          className="fixed right-5 bottom-28 z-20 w-14 h-14 rounded-full bg-ink dark:bg-lavender text-white dark:text-ink flex items-center justify-center shadow-[0_16px_40px_rgba(13,16,27,0.3)] active:scale-90 transition-transform"
+        >
+          <MobileIcon size={26} sw={2.6}><path d="M12 5v14M5 12h14" /></MobileIcon>
+        </button>
       </div>
 
       <div className="hidden lg:block page-container">
@@ -233,20 +215,6 @@ export function NutritionPage() {
           }
         />
 
-        {/* Log | Recipes tabs */}
-        <div className="flex gap-1 mb-4 p-1 rounded-xl bg-card-elev w-fit">
-          {(["log", "recipes"] as const).map((tab) => (
-            <button key={tab} type="button" onClick={() => setActiveTab(tab)}
-              className={cn("px-4 py-1.5 rounded-lg text-[13px] font-bold capitalize transition-colors",
-                activeTab === tab ? "bg-card text-text shadow-[var(--shadow-soft)]" : "text-text-muted hover:text-text")}>
-              {tab === "log" ? "Log" : "Recipes"}
-            </button>
-          ))}
-        </div>
-
-        {activeTab === "recipes" && <RecipesContent embedded />}
-
-        {activeTab === "log" && <>
         {/* Macro summary card */}
         <Card tone="ink" radius="lg" padding="md" className="flex items-center gap-4 mb-4">
           <svg width="72" height="72" viewBox="0 0 72 72" className="shrink-0">
@@ -309,7 +277,7 @@ export function NutritionPage() {
                   <p className="text-[10px] font-extrabold tracking-[0.9px] uppercase text-text-muted">{section}</p>
                   <button
                     type="button"
-                    onClick={() => navigate(`/?log=${SECTION_LOG_KEY[section]}`)}
+                    onClick={() => navigate("/coach")}
                     className="inline-flex items-center gap-1 text-[11px] font-bold text-lavender hover:text-lavender/80 transition-colors"
                   >
                     <Plus className="h-3 w-3" strokeWidth={2.5} /> Log
@@ -366,13 +334,12 @@ export function NutritionPage() {
         {/* Log meal button */}
         <button
           type="button"
-          onClick={() => navigate("/?log=breakfast")}
+          onClick={() => navigate("/coach")}
           className="w-full mt-3 flex items-center justify-center gap-2 rounded-[14px] border border-dashed border-border py-3 text-[13px] font-bold text-text-muted hover:bg-card transition-colors"
         >
           <Plus className="h-4 w-4" strokeWidth={1.8} />
           Log a meal
         </button>
-        </>}
       </div>
     </>
   );

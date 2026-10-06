@@ -11,7 +11,7 @@ function utcDate(ts: number): string {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
-/** Shared insert used by recordBehavior and other modules (e.g. nudges). */
+/** Shared insert used by recordBehavior and other modules. */
 export async function recordBehaviorRow(
   ctx: any,
   userId: string,
@@ -75,13 +75,6 @@ export function deriveBehaviorProfile(
 
   const engagement = countBy("engagement");
   const suggestions = countBy("suggestion");
-  const coaches = countBy("coach");
-
-  // Nudges dismissed in the last 7 days (used to throttle re-delivery).
-  const recentCutoff = now - 7 * 86_400_000;
-  const dismissedNudges = Array.from(
-    new Set(recent.filter((r) => r.kind === "nudge_dismiss" && r.ts >= recentCutoff).map((r) => r.key)),
-  );
 
   // Phase 4: acceptance rate — ratio of confirmed vs corrected meal logs
   const confirmCount = recent.filter((r) => r.kind === "log" && r.key === "meal_confirm").length;
@@ -92,8 +85,6 @@ export function deriveBehaviorProfile(
   return {
     engagedWindows: topKeys(engagement, 4).filter((w) => WINDOWS.includes(w)),
     topSuggestions: topKeys(suggestions, 5),
-    preferredCoach: topKeys(coaches, 1)[0] ?? null,
-    dismissedNudges,
     acceptRate,
     sampleSize: recent.length,
   };
@@ -117,19 +108,4 @@ export const getBehaviorProfile = query({
 export const getBehaviorProfileForContext = internalQuery({
   args: { userId: v.string() },
   handler: async (ctx, { userId }) => loadProfile(ctx, userId),
-});
-
-/** Distinct userIds with behavior recorded in the last `days` days (indexed scan). */
-export async function activeUserIds(ctx: any, days: number): Promise<string[]> {
-  const start = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-  const rows = await ctx.db
-    .query("user_behavior")
-    .withIndex("by_date", (q: any) => q.gte("date", start))
-    .collect();
-  return Array.from(new Set(rows.map((r: any) => r.userId)));
-}
-
-export const listActiveUsers = internalQuery({
-  args: { days: v.optional(v.number()) },
-  handler: async (ctx, { days }) => activeUserIds(ctx, days ?? 3),
 });

@@ -228,7 +228,6 @@ export const writeMealAction = internalMutation({
     const payload = prepared.member.payload as Record<string, any>;
     const id = await writeMealDomain(ctx, { ...payload, userId: prepared.group.userId }, {
       emitBehavior: true,
-      emitGamification: true,
       recomputeDerived: false,
       sourceActionId: String(prepared.member._id),
     });
@@ -250,7 +249,6 @@ export const writeWorkoutAction = internalMutation({
     const payload = prepared.member.payload as Record<string, any>;
     const id = await writeWorkoutDomain(ctx, { ...payload, userId: prepared.group.userId }, {
       emitBehavior: true,
-      emitGamification: true,
       recomputeDerived: false,
       sourceActionId: String(prepared.member._id),
     });

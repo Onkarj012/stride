@@ -4,7 +4,6 @@ import { internal } from "./_generated/api";
 import { deriveGroupKey } from "./actions_idempotency";
 import { finalizeActionGroupAfterWrite } from "./actions_group";
 import { recordBehaviorRow } from "./behavior";
-import { recordActivityForUser } from "./gamification";
 import { recomputeForAction } from "./derived_state";
 import { buildWorkoutDraft, workoutPayloadFromDraft } from "./workout_draft";
 import {
@@ -63,7 +62,7 @@ export async function assertNoNearDuplicateWorkout(
 export async function writeWorkoutDomain(
   ctx: any,
   args: any,
-  options: { emitBehavior?: boolean; emitGamification?: boolean; recomputeDerived?: boolean; sourceActionId?: string } = {},
+  options: { emitBehavior?: boolean; recomputeDerived?: boolean; sourceActionId?: string } = {},
 ) {
   const date = args.date ?? new Date().toISOString().split("T")[0];
   const logSource = normalizeLogSource(args.logSource, "manual");
@@ -167,9 +166,6 @@ export async function writeWorkoutDomain(
     sourceActionId: options.sourceActionId,
   });
   if (options.emitBehavior) await recordBehaviorRow(ctx, args.userId, "log", "workout", undefined, date);
-  if (options.emitGamification && date === new Date().toISOString().split("T")[0]) {
-    await recordActivityForUser(ctx, args.userId, { type: "workout", date });
-  }
   const durationMin = draft.durationMin;
   await ctx.runMutation(internal.workout_memory.recordFromWorkout, {
     userId: args.userId,
@@ -246,7 +242,7 @@ export const addWorkout = mutation({
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const date = args.date ?? new Date().toISOString().split("T")[0];
-    return writeWorkoutDomain(ctx, { ...args, userId, date }, { emitBehavior: true, emitGamification: true });
+    return writeWorkoutDomain(ctx, { ...args, userId, date }, { emitBehavior: true });
   },
 });
 
@@ -499,7 +495,7 @@ export const addWorkoutFromAI = internalMutation({
     allowDuplicate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    return writeWorkoutDomain(ctx, args, { emitBehavior: false, emitGamification: false });
+    return writeWorkoutDomain(ctx, args, { emitBehavior: false });
   },
 });
 

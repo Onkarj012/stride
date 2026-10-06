@@ -1,7 +1,7 @@
 /**
  * ai/intent.ts — pure intent-detection + user-macro extraction helpers.
  *
- * Extracted from ai.ts (homepageInput path). No Convex or network deps, so
+ * Extracted from ai.ts. No Convex or network deps, so
  * these are unit-testable in isolation. See ai/intent.test.ts.
  */
 

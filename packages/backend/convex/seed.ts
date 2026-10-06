@@ -3,7 +3,7 @@
  *   npx convex run seed:seedTestUser
  *
  * Creates a test user with full profile, daily goals, meals, workouts,
- * water, sleep, mood, gamification state, and behavior history — so you
+ * water, sleep, mood, and behavior history — so you
  * can test every page immediately after signing in.
  *
  * The userId "test_user_onkar" is used. After running this, sign in via
@@ -91,21 +91,11 @@ export const seedTestUser = internalMutation({
     // 8. Mood
     await ctx.db.insert("mood_logs", { userId: USER_ID, date: TODAY, rating: 4, time: "09:00", note: "Feeling strong" });
 
-    // 9. Gamification
-    await ctx.db.insert("user_gamification", {
-      userId: USER_ID, xp: 450, streakDays: 7, longestStreak: 14,
-      lastLoggedDate: TODAY, streakFreezes: 2, totalDaysLogged: 28,
-      totalMealsLogged: 84, totalWorkoutsLogged: 20,
-    });
-
-    // 10. Behavior (so patterns + nudges work)
+    // 9. Behavior (so patterns work)
     const behaviors = [
       { kind: "engagement", key: "morning" },
       { kind: "engagement", key: "morning" },
       { kind: "engagement", key: "day" },
-      { kind: "coach", key: "diet" },
-      { kind: "coach", key: "diet" },
-      { kind: "coach", key: "workout" },
       { kind: "suggestion", key: "Log lunch" },
       { kind: "suggestion", key: "Log lunch" },
       { kind: "suggestion", key: "Protein shake" },
@@ -117,7 +107,7 @@ export const seedTestUser = internalMutation({
       await ctx.db.insert("user_behavior", { userId: USER_ID, kind: b.kind, key: b.key, date: TODAY, ts: Date.now() });
     }
 
-    // 11. Settings
+    // 10. Settings
     await ctx.db.insert("user_settings", {
       userId: USER_ID,
       coachingStyle: "motivating",
@@ -125,21 +115,6 @@ export const seedTestUser = internalMutation({
       notifications: true,
       reduceMotion: false,
       timezoneOffsetMinutes: -330, // IST
-    });
-
-    // 12. A saved recipe
-    const ingredients = [
-      { name: "Oats", grams: 80, caloriesPer100g: 389, proteinPer100g: 17, carbsPer100g: 66, fatPer100g: 7 },
-      { name: "Milk", grams: 200, caloriesPer100g: 42, proteinPer100g: 3.4, carbsPer100g: 5, fatPer100g: 1 },
-      { name: "Banana", grams: 120, caloriesPer100g: 89, proteinPer100g: 1.1, carbsPer100g: 23, fatPer100g: 0.3 },
-    ];
-    await ctx.db.insert("recipes", {
-      userId: USER_ID,
-      name: "Overnight oats",
-      servings: 1,
-      ingredients: JSON.stringify(ingredients),
-      total: { kcal: 502, p: 22.9, c: 110.6, f: 8 },
-      perServing: { kcal: 502, p: 22.9, c: 110.6, f: 8 },
     });
 
     return { userId: USER_ID, message: "Test user seeded. Sign in via Clerk, then update the users table clerkId to match your Clerk subject." };

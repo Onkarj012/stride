@@ -5,15 +5,12 @@ import { useQuery } from 'convex/react'
 import { api } from '@convex/_generated/api'
 import { NarrativeCard } from '../../components/NarrativeCard'
 import { MacroCard } from '../../components/MacroCard'
-import { StreakCard } from '../../components/StreakCard'
-import { MilestoneCard } from '../../components/MilestoneCard'
 import { useTheme } from '../../components/theme'
 import { AppText, SegToggle } from '../../components/ui'
 
 type Range = 'today' | 'week' | 'month'
 type ProgressRow = { date: string; calories: number; protein: number; carbs: number; fat: number; workouts: number; goal: number }
 type LogRow = { calories?: number; protein?: number; carbs?: number; fat?: number; duration?: string | null }
-type Milestone = { label: string; achieved: boolean }
 
 const RANGE_OPTIONS: { id: Range; label: string }[] = [
   { id: 'today', label: 'Today' },
@@ -34,12 +31,8 @@ export default function InsightsScreen() {
   const progress = useQuery(api.progress.getProgress, { days, today }) as ProgressRow[] | undefined
   const meals = useQuery(api.meals.getMeals, { date: today }) as LogRow[] | undefined
   const workouts = useQuery(api.workouts.getWorkouts, { date: today }) as LogRow[] | undefined
-  const weeklySummary = useQuery(api.insights.getWeeklySummary) as { content: string } | null | undefined
-  const dailyInsights = useQuery(api.insights.getDailyInsights, { date: today }) as { insights?: string[] } | undefined
-  const streak = useQuery(api.history.getStreak, { today }) as { streak: number } | undefined
 
   const currentMeals = meals ?? []
-  const currentWorkouts = workouts ?? []
   const rows = progress ?? []
   const todayTotals = {
     kcal: Math.round(currentMeals.reduce((s, row) => s + (row.calories ?? 0), 0)),
@@ -53,16 +46,9 @@ export default function InsightsScreen() {
     carbs: Math.round(rows.reduce((s, row) => s + row.carbs, 0)),
     fat: Math.round(rows.reduce((s, row) => s + row.fat, 0)),
   }
-  const workoutMinutes = currentWorkouts.reduce((s, row) => s + (Number.parseInt(row.duration ?? '', 10) || 0), 0)
-  const activeDays = new Set(rows.filter((row) => row.calories > 0 || row.workouts > 0).map((row) => row.date)).size
-  const milestones: Milestone[] = [
-    { label: 'Protein', achieved: totals.protein > 0 },
-    { label: 'Training', achieved: range === 'today' ? workoutMinutes > 0 : rows.some((row) => row.workouts > 0) },
-    { label: 'Active days', achieved: activeDays >= Math.min(days, 3) },
-  ]
   const narrative = range === 'today'
-    ? dailyInsights?.insights?.[0] ?? `You have logged ${totals.kcal} kcal and ${totals.protein}g protein today.`
-    : weeklySummary?.content ?? `You logged ${totals.kcal} kcal and ${totals.protein}g protein across the last ${days} days.`
+    ? `You have logged ${totals.kcal} kcal and ${totals.protein}g protein today.`
+    : `You logged ${totals.kcal} kcal and ${totals.protein}g protein across the last ${days} days.`
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: t.bg }} edges={['top']}>
@@ -80,8 +66,6 @@ export default function InsightsScreen() {
         ) : <>
           <NarrativeCard type={range === 'today' ? 'daily' : 'weekly'} narrative={narrative} date={range === 'today' ? 'Today' : `Last ${days} days`} />
           <MacroCard {...totals} />
-          <StreakCard days={streak?.streak ?? 0} quote="Consistency becomes useful when it is grounded in your real logs." />
-          <MilestoneCard milestones={milestones} />
         </>}
       </ScrollView>
     </SafeAreaView>

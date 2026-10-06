@@ -1,7 +1,6 @@
-import { query, internalMutation } from "./_generated/server";
+import { query } from "./_generated/server";
 import { v } from "convex/values";
 import { adjustCaloriesForDay } from "./tdee_engine";
-import { getNextCheckInForContext, getTodayCheckInAnswerContext } from "./checkins";
 import { FALLBACK_TARGETS, parseStoredPlan, resolvePlanForDayAdjustment } from "./plan_resolve";
 import { deriveRecoveryState } from "./wellness";
 import { readActiveRowsForDate, readActiveSleepForDate, readLatestActiveStepsForDate } from "./active_rows";
@@ -20,14 +19,6 @@ async function requireUserId(ctx: any): Promise<string> {
   return identity.subject;
 }
 
-function currentWeekStart(): string {
-  const now = new Date();
-  const day = now.getDay();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - day + (day === 0 ? -6 : 1));
-  return monday.toISOString().split("T")[0];
-}
-
 function localNowFromOffset(offsetMinutes: number) {
   return new Date(Date.now() - offsetMinutes * 60_000);
 }
@@ -37,92 +28,6 @@ function dateBefore(date: string): string {
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().split("T")[0];
 }
-
-export const getDailyInsights = query({
-  args: { date: v.string() },
-  handler: async (ctx, { date }) => {
-    const userId = await requireUserId(ctx);
-    const row = await ctx.db
-      .query("insights")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .first();
-    if (!row) return { insights: [], stale: false };
-    if (row.stale) return { insights: [], stale: true, generatedAt: row.generatedAt ?? null };
-    try {
-      const parsed = JSON.parse(row.content);
-      if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
-        return { insights: parsed, stale: false, generatedAt: row.generatedAt ?? null };
-      }
-      return { insights: [row.content], stale: false, generatedAt: row.generatedAt ?? null };
-    } catch {
-      return { insights: [row.content], stale: false, generatedAt: row.generatedAt ?? null };
-    }
-  },
-});
-
-export const getWeeklySummary = query({
-  args: {},
-  handler: async (ctx) => {
-    const userId = await requireUserId(ctx);
-    const weekStart = currentWeekStart();
-    const row = await ctx.db
-      .query("weekly_summaries")
-      .withIndex("by_user_week", (q) => q.eq("userId", userId).eq("weekStart", weekStart))
-      .first();
-    if (!row) return null;
-    return { content: row.content };
-  },
-});
-
-export const saveInsights = internalMutation({
-  args: {
-    userId: v.string(),
-    date: v.string(),
-    insights: v.array(v.string()),
-  },
-  handler: async (ctx, { userId, date, insights }) => {
-    const content = JSON.stringify(insights);
-    const sourceRows = await Promise.all([
-      readActiveRowsForDate(ctx, "meals", userId, date),
-      readActiveRowsForDate(ctx, "workouts", userId, date),
-      readActiveRowsForDate(ctx, "water_logs", userId, date),
-      readActiveRowsForDate(ctx, "sleep_logs", userId, date),
-      readActiveRowsForDate(ctx, "mood_logs", userId, date),
-      readActiveRowsForDate(ctx, "steps_logs", userId, date),
-    ]);
-    const sourceRowIds = sourceRows.flat().map((source: any) => String(source._id));
-    const generatedAt = Date.now();
-    const existing = await ctx.db
-      .query("insights")
-      .withIndex("by_user_date", (q) => q.eq("userId", userId).eq("date", date))
-      .first();
-    if (existing) {
-      await ctx.db.patch(existing._id, { content, sourceRowIds, inputsVersion: generatedAt, generatedAt, stale: false });
-    } else {
-      await ctx.db.insert("insights", { userId, date, content, sourceRowIds, inputsVersion: generatedAt, generatedAt, stale: false });
-    }
-  },
-});
-
-export const saveWeeklySummary = internalMutation({
-  args: {
-    userId: v.string(),
-    weekStart: v.string(),
-    content: v.string(),
-  },
-  handler: async (ctx, { userId, weekStart, content }) => {
-    const existing = await ctx.db
-      .query("weekly_summaries")
-      .withIndex("by_user_week", (q) => q.eq("userId", userId).eq("weekStart", weekStart))
-      .first();
-    if (existing) {
-      await ctx.db.patch(existing._id, { content });
-    } else {
-      await ctx.db.insert("weekly_summaries", { userId, weekStart, content });
-    }
-  },
-});
-
 
 // ─── Today's Brief (for HomePage daily guidance) ─────────────────────────────
 
@@ -163,23 +68,6 @@ export const getTodayBrief = query({
     const waterTarget = profile?.waterTarget ?? 2000;
     const recoveryState = deriveRecoveryState({ date: today, sleep, water, mood: moods, steps, stateRows: recoveryStateRows });
 
-    // Suppress check-in questions if the user has already chatted on the homepage today
-    const homepageSession = await ctx.db
-      .query("chat_sessions")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .filter((q) => q.eq(q.field("title"), `__HOMEPAGE_${today}__`))
-      .first();
-    const todayStartMs = new Date(today + "T00:00:00.000Z").getTime() + offsetMin * 60_000;
-    let hasHomepageMessagesToday = false;
-    if (homepageSession) {
-      const recentMsg = await ctx.db
-        .query("chat_messages")
-        .withIndex("by_session", (q) => q.eq("sessionId", homepageSession._id))
-        .order("desc")
-        .first();
-      hasHomepageMessagesToday = !!recentMsg && (recentMsg._creationTime ?? 0) >= todayStartMs;
-    }
-
     // Task 19: dynamic per-day target from base plan + today's actual burn.
     const parsed = parseStoredPlan(profile?.planBreakdown);
     const plan = parsed ? resolvePlanForDayAdjustment(parsed, profile ?? {}) : null;
@@ -209,7 +97,6 @@ export const getTodayBrief = query({
       hour >= 11 && hour < 18 ? "day" :
       hour >= 18 && hour < 22 ? "evening" : "night"
     );
-    const checkInAnswerContext = await getTodayCheckInAnswerContext(ctx, userId, today);
 
     // Pick the highest-priority insight for the current window
     let headline = "";
@@ -375,20 +262,6 @@ export const getTodayBrief = query({
       };
     }
 
-    const selectedCheckIn = await getNextCheckInForContext(ctx, {
-      userId,
-      date: today,
-      window,
-      profile,
-      todayMeals,
-      todayWorkouts,
-      waterMl,
-      sleep,
-      steps,
-      moodCount: moods.length,
-      units: settings?.units,
-    });
-
     return {
       window,
       headline,
@@ -401,8 +274,6 @@ export const getTodayBrief = query({
         why: doToday.reason,
         tone,
       },
-      checkIn: (!hasHomepageMessagesToday && selectedCheckIn) ? selectedCheckIn : null,
-      checkInContext: checkInAnswerContext || null,
       stats: {
         todayCals: Math.round(todayCals),
         calorieTarget,

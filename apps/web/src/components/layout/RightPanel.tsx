@@ -34,13 +34,11 @@ export function RightPanel() {
   const today = localDateStr();
   const { logs } = useLogs(today);
   const weeklyProgress = useQuery(api.progress.getProgress, { days: 7, today }) as WeeklyProgressDay[] | undefined;
-  const streakInfo = useQuery(api.history.getStreak, { today });
 
   const kcal = Math.round(logs.reduce((s, l) => s + (l.meal?.kcal ?? 0), 0));
   const protein = Math.round(logs.reduce((s, l) => s + (l.meal?.protein ?? 0), 0));
   const waterMl = logs.reduce((s, l) => s + (l.water?.ml ?? 0), 0);
   const workoutMin = logs.reduce((s, l) => s + (l.workout?.duration ?? 0), 0);
-  const streak = streakInfo?.streak ?? 0;
 
   const stats = brief?.stats;
   const kcalTarget = stats?.adjustedCalorieTarget ?? stats?.calorieTarget ?? 0;
@@ -216,17 +214,6 @@ export function RightPanel() {
                 <p className="text-[11px] text-text-muted font-semibold mb-1">Weight goal</p>
                 <p className="text-[18px] font-extrabold text-text tracking-tight">{currentWeight} kg</p>
                 <p className="text-[11px] text-text-muted mt-0.5">→ {goalWeight} kg target</p>
-              </div>
-            )}
-
-            {/* Streak */}
-            {streak > 0 && (
-              <div className="rounded-[14px] bg-card border border-border p-3.5 flex items-center gap-3">
-                <span className="text-[22px] font-extrabold text-text tracking-tight leading-none">{streak}</span>
-                <div>
-                  <p className="text-[11px] font-extrabold text-text">day streak</p>
-                  <p className="text-[10px] text-text-muted">Keep it going!</p>
-                </div>
               </div>
             )}
             </div>

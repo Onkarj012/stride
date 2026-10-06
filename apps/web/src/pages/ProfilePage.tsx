@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   User as UserIcon, Activity, Target, Settings as SettingsIcon,
-  Bell, Ruler, Download, Trash2, LogOut, Moon, Sun, Sparkles, Eye, EyeOff, Check, RotateCcw, KeyRound, Loader2, X,
+  Bell, Ruler, Download, Trash2, LogOut, Moon, Sun, Sparkles, Eye, EyeOff, RotateCcw, KeyRound, Loader2, X,
 } from "lucide-react";
 import { useQuery, useMutation } from "convex/react";
 import { useUser, useClerk } from "@clerk/react";
@@ -16,7 +16,6 @@ import { Pill } from "@/components/primitives/Pill";
 import { StatChip } from "@/components/ui-kit/StatChip";
 import { ListRow, ListDivider } from "@/components/primitives/ListRow";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { MilestoneList } from "@/components/insights/MilestoneList";
 import { coachingPersonalities } from "@/data/mock";
 import { useTheme } from "@/context/ThemeContext";
 import { usePrefs } from "@/hooks/usePrefs";
@@ -208,7 +207,6 @@ function ProfileDetailsCard() {
 }
 
 function GoalsTab() {
-  const { logs } = useLogs();
   const profile = useQuery(api.profile.getProfile);
 
   const goals = [
@@ -237,22 +235,16 @@ function GoalsTab() {
           </Link>
         </Card>
       )}
-      <section className="space-y-3">
-        <h3 className="text-h3 text-text">Milestones</h3>
-        <MilestoneList logs={logs} />
-      </section>
       <ProfileDetailsCard />
     </div>
   );
 }
 
 /**
- * Bring-your-own-key OpenRouter setup card.
+ * OpenRouter model picker card.
  *
- * Lets the user pick which OpenRouter model Stry uses and (optionally)
- * override the deployment-wide API key with their own. Both fields are
- * persisted server-side via api.profile.upsertSettings; the saved key is
- * never echoed back to the client by api.profile.getSettings.
+ * Lets the user pick which OpenRouter model Stry uses. The choice is
+ * persisted server-side via api.profile.upsertSettings.
  *
  * Curated model list — common OpenRouter ids spanning vision-capable and
  * text-only models. The full catalogue is at https://openrouter.ai/models.
@@ -284,11 +276,7 @@ function AIProviderCard() {
   const toast = useToast();
 
   const [model, setModel] = useState<string>("openai/gpt-4o-mini");
-  const [apiKey, setApiKey] = useState<string>("");
   const [customModel, setCustomModel] = useState<string>("");
-  const [revealKey, setRevealKey] = useState(false);
-  const [hasSavedKey, setHasSavedKey] = useState(false);
-  const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
 
   // Initialize from server-side settings once they load
   useEffect(() => {
@@ -297,32 +285,14 @@ function AIProviderCard() {
     if (settings.openRouterModel && !OPENROUTER_MODELS.some((m) => m.id === settings.openRouterModel)) {
       setCustomModel(settings.openRouterModel);
     }
-    if (settings.hasOpenRouterKey) {
-      setHasSavedKey(true);
-    }
   }, [settings]);
 
-  async function handleSave(nextModel?: string, nextKey?: string) {
-    setSaving("saving");
+  async function handleSave(nextModel: string) {
     try {
-      await upsertSettings({
-        openRouterModel: nextModel ?? model,
-        openRouterKey: nextKey !== undefined ? nextKey : (apiKey || undefined),
-      });
-      setSaving("saved");
-      setHasSavedKey(!!(nextKey ?? apiKey));
-      setTimeout(() => setSaving("idle"), 1200);
+      await upsertSettings({ openRouterModel: nextModel });
     } catch (err) {
-      setSaving("idle");
       toast.error("Couldn't save", err instanceof Error ? err.message : "Try again");
     }
-  }
-
-  async function handleClearKey() {
-    setApiKey("");
-    setHasSavedKey(false);
-    await handleSave(model, "");
-    toast.success("API key cleared");
   }
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -362,7 +332,7 @@ function AIProviderCard() {
         <div className="flex-1">
           <h3 className="text-h3 text-text">AI provider</h3>
           <p className="text-[13px] text-text-muted mt-0.5">
-            Bring your own OpenRouter key and pick any model.
+            Pick the OpenRouter model Stry uses.
           </p>
         </div>
       </div>
@@ -479,120 +449,6 @@ function AIProviderCard() {
             Paste any OpenRouter model id. Presets above are just shortcuts.
           </p>
         </div>
-      </div>
-
-      {/* API key */}
-      <label className="flex flex-col gap-1.5">
-        <span className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">OpenRouter API key</span>
-        <div className="flex items-center gap-1.5">
-          <input
-            type={revealKey ? "text" : "password"}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={hasSavedKey ? "•••••••••••• (saved)" : "sk-or-v1-..."}
-            autoComplete="off"
-            spellCheck={false}
-            className="min-w-0 flex-1 bg-input border border-border rounded-lg px-3 py-2.5 text-[14px] text-text font-mono focus:outline-none focus:border-lavender"
-          />
-          <button
-            type="button"
-            onClick={() => setRevealKey((r) => !r)}
-            aria-label={revealKey ? "Hide key" : "Show key"}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-border text-text-muted hover:text-text"
-          >
-            {revealKey ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSave()}
-            disabled={saving === "saving"}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-lg px-3 h-10 text-[13px] font-bold transition-colors",
-              saving === "saved" ? "bg-mint text-ink" : "bg-ink text-text-on-ink",
-              saving === "saving" && "opacity-60",
-            )}
-          >
-            {saving === "saved" ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : null}
-            {saving === "saving" ? "Saving…" : saving === "saved" ? "Saved" : "Save"}
-          </button>
-        </div>
-        <div className="flex items-center justify-between">
-          <a
-            href="https://openrouter.ai/keys"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11.5px] text-text-subtle hover:text-text underline-offset-2 hover:underline"
-          >
-            Get a key at openrouter.ai →
-          </a>
-          {hasSavedKey && (
-            <button
-              type="button"
-              onClick={handleClearKey}
-              className="text-[11.5px] text-text-subtle hover:text-bubblegum"
-            >
-              Clear saved key
-            </button>
-          )}
-        </div>
-      </label>
-    </Card>
-  );
-}
-
-const CHECKIN_WINDOWS = [
-  { value: "morning", label: "Morning" },
-  { value: "day", label: "Day" },
-  { value: "evening", label: "Evening" },
-  { value: "night", label: "Night" },
-] as const;
-
-function CheckInTemplatesCard({ compact = false }: { compact?: boolean }) {
-  const templates = useQuery(api.checkins.getTemplateSettings) ?? [];
-  const upsert = useMutation(api.checkins.upsertTemplateSetting);
-  const toast = useToast();
-
-  async function save(template: any, patch: { enabled?: boolean; window?: string }) {
-    try {
-      await upsert({
-        templateId: template.templateId,
-        enabled: patch.enabled ?? template.enabled,
-        window: (patch.window ?? template.window) as "morning" | "day" | "evening" | "night",
-      });
-    } catch (err) {
-      toast.error("Couldn't save check-in", err instanceof Error ? err.message : "Try again");
-    }
-  }
-
-  return (
-    <Card tone="card" radius="lg" padding={compact ? "none" : "lg"} className={compact ? "overflow-hidden" : "space-y-4"}>
-      <div className={compact ? "px-4 py-3 border-b border-border" : ""}>
-        <h3 className="text-[13px] font-semibold uppercase tracking-wider text-text-muted">Check-in templates</h3>
-        {!compact && <p className="text-[13px] text-text-muted mt-1">Choose the recurring metrics Stry may ask for.</p>}
-      </div>
-      <div className={compact ? "divide-y divide-border" : "space-y-2.5"}>
-        {templates.map((template: any) => (
-          <div key={template.templateId} className={compact ? "px-4 py-3" : "rounded-[16px] border border-border bg-card p-3"}>
-            <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-[14px] font-bold text-text">{template.title}</p>
-                <p className="mt-0.5 text-[12px] text-text-muted">{template.description}</p>
-              </div>
-              <Switch checked={template.enabled} onChange={(enabled) => save(template, { enabled })} label={`Toggle ${template.title}`} />
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <span className="text-[12px] font-semibold text-text-muted">Window</span>
-              <select
-                value={template.window}
-                disabled={!template.enabled}
-                onChange={(e) => save(template, { window: e.target.value })}
-                className="rounded-lg border border-border bg-input px-2.5 py-1.5 text-[12px] font-semibold text-text disabled:opacity-50 focus:outline-none focus:border-lavender"
-              >
-                {CHECKIN_WINDOWS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
-              </select>
-            </div>
-          </div>
-        ))}
       </div>
     </Card>
   );
@@ -714,8 +570,6 @@ function SettingsTab() {
       <ProfileHeaderCard />
 
       <AIProviderCard />
-
-      <CheckInTemplatesCard />
 
       <Card tone="card" radius="lg" padding="lg" className="space-y-4">
         <div>
@@ -881,10 +735,6 @@ function MobileAccountLayout({ title }: { title: string }) {
         <AccountToggle label="Reduced motion" checked={prefs.reduceMotion} onChange={(v) => update({ reduceMotion: v })} />
         <AccountToggle label="Analytical coaching" checked={prefs.coachingStyle === "analytical"} onChange={(v) => update({ coachingStyle: v ? "analytical" : "gentle" })} />
         <AccountToggle label="Metric units" checked={prefs.units === "metric"} onChange={(v) => update({ units: v ? "metric" : "imperial" })} />
-      </div>
-
-      <div className="mt-6">
-        <CheckInTemplatesCard compact />
       </div>
 
       {/* TODO: Add full mobile settings parity per plans/005-beta-release.md. */}

@@ -17,10 +17,7 @@ const GOALS = [
 ]
 
 const SETTINGS_INIT: { label: string; on: boolean; icon: IconName }[] = [
-  { label: 'Daily morning insight', on: true,  icon: 'sun' },
   { label: 'Workout reminders',     on: true,  icon: 'bell' },
-  { label: 'Water nudges',          on: false, icon: 'droplet' },
-  { label: 'Weekly recap email',    on: true,  icon: 'mail' },
 ]
 
 const SPRING = { stiffness: 220, damping: 26 } as const

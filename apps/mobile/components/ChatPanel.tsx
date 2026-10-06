@@ -147,7 +147,6 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
       await sendToAI({
         message: text,
         sessionId,
-        coachType: 'auto',
         today: localDateStr(),
         clarificationGroupId: clarificationGroupId ?? undefined,
         clientSubmissionId,

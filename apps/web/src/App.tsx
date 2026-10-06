@@ -22,7 +22,6 @@ import { NutritionPage } from "@/pages/NutritionPage";
 import { WorkoutsPage } from "@/pages/WorkoutsPage";
 import { SignInPage, SignUpPage } from "@/pages/AuthPages";
 import { OnboardingPage } from "@/pages/OnboardingPage";
-import { LandingPage } from "@/pages/LandingPage";
 import { FADE_FAST } from "@/lib/motion";
 import { reportException } from "@/lib/observability";
 import { Loader2 } from "lucide-react";
@@ -113,7 +112,6 @@ function AppRoutes() {
         <Route path="/settings" element={<PageWrapper><SettingsPage /></PageWrapper>} />
         <Route path="/profile" element={<PageWrapper><ProfilePage /></PageWrapper>} />
         <Route path="/coach" element={<PageWrapper><CoachPage /></PageWrapper>} />
-        <Route path="/recipes" element={<Navigate to="/nutrition" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AnimatePresence>
@@ -182,8 +180,6 @@ function MobileOverlayRoutes() {
   const location = useLocation();
   const overlayPath = location.pathname === "/coach"
     ? "/coach"
-    : location.pathname === "/recipes"
-      ? "/recipes"
     : PUSH_PATHS.find((path) => location.pathname.startsWith(path));
 
   return (
@@ -194,7 +190,6 @@ function MobileOverlayRoutes() {
           <Route path="/history" element={<MobileOverlayWrapper><HistoryPage /></MobileOverlayWrapper>} />
           <Route path="/settings" element={<MobileOverlayWrapper><SettingsPage /></MobileOverlayWrapper>} />
           <Route path="/profile" element={<MobileOverlayWrapper><ProfilePage /></MobileOverlayWrapper>} />
-          <Route path="/recipes" element={<Navigate to="/nutrition" replace />} />
         </Routes>
       )}
     </AnimatePresence>
@@ -229,11 +224,10 @@ export default function App() {
       <ClerkLoaded>
         <Show when="signed-out">
           <Routes>
-            <Route path="/" element={<LandingPage />} />
             <Route path="/sign-in" element={<SignInPage />} />
             <Route path="/sign-up" element={<SignUpPage />} />
             <Route path="/sso-callback" element={<AuthenticateWithRedirectCallback />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/sign-in" replace />} />
           </Routes>
         </Show>
         <Show when="signed-in">

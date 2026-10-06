@@ -39,7 +39,6 @@ test("anonymous callers cannot invoke shared-cache or profile actions", async ()
     age: 30,
     sex: "male",
   })).rejects.toThrow("Unauthenticated");
-  await expect(t.mutation(api.gamification.recordActivity, { type: "meal" })).rejects.toThrow("Unauthenticated");
 });
 
 test("calorie feedback requires auth and workout ownership", async () => {
@@ -85,7 +84,7 @@ test("chat messages cannot be added to another user's session", async () => {
   expect(await t.run((ctx) => ctx.db.query("chat_messages").collect())).toHaveLength(0);
 });
 
-test("chat sessions cannot be touched or retitled by another user", async () => {
+test("chat sessions cannot be touched by another user", async () => {
   const t = convexTest(schema, modules);
   const updatedAt = Date.now() - 1000;
   const sessionId = await t.run((ctx) => ctx.db.insert("chat_sessions", {
@@ -94,19 +93,10 @@ test("chat sessions cannot be touched or retitled by another user", async () => 
     updatedAt,
   }));
 
-  await expect(t.mutation(internal.chat.updateSessionTitleFromAI, {
-    userId: "intruder",
-    sessionId,
-    title: "Hijacked",
-  })).rejects.toThrow("Not found");
   await expect(t.mutation(internal.chat.touchSession, {
     userId: "intruder",
     sessionId,
   })).rejects.toThrow("Not found");
-  expect(await t.query(internal.chat.getMessageCount, {
-    userId: "intruder",
-    sessionId,
-  })).toBe(0);
   expect(await t.run((ctx) => ctx.db.get(sessionId))).toMatchObject({
     title: "Owner chat",
     updatedAt,

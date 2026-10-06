@@ -141,7 +141,6 @@ async function publicAssistant(t: ReturnType<typeof convexTest>, sessionId: any)
 }
 
 function clearTestBarriers() {
-  delete process.env.HOME_CHAT_AUTO_COMMIT;
   delete process.env.STRIDE_CHAT_MEMBER_WRITE_BARRIER;
   delete process.env.STRIDE_CHAT_RECONCILE_BARRIER;
   delete process.env.STRIDE_CHAT_CONTEXT_BARRIER;
@@ -151,15 +150,14 @@ describe("chat logging concurrency invariants", () => {
   beforeEach(() => mockedCallAI.mockReset());
   afterEach(clearTestBarriers);
 
-  test("expired lease takeover fences stale Coach/Home owners and context failure finalizes", async () => {
-    for (const surface of ["coach", "home"] as const) {
-      if (surface === "home") process.env.HOME_CHAT_AUTO_COMMIT = "true";
+  test("expired lease takeover fences stale Coach owners and context failure finalizes", async () => {
+    for (const surface of ["coach"] as const) {
       const t = convexTest(schema, modules);
       const asUser = t.withIdentity({ subject: `${surface}-lease-user` });
       const { id: sessionId } = await asUser.mutation(api.chat.createSession, { title: `${surface} lease` });
       const barrier = installWaterMock();
       const request = { message: "I drank 500ml water", sessionId, today: "2026-07-16", clientSubmissionId: `${surface}-lease` };
-      const first = surface === "coach" ? asUser.action(api.ai.chat, request) : asUser.action(api.ai.homepageInput, request);
+      const first = asUser.action(api.ai.chat, request);
       await barrier.started;
       await waitFor(
         () => t.run((ctx) => ctx.db.query("chat_messages").collect()),
@@ -173,7 +171,7 @@ describe("chat logging concurrency invariants", () => {
       process.env.STRIDE_CHAT_RECONCILE_BARRIER = "paused";
       barrier.release();
       await waitFor(() => t.run((ctx) => ctx.db.query("water_logs").collect()), (rows) => rows.length === 1);
-      const takeover = surface === "coach" ? asUser.action(api.ai.chat, request) : asUser.action(api.ai.homepageInput, request);
+      const takeover = asUser.action(api.ai.chat, request);
       await waitFor(
         () => t.run((ctx) => ctx.db.query("chat_messages").collect()),
         (rows) => rows.some((row: any) => row.clientSubmissionId === request.clientSubmissionId && row.role === "user" && row.processingLeaseVersion === 2),

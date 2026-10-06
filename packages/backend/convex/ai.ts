@@ -13,8 +13,7 @@ import {
   assertTransition,
   type ActionGroupStatus,
 } from "./actions_envelope";
-import { getCoach, classifyCoachType, COACHES, behaviorSummary, toneInstruction, type CoachType } from "./coaches";
-import { toLegacyPersona } from "./personas";
+import { COACH_SYSTEM_PROMPT, behaviorSummary, toneInstruction } from "./coaches";
 import { insertActionTelemetry } from "./telemetry";
 import { assertValidDate, assertValidTime, stableHash } from "./validation";
 import { finalizeActionGroup as finalizeActionGroupInMutation } from "./actions_group";
@@ -38,7 +37,6 @@ import {
   assertAudioBase64,
   assertHistoryEntries,
   assertImageDataUrl,
-  assertIngredients,
   assertMaxChars,
   estimateTranscriptionCostUsd,
 } from "./ai_guard";
@@ -1370,123 +1368,6 @@ export const discardConfirmationMember = internalMutation({
 
 // ─── Public actions ───────────────────────────────────────────────────────────
 
-/** Commit a Home confirmation card through the canonical action envelope. */
-export const commitHomeDraft = mutation({
-  args: {
-    draft: v.any(),
-    clientSubmissionId: v.string(),
-  },
-  handler: async (ctx, { draft: rawDraft, clientSubmissionId }): Promise<{ id: string; actionId: Id<"actions">; groupId: Id<"actionGroups"> }> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    if (!clientSubmissionId.trim()) throw new Error("clientSubmissionId is required");
-    if (!rawDraft || typeof rawDraft !== "object" || Array.isArray(rawDraft)) {
-      throw new Error("A log draft is required");
-    }
-
-    const draft = rawDraft as Record<string, any>;
-    const kind = draft.kind;
-    const actionType = kind === "workout" ? "workout" : ["sleep", "water", "mood", "steps"].includes(kind) ? "recovery" : null;
-    if (!actionType) throw new Error("Unsupported Home log draft");
-
-    const date = assertValidDate(String(draft.date ?? new Date().toISOString().slice(0, 10)));
-    const time = assertValidTime(typeof draft.time === "string"
-      ? draft.time
-      : typeof draft.timestamp === "string"
-        ? draft.timestamp
-        : new Date().toISOString().slice(11, 16));
-    const groupIdempotencyKey = deriveGroupKey({
-      userId: identity.subject,
-      sourceSurface: "chat",
-      rawInput: `home-confirm:${clientSubmissionId}`,
-      clientSubmissionId,
-    });
-    const group = {
-      userId: identity.subject,
-      groupIdempotencyKey,
-      sourceSurface: "chat" as const,
-      rawInput: `home-confirm:${clientSubmissionId}`,
-      clientLocalDate: date,
-      clientLocalTime: time,
-      createdAt: Date.now(),
-    };
-    const reportedCalories = kind === "workout" && typeof draft.reportedCalories === "number"
-      ? draft.reportedCalories
-      : kind === "workout" && draft.calorieSource === "reported" && typeof draft.kcal === "number"
-        ? draft.kcal
-        : undefined;
-    const estimatedCalories = kind === "workout" && typeof draft.estimatedCalories === "number"
-      ? draft.estimatedCalories
-      : kind === "workout" && reportedCalories == null && typeof draft.kcal === "number"
-        ? draft.kcal
-        : undefined;
-    const payload = kind === "workout"
-      ? {
-          name: String(draft.description ?? draft.name ?? "Workout"),
-          sets: String(draft.sets ?? "1"),
-          duration: String(draft.duration ?? ""),
-          intensity: String(draft.intensity ?? "MEDIUM").toUpperCase(),
-          date,
-          timestamp: time,
-          exercises: draft.exercises ?? undefined,
-          rationale: draft.rationale ?? undefined,
-          caloriesBurned: typeof draft.kcal === "number" && draft.kcal > 0 ? draft.kcal : undefined,
-          reportedCalories,
-          estimatedCalories,
-          calorieSource: reportedCalories != null ? "reported" as const : estimatedCalories != null ? "estimated" as const : undefined,
-          calorieConfidence: draft.calorieResult?.confidence,
-          calorieRangeLow: draft.calorieResult?.range_low,
-          calorieRangeHigh: draft.calorieResult?.range_high,
-          calorieEstimateRough: draft.calorieResult?.rough,
-          calorieBreakdown: draft.calorieResult?.breakdown ? JSON.stringify(draft.calorieResult.breakdown) : undefined,
-          calculationVersion: draft.calorieResult ? 1 : undefined,
-          structuredSets: draft.exercises ? JSON.stringify(draft.exercises) : undefined,
-          logSource: "home",
-          allowDuplicate: draft.allowDuplicate,
-        }
-      : {
-          kind,
-          date,
-          time,
-          source: "home",
-          note: draft.description,
-          ...(kind === "sleep" ? { hours: draft.hours, quality: draft.quality } : {}),
-          ...(kind === "water" ? { ml: draft.ml } : {}),
-          ...(kind === "mood" ? { rating: draft.rating } : {}),
-          ...(kind === "steps" ? { count: draft.count } : {}),
-        };
-    const memberIdempotencyKey = deriveMemberKey({
-      groupKey: groupIdempotencyKey,
-      actionType,
-      payloadFingerprint: clientSubmissionId,
-      ordinal: 0,
-    });
-    const member = {
-      memberIdempotencyKey,
-      payload,
-      provenance: kind === "workout" && reportedCalories != null ? "user_reported" as const : "ai_extracted" as const,
-      validation: { status: draft.parseError ? "error" as const : "valid" as const, messages: draft.parseError ? [String(draft.parseError)] : [] },
-      reversible: true,
-      resolvedDate: date,
-      resolvedTime: time,
-    };
-    const result: any = actionType === "workout"
-      ? await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group, member })
-      : await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group, member });
-    const action = await ctx.db
-      .query("actions")
-      .withIndex("by_member_idempotency_key", (q) => q.eq("userId", identity.subject).eq("memberIdempotencyKey", memberIdempotencyKey))
-      .first();
-    if (!action) throw new Error("Canonical action envelope was not created");
-    await finalizeActionGroupInMutation(ctx, action.groupId);
-    return {
-      id: actionType === "recovery" ? String((result as any)?.id ?? result) : String(result),
-      actionId: action._id,
-      groupId: action.groupId,
-    };
-  },
-});
-
 export const parseOnboarding = action({
   args: { field: v.string(), text: v.string() },
   handler: async (ctx, { field, text }): Promise<Record<string, unknown>> => {
@@ -1513,7 +1394,6 @@ export const parseOnboarding = action({
       [{ role: "user", content: prompt }],
       300,
       settings?.openRouterModel ?? undefined,
-      settings?.openRouterKey ?? undefined,
     );
     try {
       const match = content.match(/\{[\s\S]*\}/);
@@ -1523,100 +1403,6 @@ export const parseOnboarding = action({
     }
   },
 });
-export const recipeInsight = action({
-  args: {
-    name: v.string(),
-    perServing: v.object({ kcal: v.number(), p: v.number(), c: v.number(), f: v.number() }),
-    ingredients: v.array(v.string()),
-  },
-  handler: async (ctx, { name, perServing, ingredients }): Promise<string> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    assertMaxChars(name, AI_INPUT_LIMITS.textChars, "recipe name");
-    assertIngredients(ingredients);
-    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
-    const prompt = `You are a friendly nutrition coach. In 1-2 short sentences, give one specific, encouraging insight about this recipe — name a nutritional strength and (optionally) one small tweak. No preamble.\nRecipe: ${name}\nPer serving: ${perServing.kcal} kcal, ${perServing.p}g protein, ${perServing.c}g carbs, ${perServing.f}g fat\nIngredients: ${ingredients.join(", ")}`;
-    return callAI(
-      ctx,
-      identity.subject,
-      [{ role: "user", content: prompt }],
-      140,
-      settings?.openRouterModel ?? undefined,
-      settings?.openRouterKey ?? undefined,
-    );
-  },
-});
-
-/** Frictionless recipe ingredient entry: parse a free-text ingredient list
- *  (natural portions, any units) into structured per-100g ingredients with an
- *  AI-estimated gram weight for each portion. One AI round-trip, no DB lookups. */
-export const parseIngredients = action({
-  args: { text: v.string() },
-  handler: async (ctx, { text }): Promise<Array<{ name: string; grams: number; caloriesPer100g: number; proteinPer100g: number; carbsPer100g: number; fatPer100g: number; source: string }>> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    assertMaxChars(text, AI_INPUT_LIMITS.textChars, "ingredient text");
-    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
-    const prompt = `You are a nutrition database. Parse this ingredient list (natural language, any units or portions) into structured JSON. For EACH ingredient: estimate the realistic edible weight in grams of the stated portion (e.g. "1 large banana"≈120, "1 tbsp olive oil"≈14, "2 eggs"≈100, "a handful of almonds"≈30, "1 cup cooked rice"≈195), and give standard per-100g macros. Return ONLY a JSON array, no prose:\n[{"name": string, "grams": number, "caloriesPer100g": number, "proteinPer100g": number, "carbsPer100g": number, "fatPer100g": number}]\n\nIngredients: "${text}"`;
-    const content = await callAI(
-      ctx,
-      identity.subject,
-      [{ role: "user", content: prompt }],
-      700,
-      settings?.openRouterModel ?? undefined,
-      settings?.openRouterKey ?? undefined,
-    );
-    try {
-      const match = content.match(/\[[\s\S]*\]/);
-      const raw = JSON.parse(match ? match[0] : content) as any[];
-      return raw
-        .filter((r) => r && typeof r.name === "string" && r.name.trim())
-        .map((r) => ({
-          name: String(r.name).trim(),
-          grams: finiteNonNegativeNumber("ingredient grams", r.grams),
-          caloriesPer100g: finiteNonNegativeNumber("ingredient caloriesPer100g", r.caloriesPer100g),
-          proteinPer100g: finiteNonNegativeNumber("ingredient proteinPer100g", r.proteinPer100g),
-          carbsPer100g: finiteNonNegativeNumber("ingredient carbsPer100g", r.carbsPer100g),
-          fatPer100g: finiteNonNegativeNumber("ingredient fatPer100g", r.fatPer100g),
-          source: "ai",
-        }));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Malformed AI output parsing ingredients: ${message} - content: ${content}`);
-    }
-  },
-});
-
-
-/** Turn a free-text method into clean, ordered recipe steps. */
-export const parseSteps = action({
-  args: { text: v.string() },
-  handler: async (ctx, { text }): Promise<string[]> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    assertMaxChars(text, AI_INPUT_LIMITS.textChars, "cooking method");
-    const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId: identity.subject });
-    const prompt = `Turn this cooking method into clear, concise, ordered recipe steps. One action per step, imperative voice, no numbering or prose. Return ONLY a JSON array of strings.\n\nMethod: "${text}"`;
-    const content = await callAI(
-      ctx,
-      identity.subject,
-      [{ role: "user", content: prompt }],
-      500,
-      settings?.openRouterModel ?? undefined,
-      settings?.openRouterKey ?? undefined,
-    );
-    try {
-      const match = content.match(/\[[\s\S]*\]/);
-      const raw = JSON.parse(match ? match[0] : content) as any[];
-      return raw.map((s) => String(s).trim()).filter(Boolean);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Malformed AI output parsing steps: ${message} - content: ${content}`);
-    }
-  },
-});
-
-
 export const estimateMeal = action({
   args: { mealName: v.string() },
   handler: async (ctx, { mealName }) => {
@@ -1625,16 +1411,14 @@ export const estimateMeal = action({
     assertMaxChars(mealName, AI_INPUT_LIMITS.textChars, "meal name");
     const userId = identity.subject;
     let model: string | undefined;
-    let apiKey: string | undefined;
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     model = settings?.openRouterModel ?? undefined;
-    apiKey = settings?.openRouterKey ?? undefined;
     const prompt = `Estimate the nutritional values for this meal: "${mealName}".
 
 ${NUTRITION_ACCURACY_RULES}
 
 Return ONLY a JSON object with keys: calories (number), protein (number in grams), carbs (number in grams), fat (number in grams). No explanation.`;
-    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 200, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 200, model);
     const result = parseJSON<any>(content, { calories: 0, protein: 0, carbs: 0, fat: 0 });
     return { calories: result.calories || 0, protein: result.protein || 0, carbs: result.carbs || 0, fat: result.fat || 0 };
   },
@@ -1652,11 +1436,9 @@ export const parseMeal = action({
     assertMaxChars(description, AI_INPUT_LIMITS.textChars, "meal description");
     const userId = identity.subject;
     let model: string | undefined;
-    let apiKey: string | undefined;
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     model = settings?.openRouterModel ?? undefined;
-    apiKey = settings?.openRouterKey ?? undefined;
-    const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", ctx, userId, model, apiKey);
+    const parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", ctx, userId, model);
 
     // Run deterministic nutrition calculation
     const nutrition = nutritionFromDraft(await buildMealDraftFromParsed(ctx, { ...parsedMeal, date: new Date().toISOString().split("T")[0] }, { userId, useMemory: true }));
@@ -1686,7 +1468,6 @@ export const parseWorkout = action({
     assertMaxChars(description, AI_INPUT_LIMITS.textChars, "workout description");
     const userId = identity.subject;
     let model: string | undefined;
-    let apiKey: string | undefined;
     let userPhysique: UserPhysique | undefined;
     const [settings, profile, metabolicProfile] = await Promise.all([
       ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
@@ -1694,7 +1475,6 @@ export const parseWorkout = action({
       ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
     ]);
     model = settings?.openRouterModel ?? undefined;
-    apiKey = settings?.openRouterKey ?? undefined;
     if (profile) {
       userPhysique = {
         weight: profile.weight,
@@ -1705,7 +1485,7 @@ export const parseWorkout = action({
         metabolicFactor: metabolicProfile?.metabolicFactor ?? 1.0,
       };
     }
-    const result = await parseWorkoutDescription(description, ctx, userId, duration, intensity, model, apiKey, userPhysique);
+    const result = await parseWorkoutDescription(description, ctx, userId, duration, intensity, model, userPhysique);
     return result;
   },
 });
@@ -1726,7 +1506,6 @@ export const logMeal = action({
 
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     const model = settings?.openRouterModel ?? undefined;
-    const apiKey = settings?.openRouterKey ?? undefined;
 
     let data: any;
     let parsedMeal: any;
@@ -1741,7 +1520,7 @@ export const logMeal = action({
         missing_fields: parsedData.missing_fields || [],
       };
     } else if (description) {
-      parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", ctx, userId, model, apiKey);
+      parsedMeal = await parseMealDescription(description, mealType || "unspecified", time || "", ctx, userId, model);
     } else {
       throw new Error("description or parsedData required");
     }
@@ -1814,7 +1593,6 @@ export const logWorkout = action({
       ctx.runQuery(api.calibration.getMetabolicProfileForContext, {}),
     ]);
     const model = settings?.openRouterModel ?? undefined;
-    const apiKey = settings?.openRouterKey ?? undefined;
     const userPhysique: UserPhysique | undefined = profile ? {
       weight: profile.weight,
       height: profile.height,
@@ -1865,7 +1643,7 @@ export const logWorkout = action({
         });
       data = { _id: id, ...parsedData };
     } else if (description) {
-      const parsed = await parseWorkoutDescription(description, ctx, userId, duration, intensity, model, apiKey, userPhysique);
+      const parsed = await parseWorkoutDescription(description, ctx, userId, duration, intensity, model, userPhysique);
       if (parsed.parseError) throw new Error("Workout could not be parsed. Edit it before saving.");
       const calorieFields = parsed.calorieResult ? {
         calorieConfidence: parsed.calorieResult.confidence,
@@ -1904,13 +1682,12 @@ export const chat = action({
   args: {
     message: v.string(),
     sessionId: v.optional(v.id("chat_sessions")),
-    coachType: v.optional(v.string()),
     today: v.optional(v.string()),
     image: v.optional(v.string()),
     clarificationGroupId: v.optional(v.id("actionGroups")),
     clientSubmissionId: v.optional(v.string()),
   },
-  handler: async (ctx, { message, sessionId, coachType, today: todayArg, image, clarificationGroupId, clientSubmissionId }): Promise<any> => {
+  handler: async (ctx, { message, sessionId, today: todayArg, image, clarificationGroupId, clientSubmissionId }): Promise<any> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     assertMaxChars(message, AI_INPUT_LIMITS.messageChars, "chat message");
@@ -1933,7 +1710,7 @@ export const chat = action({
           claimOwner: claimOwner!,
         })
       : null;
-    if (claim?.state === "terminal") return await chatResponseFromPersistedTurn(ctx, userId, claim.turn, coachType, restrictedGuidance);
+    if (claim?.state === "terminal") return await chatResponseFromPersistedTurn(ctx, userId, claim.turn, restrictedGuidance);
     if (claim?.state === "in_progress") throw new Error("Chat submission is already in progress; retry after the current request completes");
     const turnClaim: TurnClaim = clientSubmissionId
       ? { clientSubmissionId, claimOwner, claimVersion: claim?.claimVersion }
@@ -1943,7 +1720,7 @@ export const chat = action({
     try {
     await waitForChatContextBarrier();
     // Gather context
-    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topRecipes, topWorkoutMemory, userIngredients, checkInAnswers] = await Promise.all([
+    const [profile, todayMeals, todayWorkouts, recentCals, settings, behavior, topMemories, lastSleep, patterns, topWorkoutMemory, userIngredients] = await Promise.all([
       ctx.runQuery(internal.profile.getProfileForContext, { userId }),
       ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
       ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
@@ -1953,10 +1730,8 @@ export const chat = action({
       ctx.runQuery(internal.food_memory.getTopForContext, { userId, limit: 8 }),
       ctx.runQuery(internal.wellness.getLastSleepForContext, { userId }),
       ctx.runQuery(internal.patterns.getPatternsForContext, { userId }),
-      ctx.runQuery(internal.recipes.getTopRecipesForContext, { userId }),
       ctx.runQuery(internal.workout_memory.getTopForContext, { userId, limit: 6 }),
       ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
-      ctx.runQuery(internal.checkins.getAnswerContextForContext, { userId, date: today }),
     ]);
 
     const totalCals = todayMeals.reduce((s: number, m: any) => s + m.calories, 0);
@@ -2001,9 +1776,6 @@ export const chat = action({
       });
     }
     contextBlock += `\nRECENT 7-DAY TREND:\n${recentCals.map((d: any) => `${d.date}: ${d.cals}cal`).join(", ")}`;
-    if (checkInAnswers) {
-      contextBlock += `\n\nTODAY'S CHECK-IN ANSWERS:\n${checkInAnswers}\n`;
-    }
 
     const loggingPrompt = `\n\nLOGGING STATUS:
 The app extracts and saves reported activities through a separate structured pipeline.
@@ -2011,14 +1783,8 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
 
     // Load session history
     let history: { role: string; content: string }[] = [];
-    let isFirstMessage = false;
     if (sessionId) {
-      const [msgs, count] = await Promise.all([
-        ctx.runQuery(internal.chat.getMessagesForContext, { userId, sessionId }),
-        ctx.runQuery(internal.chat.getMessageCount, { userId, sessionId }),
-      ]);
-      history = msgs;
-      isFirstMessage = count === 0;
+      history = await ctx.runQuery(internal.chat.getMessagesForContext, { userId, sessionId });
       assertHistoryEntries(history);
     }
 
@@ -2058,7 +1824,6 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
           loggedItem,
           memoryApprovals: resolved.memoryApprovals ?? [],
           failedItems: [],
-          coachType: toLegacyPersona(coachType),
           restricted: restrictedGuidance,
           outcome: resolved.turnOutcome,
           cards: resolved.turnCards,
@@ -2066,11 +1831,6 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
         };
       }
     }
-
-    // Detect coach (keyword routing, biased toward the user's preferred coach)
-    let detectedCoach: CoachType = toLegacyPersona(coachType) as CoachType;
-    if (!coachType || coachType === "auto") detectedCoach = classifyCoachType(message, behavior?.preferredCoach);
-    const coach = getCoach(detectedCoach);
 
     // Known food memory context
     if (Array.isArray(topMemories) && topMemories.length > 0) {
@@ -2106,14 +1866,6 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       }
     }
 
-    // Saved recipes
-    if (Array.isArray(topRecipes) && topRecipes.length > 0) {
-      contextBlock += `\nUSER'S SAVED RECIPES:\n`;
-      for (const r of topRecipes as any[]) {
-        contextBlock += `- ${r.name} (${r.servings} servings): ${r.kcalPerServing} kcal/serving, P:${r.proteinPerServing}g C:${r.carbsPerServing}g F:${r.fatPerServing}g\n`;
-      }
-    }
-
     // Last night's sleep (Phase 3: cross-domain)
     if (lastSleep) {
       const sleepLabel = (lastSleep as any).date === today ? "Today" : "Last night";
@@ -2139,7 +1891,7 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
     const personaSuffix = [behaviorLine, toneLine].filter(Boolean).join("\n");
 
     const messages: AIMessage[] = [
-      { role: "system", content: `${coach.systemPrompt}${personaSuffix ? `\n\n${personaSuffix}` : ""}\n\n${contextBlock}${loggingPrompt}${restrictedGuidance ? `\n\n${RESTRICTED_GUIDANCE}` : ""}` },
+      { role: "system", content: `${COACH_SYSTEM_PROMPT}${personaSuffix ? `\n\n${personaSuffix}` : ""}\n\n${contextBlock}${loggingPrompt}${restrictedGuidance ? `\n\n${RESTRICTED_GUIDANCE}` : ""}` },
       ...history.map((m) => ({ role: m.role === "ai" ? "assistant" : m.role, content: m.content })),
       image
         ? {
@@ -2154,12 +1906,11 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
 
     const settingsModel = settings?.openRouterModel ?? undefined;
     failureModel = settingsModel;
-    const apiKey = settings?.openRouterKey ?? undefined;
     // Split-model: parsing/extraction stays cheap (user override → else DEFAULT_MODEL
     // inside callAI); the chat reply users read gets the upgraded CHAT_MODEL.
     const parseModel = settingsModel;
     const replyModel = settingsModel ?? CHAT_MODEL; // Sonnet handles text + vision
-    const reply = await callAI(ctx, userId, messages, 800, replyModel, apiKey);
+    const reply = await callAI(ctx, userId, messages, 800, replyModel);
 
     const extractionHistory: HomepageHistoryMessage[] = history.flatMap((entry) => {
       const role = entry.role === "ai" ? "assistant" : entry.role;
@@ -2176,7 +1927,6 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
       history: extractionHistory,
       model: parseModel,
       visionModel: settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL,
-      apiKey,
     });
     const parsedTurn = extraction.failure
       ? { drafts: [], summaryParts: [], failedItems: [] as FailedLogItem[] }
@@ -2188,7 +1938,6 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
           today,
           settingsModel: parseModel,
           visionModel: settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL,
-          apiKey,
           userMacros: extractUserMacros(message),
         });
     const candidates = parsedTurn.drafts.map(turnCandidateFromDraft);
@@ -2241,37 +1990,13 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
     const persistedConfirmation = persistedCards.find((card) => card.kind === "confirmation")?.data;
     const memoryApprovals = canonicalMemoryApprovalsForCards(turnResult.memoryApprovals, persistedCards);
 
-    // Update session
-    if (sessionId) {
-      if (isFirstMessage) {
-        try {
-          const title = await callAI(
-            ctx,
-            userId,
-            [
-              { role: "system", content: "Generate a short, descriptive title (max 6 words, 40 characters) for a fitness coaching conversation based on the user's first message. Return ONLY the title, no quotes, no punctuation." },
-              { role: "user", content: message },
-            ],
-            40,
-            parseModel,
-            apiKey,
-          );
-          const cleanTitle = title.replace(/^["']|["']$/g, "").trim().slice(0, 60);
-          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { userId, sessionId, title: cleanTitle || message.slice(0, 50) });
-        } catch {
-          await ctx.runMutation(internal.chat.updateSessionTitleFromAI, { userId, sessionId, title: message.slice(0, 50) });
-        }
-      } else {
-        await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
-      }
-    }
+    if (sessionId) await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
 
     return {
       reply: persistedContent,
       loggedItem: persistedLoggedItem,
       memoryApprovals,
       failedItems,
-      coachType: detectedCoach,
       clarification: persistedClarification,
       confirmation: persistedConfirmation,
       restricted: restrictedGuidance,
@@ -2293,8 +2018,7 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
             loggedItem,
             memoryApprovals: resolved.memoryApprovals ?? [],
             failedItems: [],
-            coachType: toLegacyPersona(coachType),
-            restricted: restrictedGuidance,
+              restricted: restrictedGuidance,
             outcome: resolved.turnOutcome,
             cards: resolved.turnCards,
             messageId: resolved.messageId,
@@ -2324,8 +2048,7 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
             loggedItem: await loggedItemFromCards(ctx, userId, finalized.turnCards),
             memoryApprovals: [],
             failedItems: [],
-            coachType: toLegacyPersona(coachType),
-            restricted: restrictedGuidance,
+              restricted: restrictedGuidance,
             outcome: finalized.turnOutcome,
             cards: finalized.turnCards,
             messageId: finalized.messageId,
@@ -2341,197 +2064,6 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
     }
   },
 });
-
-export const generateDailyInsights = action({
-  args: { date: v.string() },
-  handler: async (ctx, { date }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    return runDailyInsights(ctx, identity.subject, date);
-  },
-});
-
-export const generateDailyInsightsForUser = internalAction({
-  args: { userId: v.string(), date: v.string() },
-  handler: async (ctx, { userId, date }) => {
-    if (process.env.AI_CRONS_ENABLED !== "true") {
-      console.log(JSON.stringify({ event: "ai_cron_worker_skipped", cron: "daily_insights", userId, reason: "AI_CRONS_ENABLED_not_true" }));
-      return { skipped: true };
-    }
-    return runDailyInsights(ctx, userId, date);
-  },
-});
-
-const AI_CRON_BATCH_SIZE = 25;
-const AI_CRON_BATCH_DELAY_MS = 60_000;
-
-// TODO(beta P1): replace this delayed fan-out with a bounded, cursor-driven dispatcher
-// before enabling AI_CRONS_ENABLED. See plans/005-beta-release.md, P1 priority.
-/** Cron: fan out daily insights to each active user via the scheduler. */
-export const cronDailyInsights = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    if (process.env.AI_CRONS_ENABLED !== "true") {
-      console.log(JSON.stringify({ event: "ai_cron_skipped", cron: "daily_insights", reason: "AI_CRONS_ENABLED_not_true" }));
-      return { users: 0 };
-    }
-
-    const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 3 })) as string[];
-    for (let batchStart = 0; batchStart < users.length; batchStart += AI_CRON_BATCH_SIZE) {
-      const batch = users.slice(batchStart, batchStart + AI_CRON_BATCH_SIZE);
-      const delayMs = (batchStart / AI_CRON_BATCH_SIZE) * AI_CRON_BATCH_DELAY_MS;
-      for (const userId of batch) {
-        // Derive the user's local date from their stored timezone offset.
-        const settings = (await ctx.runQuery(internal.profile.getSettingsForContext, { userId })) as any;
-        const offsetMin: number = settings?.timezoneOffsetMinutes ?? 0;
-        const localDate = new Date(Date.now() - offsetMin * 60_000).toISOString().slice(0, 10);
-        await ctx.scheduler.runAfter(delayMs, internal.ai.generateDailyInsightsForUser, { userId, date: localDate });
-      }
-    }
-    return { users: users.length };
-  },
-});
-
-async function runDailyInsights(ctx: any, userId: string, date: string) {
-    const [meals, workouts, goal, settings, profile] = await Promise.all([
-      ctx.runQuery(internal.meals.getMealsForContext, { userId, date }),
-      ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date }),
-      ctx.runQuery(internal.goals.getDailyGoalForContext, { userId, date }),
-      ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
-      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-    ]);
-
-    const totalCals = meals.reduce((s: number, m: any) => s + m.calories, 0);
-    const totalProtein = meals.reduce((s: number, m: any) => s + m.protein, 0);
-    const totalCarbs = meals.reduce((s: number, m: any) => s + (m.carbs ?? 0), 0);
-    const totalFat = meals.reduce((s: number, m: any) => s + (m.fat ?? 0), 0);
-    const totalBurned = workouts.reduce((s: number, w: any) => s + (w.caloriesBurned ?? 0), 0);
-
-    let userContext = "";
-    if (profile?.goal) userContext += `User goal: ${profile.goal}. `;
-    if (profile?.weight) userContext += `Weight: ${profile.weight}kg. `;
-    if (profile?.trainingStyle) userContext += `Training style: ${profile.trainingStyle}. `;
-
-    const mealsList = meals.length > 0 ? `\nMeals today: ${meals.map((m: any) => m.name).join(", ")}` : "";
-
-    const prompt = `${userContext}Today's nutrition & workout data:
-- Calories consumed: ${totalCals} (goal: ${goal?.calorieGoal || 2400})
-- Calories burned: ${totalBurned}
-- Net calories: ${totalCals - totalBurned}
-- Protein: ${totalProtein}g (goal: ${goal?.proteinGoal || 180}g)
-- Carbs: ${totalCarbs}g | Fat: ${totalFat}g
-- Meals logged: ${meals.length}
-- Workouts logged: ${workouts.length}${mealsList}
-
-Give 3 short, punchy insights (one sentence each) about their day. Tailor advice to their goal (${profile?.goal || "general fitness"}). Be motivating but direct. Return ONLY a JSON array of 3 strings. Example: ["Protein intake on target. Stay locked in.", "Caloric deficit detected. Fuel up, soldier.", "Zero training logged. The iron doesn't lift itself."]`;
-
-    const model = settings?.openRouterModel ?? undefined;
-    const apiKey = settings?.openRouterKey ?? undefined;
-    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model, apiKey);
-    let insights: string[] = [];
-    try {
-      const match = content.match(/\[[\s\S]*\]/);
-      insights = JSON.parse(match ? match[0] : content) as string[];
-      if (!Array.isArray(insights)) insights = [];
-    } catch {
-      insights = [content.slice(0, 100), "Keep pushing forward.", "Data logged successfully."];
-    }
-
-    await ctx.runMutation(internal.insights.saveInsights, { userId, date, insights });
-    return { insights };
-}
-
-export const generateWeeklySummary = action({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    return runWeeklySummary(ctx, identity.subject);
-  },
-});
-
-export const generateWeeklySummaryForUser = internalAction({
-  args: { userId: v.string() },
-  handler: async (ctx, { userId }) => {
-    if (process.env.AI_CRONS_ENABLED !== "true") {
-      console.log(JSON.stringify({ event: "ai_cron_worker_skipped", cron: "weekly_summary", userId, reason: "AI_CRONS_ENABLED_not_true" }));
-      return { skipped: true };
-    }
-    return runWeeklySummary(ctx, userId);
-  },
-});
-
-/** Cron: fan out weekly summaries to each active user via the scheduler. */
-export const cronWeeklySummary = internalAction({
-  args: {},
-  handler: async (ctx) => {
-    if (process.env.AI_CRONS_ENABLED !== "true") {
-      console.log(JSON.stringify({ event: "ai_cron_skipped", cron: "weekly_summary", reason: "AI_CRONS_ENABLED_not_true" }));
-      return { users: 0 };
-    }
-
-    const users = (await ctx.runQuery(internal.behavior.listActiveUsers, { days: 7 })) as string[];
-    for (let batchStart = 0; batchStart < users.length; batchStart += AI_CRON_BATCH_SIZE) {
-      const batch = users.slice(batchStart, batchStart + AI_CRON_BATCH_SIZE);
-      const delayMs = (batchStart / AI_CRON_BATCH_SIZE) * AI_CRON_BATCH_DELAY_MS;
-      for (const userId of batch) {
-        await ctx.scheduler.runAfter(delayMs, internal.ai.generateWeeklySummaryForUser, { userId });
-      }
-    }
-    return { users: users.length };
-  },
-});
-
-async function runWeeklySummary(ctx: any, userId: string) {
-    const _settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-    const offsetMin: number = _settings?.timezoneOffsetMinutes ?? 0;
-    const localNow = new Date(Date.now() - offsetMin * 60_000);
-    const day = localNow.getUTCDay();
-    const monday = new Date(localNow);
-    monday.setUTCDate(localNow.getUTCDate() - day + (day === 0 ? -6 : 1));
-    const weekStart = monday.toISOString().slice(0, 10);
-
-    const history = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(monday);
-      d.setDate(d.getDate() + i);
-      const date = d.toISOString().split("T")[0];
-      const [meals, workouts] = await Promise.all([
-        ctx.runQuery(internal.meals.getMealsForContext, { userId, date }),
-        ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date }),
-      ]);
-      history.push({ date, calories: Math.round(meals.reduce((s: number, m: any) => s + m.calories, 0)), burned: Math.round(workouts.reduce((s: number, w: any) => s + (w.caloriesBurned ?? 0), 0)), workouts: workouts.length });
-    }
-
-    const avgCals = Math.round(history.reduce((s, d) => s + d.calories, 0) / 7);
-    const avgBurned = Math.round(history.reduce((s, d) => s + d.burned, 0) / 7);
-    const totalWorkouts = history.reduce((s, d) => s + d.workouts, 0);
-    const dailyBreakdown = history.map((d) => `${d.date.split("-")[2]}: ${d.calories}cal/${d.burned}burned/${d.workouts}wkt`).join(", ");
-
-    const [settings, profile] = await Promise.all([
-      ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
-      ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-    ]);
-
-    let userContext = "";
-    if (profile?.goal) userContext += `User goal: ${profile.goal}. `;
-    if (profile?.weight) userContext += `Weight: ${profile.weight}kg. `;
-    if (profile?.trainingStyle) userContext += `Training: ${profile.trainingStyle}. `;
-    if (profile?.calorieTarget) userContext += `Target: ${profile.calorieTarget}cal/day. `;
-
-    const prompt = `${userContext}Weekly fitness summary:
-- Average daily calories: ${avgCals}
-- Average daily burned: ${avgBurned}
-- Total workouts: ${totalWorkouts}/7 days
-- Daily breakdown: ${dailyBreakdown}
-
-Give a brief (2-3 sentences) weekly summary and recommendation tailored to their goal (${profile?.goal || "general fitness"}). Be direct and actionable.`;
-    const model = settings?.openRouterModel ?? undefined;
-    const apiKey = settings?.openRouterKey ?? undefined;
-    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model, apiKey);
-    await ctx.runMutation(internal.insights.saveWeeklySummary, { userId, weekStart, content });
-    return { content };
-}
 
 export const suggestWorkout = action({
   args: {},
@@ -2576,8 +2108,7 @@ Return ONLY a valid JSON object (no markdown, no explanation):
 }
 Include 3-6 exercises with 3-4 sets each. For cardio, use duration as reps field and omit weight. Be specific with exercise names. Do NOT include caloriesBurned — calories are calculated separately.`;
     const model = settings?.openRouterModel ?? undefined;
-    const apiKey = settings?.openRouterKey ?? undefined;
-    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 800, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 800, model);
     const result = parseJSON<any>(content, {});
 
     // Deterministic calorie calculation
@@ -2645,10 +2176,8 @@ export const parseNutritionImage = action({
     assertImageDataUrl(imageDataUrl, "image data URL");
     if (userDescription) assertMaxChars(userDescription, AI_INPUT_LIMITS.textChars, "image description");
     let model: string | undefined;
-    let apiKey: string | undefined;
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     model = settings?.openRouterModel ?? undefined;
-    apiKey = settings?.openRouterKey ?? undefined;
     const visionModel = model && VISION_MODELS.has(model) ? model : DEFAULT_MODEL;
 
     const portionClause = userDescription
@@ -2668,7 +2197,7 @@ Extract nutritional values per 100g. If the label is per serving, convert using 
         { type: "text", text: prompt },
         { type: "image_url", image_url: { url: imageDataUrl } },
       ],
-    }], 400, visionModel, apiKey);
+    }], 400, visionModel);
     const result = parseJSON<any>(content, null);
     if (!result) throw new Error("Could not parse nutrition from image");
     return {
@@ -2703,10 +2232,8 @@ export const estimatePortion = action({
     assertMaxChars(args.baseName, AI_INPUT_LIMITS.textChars, "food name");
     assertMaxChars(args.portionDescription, AI_INPUT_LIMITS.textChars, "portion description");
     let model: string | undefined;
-    let apiKey: string | undefined;
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     model = settings?.openRouterModel ?? undefined;
-    apiKey = settings?.openRouterKey ?? undefined;
 
     const servingClause = args.servingSize
       ? `Serving size: ${args.servingSize}${args.servingUnit || "g"}.`
@@ -2720,7 +2247,7 @@ User portion description: "${args.portionDescription}"
 Estimate the total grams the user consumed based on their description, then calculate exact macros from the per-100g data. Return ONLY a JSON object (no markdown, no explanation):
 {"grams":number,"calories":number,"protein":number,"carbs":number,"fat":number}`;
 
-    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model);
     const result = parseJSON<any>(content, {});
     const ratio = (result.grams || 0) / 100;
     return {
@@ -2745,10 +2272,8 @@ export const calculateProfileMacros = action({
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
     let model: string | undefined;
-    let apiKey: string | undefined;
     const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
     model = settings?.openRouterModel ?? undefined;
-    apiKey = settings?.openRouterKey ?? undefined;
 
     const prompt = `Calculate optimal daily macronutrient targets for:
 - Weight: ${weight}kg
@@ -2763,7 +2288,7 @@ Return ONLY a JSON object with these keys (numbers only, no text):
 - fat: grams of fat
 - explanation: one sentence explaining the reasoning (max 15 words)`;
 
-    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 300, model);
     const result = parseJSON<any>(content, {});
     if (!result.calories) {
       const bmr = 10 * weight + 6.25 * height - 5 * age + 5;
@@ -2797,11 +2322,9 @@ export const regenerateSuggestion = action({
     assertMaxChars(args.mealName, AI_INPUT_LIMITS.textChars, "meal name");
     if (args.mealComponents) assertMaxChars(args.mealComponents, AI_INPUT_LIMITS.textChars, "meal components");
     let model: string | undefined;
-    let apiKey: string | undefined;
     if (userId) {
       const settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
       model = settings?.openRouterModel ?? undefined;
-      apiKey = settings?.openRouterKey ?? undefined;
     }
 
     const budgetContext = args.remainingCalories != null
@@ -2816,18 +2339,9 @@ Macros: ${args.mealCalories} kcal, ${args.mealProtein}g protein, ${args.mealCarb
 
 Return ONLY a short JSON object: {"suggestion":"one forward-looking next-meal tip (max 25 words)"}`;
 
-    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 400, model, apiKey);
+    const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 400, model);
     const result = parseJSON<any>(content, { suggestion: "" });
     return { suggestion: result.suggestion || "" };
-  },
-});
-
-// Deliberately public: this read-only static coach catalog is safe to expose.
-export const getCoaches = query({
-  args: {},
-  handler: async () => {
-    const list = Object.values(COACHES).map(({ id, name, tagline }) => ({ id, name, tagline }));
-    return [{ id: "auto", name: "Auto", tagline: "Automatically route to the right coach" }, ...list];
   },
 });
 
@@ -2895,16 +2409,6 @@ export const transcribe = action({
 
 
 /**
- * Homepage quick-input action.
- *
- * Uses the LLM to extract ALL loggable items from a single message.
- * Returns an array of drafts (meal, workout, sleep, water, mood, steps)
- * plus a tier-1 summary and tier-2 detail for the UI.
- *
- * Example: "Had chicken salad and drank 1L of water" → [meal draft, water draft]
- * Example: "Slept 6.5h last night, woke up at 7" → [sleep draft]
- */
-/**
  * Heuristic: detect whether a free-text message looks like a log report
  * vs. a question. Used as a pre-check AND as a sanity check on the LLM's
  * intent classification — fixes the "coin flip" where the LLM occasionally
@@ -2914,9 +2418,7 @@ export const transcribe = action({
 // applyUserMacros) and their regexes → ./ai/intent
 
 const EXTRACTION_MAX_TOKENS = 1_600;
-const EXTRACTION_HISTORY_TURNS = 12;
 
-type HomepageHistoryEntry = { role: string; content: string };
 type HomepageHistoryMessage = { role: "user" | "assistant"; content: string };
 type StructuredLogItem = {
   type: "meal" | "workout" | "sleep" | "water" | "mood" | "steps";
@@ -2936,17 +2438,6 @@ type StructuredExtraction = {
     retriable: boolean;
   };
 };
-
-export function trimHomepageHistory(history: HomepageHistoryEntry[]): HomepageHistoryMessage[] {
-  return history
-    .slice(0, -1) // The current user message is persisted before history is loaded.
-    .slice(-EXTRACTION_HISTORY_TURNS)
-    .flatMap((entry): HomepageHistoryMessage[] => {
-      const role = entry.role === "ai" ? "assistant" : entry.role;
-      if (role !== "user" && role !== "assistant") return [];
-      return [{ role, content: entry.content }];
-    });
-}
 
 function validateStructuredExtraction(value: unknown, today: string): { isQuestion: boolean; items: StructuredLogItem[] } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -3040,10 +2531,9 @@ async function extractStructuredLogItems(input: {
   history: HomepageHistoryMessage[];
   model?: string;
   visionModel: string;
-  apiKey?: string;
 }): Promise<StructuredExtraction> {
   const {
-    ctx, userId, message, image, today, history, model, visionModel, apiKey,
+    ctx, userId, message, image, today, history, model, visionModel,
   } = input;
   const estimateMode = looksLikeFoodEstimate(message);
   const homepageIntent = classifyHomepageIntent(message);
@@ -3061,7 +2551,7 @@ async function extractStructuredLogItems(input: {
   let firstError: unknown;
   let parsed: { isQuestion: boolean; items: StructuredLogItem[] } | null = null;
   try {
-    const raw = await callAI(ctx, userId, messages, EXTRACTION_MAX_TOKENS, selectedModel, apiKey);
+    const raw = await callAI(ctx, userId, messages, EXTRACTION_MAX_TOKENS, selectedModel);
     parsed = validateStructuredExtraction(parseJSON<unknown>(raw, null), today);
   } catch (error) {
     firstError = error;
@@ -3076,7 +2566,7 @@ async function extractStructuredLogItems(input: {
         image
           ? { role: "user", content: [{ type: "text", text: message || "What do you see?" }, { type: "image_url", image_url: { url: image } }] }
           : { role: "user", content: message },
-      ], EXTRACTION_MAX_TOKENS, selectedModel, apiKey);
+      ], EXTRACTION_MAX_TOKENS, selectedModel);
       const retried = validateStructuredExtraction(parseJSON<unknown>(raw, null), today);
       if (retried) parsed = retried;
     } catch (error) {
@@ -3146,7 +2636,6 @@ async function parseStructuredLogItems(input: {
   today: string;
   settingsModel?: string;
   visionModel: string;
-  apiKey?: string;
   userMacros: ReturnType<typeof extractUserMacros>;
 }): Promise<{
   drafts: any[];
@@ -3154,7 +2643,7 @@ async function parseStructuredLogItems(input: {
   failedItems: FailedLogItem[];
 }> {
   const {
-    ctx, userId, items, image, today, settingsModel, visionModel, apiKey, userMacros,
+    ctx, userId, items, image, today, settingsModel, visionModel, userMacros,
   } = input;
   const hasUserMacros = Object.values(userMacros).some((value) => value != null);
   const withTurnMetadata = (draft: any, item: StructuredLogItem) => ({
@@ -3191,7 +2680,7 @@ async function parseStructuredLogItems(input: {
           description = await callAI(ctx, userId, [{
             role: "user",
             content: [{ type: "text", text: "Describe this food briefly." }, { type: "image_url", image_url: { url: image } }],
-          }], 150, visionModel, apiKey);
+          }], 150, visionModel);
         }
 
         const memoryDraft = await buildMealDraftFromParsed(ctx, {
@@ -3227,7 +2716,7 @@ async function parseStructuredLogItems(input: {
           continue;
         }
 
-        const parsed = await parseMealDescription(description, "unspecified", "", ctx, userId, settingsModel, apiKey, userIngredients as any[]);
+        const parsed = await parseMealDescription(description, "unspecified", "", ctx, userId, settingsModel, userIngredients as any[]);
         if (isUnusablePlaceholderMeal(description, parsed)) {
           failedItems.push({
             kind: "meal",
@@ -3271,7 +2760,7 @@ async function parseStructuredLogItems(input: {
         drafts.push(withTurnMetadata(macroDecision.draft, item));
         summaryParts.push(`${parsed.name || "Meal"} (~${macroDecision.draft.kcal} kcal)`);
       } else if (item.type === "workout") {
-        const parsed = await parseWorkoutDescription(item.description, ctx, userId, undefined, undefined, settingsModel, apiKey, userPhysique);
+        const parsed = await parseWorkoutDescription(item.description, ctx, userId, undefined, undefined, settingsModel, userPhysique);
         if (parsed.parseError) {
           failedItems.push({
             kind: "workout",
@@ -3318,7 +2807,7 @@ async function parseStructuredLogItems(input: {
           role: "user",
           content: `Extract sleep data from: "${item.description}"
 Return ONLY JSON: {"hours": number, "quality": "poor"|"ok"|"good"|"great"}.`,
-        }], 80, settingsModel, apiKey);
+        }], 80, settingsModel);
         const data = parseJSON<{ hours?: number; band?: string; quality?: string }>(raw, {});
         const hours = typeof data.hours === "number" && Number.isFinite(data.hours) ? data.hours : undefined;
         const band = ["under_6", "six_to_eight", "eight_plus"].includes(data.band ?? "") ? data.band : undefined;
@@ -3332,7 +2821,7 @@ Return ONLY JSON: {"hours": number, "quality": "poor"|"ok"|"good"|"great"}.`,
           content: `Extract water amount in ml from: "${item.description}"
 Common conversions: 1 glass = 250ml, 1L = 1000ml, 1 bottle = 500ml.
 Return ONLY a number (ml).`,
-        }], 20, settingsModel, apiKey);
+        }], 20, settingsModel);
         const parsedMl = parseInt(raw.replace(/[^0-9]/g, ""), 10);
         const ml = Number.isFinite(parsedMl) ? parsedMl : undefined;
         const draft = buildRecoveryDraft({ kind: "water", date: item.date ?? today, ml, source: "ai_extracted" });
@@ -3343,7 +2832,7 @@ Return ONLY a number (ml).`,
           role: "user",
           content: `Extract mood rating 1-5 from: "${item.description}"
 1=very bad, 2=bad, 3=ok, 4=good, 5=great. Return ONLY a number 1-5.`,
-        }], 10, settingsModel, apiKey);
+        }], 10, settingsModel);
         const parsedRating = parseInt(raw.replace(/[^0-9]/g, ""), 10);
         const rating = Number.isFinite(parsedRating) ? parsedRating : undefined;
         const draft = buildRecoveryDraft({ kind: "mood", date: item.date ?? today, rating, source: "ai_extracted" });
@@ -3353,7 +2842,7 @@ Return ONLY a number (ml).`,
         const raw = await callAI(ctx, userId, [{
           role: "user",
           content: `Extract step count from: "${item.description}". Return ONLY a number.`,
-        }], 15, settingsModel, apiKey);
+        }], 15, settingsModel);
         const parsedCount = parseInt(raw.replace(/[^0-9]/g, ""), 10);
         const count = Number.isFinite(parsedCount) ? parsedCount : undefined;
         const draft = buildRecoveryDraft({ kind: "steps", date: item.date ?? today, count, source: "ai_extracted" });
@@ -4083,14 +3572,13 @@ async function loggedItemsFromCards(
   });
 }
 
-async function chatResponseFromPersistedTurn(ctx: ActionCtx, userId: string, turn: any, coachType: string | undefined, restricted: boolean) {
+async function chatResponseFromPersistedTurn(ctx: ActionCtx, userId: string, turn: any, restricted: boolean) {
   const cards = (turn.turnCards ?? []) as ChatTurnCard[];
   return {
     reply: turn.content,
     loggedItem: await loggedItemFromCards(ctx, userId, cards),
     memoryApprovals: [],
     failedItems: [],
-    coachType: toLegacyPersona(coachType),
     restricted,
     outcome: turn.turnOutcome,
     cards,
@@ -4102,24 +3590,6 @@ async function chatResponseFromPersistedTurn(ctx: ActionCtx, userId: string, tur
 
 function isChatClaimFenceError(error: unknown): boolean {
   return error instanceof Error && error.message === "Chat submission lease is no longer current";
-}
-
-function homepageResponseFromPersistedTurn(turn: any, activeSessionId: Id<"chat_sessions">, restricted: boolean) {
-  const cards = (turn.turnCards ?? []) as ChatTurnCard[];
-  return {
-    drafts: [],
-    tier1Summary: turn.content,
-    tier2Detail: "",
-    isQuestion: turn.turnOutcome === "no_action",
-    reply: turn.content,
-    coachType: "overall" as CoachType,
-    sessionId: activeSessionId,
-    messageId: turn.messageId,
-    restricted,
-    failedItems: [],
-    outcome: turn.turnOutcome as ChatTurnOutcome,
-    cards,
-  };
 }
 
 async function reconcileAssistantOutcome(ctx: ActionCtx, userId: string, actionGroupId: Id<"actionGroups">, claim: TurnClaim = {}) {
@@ -4218,446 +3688,3 @@ async function persistFailedChatTurn(
     turnOutcome: (persisted?.turnOutcome ?? turnOutcome) as ChatTurnOutcome,
   };
 }
-
-export const homepageInput = action({
-  args: {
-    message: v.string(),
-    image: v.optional(v.string()),
-    today: v.optional(v.string()),
-    sessionId: v.optional(v.id("chat_sessions")),
-    clientSubmissionId: v.optional(v.string()),
-  },
-  handler: async (ctx, { message, image, today: todayArg, sessionId, clientSubmissionId }): Promise<{
-    drafts: any[];
-    tier1Summary: string;
-    tier2Detail: string;
-    isQuestion: boolean;
-    actions?: any[];
-    reply?: string;
-    coachType?: CoachType;
-    sessionId?: any;
-    messageId?: string;
-    restricted?: boolean;
-    failedItems: FailedLogItem[];
-    outcome?: ChatTurnOutcome;
-    cards?: ChatTurnCard[];
-    processingError?: string;
-  }> => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    assertMaxChars(message, AI_INPUT_LIMITS.messageChars, "homepage message");
-    if (image) assertImageDataUrl(image, "homepage image");
-    const userId = identity.subject;
-    const today = assertValidDate(todayArg ?? new Date().toISOString().split("T")[0]);
-    const restrictedGuidance = hasRestrictedRecoverySignal(message);
-
-    // Make sure we have a homepage session to persist into
-    const activeSessionId = sessionId
-      ?? (await ctx.runMutation(internal.chat.getOrCreateHomepageSession, { userId, date: today }));
-    const submissionFingerprint = clientSubmissionId
-      ? turnSubmissionFingerprint({ userId, sessionId: activeSessionId, message, image, today, surface: "home" })
-      : undefined;
-    const claimOwner = clientSubmissionId ? newTurnClaimOwner(clientSubmissionId) : undefined;
-    const claim = clientSubmissionId
-      ? await ctx.runMutation(internal.chat.claimTurn, {
-          userId,
-          sessionId: activeSessionId,
-          clientSubmissionId,
-          content: message,
-          submissionFingerprint: submissionFingerprint!,
-          claimOwner: claimOwner!,
-        })
-      : null;
-    if (claim?.state === "terminal") return homepageResponseFromPersistedTurn(claim.turn, activeSessionId, restrictedGuidance);
-    if (claim?.state === "in_progress") throw new Error("Chat submission is already in progress; retry after the current request completes");
-    const turnClaim: TurnClaim = clientSubmissionId
-      ? { clientSubmissionId, claimOwner, claimVersion: claim?.claimVersion }
-      : {};
-    let settingsModel: string | undefined;
-    let settings: any;
-
-    // A clientSubmissionId is atomically claimed above; legacy submissions without
-    // one still get the historical user-message persistence behavior.
-    if (!clientSubmissionId) {
-      await ctx.runMutation(internal.chat.addMessage, {
-        userId,
-        sessionId: activeSessionId,
-        role: "user",
-        content: message,
-      });
-    }
-
-    try {
-    settings = await ctx.runQuery(internal.profile.getSettingsForContext, { userId });
-    settingsModel = settings?.openRouterModel ?? undefined;
-    const apiKey = settings?.openRouterKey ?? undefined;
-    const visionModel = settingsModel && VISION_MODELS.has(settingsModel) ? settingsModel : DEFAULT_MODEL;
-    const intentModel = image ? visionModel : settingsModel;
-    await waitForChatContextBarrier();
-    // Phase 5: MemoryAgent — fire-and-forget fact extraction (does not block response)
-    ctx.runAction(internal.agents.runMemoryAgentAction, {
-      userId, message, today,
-      model: settings?.openRouterModel ?? undefined,
-      apiKey: settings?.openRouterKey ?? undefined,
-    }).catch(() => {});
-
-    const history = await ctx.runQuery(internal.chat.getMessagesForContext, {
-      userId,
-      sessionId: activeSessionId,
-    }) as HomepageHistoryEntry[];
-    const trimmedHistory = trimHomepageHistory(history);
-    assertHistoryEntries(trimmedHistory);
-
-    // Heuristic pre-check
-    const estimateMode = looksLikeFoodEstimate(message);
-    const userMacros = extractUserMacros(message);
-    const homepageIntent = classifyHomepageIntent(message);
-    const heuristicSaysLog = !!image || homepageIntent === "log_report" || looksLikeLog(message) || estimateMode;
-
-    const extraction = await extractStructuredLogItems({
-      ctx,
-      userId,
-      message,
-      image,
-      today,
-      history: trimmedHistory,
-      model: intentModel,
-      visionModel,
-      apiKey,
-    });
-    let extracted = {
-      isQuestion: extraction.isQuestion,
-      items: extraction.items,
-    };
-    const submissionRawInput = image ? `${message}\n[image:${stableHash(image)}]` : message;
-
-    if (extraction.failure) {
-      const turnResult = await executeTurnPolicy({
-        ctx,
-        userId,
-        rawInput: submissionRawInput,
-        clientSubmissionId,
-        today,
-        model: intentModel,
-        candidates: [],
-        parseFailures: [],
-        turnFailure: extraction.failure,
-        forceConfirmation: false,
-        claim: turnClaim,
-      });
-      const reply = turnOutcomeText(turnResult);
-      await waitForChatReconciliationBarrier();
-      const messageId = await ctx.runMutation(internal.chat.addMessage, {
-        userId,
-        sessionId: activeSessionId,
-        role: "ai",
-        content: reply,
-        clientSubmissionId,
-        turnContractVersion: 1,
-        turnOutcome: turnResult.outcome,
-        turnCards: turnResult.cards,
-        actionGroupId: turnResult.groupId,
-        actionIds: turnResult.actionIds,
-        claimOwner: turnClaim.claimOwner,
-        claimVersion: turnClaim.claimVersion,
-      });
-      const persistedMessage = turnResult.groupId
-        ? await reconcileAssistantOutcome(ctx, userId, turnResult.groupId, turnClaim)
-        : null;
-      const persistedCards = (persistedMessage?.turnCards ?? turnResult.cards) as ChatTurnCard[];
-      const persistedContent = persistedMessage?.content ?? reply;
-      const persistedOutcome = (persistedMessage?.turnOutcome ?? turnResult.outcome) as ChatTurnOutcome;
-      return {
-        drafts: [],
-        tier1Summary: "",
-        tier2Detail: "",
-        isQuestion: false,
-        reply: persistedContent,
-        coachType: "overall",
-        sessionId: activeSessionId,
-        messageId: persistedMessage?._id ?? messageId,
-        restricted: restrictedGuidance,
-        failedItems: [],
-        outcome: persistedOutcome,
-        cards: persistedCards,
-      };
-    }
-
-    // If it's a question, route to chat coach (with chat history)
-    const shouldFallbackToEstimate = estimateMode
-      && homepageIntent !== "negation"
-      && !isNegatedLogItem(message, { type: "meal", description: message });
-    if (shouldFallbackToEstimate && (extracted.isQuestion || extracted.items.length === 0)) {
-      extracted = { isQuestion: false, items: [{ type: "meal", description: message, date: today }] };
-    }
-
-    if (extracted.isQuestion || extracted.items.length === 0) {
-      const coachType: CoachType = classifyCoachType(message);
-      const coach = getCoach(coachType);
-      const [todayMealsList, todayWorkoutsList, profile, topMemories, lastSleepQ, patternsQ, topRecipesQ, topWkMemQ, behaviorQ, settingsQ, userIngredientsQ, checkInAnswersQ] = await Promise.all([
-        ctx.runQuery(internal.meals.getMealsForContext, { userId, date: today }),
-        ctx.runQuery(internal.workouts.getWorkoutsForContext, { userId, date: today }),
-        ctx.runQuery(internal.profile.getProfileForContext, { userId }),
-        ctx.runQuery(internal.food_memory.getTopForContext, { userId, limit: 6 }),
-        ctx.runQuery(internal.wellness.getLastSleepForContext, { userId }),
-        ctx.runQuery(internal.patterns.getPatternsForContext, { userId }),
-        ctx.runQuery(internal.recipes.getTopRecipesForContext, { userId, limit: 5 }),
-        ctx.runQuery(internal.workout_memory.getTopForContext, { userId, limit: 4 }),
-        ctx.runQuery(internal.behavior.getBehaviorProfileForContext, { userId }),
-        ctx.runQuery(internal.profile.getSettingsForContext, { userId }),
-        ctx.runQuery(internal.user_ingredients.getForContext, { userId }),
-        ctx.runQuery(internal.checkins.getAnswerContextForContext, { userId, date: today }),
-      ]);
-      const userName = identity.name ?? "Athlete";
-      let context = `USER: ${userName}\n`;
-      if (profile?.calorieTarget) context += `Calorie target: ${profile.calorieTarget}\n`;
-      if (profile?.proteinTarget) context += `Protein target: ${profile.proteinTarget}g\n`;
-      if (profile?.dietaryPreference && profile.dietaryPreference !== "none") {
-        context += `Diet: ${profile.dietaryPreference}\n`;
-      }
-      context += `Today: ${todayMealsList.length} meals, ${todayWorkoutsList.length} workouts logged.\n`;
-      if (Array.isArray(topMemories) && topMemories.length > 0) {
-        context += `Known foods: ${(topMemories as any[]).map((m: any) => `${m.name} (~${m.kcal} kcal)`).join(", ")}\n`;
-      }
-      if (Array.isArray(topRecipesQ) && topRecipesQ.length > 0) {
-        context += `Saved recipes: ${(topRecipesQ as any[]).map((r: any) => `${r.name} (${r.kcalPerServing} kcal/srv)`).join(", ")}\n`;
-      }
-      if (Array.isArray(topWkMemQ) && topWkMemQ.length > 0) {
-        context += `Known workouts: ${(topWkMemQ as any[]).map((w: any) => `${w.name}`).join(", ")}\n`;
-      }
-      if (Array.isArray(userIngredientsQ) && userIngredientsQ.length > 0) {
-        context += `Personal ingredients: ${(userIngredientsQ as any[]).map((i: any) => {
-          const k = i.caloriesPer100g != null ? `${i.caloriesPer100g} kcal/100g` : "custom";
-          return `${i.name} (${k})`;
-        }).join(", ")}\n`;
-      }
-      if (lastSleepQ) {
-        const sleepValue = (lastSleepQ as any).hours != null ? `${(lastSleepQ as any).hours}h` : (lastSleepQ as any).band ?? "unknown duration";
-        context += `Last sleep: ${sleepValue}, ${(lastSleepQ as any).quality ?? "unknown"}\n`;
-      }
-      if (checkInAnswersQ) {
-        context += `Today's check-in answers: ${checkInAnswersQ}\n`;
-      }
-      if (Array.isArray(patternsQ) && patternsQ.length > 0) {
-        context += `Patterns: ${(patternsQ as string[]).join(" | ")}\n`;
-      }
-
-      const toneOpts = {
-        sleepHours: lastSleepQ && (lastSleepQ as any).hours != null ? (lastSleepQ as any).hours : undefined,
-        sleepQuality: lastSleepQ ? (lastSleepQ as any).quality : undefined,
-        acceptRate: (behaviorQ as any)?.acceptRate ?? undefined,
-      };
-      const tone = toneInstruction(settingsQ?.coachingStyle, toneOpts);
-
-      const systemContent = `${coach.systemPrompt}${tone ? `\n\n${tone}` : ""}\n\n${context}\n\nKeep your reply concise — under 60 words unless the user asks for detail.${restrictedGuidance ? `\n\n${RESTRICTED_GUIDANCE}` : ""}`;
-      const replyMessages: AIMessage[] = [
-        { role: "system", content: systemContent },
-        ...trimmedHistory,
-        image
-          ? { role: "user", content: [{ type: "text", text: message }, { type: "image_url", image_url: { url: image } }] }
-          : { role: "user", content: message },
-      ];
-      // Upgraded chat reply (CHAT_MODEL) for text; image stays on the vision model.
-      // Parsing/extraction elsewhere in this action stays on the cheap settingsModel/DEFAULT.
-      const rawReply = await callAI(ctx, userId, replyMessages, 250, image ? visionModel : (settingsModel ?? CHAT_MODEL), apiKey);
-      const reply = sanitizeConversationalReply(rawReply) || "How can I help with that?";
-
-      // Persist AI reply
-      await waitForChatReconciliationBarrier();
-      const messageId = await ctx.runMutation(internal.chat.addMessage, {
-        userId,
-        sessionId: activeSessionId,
-        role: "ai",
-        content: reply,
-        clientSubmissionId,
-        turnContractVersion: 1,
-        turnOutcome: "no_action",
-        turnCards: [],
-        actionIds: [],
-        claimOwner: turnClaim.claimOwner,
-        claimVersion: turnClaim.claimVersion,
-      });
-
-      return {
-        drafts: [],
-        tier1Summary: "",
-        tier2Detail: "",
-        isQuestion: true,
-        reply,
-        coachType,
-        sessionId: activeSessionId,
-        messageId,
-        restricted: restrictedGuidance,
-        failedItems: [],
-        outcome: "no_action",
-        cards: [],
-      };
-    }
-
-    const parsedTurn = await parseStructuredLogItems({
-      ctx,
-      userId,
-      items: extracted.items,
-      image,
-      today,
-      settingsModel,
-      visionModel,
-      apiKey,
-      userMacros,
-    });
-    const { drafts, summaryParts, failedItems } = parsedTurn;
-    const skippedPlaceholderMeals = failedItems.filter((item) => item.kind === "meal").length;
-
-    if (drafts.length === 0) {
-      const turnResult = await executeTurnPolicy({
-        ctx,
-        userId,
-        rawInput: submissionRawInput,
-        clientSubmissionId,
-        today,
-        model: settingsModel,
-        candidates: [],
-        parseFailures: failedItems,
-        forceConfirmation: false,
-        claim: turnClaim,
-      });
-      const reply = turnResult.outcome === "failed"
-        ? turnOutcomeText(turnResult)
-        : skippedPlaceholderMeals > 0
-          ? `I couldn't catch the details for ${skippedPlaceholderMeals === 1 ? "that meal" : `${skippedPlaceholderMeals} of those meals`}. Could you describe ${skippedPlaceholderMeals === 1 ? "it" : "them"} again?`
-          : "I couldn't parse that. Could you be more specific?";
-      const messageId = await ctx.runMutation(internal.chat.addMessage, {
-        userId,
-        sessionId: activeSessionId,
-        role: "ai",
-        content: reply,
-        clientSubmissionId,
-        turnContractVersion: 1,
-        turnOutcome: turnResult.outcome,
-        turnCards: turnResult.cards,
-        actionGroupId: turnResult.groupId,
-        actionIds: turnResult.actionIds,
-        claimOwner: turnClaim.claimOwner,
-        claimVersion: turnClaim.claimVersion,
-      });
-      const persistedMessage = turnResult.groupId
-        ? await reconcileAssistantOutcome(ctx, userId, turnResult.groupId, turnClaim)
-        : null;
-      const persistedCards = (persistedMessage?.turnCards ?? turnResult.cards) as ChatTurnCard[];
-      const persistedContent = persistedMessage?.content ?? reply;
-      const persistedOutcome = (persistedMessage?.turnOutcome ?? turnResult.outcome) as ChatTurnOutcome;
-      return {
-        drafts: [],
-        tier1Summary: "",
-        tier2Detail: "",
-        isQuestion: turnResult.outcome === "no_action",
-        reply: persistedContent,
-        coachType: "overall",
-        sessionId: activeSessionId,
-        messageId: persistedMessage?._id ?? messageId,
-        restricted: restrictedGuidance,
-        failedItems,
-        outcome: persistedOutcome,
-        cards: persistedCards,
-      };
-    }
-
-    // If any draft has a date != today, mention it in the summary
-    const nonTodayDates = [...new Set(drafts.map((d) => d.date).filter((d) => d && d !== today))];
-    const dateNote = nonTodayDates.length > 0 ? ` (for ${nonTodayDates.join(", ")})` : "";
-    const skippedNote = skippedPlaceholderMeals > 0
-      ? ` I couldn't catch the details for ${skippedPlaceholderMeals === 1 ? "1 meal" : `${skippedPlaceholderMeals} meals`}; please describe ${skippedPlaceholderMeals === 1 ? "it" : "them"} again.`
-      : "";
-    const candidates = drafts.map(turnCandidateFromDraft);
-    const homeAutoCommitEnabled = process.env.HOME_CHAT_AUTO_COMMIT === "true";
-    const turnResult = await executeTurnPolicy({
-      ctx,
-      userId,
-      rawInput: submissionRawInput,
-      clientSubmissionId,
-      today,
-      model: settingsModel,
-      candidates,
-      parseFailures: failedItems,
-      forceConfirmation: !homeAutoCommitEnabled,
-      claim: turnClaim,
-    });
-    const tier1Summary = `${summaryParts.join(" · ")}${dateNote}. ${turnOutcomeText(turnResult)}${skippedNote}`.trim();
-
-    // Report turns persist only deterministic text derived from the outcome.
-    // Model prose is intentionally not mixed into this status-bearing reply.
-    const tier2Detail = "";
-    const persistedReply = tier1Summary;
-    await waitForChatReconciliationBarrier();
-    const messageId = await ctx.runMutation(internal.chat.addMessage, {
-      userId,
-      sessionId: activeSessionId,
-      role: "ai",
-      content: persistedReply,
-      clientSubmissionId,
-      turnContractVersion: 1,
-      turnOutcome: turnResult.outcome,
-      turnCards: turnResult.cards,
-      actionGroupId: turnResult.groupId,
-      actionIds: turnResult.actionIds,
-      claimOwner: turnClaim.claimOwner,
-      claimVersion: turnClaim.claimVersion,
-    });
-    const persistedMessage = turnResult.groupId
-      ? await reconcileAssistantOutcome(ctx, userId, turnResult.groupId, turnClaim)
-      : null;
-    const persistedCards = (persistedMessage?.turnCards ?? turnResult.cards) as ChatTurnCard[];
-    const persistedContent = persistedMessage?.content ?? persistedReply;
-    const persistedOutcome = (persistedMessage?.turnOutcome ?? turnResult.outcome) as ChatTurnOutcome;
-
-    return {
-      drafts,
-      tier1Summary: persistedContent,
-      tier2Detail,
-      isQuestion: false,
-      sessionId: activeSessionId,
-      messageId: persistedMessage?._id ?? messageId,
-      restricted: restrictedGuidance,
-      failedItems,
-      outcome: persistedOutcome,
-      cards: persistedCards,
-    };
-    } catch (error) {
-      let finalized;
-      try {
-        finalized = await persistFailedChatTurn(
-          ctx,
-          userId,
-          activeSessionId,
-          image ? `${message}\n[image:${stableHash(image)}]` : message,
-          clientSubmissionId,
-          today,
-          settingsModel,
-          error,
-          turnClaim,
-        );
-      } catch (finalizeError) {
-        if (isChatClaimFenceError(error) || isChatClaimFenceError(finalizeError)) {
-          throw new Error("Chat submission was taken over; retry to retrieve the current result");
-        }
-        throw finalizeError;
-      }
-      const reason = error instanceof Error ? error.message : String(error);
-      return {
-        drafts: [],
-        tier1Summary: finalized.content,
-        tier2Detail: "",
-        isQuestion: false,
-        reply: finalized.content,
-        coachType: "overall",
-        sessionId: activeSessionId,
-        messageId: finalized.messageId,
-        restricted: restrictedGuidance,
-        failedItems: [],
-        outcome: finalized.turnOutcome,
-        cards: finalized.turnCards,
-        processingError: reason,
-      };
-    }
-  },
-});

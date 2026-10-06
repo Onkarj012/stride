@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import Animated, { FadeInDown } from 'react-native-reanimated'
 import { Icon } from '../components/Icon'
-import { useTheme, LAVENDER, PEACH, MINT } from '../components/theme'
+import { useTheme, LAVENDER } from '../components/theme'
 import { ListRow, Toggle, SegToggle } from '../components/ui'
 import * as Haptics from '../lib/haptics'
 
@@ -119,11 +119,7 @@ export default function SettingsScreen() {
 
         {/* Notifications */}
         <Section title="Notifications" delay={120}>
-          <ToggleListRow label="Morning insight" subtitle="Daily 9am summary" initial icon="sun" />
           <ToggleListRow label="Workout reminders" subtitle="30 min before session" initial icon="bell" />
-          <ToggleListRow label="Water nudges" subtitle="Every 2 hours" initial={false} icon="droplet" onColor={MINT} />
-          <ToggleListRow label="Weekly recap" subtitle="Every Sunday" initial icon="mail" onColor={PEACH} />
-          <ToggleListRow label="Streak alerts" subtitle="Don't break your streak" initial={false} icon="flame" onColor={PEACH} />
         </Section>
 
         {/* AI */}

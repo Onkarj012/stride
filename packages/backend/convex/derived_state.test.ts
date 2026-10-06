@@ -50,57 +50,6 @@ describe("derived-state recomputation and memory correction", () => {
     await expect(asUser.query(api.goals.getDailyGoal, { date: "2026-07-16" })).resolves.toMatchObject({ calorieGoal: plan.calories + 200 });
   });
 
-  test("a canonical meal write preserves an earned protein-target mission and its XP", async () => {
-    const t = convexTest(schema, modules);
-    const asUser = t.withIdentity({ subject: "derived-user" });
-    await asUser.mutation(api.gamification.recordActivity, {
-      type: "meal", date: "2026-07-16", totalProtein: 100, proteinTarget: 100,
-    });
-    const before = await asUser.query(api.gamification.getState);
-
-    await writeMeal(t, "derived-protein-followup");
-
-    const after = await asUser.query(api.gamification.getState);
-    expect(before?.missionsCompleted).toContain("hit_protein");
-    expect(after?.missionsCompleted).toContain("hit_protein");
-    expect(after?.xp).toBe(before?.xp);
-  });
-
-  test("undo rebuilds streak and XP from active source rows", async () => {
-    const t = convexTest(schema, modules);
-    const asUser = t.withIdentity({ subject: "derived-user" });
-    await writeMeal(t, "derived-yesterday", "2026-07-15");
-    await writeMeal(t, "derived-today");
-    const before = await asUser.query(api.gamification.getState);
-    const actions = await t.run((ctx) => ctx.db.query("actions").collect());
-    const todayAction = actions.find((action) => action.memberIdempotencyKey === "derived-today-member");
-    if (!todayAction) throw new Error("today action missing");
-    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: todayAction._id });
-    const after = await asUser.query(api.gamification.getState);
-    expect(before?.streakDays).toBe(2);
-    expect(after).toMatchObject({ streakDays: 1, totalMealsLogged: 1 });
-    expect(after!.xp).toBeLessThan(before!.xp);
-  });
-
-  test("undo drops day-complete mission XP when fewer than three active meals remain", async () => {
-    const t = convexTest(schema, modules);
-    const asUser = t.withIdentity({ subject: "derived-user" });
-    await writeMeal(t, "derived-breakfast", "2026-07-16", "Oats");
-    await writeMeal(t, "derived-lunch", "2026-07-16", "Salad");
-    await writeMeal(t, "derived-dinner", "2026-07-16", "Curry");
-    const before = await asUser.query(api.gamification.getState);
-    const actions = await t.run((ctx) => ctx.db.query("actions").collect());
-    const dinnerAction = actions.find((action) => action.memberIdempotencyKey === "derived-dinner-member");
-    if (!dinnerAction) throw new Error("dinner action missing");
-
-    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: dinnerAction._id });
-
-    const after = await asUser.query(api.gamification.getState);
-    expect(before?.missionsCompleted).toContain("day_complete");
-    expect(after?.missionsCompleted).not.toContain("day_complete");
-    expect(after!.xp).toBe(before!.xp - 40);
-  });
-
   test("delete followed by a canonical relog leaves one active source and consistent counts", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "derived-user" });
@@ -108,20 +57,6 @@ describe("derived-state recomputation and memory correction", () => {
     await asUser.mutation(api.meals.deleteMeal, { id: originalId });
     await writeMeal(t, "derived-relog", "2026-07-16", "relogged");
     expect(await asUser.query(api.meals.getMeals, { date: "2026-07-16" })).toHaveLength(1);
-    expect(await asUser.query(api.gamification.getState)).toMatchObject({ totalMealsLogged: 1 });
-  });
-
-  test("source undo marks a generated insight stale", async () => {
-    const t = convexTest(schema, modules);
-    const asUser = t.withIdentity({ subject: "derived-user" });
-    const mealId = await writeMeal(t, "derived-insight");
-    await t.mutation((internal as any).insights.saveInsights, { userId: "derived-user", date: "2026-07-16", insights: ["old"] });
-    const action = (await t.run((ctx) => ctx.db.query("actions").collect())).find((row) => row.committedRowRef?.id === mealId);
-    if (!action) throw new Error("meal action missing");
-    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action._id });
-    const row = await t.run((ctx) => ctx.db.query("insights").withIndex("by_user_date", (q) => q.eq("userId", "derived-user").eq("date", "2026-07-16")).first());
-    expect(row).toMatchObject({ stale: true, generatedAt: expect.any(Number), sourceRowIds: [mealId] });
-    await expect(asUser.query(api.insights.getDailyInsights, { date: "2026-07-16" })).resolves.toMatchObject({ insights: [], stale: true });
   });
 
   test("explicit facts persist with user provenance", async () => {

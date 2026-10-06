@@ -1,8 +1,7 @@
 /**
  * Chat card sizing system.
  *
- * One set of layout rules shared by the Home surface (AssistantConsole) and the
- * Coach surface (CoachPage) so cards can never drift apart between the two.
+ * One set of layout rules for chat cards on the Coach surface (CoachPage).
  * Sizing is expressed as real responsive layout (widths, gutters, minimum
  * target and type sizes) — never as a post-hoc visual transform such as CSS
  * `zoom`, which shrinks type below legibility and bypasses breakpoints.

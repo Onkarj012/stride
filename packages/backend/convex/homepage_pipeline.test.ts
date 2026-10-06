@@ -2,25 +2,9 @@ import { describe, expect, test } from "vitest";
 import {
   disambiguateCardTitles,
   isUnusablePlaceholderMeal,
-  trimHomepageHistory,
 } from "./ai";
 
 describe("homepage meal pipeline helpers", () => {
-  test("keeps bounded prior meal context and excludes the persisted current turn", () => {
-    const history = [
-      { role: "user", content: "Breakfast was oats and yogurt" },
-      { role: "ai", content: "Got it." },
-      { role: "user", content: "Lunch was paneer with rice" },
-      { role: "user", content: "log those 2 meals" },
-    ];
-
-    expect(trimHomepageHistory(history)).toEqual([
-      { role: "user", content: "Breakfast was oats and yogurt" },
-      { role: "assistant", content: "Got it." },
-      { role: "user", content: "Lunch was paneer with rice" },
-    ]);
-  });
-
   test("classifies generic all-zero parse failures for skipping", () => {
     const failedParse = {
       calories: 0,

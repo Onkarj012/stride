@@ -6,8 +6,6 @@ import { callAI } from "./ai/llm";
 import { buildMealDraft } from "./nutrition_draft";
 import { hasRestrictedRecoverySignal } from "./ai";
 import { resolveActionDate, resolveIntervalDay } from "./time_resolve";
-import { getCoach } from "./coaches";
-import { toCanonicalPersona, toLegacyPersona } from "./personas";
 import { ensureGroup, ensureMember } from "./actions_idempotency";
 import {
   legacyConversationText,
@@ -149,40 +147,6 @@ describe("canonical pipeline end-to-end contract", () => {
     expect(waterRows).toHaveLength(2);
     const brief = await asUser.query(api.insights.getTodayBrief, { today: "2026-07-16" });
     expect(brief.stats.waterMl).toBe(500);
-  });
-
-  test("homepage multi-item parsing returns individual failures instead of dropping them", async () => {
-    const t = convexTest(schema, modules);
-    const asUser = t.withIdentity({ subject: "e2e-user" });
-    mockedCallAI.mockImplementation(async (_ctx, _userId, messages) => {
-      const prompt = promptText(messages);
-      if (prompt.includes("Extract ALL loggable items")) {
-        return JSON.stringify({
-          isQuestion: false,
-          items: [
-            { type: "water", description: "500ml water", date: "2026-07-16" },
-            { type: "mood", description: "mood was good", date: "2026-07-16" },
-          ],
-        });
-      }
-      if (prompt.includes("Extract water amount in ml")) return "500";
-      if (prompt.includes("Extract mood rating 1-5")) throw new Error("mood parser unavailable");
-      if (prompt.includes("Give a brief, encouraging analysis")) return "Good hydration progress.";
-      return "{}";
-    });
-
-    const result = await asUser.action(api.ai.homepageInput, {
-      message: "I drank 500ml water and my mood was good",
-      today: "2026-07-16",
-    }) as any;
-
-    expect(result.drafts).toHaveLength(1);
-    expect(result.failedItems).toEqual([{
-      kind: "mood",
-      code: "PARSE_FAILED",
-      description: "mood was good",
-      reason: "mood parser unavailable",
-    }]);
   });
 
   test("memory flow persists an explicit fact independently of source-action undo", async () => {
@@ -416,16 +380,5 @@ describe("canonical pipeline end-to-end contract", () => {
     mockChatReply("⟦LOG_MEAL⟧{broken⟦/LOG_MEAL⟧");
     const failed = await asUser.action(api.ai.chat, { message: "bad parse", today: "2026-07-16" }) as any;
     expect(failed.reply).toMatch(/couldn't parse|couldn't save/i);
-  });
-
-  test("legacy and canonical coach IDs map bidirectionally and backend context accepts both", () => {
-    expect(toCanonicalPersona("overall")).toBe("general");
-    expect(toCanonicalPersona("diet")).toBe("nutrition");
-    expect(toCanonicalPersona("water")).toBe("hydration");
-    expect(toCanonicalPersona("mindset")).toBe("wellness");
-    expect(toLegacyPersona("general")).toBe("overall");
-    expect(toLegacyPersona("nutrition")).toBe("diet");
-    expect(getCoach("nutrition").id).toBe("diet");
-    expect(getCoach("wellness").id).toBe("mindset");
   });
 });

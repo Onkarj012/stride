@@ -150,33 +150,6 @@ describe("persisted chat-turn outcome contract", () => {
     });
   });
 
-  test("homepage failure after user persistence creates one retriable terminal outcome", async () => {
-    const t = convexTest(schema, modules);
-    const asUser = t.withIdentity({ subject: "turn-user" });
-    mockTurn({ extraction: new Error("homepage extraction unavailable") });
-    const result = await asUser.action(api.ai.homepageInput, {
-      message: "I ate lunch",
-      today: "2026-07-16",
-      clientSubmissionId: "homepage-failure",
-    }) as any;
-
-    expect(result.outcome).toBe("failed");
-    expect(result.cards).toContainEqual(expect.objectContaining({
-      kind: "failure",
-      data: expect.objectContaining({
-        retriable: true,
-        message: "homepage extraction unavailable",
-      }),
-    }));
-    const messages = await t.run((ctx) => ctx.db.query("chat_messages").collect());
-    expect(messages.filter((message) => message.role === "user")).toHaveLength(1);
-    expect(messages.filter((message) => message.role === "ai")).toHaveLength(1);
-    expect(messages.find((message) => message.role === "ai")).toMatchObject({
-      turnOutcome: "failed",
-      clientSubmissionId: "homepage-failure",
-    });
-  });
-
   test("explicit retry can recover a current failed confirmation through the CAS path", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "turn-user" });

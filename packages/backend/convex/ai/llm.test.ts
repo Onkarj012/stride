@@ -1,9 +1,14 @@
-import { afterEach, describe, test, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, test, expect, vi } from "vitest";
 import type { ActionCtx } from "../_generated/server";
 import { callAI, parseJSON, VISION_MODELS, DEFAULT_MODEL, CHAT_MODEL, FALLBACK_MODEL } from "./llm";
 
+beforeEach(() => {
+  vi.stubEnv("OPENROUTER_API_KEY", "test-deployment-key");
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("parseJSON", () => {
@@ -87,7 +92,6 @@ describe("model config", () => {
       [{ role: "user", content: "hello" }],
       10,
       DEFAULT_MODEL,
-      "user-supplied-key",
     )).rejects.toThrow("settlement unavailable");
     expect(mutationArgs).toHaveLength(2);
     expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1" });
@@ -112,7 +116,6 @@ describe("model config", () => {
       [{ role: "user", content: "hello" }],
       10,
       DEFAULT_MODEL,
-      "user-supplied-key",
     )).rejects.toThrow("OpenRouter error 400");
     expect(mutationArgs).toHaveLength(2);
     expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1" });
@@ -149,7 +152,6 @@ describe("model config", () => {
       [{ role: "user", content: "hello" }],
       10,
       DEFAULT_MODEL,
-      "user-supplied-key",
     )).rejects.toThrow("OpenRouter incomplete response (finish_reason: length); retry the request");
     expect(mutationArgs).toHaveLength(2);
 
@@ -160,7 +162,6 @@ describe("model config", () => {
       [{ role: "user", content: "hello" }],
       10,
       DEFAULT_MODEL,
-      "user-supplied-key",
     )).resolves.toBe("complete response");
     expect(mutationArgs).toHaveLength(2);
 
@@ -171,7 +172,6 @@ describe("model config", () => {
       [{ role: "user", content: "hello" }],
       10,
       DEFAULT_MODEL,
-      "user-supplied-key",
     )).resolves.toBe("also complete");
     expect(mutationArgs).toHaveLength(2);
   });
@@ -203,9 +203,8 @@ describe("model config", () => {
       [{ role: "user", content: "hello" }],
       10,
       DEFAULT_MODEL,
-      "user-supplied-key",
     )).resolves.toBe("done");
     expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1" });
-    expect(mutationArgs[2]).toMatchObject({ estimatedCostUsd: 0 });
+    expect(mutationArgs[2]).toMatchObject({ estimatedCostUsd: expect.any(Number) });
   });
 });

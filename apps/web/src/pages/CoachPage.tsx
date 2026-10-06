@@ -15,7 +15,7 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { ThinkingBubble } from "@/components/ui-kit/ChatMessage";
 import { Skeleton } from "@/components/primitives/Skeleton";
 import { CoachBubble, InputBar } from "@/components/ui-kit";
-import type { AgentType, AttachItem, InputMode, Modality } from "@/components/ui-kit";
+import type { AttachItem, InputMode, Modality } from "@/components/ui-kit";
 import { useSubmissionId } from "@/lib/submissionId";
 import { usePrefs } from "@/hooks/usePrefs";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
@@ -26,7 +26,7 @@ import { cn, localDateStr } from "@/lib/utils";
 import { getAIErrorMessage } from "@/lib/ai-errors";
 import { reportException } from "@/lib/observability";
 import { MobileIcon } from "@/components/mobile/MobileKit";
-import type { Agent, CoachingStyle } from "@/lib/storage";
+import type { CoachingStyle } from "@/lib/storage";
 
 const COACH_SUGGESTIONS = [
   "Log breakfast",
@@ -42,21 +42,6 @@ const SUGGESTION_DOT: Record<string, string> = {
   "I'm feeling tired": "bg-sky",
 };
 
-function coachToAgent(coachType?: string): Agent {
-  // Mirrored from the backend persona compatibility module. Keep this local
-  // and tiny so the web build does not depend on Convex server modules.
-  const personaToAgent: Record<string, Agent> = {
-    overall: "main", general: "main",
-    diet: "diet", nutrition: "diet",
-    workout: "workout",
-    recovery: "sleep",
-    water: "water", hydration: "water",
-    habit: "habit",
-    mindset: "wellness", wellness: "wellness",
-  };
-  return personaToAgent[coachType ?? "general"] ?? "main";
-}
-
 type MemoryApprovalEntry = { memoryId: string; kind: "food" | "workout"; label: string; status?: "pending" | "approved" | "rejected" };
 /**
  * Transient additions to the transcript. Everything durable — messages, cards,
@@ -66,7 +51,7 @@ type LocalNote =
   | { kind: "text"; id: string; text: string }
   | { kind: "memory-approval"; id: string; entries: MemoryApprovalEntry[] };
 type PendingSend = { submissionId: string; text: string; modality?: Modality; chip?: string };
-type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number; isHome?: boolean };
+type ChatSessionSummary = { id: Id<"chat_sessions">; title: string; updatedAt: number };
 
 const RAIL_SPRING = { type: "spring", stiffness: 260, damping: 30 } as const;
 const CHAT_RAIL_STORAGE_KEY = "stride_chat_rail_expanded";
@@ -176,7 +161,6 @@ export function CoachPage() {
 
   const [notes, setNotes] = useState<LocalNote[]>([]);
   const [pendingSend, setPendingSend] = useState<PendingSend | null>(null);
-  const [agentBySubmission, setAgentBySubmission] = useState<Record<string, Agent>>({});
   const [freshSubmissionId, setFreshSubmissionId] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
   const [input, setInput] = useState("");
@@ -418,14 +402,11 @@ export function CoachPage() {
         message: messageText,
         image,
         sessionId,
-        coachType: "auto",
         today: localDateStr(),
         clarificationGroupId: (activeClarificationGroupId ?? undefined) as Id<"actionGroups"> | undefined,
         clientSubmissionId,
       });
       const r = result as Record<string, unknown>;
-      const coachType = typeof r.coachType === "string" ? r.coachType : undefined;
-      const agent = coachToAgent(coachType);
       const loggedItem = (r.loggedItem && typeof r.loggedItem === "object" && "type" in (r.loggedItem as object))
         ? r.loggedItem as { type: string; data: any } : undefined;
       const memoryApprovals = Array.isArray(r.memoryApprovals) ? r.memoryApprovals as MemoryApprovalEntry[] : [];
@@ -433,7 +414,6 @@ export function CoachPage() {
       // The reply text and every card are read back from the persisted turn;
       // nothing about this turn is held in component state.
       submissionIds.clear();
-      setAgentBySubmission((prev) => ({ ...prev, [clientSubmissionId]: agent }));
       setFreshSubmissionId(clientSubmissionId);
       addMemoryApprovals(memoryApprovals);
       scroll();
@@ -504,10 +484,6 @@ export function CoachPage() {
     { key: "barcode", label: "Scan barcode", mode: "barcode", icon: <Barcode className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => setBarcodeOpen(true) },
     { key: "ocr", label: "Nutrition label", mode: "ocr", icon: <Paperclip className="h-[18px] w-[18px]" strokeWidth={1.9} />, onSelect: () => labelFileRef.current?.click() },
   ];
-  const coachPresenceType: AgentType =
-    style === "analytical" ? "overall" :
-    style === "motivating" ? "workout" :
-    "overall";
 
   return (
     /* Break out of AppLayout padding — same technique as HomePage */
@@ -610,7 +586,7 @@ export function CoachPage() {
             {!hasUserMsg && (
               <div>
                 <CoachBubble
-                  agentType={coachPresenceType}
+                  agentType="overall"
                   defaultStyle={style}
                   messages={{
                     gentle: GREETING.gentle,
@@ -624,7 +600,6 @@ export function CoachPage() {
             {/* Every durable turn — text and cards — is rendered from persisted state. */}
             {persistedMessages.map((message, index) => {
               const submissionId = message.clientSubmissionId;
-              const agent = message.role === "ai" && submissionId ? agentBySubmission[submissionId] : undefined;
               return (
                 <ChatTurnMessage
                   key={`${submissionId ?? "m"}-${index}`}
@@ -632,7 +607,6 @@ export function CoachPage() {
                   handlers={cardHandlers}
                   state={cardState}
                   fresh={message.role === "ai" && submissionId != null && submissionId === freshSubmissionId}
-                  badge={agent && agent !== "main" ? <AgentBadge agent={agent} /> : undefined}
                   onEdit={message.role === "user" ? () => { setInput(message.content); inputRef.current?.focus(); } : undefined}
                 />
               );
@@ -784,9 +758,6 @@ export function CoachPage() {
                 <div key={s.id} className={cn("group flex items-center gap-1 rounded-[10px] transition-colors", s.id === activeSessionId ? "bg-lavender/20 text-ink dark:text-lavender" : "text-ink/55 dark:text-white/50 hover:bg-ink/5 dark:hover:bg-white/5")}>
                   <button type="button" onClick={() => loadSession(s.id)} className="flex-1 text-left rounded-[10px] px-3 py-2.5 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      {s.isHome && (
-                        <span className="shrink-0 inline-flex items-center rounded-full bg-lavender/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-lavender">Home</span>
-                      )}
                       <div className="text-[13px] font-bold truncate">{s.title}</div>
                     </div>
                     <div className="text-[10px] opacity-70">{new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>

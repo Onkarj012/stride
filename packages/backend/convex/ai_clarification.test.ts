@@ -85,7 +85,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "I ate pizza a while ago",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
 
@@ -115,7 +114,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "I drank 500ml water",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
 
@@ -137,7 +135,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "pizza and sleep",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as any;
     const groupId = result.clarification.groupId;
@@ -237,7 +234,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "I ate something weird",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
 
@@ -260,7 +256,6 @@ describe("clarification flow", () => {
     const result = await asUser.action(api.ai.chat, {
       message: "I had pizza",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
 
@@ -315,7 +310,6 @@ describe("clarification flow", () => {
     const chatResult = await asUser.action(api.ai.chat, {
       message: "I ate pizza a while ago",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
@@ -357,7 +351,6 @@ describe("clarification flow", () => {
     const chatResult = await asUser.action(api.ai.chat, {
       message: "I ate pizza a while ago",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
@@ -378,7 +371,6 @@ describe("clarification flow", () => {
     const chatResult = await asUser.action(api.ai.chat, {
       message: "I ate pizza a while ago",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
     }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
@@ -386,7 +378,6 @@ describe("clarification flow", () => {
     const followUp = await asUser.action(api.ai.chat, {
       message: "2026-07-12",
       sessionId: undefined,
-      coachType: "auto",
       today: "2026-07-16",
       clarificationGroupId: groupId as any,
     }) as Record<string, unknown>;
@@ -458,7 +449,7 @@ describe("clarification flow", () => {
     mockChatReply(
       'Please confirm.⟦LOG_MEAL⟧{"description":"pizza","date":"2026-07-16","validation":{"status":"warning","messages":["unclear portion"]}}⟦/LOG_MEAL⟧',
     );
-    const result = await asUser.action(api.ai.chat, { message: "I had pizza", sessionId: undefined, coachType: "auto", today: "2026-07-16" }) as Record<string, unknown>;
+    const result = await asUser.action(api.ai.chat, { message: "I had pizza", sessionId: undefined, today: "2026-07-16" }) as Record<string, unknown>;
     const groupId = (result.clarification as { groupId: string }).groupId;
     const confirmed = await asUser.action(api.ai.confirmGroup, {
       groupId: groupId as any,
@@ -476,7 +467,7 @@ describe("clarification flow", () => {
     mockChatReply(
       'I need the exact date.⟦LOG_MEAL⟧{"description":"pizza","date":"UNKNOWN_VAGUE","question":"Which date did you eat this?"}⟦/LOG_MEAL⟧',
     );
-    const chatResult = await asUser.action(api.ai.chat, { message: "I ate pizza", sessionId: undefined, coachType: "auto", today: "2026-07-16" }) as Record<string, unknown>;
+    const chatResult = await asUser.action(api.ai.chat, { message: "I ate pizza", sessionId: undefined, today: "2026-07-16" }) as Record<string, unknown>;
     const groupId = (chatResult.clarification as { groupId: string }).groupId;
     const group = await t.run((ctx) => ctx.db.get("actionGroups", groupId as any));
     expect(group?.clientLocalDate).toBe("2026-07-16");

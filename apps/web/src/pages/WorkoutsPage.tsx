@@ -362,7 +362,7 @@ export function WorkoutsPage() {
         {/* Log workout button */}
         <button
           type="button"
-          onClick={() => navigate("/?log=workout")}
+          onClick={() => navigate("/coach")}
           className="w-full mt-3 flex items-center justify-center gap-2 rounded-[14px] border border-dashed border-border py-3 text-[13px] font-bold text-text-muted hover:bg-card transition-colors"
         >
           <Plus className="h-4 w-4" strokeWidth={1.8} />
