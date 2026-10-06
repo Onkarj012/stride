@@ -44,10 +44,8 @@ export interface AIMessage {
  * uses FALLBACK_MODEL. Only transient provider failures are retried.
  */
 export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage[], maxTokens = 500, model?: string): Promise<string> {
-  const primaryModel = model || DEFAULT_MODEL;
-  if (!hasDeploymentPricing(primaryModel)) {
-    throw new Error(`MODEL_NOT_ALLOWED_WITH_DEPLOYMENT_KEY:${primaryModel}`);
-  }
+  // A saved model without deployment pricing (left over from BYOK) falls back to the default.
+  const primaryModel = model && hasDeploymentPricing(model) ? model : DEFAULT_MODEL;
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
 
@@ -130,12 +128,10 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
         throw new Error(`OpenRouter API error: ${data.error.message}`);
       }
       const finishReason = data.choices?.[0]?.finish_reason;
-      if (finishReason === "length" || finishReason === "content_filter") {
-        releaseCurrentReservation = true;
-        throw new Error(`OpenRouter incomplete response (finish_reason: ${finishReason ?? "missing"}); retry the request`);
-      }
+      // The provider bills incomplete replies, so they settle usage before being rejected.
+      const incomplete = finishReason === "length" || finishReason === "content_filter";
       const content = data.choices?.[0]?.message?.content;
-      if (!content) {
+      if (!incomplete && !content) {
         releaseCurrentReservation = true;
         throw new Error("OpenRouter returned empty response");
       }
@@ -144,7 +140,7 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
       const usage = usageFromResponse(
         data.usage,
         estimatedInputTokens,
-        Math.min(maxTokens, Math.max(1, Math.ceil(String(content).length / 3))),
+        incomplete ? maxTokens : Math.min(maxTokens, Math.max(1, Math.ceil(String(content).length / 3))),
       );
       await ctx.runMutation(internal.ai_guard.settleUsage, {
         reservationId: reservation.reservationId,
@@ -152,6 +148,9 @@ export async function callAI(ctx: ActionCtx, userId: string, messages: AIMessage
         outputTokens: usage.outputTokens,
         actualCostUsd: estimateCostUsd(currentModel, usage.inputTokens, usage.outputTokens),
       });
+      if (incomplete) {
+        throw new Error(`OpenRouter incomplete response (finish_reason: ${finishReason}); retry the request`);
+      }
       return content;
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);

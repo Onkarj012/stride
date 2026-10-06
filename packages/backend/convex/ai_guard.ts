@@ -1,5 +1,6 @@
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { ConvexError, v } from "convex/values";
+import type { AIModelId } from "../../shared/src/ai-models";
 
 // Public-beta ceilings. Keep all AI spend and payload limits in this module.
 export const AI_RATE_LIMIT_REQUESTS = 20;
@@ -26,11 +27,12 @@ export const AI_INPUT_LIMITS = {
 } as const;
 
 // OpenRouter list prices in USD per million tokens (verified 2026-07-18).
+// Keyed by AIModelId so the shared model picker list and this table cannot drift.
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "openai/gpt-4o-mini": { input: 0.15, output: 0.60 },
   "anthropic/claude-haiku-4.5": { input: 1, output: 5 },
   "anthropic/claude-sonnet-4.6": { input: 3, output: 15 },
-};
+} satisfies Record<AIModelId, { input: number; output: number }>;
 
 type UsageLike = {
   prompt_tokens?: number;

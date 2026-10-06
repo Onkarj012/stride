@@ -1,4 +1,6 @@
 export { colors, typography, spacing, radius, motion } from './tokens.ts'
+export { AI_MODELS } from './ai-models.ts'
+export type { AIModelId } from './ai-models.ts'
 export {
   CHAT_TURN_CARD_VERSION,
   assertChatTurnCard,

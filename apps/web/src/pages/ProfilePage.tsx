@@ -8,6 +8,7 @@ import {
 import { useQuery, useMutation } from "convex/react";
 import { useUser, useClerk } from "@clerk/react";
 import { api } from "@convex/_generated/api";
+import { AI_MODELS } from "@stride/shared";
 import { NavTrigger } from "@/components/layout/NavTrigger";
 import { OverlayHeader } from "@/components/mobile/MobileKit";
 import { Avatar } from "@/components/primitives/Avatar";
@@ -243,48 +244,21 @@ function GoalsTab() {
 /**
  * OpenRouter model picker card.
  *
- * Lets the user pick which OpenRouter model Stry uses. The choice is
- * persisted server-side via api.profile.upsertSettings.
- *
- * Curated model list — common OpenRouter ids spanning vision-capable and
- * text-only models. The full catalogue is at https://openrouter.ai/models.
+ * Lets the user pick which model Stry uses. Only models the deployment key is
+ * priced for are offered. The choice is persisted via api.profile.upsertSettings.
  */
-const OPENROUTER_MODELS = [
-  { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", lab: "OpenAI" },
-  { id: "openai/gpt-5-mini", name: "GPT-5 Mini", lab: "OpenAI" },
-  { id: "openai/gpt-5.5", name: "GPT-5.5", lab: "OpenAI" },
-  { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B", lab: "OpenAI" },
-  { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6", lab: "Anthropic" },
-  { id: "anthropic/claude-haiku-4.5", name: "Claude Haiku 4.5", lab: "Anthropic" },
-  { id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash", lab: "DeepSeek" },
-  { id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro", lab: "DeepSeek" },
-  { id: "google/gemini-3.5-flash", name: "Gemini 3.5 Flash", lab: "Google" },
-  { id: "google/gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite", lab: "Google" },
-  { id: "google/gemini-2.5-flash-lite-preview-09-2025", name: "Gemini 2.5 Flash Lite Preview", lab: "Google" },
-  { id: "google/gemma-4-31b-it", name: "Gemma 4 31B", lab: "Google" },
-  { id: "moonshotai/kimi-k2-thinking", name: "Kimi K2 Thinking", lab: "Moonshot AI" },
-  { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6", lab: "Moonshot AI" },
-  { id: "x-ai/grok-build-0.1", name: "Grok Build 0.1", lab: "xAI" },
-  { id: "qwen/qwen3.6-plus", name: "Qwen 3.6 Plus", lab: "Qwen" },
-  { id: "z-ai/glm-5.1", name: "GLM 5.1", lab: "Z.AI" },
-  { id: "minimax/minimax-m2.5", name: "MiniMax M2.5", lab: "MiniMax" },
-];
-
 function AIProviderCard() {
   const settings = useQuery(api.profile.getSettings);
   const upsertSettings = useMutation(api.profile.upsertSettings);
   const toast = useToast();
 
-  const [model, setModel] = useState<string>("openai/gpt-4o-mini");
-  const [customModel, setCustomModel] = useState<string>("");
+  const [model, setModel] = useState<string>(AI_MODELS[0].id);
 
-  // Initialize from server-side settings once they load
+  // Initialize from server-side settings once they load; unsupported saved models run on the default.
   useEffect(() => {
     if (!settings) return;
-    setModel(settings.openRouterModel ?? "openai/gpt-4o-mini");
-    if (settings.openRouterModel && !OPENROUTER_MODELS.some((m) => m.id === settings.openRouterModel)) {
-      setCustomModel(settings.openRouterModel);
-    }
+    const saved = AI_MODELS.find((m) => m.id === settings.openRouterModel);
+    setModel(saved?.id ?? AI_MODELS[0].id);
   }, [settings]);
 
   async function handleSave(nextModel: string) {
@@ -297,9 +271,7 @@ function AIProviderCard() {
 
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const selectedModel = OPENROUTER_MODELS.find((m) => m.id === model);
-  const isCustomModel = !selectedModel;
-  const customModelValue = customModel.trim();
+  const selectedModel = AI_MODELS.find((m) => m.id === model);
 
   // Click-outside handler for dropdown
   useEffect(() => {
@@ -348,7 +320,7 @@ function AIProviderCard() {
           >
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="inline-flex h-6 items-center rounded-full bg-lavender/15 px-2 text-[10px] font-bold uppercase tracking-wider text-lavender">
-                {selectedModel?.lab ?? "Custom"}
+                {selectedModel?.lab}
               </span>
               <span className="text-[14px] font-semibold text-text truncate">
                 {selectedModel?.name ?? model}
@@ -363,7 +335,7 @@ function AIProviderCard() {
           {dropdownOpen && (
             <div className="absolute z-30 mt-2 w-full max-h-[320px] overflow-y-auto rounded-[20px] border border-border bg-card shadow-[0_8px_24px_rgba(13,16,27,0.12)] py-2">
               {Object.entries(
-                OPENROUTER_MODELS.reduce<Record<string, typeof OPENROUTER_MODELS>>((acc, m) => {
+                AI_MODELS.reduce<Record<string, Array<(typeof AI_MODELS)[number]>>>((acc, m) => {
                   (acc[m.lab] = acc[m.lab] || []).push(m);
                   return acc;
                 }, {}),
@@ -404,50 +376,6 @@ function AIProviderCard() {
               ))}
             </div>
           )}
-        </div>
-        <div className={cn(
-          "rounded-[16px] border p-3 transition-colors",
-          isCustomModel ? "border-lavender bg-lavender/10" : "border-border bg-card-elev/60",
-        )}>
-          <div className="flex items-center justify-between gap-3">
-            <label htmlFor="custom-model" className="text-[12px] font-semibold uppercase tracking-wider text-text-muted">
-              Custom model code
-            </label>
-            {isCustomModel && (
-              <span className="rounded-full bg-lavender/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-lavender">
-                Active
-              </span>
-            )}
-          </div>
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              id="custom-model"
-              type="text"
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              placeholder="provider/model-code"
-              autoComplete="off"
-              spellCheck={false}
-              className="min-w-0 flex-1 bg-input border border-border rounded-lg px-3 py-2.5 text-[13px] text-text font-mono focus:outline-none focus:border-lavender"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                if (!customModelValue) {
-                  toast.error("Add a model code", "Example: openai/gpt-5-mini");
-                  return;
-                }
-                setModel(customModelValue);
-                handleSave(customModelValue);
-              }}
-              className="shrink-0 rounded-lg bg-ink px-3 py-2.5 text-[12px] font-bold text-text-on-ink"
-            >
-              Use
-            </button>
-          </div>
-          <p className="mt-1.5 text-[11.5px] text-text-subtle">
-            Paste any OpenRouter model id. Presets above are just shortcuts.
-          </p>
         </div>
       </div>
     </Card>

@@ -51,14 +51,22 @@ describe("model config", () => {
     expect(VISION_MODELS.has(FALLBACK_MODEL)).toBe(true);
   });
 
-  test("rejects an unknown model before using the deployment key", async () => {
-    let mutationCalled = false;
+  test("falls back to the default model for a saved model without deployment pricing", async () => {
+    const mutationArgs: unknown[] = [];
     const ctx = {
-      runMutation: async () => {
-        mutationCalled = true;
-        throw new Error("unexpected mutation");
+      runMutation: async (_reference: unknown, args: unknown) => {
+        mutationArgs.push(args);
+        if (mutationArgs.length === 1) {
+          return { reservationId: "reservation-1", reservedCostUsd: 0, bucketKey: "2026-07-18" };
+        }
+        return undefined;
       },
     } as unknown as ActionCtx;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "done" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
 
     await expect(callAI(
       ctx,
@@ -66,8 +74,9 @@ describe("model config", () => {
       [{ role: "user", content: "hello" }],
       10,
       "unpriced/provider-model",
-    )).rejects.toThrow("MODEL_NOT_ALLOWED_WITH_DEPLOYMENT_KEY:unpriced/provider-model");
-    expect(mutationCalled).toBe(false);
+    )).resolves.toBe("done");
+    expect(mutationArgs[0]).toMatchObject({ model: DEFAULT_MODEL });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).model).toBe(DEFAULT_MODEL);
   });
 
   test("retains the reservation when settlement fails after a provider response", async () => {
@@ -154,6 +163,8 @@ describe("model config", () => {
       DEFAULT_MODEL,
     )).rejects.toThrow("OpenRouter incomplete response (finish_reason: length); retry the request");
     expect(mutationArgs).toHaveLength(2);
+    // Truncated replies are billed, so their usage settles against the budget instead of being released.
+    expect(mutationArgs[1]).toMatchObject({ reservationId: "reservation-1", inputTokens: 3, outputTokens: 10 });
 
     mutationArgs.length = 0;
     await expect(callAI(
