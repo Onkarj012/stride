@@ -21,6 +21,11 @@ describe("HANDOFF #2: food memory respects quantity", () => {
     expect(selectMatch(rankCandidates("4 rotis and dal", memories))).toEqual({ status: "no_match" });
     expect(selectMatch(rankCandidates("2 rotis and dal", memories))).toMatchObject({ status: "matched", score: 1 });
   });
+
+  it("does not match swapped amounts: '2 rotis and 1 dal' vs a saved '1 roti and 2 dal'", () => {
+    expect(selectMatch(rankCandidates("2 rotis and 1 dal", [{ name: "1 roti and 2 dal" }]))).toEqual({ status: "no_match" });
+    expect(selectMatch(rankCandidates("2 rotis and 1 dal", [{ name: "1 dal and 2 chapatis" }]))).toMatchObject({ status: "matched" });
+  });
 });
 
 describe("HANDOFF #3: aliases match at ranking, not only at search", () => {

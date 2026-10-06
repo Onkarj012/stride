@@ -58,15 +58,20 @@ function isNumber(token: string): boolean {
   return /^\d/.test(token);
 }
 
+/** Each number joined to the word after it, sorted, so a quantity stays attached to its food. */
+function quantityKey(tokens: readonly string[]): string {
+  return tokens.flatMap((t, i) => (isNumber(t) ? [`${t} ${tokens[i + 1] ?? ""}`] : [])).sort().join("|");
+}
+
 /** Scores one query against one name. Word-boundary prefix and containment, in either direction. */
 export function scoreName(query: string, name: string): number {
   const q = canonicalTokens(query);
   const n = canonicalTokens(name);
   if (q.length === 0 || n.length === 0) return 0;
 
-  // "2 rotis and dal" must never match a saved "4 rotis and dal": numbers in the query must agree exactly.
-  const qNumbers = q.filter(isNumber).sort().join(" ");
-  if (qNumbers !== "" && qNumbers !== n.filter(isNumber).sort().join(" ")) return 0;
+  // "2 rotis and dal" must never match a saved "4 rotis and dal", and "2 rotis and 1 dal" never "1 roti and 2 dal".
+  const qQuantities = quantityKey(q);
+  if (qQuantities !== "" && qQuantities !== quantityKey(n)) return 0;
 
   const qs = q.join(" ");
   const ns = n.join(" ");

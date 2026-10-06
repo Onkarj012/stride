@@ -60,7 +60,8 @@ export type UnresolvedReason =
   | "unknown_unit"
   | "missing_density"
   | "missing_piece_weight"
-  | "food_specific_measure";
+  | "food_specific_measure"
+  | "conflicting_portions";
 
 /** Grams for a portion, or the reason there are none. Unresolved results never carry a guessed weight. */
 export type PortionResult =
@@ -110,13 +111,15 @@ export function pieceWeightFor(foodName: string): number | null {
   return longestMatch(foodName, PIECE_WEIGHTS)?.grams ?? null;
 }
 
-/** Returns grams per measure from the food's own portion rows, or null when absent or ambiguous. */
-function foodPortionGrams(unit: string, portions: PortionContext["portions"]): number | null {
-  const grams = new Set((portions ?? []).filter((p) => normalizeUnit(p.measure) === unit).map((p) => p.gramsPerMeasure));
+/** Returns grams per measure from the food's own portion rows, null when absent, or "conflict" when rows disagree. */
+function foodPortionGrams(unit: string, portions: PortionContext["portions"]): number | "conflict" | null {
+  const grams = new Set(
+    (portions ?? []).filter((p) => normalizeUnit(p.measure) === unit && p.gramsPerMeasure > 0).map((p) => p.gramsPerMeasure),
+  );
   // Two different weights for one measure (banana "cup, mashed" vs "cup, sliced") is ambiguous, so do not pick one.
-  if (grams.size !== 1) return null;
+  if (grams.size > 1) return "conflict";
   const [only] = grams;
-  return only !== undefined && only > 0 ? only : null;
+  return only ?? null;
 }
 
 /** Usable density: a positive finite number from the record, else the seed table, else null. */
@@ -155,10 +158,14 @@ export function resolvePortion(
   const gramsPerMass = own(MASS_UNITS_G, unit);
   if (gramsPerMass !== undefined) return resolved(quantity * gramsPerMass, PORTION_CONFIDENCE.mass, "mass");
 
-  const portionGrams = foodPortionGrams(unit, ctx.portions);
-  if (portionGrams !== null) return resolved(quantity * portionGrams, PORTION_CONFIDENCE.foodPortion, "food_portion");
-
+  // The user's own volume for a measure beats the food's portion row for that measure.
   const userMl = userMeasure && "ml" in userMeasure && userMeasure.ml > 0 ? userMeasure.ml : undefined;
+  if (userMl === undefined) {
+    const portionGrams = foodPortionGrams(unit, ctx.portions);
+    if (portionGrams === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+    if (portionGrams !== null) return resolved(quantity * portionGrams, PORTION_CONFIDENCE.foodPortion, "food_portion");
+  }
+
   const vessel = own(HOUSEHOLD_VESSELS, unit);
   const mlPerUnit = userMl ?? own(VOLUME_UNITS_ML, unit) ?? vessel?.ml;
   if (mlPerUnit !== undefined) {

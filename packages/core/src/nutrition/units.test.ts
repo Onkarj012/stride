@@ -87,14 +87,25 @@ describe("household measures", () => {
     expect(resolvePortion({ quantity: 2, unit: "piece" }, roti)).toMatchObject({ grams: 90, method: "user_measure" });
   });
 
-  it("skips a food's portion rows when one measure has two different weights", () => {
+  it("stays unresolved when one measure has two different weights, even with a density to fall back on", () => {
     const portions = [
       { measure: "cup", gramsPerMeasure: 225 },
       { measure: "cup", gramsPerMeasure: 150 },
     ];
-    expect(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Bananas, raw", portions })).toEqual({
-      status: "unresolved", reason: "missing_density",
-    });
+    const conflict = { status: "unresolved", reason: "conflicting_portions" };
+    expect(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Bananas, raw", portions })).toEqual(conflict);
+    expect(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "cooked rice", portions })).toEqual(conflict);
+  });
+
+  it("uses the user's saved volume over the food's own portion for that measure", () => {
+    const ctx = {
+      foodName: "Milk, whole",
+      portions: [{ measure: "cup", gramsPerMeasure: 244 }],
+      userMeasures: [{ measure: "cup", ml: 180 }],
+    };
+    const r = resolvePortion({ quantity: 1, unit: "cup" }, ctx);
+    expect(r).toMatchObject({ status: "resolved", method: "volume" });
+    expect(gramsOf(r)).toBeCloseTo(180 * 1.031, 6);
   });
 
   it("rejects unknown units and bad quantities", () => {
