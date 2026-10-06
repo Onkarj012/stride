@@ -22,7 +22,7 @@ function Digit({ value, color }: { value: number; color: string }) {
     <View style={s.digit}>
       <Animated.View style={roll}>
         {Array.from({ length: 10 }, (_, d) => (
-          <Text key={d} style={[s.heroText, { color }]}>
+          <Text key={d} style={[s.heroText, { color }]} allowFontScaling={false}>
             {d}
           </Text>
         ))}
@@ -40,7 +40,7 @@ export function Odometer({ value }: { value: number }) {
     <View style={s.odo} accessible accessibilityLabel={`${formatNumber(value)}`}>
       {chars.map((ch, i) =>
         ch === ',' ? (
-          <Text key={`sep${i}`} style={[s.heroText, s.sep, { color: t.c.ink }]}>
+          <Text key={`sep${i}`} style={[s.heroText, s.sep, { color: t.c.ink }]} allowFontScaling={false}>
             ,
           </Text>
         ) : (
