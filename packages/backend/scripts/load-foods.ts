@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** NDJSON written by `pnpm --filter @stride/core data:import`. */
-const OUT_DIR = new URL("../../core/data/out/", import.meta.url).pathname;
-const BACKEND_DIR = new URL("..", import.meta.url).pathname;
+const OUT_DIR = fileURLToPath(new URL("../../core/data/out/", import.meta.url));
+const BACKEND_DIR = fileURLToPath(new URL("..", import.meta.url));
 /** Rows per `convex run` call. Keeps each call far under the 500-row cap and the command-line size limit. */
 const BATCH_SIZE = 200;
 
