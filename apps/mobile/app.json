@@ -6,28 +6,33 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "stride",
-    "userInterfaceStyle": "dark",
-    "splash": {
-      "backgroundColor": "#0d101b",
-      "resizeMode": "contain"
-    },
+    "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.stride.mobile"
     },
     "android": {
+      "package": "com.stride.mobile",
       "adaptiveIcon": {
-        "backgroundColor": "#0d101b"
+        "backgroundColor": "#F4F1E9"
       },
-      "package": "com.stride.mobile"
+      "predictiveBackGestureEnabled": false
     },
-    "plugins": ["expo-router"],
-    "experiments": {
-      "typedRoutes": true
-    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F4F1E9",
+          "dark": {
+            "backgroundColor": "#12110F"
+          }
+        }
+      ]
+    ],
     "extra": {
-      "convexUrl": "__EXPO_PUBLIC_CONVEX_URL__",
-      "clerkPublishableKey": "__EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY__",
       "eas": {
         "projectId": "d196dbbf-4b00-4bf6-b681-b2b7be4b9b29"
       }

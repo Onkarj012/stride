@@ -1,4 +1,6 @@
+import { FOOD_SPECIFIC_MEASURES, HOUSEHOLD_VESSELS, MASS_UNITS_G, VOLUME_UNITS_ML } from "./household_measures.ts";
 import { tokenize } from "./text.ts";
+import { normalizeUnit, UNIT_ALIASES } from "./units.ts";
 
 /** Scores for each kind of name agreement. Anything weaker falls back to token Jaccard. */
 export const MATCH_SCORES = { exact: 1, prefix: 0.88, contains: 0.78 } as const;
@@ -58,15 +60,53 @@ function isNumber(token: string): boolean {
   return /^\d/.test(token);
 }
 
+/** Known unit phrases in token form, such as "cup", "fl oz" and "fluid ounce". */
+const UNIT_PHRASES: ReadonlySet<string> = new Set(
+  [
+    ...Object.keys(MASS_UNITS_G),
+    ...Object.keys(VOLUME_UNITS_ML),
+    ...Object.keys(HOUSEHOLD_VESSELS),
+    ...FOOD_SPECIFIC_MEASURES,
+    ...Object.keys(UNIT_ALIASES),
+  ].map((phrase) => tokenize(phrase).join(" ")),
+);
+
+const MAX_UNIT_WORDS = Math.max(...[...UNIT_PHRASES].map((p) => p.split(" ").length));
+
+/** Word count of the longest known unit phrase starting at `start`, or 0 when none does. */
+function unitLength(tokens: readonly string[], start: number): number {
+  for (let len = MAX_UNIT_WORDS; len > 0; len--) {
+    if (start + len <= tokens.length && UNIT_PHRASES.has(tokens.slice(start, start + len).join(" "))) return len;
+  }
+  return 0;
+}
+
+/** Each number with its normalized unit and the food word after it, sorted, so amount, unit and food stay together. */
+function quantityKey(tokens: readonly string[]): string {
+  return tokens
+    .flatMap((t, i) => {
+      if (!isNumber(t)) return [];
+      let at = i + 1;
+      const len = unitLength(tokens, at);
+      // One unit phrase only, so a food word that is also a unit alias ("whole milk") stays the food.
+      const unit = normalizeUnit(tokens.slice(at, at + len).join(" "));
+      at += len;
+      if (tokens[at] === "of") at++;
+      return [[t, unit, tokens[at] ?? ""].join(" ")];
+    })
+    .sort()
+    .join("|");
+}
+
 /** Scores one query against one name. Word-boundary prefix and containment, in either direction. */
 export function scoreName(query: string, name: string): number {
   const q = canonicalTokens(query);
   const n = canonicalTokens(name);
   if (q.length === 0 || n.length === 0) return 0;
 
-  // "2 rotis and dal" must never match a saved "4 rotis and dal": numbers in the query must agree exactly.
-  const qNumbers = q.filter(isNumber).sort().join(" ");
-  if (qNumbers !== "" && qNumbers !== n.filter(isNumber).sort().join(" ")) return 0;
+  // "2 rotis and dal" must never match a saved "4 rotis and dal", and "2 rotis and 1 dal" never "1 roti and 2 dal".
+  const qQuantities = quantityKey(q);
+  if (qQuantities !== "" && qQuantities !== quantityKey(n)) return 0;
 
   const qs = q.join(" ");
   const ns = n.join(" ");

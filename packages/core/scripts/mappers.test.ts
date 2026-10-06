@@ -79,6 +79,19 @@ describe("mapIfct", () => {
     expect(foods[0]?.aliases).toEqual(["plain grain", "chawal", "tandool"]);
   });
 
+  it("drops rows with a negative required nutrient and reads negative optional nutrients as missing", () => {
+    const malformed = [
+      header,
+      "N001,Negative energy,,,Other,-5,1,1,1,1,1,0.001",
+      "N002,Negative protein,,,Other,500,-1,1,1,1,1,0.001",
+      "N003,Negative extras,,,Other,500,1,1,1,-2,-1,-0.5",
+    ].join("\n");
+    const { foods, skippedFoods } = mapIfct(malformed);
+    expect(skippedFoods).toBe(2);
+    expect(foods.map((f) => f.sourceId)).toEqual(["N003"]);
+    expect(foods[0]?.per100g).toMatchObject({ fiber: null, sugar: null, sodiumMg: null });
+  });
+
   it("rejects a CSV without the expected columns", () => {
     expect(() => mapIfct("code,name\nA1,Rice\n")).toThrow(/missing columns/);
   });
