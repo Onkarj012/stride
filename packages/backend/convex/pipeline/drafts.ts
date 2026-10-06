@@ -248,6 +248,7 @@ export const discardDraft = mutation({
   returns: v.null(),
   handler: async (ctx, { draftId }) => {
     const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
     const draft = await ownDraft(ctx, userId, draftId);
     if (draft.status === "discarded") return null;
     if (draft.status !== "pending") throw new Error(`Draft is ${draft.status}`);

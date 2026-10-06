@@ -148,7 +148,7 @@ describe("clearAllData", () => {
     });
   });
 
-  test("refuses chat, draft, food link and personal food writes until the clear finishes", async () => {
+  test("refuses chat, draft confirm and discard, food link and personal food writes until the clear finishes", async () => {
     vi.useFakeTimers();
     const { t, sharedFood, a, user } = await setup();
     await user.mutation(api.users.clearAllData, {});
@@ -186,6 +186,7 @@ describe("clearAllData", () => {
       }),
     ).rejects.toThrow(cleared);
     await expect(user.mutation(api.pipeline.drafts.confirmDraft, { draftId: a.draftId })).rejects.toThrow(cleared);
+    await expect(user.mutation(api.pipeline.drafts.discardDraft, { draftId: a.draftId })).rejects.toThrow(cleared);
     await expect(user.mutation(api.pipeline.drafts.forgetFoodLink, { linkId: a.linkId })).rejects.toThrow(cleared);
     await expect(user.mutation(api.foods_db.createUserFood, { name: "Ghee roti", per100g: PER_100G })).rejects.toThrow(cleared);
 
