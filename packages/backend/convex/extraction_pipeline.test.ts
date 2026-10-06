@@ -7,6 +7,7 @@ import schema from "./schema";
 import { MAX_TOOL_ITERATIONS } from "./pipeline/tools";
 import { isRecord, OPENROUTER_CHAT_URL, PHOTO_MODEL, PIPELINE_MODEL } from "./pipeline/openrouter";
 import { UNDO_WINDOW_MS } from "./pipeline/resolve";
+import { AI_INPUT_LIMITS } from "./ai_guard";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -226,6 +227,16 @@ describe("HANDOFF #1: a correction made in the draft card is what gets stored", 
     expect(roundNutrients(row?.nutrients ?? PANEER).kcal).toBe(450);
   });
 
+  test("a unit correction alone recomputes grams", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "paneer tikka", quantity: 100, unit: "plate" }]);
+    const result = await logText(user, "100 plate paneer tikka");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, unit: "g" }] });
+    const [row] = await entryRows(t);
+    expect(row?.grams).toBe(100);
+  });
+
   test("confirming twice returns the same entries and a discarded draft cannot be confirmed", async () => {
     const { t, user } = await setup();
     llm = () => extraction([{ food: "paneer tikka", quantity: 1, unit: "plate" }]);
@@ -330,6 +341,17 @@ describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", (
     expect(result.lines[0]?.reasons).toContain("invalid_portion_scale");
     expect(await entryRows(t)).toHaveLength(0);
   });
+
+  test("a refused fraction does not scale the grams when the draft's food is changed", async () => {
+    const { t, user, foods } = await setup();
+    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 4 }]);
+    const result = await logText(user, "biryani");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, foodId: foods.rice }] });
+    const [row] = await entryRows(t);
+    expect(row).toMatchObject({ foodId: foods.rice, grams: 1000 });
+    expect(row?.flags).not.toContain("portion_scale");
+  });
 });
 
 describe("HANDOFF #7: rejected or deleted memories are never used", () => {
@@ -420,6 +442,33 @@ describe("HANDOFF #8: personal foods resolve before generic records", () => {
     expect(row?.foodId).toBe(foods.paneer);
     const found = await user.query(api.foods_db.searchFoods, { query: "paneer" });
     expect(found.every((f) => f.source !== "user")).toBe(true);
+  });
+});
+
+describe("search keeps shared foods visible", () => {
+  test("many private foods from another user never hide a shared match", async () => {
+    const t = convexTest(schema, modules);
+    const other = t.withIdentity({ subject: "user_b" });
+    for (let i = 0; i < 30; i++) await other.mutation(api.foods_db.createUserFood, { name: `Paneer ${i}`, per100g: HOMEMADE_PANEER });
+    const shared = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Paneer",
+        aliases: [],
+        searchText: "Paneer",
+        per100g: PANEER,
+        source: "fdc",
+        sourceId: "4",
+        verified: true,
+      }),
+    );
+    const user = t.withIdentity({ subject: "user_a" });
+    await user.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
+
+    const found = await user.query(api.foods_db.searchFoods, { query: "paneer" });
+    expect(found.map((f) => f._id)).toEqual([shared]);
+    llm = () => extraction([{ food: "paneer", quantity: 200, unit: "g" }]);
+    await logText(user, "200 g paneer");
+    expect((await entryRows(t))[0]?.foodId).toBe(shared);
   });
 });
 
@@ -529,6 +578,17 @@ describe("photo and voice input", () => {
     expect(result.lines[0]?.estimated).toBe(true);
   });
 
+  test("an oversized photo is refused before any model call", async () => {
+    const { t, user } = await setup();
+    const storageId = await t.run((ctx) =>
+      ctx.storage.store(new Blob([new Uint8Array(AI_INPUT_LIMITS.imageBytes + 1)], { type: "image/jpeg" })),
+    );
+    await expect(
+      user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } }),
+    ).rejects.toThrow(/too large/);
+    expect(openRouterBodies).toHaveLength(0);
+  });
+
   test("voice is transcribed by Groq Whisper, under the budget guard, then logged", async () => {
     const { t, user, foods } = await setup();
     llm = (body) => {
@@ -560,5 +620,45 @@ describe("dates and slots", () => {
     const future = await logText(user, "1 roti tomorrow", "d2");
     expect(future.kind).toBe("draft");
     expect(future.lines[0]?.reasons).toContain("invalid_date");
+  });
+
+  test("a refused date must be replaced before the draft confirms", async () => {
+    const { t, user } = await setup();
+    const today = await t.run(async () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()));
+    const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+    const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+    llm = () => extraction([{ food: "roti", quantity: 1, date: tomorrow }]);
+    const result = await logText(user, "1 roti tomorrow");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]).toMatchObject({ requestedDate: tomorrow, localDate: null });
+
+    const confirm = (localDate?: string) =>
+      user.mutation(api.pipeline.drafts.confirmDraft, {
+        draftId: result.draftId,
+        ...(localDate === undefined ? {} : { corrections: [{ index: 0, localDate }] }),
+      });
+    await expect(confirm()).rejects.toThrow(/Pick a date or remove it/);
+    await expect(confirm(tomorrow)).rejects.toThrow(/within the last/);
+    expect(await entryRows(t)).toHaveLength(0);
+    await confirm(yesterday);
+    expect((await entryRows(t))[0]?.localDate).toBe(yesterday);
+  });
+
+  test("a draft keeps the day and slot it was logged in when confirmed after midnight", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-05T18:20:00Z")); // 23:50 IST
+      const { t, user } = await setup();
+      llm = () => extraction([{ food: "paneer tikka", quantity: 1, unit: "plate" }]);
+      const result = await logText(user, "a plate of paneer tikka");
+      if (result.kind !== "draft") throw new Error("expected a draft");
+
+      vi.setSystemTime(new Date("2026-10-05T18:45:00Z")); // 00:15 IST the next day
+      await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, grams: 150 }] });
+      expect((await entryRows(t))[0]).toMatchObject({ localDate: "2026-10-05", slot: "dinner" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

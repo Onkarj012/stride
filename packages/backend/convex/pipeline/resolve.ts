@@ -21,7 +21,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { insertEntries, MAX_BATCH, type NewEntry } from "../entries";
-import { isVisibleFood, MAX_USER_FOODS } from "../foods_db";
+import { isVisibleFood, MAX_USER_FOODS, searchVisibleFoodRows } from "../foods_db";
 import { inputKindValidator, matchSourceValidator } from "../ledger_validators";
 import { resolveLocalDay } from "../time_zone";
 import { extractedItemValidator, type ExtractedItem } from "./extract";
@@ -136,17 +136,13 @@ export async function userFoodsOf(ctx: Ctx, userId: string): Promise<Doc<"foods"
     .take(MAX_USER_FOODS);
 }
 
-/** Full-text search over foods with every synonym spelling of the text, minus other users' personal foods. */
+/** Full-text search over the foods the user may see, with every synonym spelling of the text. */
 export async function searchVisibleFoods(ctx: Ctx, userId: string, text: string): Promise<Doc<"foods">[]> {
   const terms = [...new Set(expandSynonyms(text).flatMap((variant) => variant.split(" ")))]
     .filter((term) => term !== "")
     .slice(0, MAX_SEARCH_TERMS);
   if (terms.length === 0) return [];
-  const rows = await ctx.db
-    .query("foods")
-    .withSearchIndex("search_text", (q) => q.search("searchText", terms.join(" ")))
-    .take(MAX_SEARCH_ROWS);
-  return rows.filter((row) => isVisibleFood(row, userId));
+  return await searchVisibleFoodRows(ctx, userId, terms.join(" "), MAX_SEARCH_ROWS);
 }
 
 /** Foods a draft card offers when the match was ambiguous or missing: best scores first. */
@@ -206,7 +202,7 @@ export async function resolveFoodPortion(
 }
 
 /** True for a usable recipe fraction: above 0 and at most the whole recipe. */
-function validScale(scale: number): boolean {
+export function validScale(scale: number): boolean {
   return Number.isFinite(scale) && scale > 0 && scale <= 1;
 }
 
@@ -478,8 +474,11 @@ export const commitLog = internalMutation({
         text: r.item.food,
         quantity: r.item.quantity,
         ...(r.item.unit === null ? {} : { unit: r.item.unit }),
-        ...(r.item.slot === null ? {} : { slot: r.item.slot }),
-        ...(r.localDate === null ? {} : { localDate: r.localDate }),
+        // Defaults are fixed now, so a later confirm cannot move the meal to the confirm-time day or slot.
+        slot: r.item.slot ?? today.slot,
+        ...(r.item.date !== null && r.localDate === null
+          ? { requestedDate: r.item.date }
+          : { localDate: r.localDate ?? today.localDate }),
         ...(r.food === null ? { unresolved: "no_food" } : { foodId: r.food._id }),
         ...(r.portion.status === "resolved"
           ? { grams: r.portion.grams }

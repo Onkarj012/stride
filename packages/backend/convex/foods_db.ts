@@ -1,7 +1,7 @@
 import { hasAtwaterMismatch, normalizeText } from "@stride/core";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import {
   exerciseRecordValidator,
   foodPortionRecordValidator,
@@ -21,6 +21,24 @@ export const MAX_USER_FOODS = 200;
 /** True when a user may see and log this food: shared records, or personal records they own. */
 export function isVisibleFood(food: Pick<Doc<"foods">, "ownerUserId">, userId: string): boolean {
   return food.ownerUserId === undefined || food.ownerUserId === userId;
+}
+
+/** Search hits a user may see: their own foods, then shared ones. Searched apart so other users' foods never fill the window. */
+export async function searchVisibleFoodRows(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  text: string,
+  limit: number,
+): Promise<Doc<"foods">[]> {
+  const own = await ctx.db
+    .query("foods")
+    .withSearchIndex("search_text", (q) => q.search("searchText", text).eq("ownerUserId", userId))
+    .take(limit);
+  const shared = await ctx.db
+    .query("foods")
+    .withSearchIndex("search_text", (q) => q.search("searchText", text).eq("ownerUserId", undefined))
+    .take(limit);
+  return [...own, ...shared];
 }
 
 const upsertCounts = v.object({ inserted: v.number(), updated: v.number(), unchanged: v.number() });
@@ -167,13 +185,8 @@ export const searchFoods = query({
     if (text === "") return [];
     const requested = args.limit !== undefined && Number.isFinite(args.limit) ? Math.floor(args.limit) : 10;
     const limit = Math.min(Math.max(requested, 1), MAX_SEARCH_RESULTS);
-    // Over-fetch so other users' personal foods can be dropped without shrinking the page much.
-    const rows = await ctx.db
-      .query("foods")
-      .withSearchIndex("search_text", (q) => q.search("searchText", text))
-      .take(limit + 10);
+    const rows = await searchVisibleFoodRows(ctx, userId, text, limit);
     return rows
-      .filter((row) => isVisibleFood(row, userId))
       .slice(0, limit)
       .map((row) => ({
         _id: row._id,

@@ -677,7 +677,7 @@ export default defineSchema({
   })
     .index("by_source_and_sourceId", ["source", "sourceId"])
     .index("by_ownerUserId", ["ownerUserId"])
-    .searchIndex("search_text", { searchField: "searchText", filterFields: ["source", "verified"] }),
+    .searchIndex("search_text", { searchField: "searchText", filterFields: ["source", "verified", "ownerUserId"] }),
 
   food_portions: defineTable({
     foodId: v.id("foods"),
@@ -827,6 +827,7 @@ export default defineSchema({
     draftIds: v.array(v.id("drafts")),
     entryIds: v.optional(v.array(v.id("entries"))),
     submissionId: v.optional(v.string()),
+    claimedAt: v.optional(v.number()), // user messages: when a chat turn last started work on it
   })
     .index("by_chatId", ["chatId"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
@@ -845,6 +846,7 @@ export default defineSchema({
         unit: v.optional(v.string()),
         slot: v.optional(mealSlotValidator),
         localDate: v.optional(v.string()),
+        requestedDate: v.optional(v.string()), // a date the gate refused; confirm needs a valid one
         foodId: v.optional(v.id("foods")),
         grams: v.optional(v.number()),
         score: v.optional(v.number()),

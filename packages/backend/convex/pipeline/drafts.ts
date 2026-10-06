@@ -1,19 +1,21 @@
-import { roundNutrients, scaleNutrients } from "@stride/core";
+import { daysBetween, isLocalDate, roundNutrients, scaleNutrients } from "@stride/core";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
 import { insertEntries, type NewEntry } from "../entries";
 import { isVisibleFood } from "../foods_db";
 import { inputKindValidator, mealSlotValidator, nutrientsValidator } from "../ledger_validators";
-import { requireUserId } from "../time_zone";
+import { requireUserId, resolveLocalDay } from "../time_zone";
 import {
   committedResult,
   draftLines,
   entrySource,
   linkKey,
   logResultValidator,
+  MAX_PAST_DAYS,
   resolveFoodPortion,
   userMeasuresOf,
+  validScale,
   type LogResult,
 } from "./resolve";
 
@@ -30,6 +32,8 @@ const correctionValidator = v.object({
   kcal: v.optional(v.number()),
   quantity: v.optional(v.number()),
   unit: v.optional(v.string()),
+  /** YYYY-MM-DD within the last `MAX_PAST_DAYS` days. Required when the extracted date was refused. */
+  localDate: v.optional(v.string()),
 });
 
 /** Draft card item: the extracted text, the chosen food, grams and a preview computed from `foods` × grams. */
@@ -39,6 +43,7 @@ const draftItemViewValidator = v.object({
   unit: v.union(v.string(), v.null()),
   slot: v.union(mealSlotValidator, v.null()),
   localDate: v.union(v.string(), v.null()),
+  requestedDate: v.union(v.string(), v.null()),
   food: v.union(v.object({ _id: v.id("foods"), name: v.string() }), v.null()),
   grams: v.union(v.number(), v.null()),
   preview: v.union(nutrientsValidator, v.null()),
@@ -111,6 +116,7 @@ export const getDraft = query({
         unit: item.unit ?? null,
         slot: item.slot ?? null,
         localDate: item.localDate ?? null,
+        requestedDate: item.requestedDate ?? null,
         food: food === null ? null : { _id: food._id, name: food.name },
         grams: item.grams ?? null,
         preview: food !== null && item.grams !== undefined ? roundNutrients(scaleNutrients(food.per100g, item.grams)) : null,
@@ -165,6 +171,7 @@ export const confirmDraft = mutation({
     if (draft.status !== "pending") throw new Error(`Draft is ${draft.status}`);
 
     const userMeasures = await userMeasuresOf(ctx, userId);
+    const today = (await resolveLocalDay(ctx, userId, Date.now())).localDate;
     const entries: NewEntry[] = [];
     const links: { text: string; foodId: Id<"foods"> }[] = [];
     for (const [index, item] of draft.items.entries()) {
@@ -175,19 +182,30 @@ export const confirmDraft = mutation({
       if (foodId === undefined) throw new Error(`Item ${n} ("${item.text}") needs a food. Pick one or remove it.`);
       const food = await requireVisibleFood(ctx, userId, foodId, n);
       const foodChanged = foodId !== item.foodId;
+      // An out-of-range fraction was refused at extraction, so it never scales the grams here either.
+      const scale = item.portionScale !== undefined && validScale(item.portionScale) ? item.portionScale : undefined;
 
       let grams: number | undefined;
       if (fix?.grams !== undefined) grams = fix.grams;
       else if (fix?.kcal !== undefined) {
         if (!(food.per100g.kcal > 0)) throw new Error(`Item ${n}: ${food.name} has no kcal, so set grams instead`);
         grams = (fix.kcal / food.per100g.kcal) * 100;
-      } else if (fix?.quantity !== undefined || (foodChanged && item.quantity !== undefined)) {
+      } else if (fix?.quantity !== undefined || fix?.unit !== undefined || (foodChanged && item.quantity !== undefined)) {
         const quantity = fix?.quantity ?? item.quantity ?? 1;
         const portion = await resolveFoodPortion(ctx, food, quantity, fix?.unit ?? item.unit ?? null, userMeasures);
         if (portion.status !== "resolved") throw new Error(`Item ${n}: cannot turn that amount into grams. Enter grams.`);
-        grams = fix?.quantity === undefined && item.portionScale !== undefined ? portion.grams * item.portionScale : portion.grams;
+        grams = fix?.quantity === undefined && scale !== undefined ? portion.grams * scale : portion.grams;
       } else grams = item.grams;
       if (grams === undefined) throw new Error(`Item ${n} ("${item.text}") needs an amount.`);
+
+      let localDate = item.localDate;
+      if (fix?.localDate !== undefined) {
+        const ago = isLocalDate(fix.localDate) ? daysBetween(fix.localDate, today) : -1;
+        if (ago < 0 || ago > MAX_PAST_DAYS) throw new Error(`Item ${n}: pick a date within the last ${MAX_PAST_DAYS} days.`);
+        localDate = fix.localDate;
+      } else if (item.requestedDate !== undefined) {
+        throw new Error(`Item ${n} ("${item.text}"): ${item.requestedDate} cannot be logged. Pick a date or remove it.`);
+      }
 
       const corrected = fix !== undefined;
       entries.push({
@@ -198,11 +216,11 @@ export const confirmDraft = mutation({
         flags: [
           ...(item.fromPhoto === true ? ["estimated"] : []),
           ...(item.cookingOil === true ? ["cooking_oil"] : []),
-          ...(item.portionScale !== undefined && !corrected ? ["portion_scale"] : []),
+          ...(scale !== undefined && !corrected ? ["portion_scale"] : []),
           ...(corrected ? ["user_corrected"] : []),
         ],
         ...(item.slot === undefined ? {} : { slot: item.slot }),
-        ...(item.localDate === undefined ? {} : { localDate: item.localDate }),
+        ...(localDate === undefined ? {} : { localDate }),
       });
       links.push({ text: item.text, foodId });
     }

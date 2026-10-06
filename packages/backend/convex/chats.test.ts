@@ -154,6 +154,51 @@ describe("multi-chat (D12)", () => {
     expect(b).toEqual(a);
     expect(bodies).toHaveLength(1);
   });
+
+  test("a retry after a failed turn reports its saved meal instead of logging it again", async () => {
+    const { t, user, chatId, foods } = await setup();
+    // Attempt 1 logs 2 rotis, then the next model call fails (an empty reply throws).
+    llm = (_body, n) => (n === 1 ? { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95 } }] } : {});
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" })).rejects.toThrow();
+    expect(await entryRows(t)).toHaveLength(1);
+    const calls = bodies.length;
+
+    // A fresh model run would look something up first and add the same meal under a new key.
+    llm = (_body, n) => {
+      if (n === calls + 1) return { toolCalls: [{ name: "get_user_foods", args: {} }] };
+      if (n === calls + 2) return { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95 } }] };
+      return { content: "Logged." };
+    };
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" });
+
+    const rows = await entryRows(t);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.foodId).toBe(foods.chapati);
+    expect(bodies).toHaveLength(calls);
+    expect(turn.entryIds).toEqual([rows[0]?._id]);
+    expect(turn.reply).toContain("Chapati");
+  });
+
+  test("a second send while the first is still running is refused before any model call", async () => {
+    const { t, user, chatId } = await setup();
+    await t.run((ctx) =>
+      ctx.db.insert("messages", {
+        userId: "user_a",
+        chatId,
+        role: "user",
+        text: "hi",
+        attachments: [],
+        toolCalls: [],
+        draftIds: [],
+        submissionId: "m1",
+        claimedAt: Date.now(),
+      }),
+    );
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(
+      /already being handled/,
+    );
+    expect(bodies).toHaveLength(0);
+  });
 });
 
 describe("chat logging runs the same pipeline", () => {

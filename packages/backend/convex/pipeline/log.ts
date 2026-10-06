@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { action, type ActionCtx } from "../_generated/server";
+import { action, internalQuery, type ActionCtx } from "../_generated/server";
 import { AI_INPUT_LIMITS, assertMaxChars } from "../ai_guard";
 import { extractItems, type ExtractedItem } from "./extract";
 import { logResultValidator, type InputKind, type LogResult, type UnresolvedItem } from "./resolve";
@@ -48,8 +48,25 @@ export async function transcribe(ctx: ActionCtx, audio: string, mimeType: string
   return transcript;
 }
 
-/** A signed URL the photo model can fetch for an uploaded image. */
+/** Size and type of an uploaded file, from the `_storage` system table. Null when it does not exist. */
+export const photoInfo = internalQuery({
+  args: { storageId: v.id("_storage") },
+  returns: v.union(v.object({ size: v.number(), contentType: v.union(v.string(), v.null()) }), v.null()),
+  handler: async (ctx, { storageId }) => {
+    const file = await ctx.db.system.get("_storage", storageId);
+    return file === null ? null : { size: file.size, contentType: file.contentType ?? null };
+  },
+});
+
+/** A signed URL the photo model can fetch for an uploaded image. Rejects oversized or non-image files before any model call. */
 export async function imageUrl(ctx: ActionCtx, storageId: Id<"_storage">): Promise<string> {
+  const info: { size: number; contentType: string | null } | null = await ctx.runQuery(internal.pipeline.log.photoInfo, {
+    storageId,
+  });
+  if (info === null) throw new Error("Photo not found. Upload it again.");
+  if (info.size > AI_INPUT_LIMITS.imageBytes) throw new Error(`Photo is too large. The limit is ${AI_INPUT_LIMITS.imageBytes} bytes.`);
+  // Uploads without a Content-Type have no stored type; the model rejects those if they are not images.
+  if (info.contentType !== null && !info.contentType.startsWith("image/")) throw new Error("That file is not an image.");
   const url = await ctx.storage.getUrl(storageId);
   if (url === null) throw new Error("Photo not found. Upload it again.");
   return url;

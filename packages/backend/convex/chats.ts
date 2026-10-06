@@ -40,6 +40,9 @@ const MAX_CONTEXT_USER_FOODS = 30;
 const MAX_TOOL_RESULT_CHARS = 4_000;
 const PURGE_BATCH = 100;
 const CHAT_MAX_TOKENS = 800;
+/** How long a started turn holds its message. Matches the Convex action time limit, so a crashed turn frees it. */
+const TURN_LEASE_MS = 10 * 60_000;
+const MAX_PRIOR_DRAFTS = 10;
 
 const messageViewValidator = v.object({
   _id: v.id("messages"),
@@ -54,6 +57,8 @@ const messageViewValidator = v.object({
 
 const toolCallRecordValidator = v.object({ name: v.string(), argsJson: v.string(), resultJson: v.optional(v.string()) });
 type ToolCallRecord = Infer<typeof toolCallRecordValidator>;
+/** What a turn's work produced, before the reply message is stored. */
+type Turn = { reply: string; toolCalls: ToolCallRecord[]; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] };
 
 /** What one chat turn produced: both messages, the reply text, and the drafts and entries its cards point at. */
 const turnResultValidator = v.object({
@@ -190,8 +195,11 @@ export const findTurn = internalQuery({
   },
 });
 
-/** Stores the user's message once per submission id, names an untitled chat after it, and bumps the chat. */
-export const insertUserMessage = internalMutation({
+/**
+ * Claims a turn before any model work: stores the user's message once per submission id, names an untitled chat
+ * after it, and bumps the chat. A second send while the first still runs is refused; `retry` marks a failed turn.
+ */
+export const claimTurn = internalMutation({
   args: {
     userId: v.string(),
     chatId: v.id("chats"),
@@ -199,11 +207,18 @@ export const insertUserMessage = internalMutation({
     text: v.string(),
     attachments: v.array(v.object({ kind: v.union(v.literal("image"), v.literal("audio")), storageId: v.id("_storage") })),
   },
-  returns: v.id("messages"),
-  handler: async (ctx, args): Promise<Id<"messages">> => {
+  returns: v.object({ messageId: v.id("messages"), retry: v.boolean() }),
+  handler: async (ctx, args): Promise<{ messageId: Id<"messages">; retry: boolean }> => {
     const chat = await ownChat(ctx, args.userId, args.chatId);
     const existing = await messageBySubmission(ctx, args.userId, args.submissionId);
-    if (existing !== null) return existing._id;
+    const now = Date.now();
+    if (existing !== null) {
+      const reply = await messageBySubmission(ctx, args.userId, `${args.submissionId}:reply`);
+      const running = existing.claimedAt !== undefined && now - existing.claimedAt < TURN_LEASE_MS;
+      if (reply !== null || running) throw new Error("This message is already being handled. Try again in a moment.");
+      await ctx.db.patch("messages", existing._id, { claimedAt: now });
+      return { messageId: existing._id, retry: true };
+    }
     const id = await ctx.db.insert("messages", {
       userId: args.userId,
       chatId: args.chatId,
@@ -213,10 +228,52 @@ export const insertUserMessage = internalMutation({
       toolCalls: [],
       draftIds: [],
       submissionId: args.submissionId,
+      claimedAt: now,
     });
     const title = chat.title === DEFAULT_CHAT_TITLE && args.text !== "" ? args.text.slice(0, MAX_TITLE_CHARS) : chat.title;
-    await ctx.db.patch("chats", chat._id, { title, updatedAt: Date.now() });
-    return id;
+    await ctx.db.patch("chats", chat._id, { title, updatedAt: now });
+    return { messageId: id, retry: false };
+  },
+});
+
+/** Frees a failed turn's claim so the client can retry it right away. */
+export const releaseTurn = internalMutation({
+  args: { userId: v.string(), messageId: v.id("messages") },
+  returns: v.null(),
+  handler: async (ctx, { userId, messageId }) => {
+    const message = await ctx.db.get("messages", messageId);
+    if (message !== null && message.userId === userId) await ctx.db.patch("messages", messageId, { claimedAt: undefined });
+    return null;
+  },
+});
+
+/** Entries and drafts an earlier, failed attempt at this turn already wrote, with a reply describing them. */
+export const priorTurnWrites = internalQuery({
+  args: { userId: v.string(), submissionId: v.string() },
+  returns: v.object({ reply: v.string(), draftIds: v.array(v.id("drafts")), entryIds: v.array(v.id("entries")) }),
+  handler: async (ctx, { userId, submissionId }) => {
+    // Every write of a turn uses a `${submissionId}:...` key, so one index range finds them all.
+    const prefix = `${submissionId}:`;
+    const end = `${prefix}\uffff`;
+    const entries = await ctx.db
+      .query("entries")
+      .withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).gte("submissionId", prefix).lt("submissionId", end))
+      .take(MAX_DAY_ENTRIES);
+    const drafts = await ctx.db
+      .query("drafts")
+      .withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).gte("submissionId", prefix).lt("submissionId", end))
+      .take(MAX_PRIOR_DRAFTS);
+    const names = [...new Set(entries.map((row) => row.foodName))];
+    const parts = [
+      ...(names.length === 0 ? [] : [`Part of this was saved before an error: ${names.join(", ")}.`]),
+      ...(drafts.length === 0 ? [] : ["A card is waiting for you to check."]),
+      "Send the rest again if anything is missing.",
+    ];
+    return {
+      reply: entries.length === 0 && drafts.length === 0 ? "" : parts.join(" "),
+      draftIds: drafts.map((row) => row._id),
+      entryIds: entries.map((row) => row._id),
+    };
   },
 });
 
@@ -488,7 +545,7 @@ async function runChatTurn(
   chatId: Id<"chats">,
   messageId: Id<"messages">,
   submissionId: string,
-): Promise<{ reply: string; toolCalls: ToolCallRecord[]; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] }> {
+): Promise<Turn> {
   const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId });
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt(context) },
@@ -596,47 +653,69 @@ export const sendMessage = action({
     assertMaxChars(text, AI_INPUT_LIMITS.messageChars, "message");
     if (text === "" && args.imageStorageId === undefined) throw new Error("Message is empty");
 
-    const userMessageId: Id<"messages"> = await ctx.runMutation(internal.chats.insertUserMessage, {
+    const claim: { messageId: Id<"messages">; retry: boolean } = await ctx.runMutation(internal.chats.claimTurn, {
       userId,
       chatId: args.chatId,
       submissionId: args.submissionId,
       text,
       attachments: args.imageStorageId === undefined ? [] : [{ kind: "image", storageId: args.imageStorageId }],
     });
-
-    let turn: { reply: string; toolCalls: ToolCallRecord[]; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] };
-    if (args.imageStorageId !== undefined) {
-      const today = await ctx.runQuery(internal.pipeline.resolve.logContext, { userId });
-      const items = await extractItems(ctx, userId, {
-        text,
-        today: today.localDate,
-        slot: today.slot,
-        imageUrl: await imageUrl(ctx, args.imageStorageId),
-      });
-      const result = await runPipeline(ctx, userId, {
-        submissionId: `${args.submissionId}:photo`,
-        inputKind: "photo",
-        items,
+    const userMessageId = claim.messageId;
+    try {
+      const turn = await runTurn(ctx, userId, args, text, userMessageId, claim.retry);
+      const assistantMessageId: Id<"messages"> = await ctx.runMutation(internal.chats.insertAssistantMessage, {
+        userId,
         chatId: args.chatId,
-        messageId: userMessageId,
+        submissionId: args.submissionId,
+        text: turn.reply,
+        toolCalls: turn.toolCalls,
+        draftIds: turn.draftIds,
+        entryIds: turn.entryIds,
       });
-      const draftIds: Id<"drafts">[] = [];
-      const entryIds: Id<"entries">[] = [];
-      collect(result, draftIds, entryIds);
-      turn = { reply: describeResult(result), toolCalls: [], draftIds, entryIds };
-    } else {
-      turn = await runChatTurn(ctx, userId, args.chatId, userMessageId, args.submissionId);
+      return { userMessageId, assistantMessageId, reply: turn.reply, draftIds: turn.draftIds, entryIds: turn.entryIds };
+    } catch (err) {
+      await ctx.runMutation(internal.chats.releaseTurn, { userId, messageId: userMessageId });
+      throw err;
     }
-
-    const assistantMessageId: Id<"messages"> = await ctx.runMutation(internal.chats.insertAssistantMessage, {
-      userId,
-      chatId: args.chatId,
-      submissionId: args.submissionId,
-      text: turn.reply,
-      toolCalls: turn.toolCalls,
-      draftIds: turn.draftIds,
-      entryIds: turn.entryIds,
-    });
-    return { userMessageId, assistantMessageId, reply: turn.reply, draftIds: turn.draftIds, entryIds: turn.entryIds };
   },
 });
+
+/**
+ * The work of one claimed turn. A retry whose earlier attempt already wrote entries or drafts reports those instead
+ * of asking the model again, because a new model run could log the same meal under a different key.
+ */
+async function runTurn(
+  ctx: ActionCtx,
+  userId: string,
+  args: { chatId: Id<"chats">; submissionId: string; imageStorageId?: Id<"_storage"> },
+  text: string,
+  userMessageId: Id<"messages">,
+  retry: boolean,
+): Promise<Turn> {
+  if (retry) {
+    const prior: { reply: string; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] } = await ctx.runQuery(
+      internal.chats.priorTurnWrites,
+      { userId, submissionId: args.submissionId },
+    );
+    if (prior.reply !== "") return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, entryIds: prior.entryIds };
+  }
+  if (args.imageStorageId === undefined) return await runChatTurn(ctx, userId, args.chatId, userMessageId, args.submissionId);
+  const today = await ctx.runQuery(internal.pipeline.resolve.logContext, { userId });
+  const items = await extractItems(ctx, userId, {
+    text,
+    today: today.localDate,
+    slot: today.slot,
+    imageUrl: await imageUrl(ctx, args.imageStorageId),
+  });
+  const result = await runPipeline(ctx, userId, {
+    submissionId: `${args.submissionId}:photo`,
+    inputKind: "photo",
+    items,
+    chatId: args.chatId,
+    messageId: userMessageId,
+  });
+  const draftIds: Id<"drafts">[] = [];
+  const entryIds: Id<"entries">[] = [];
+  collect(result, draftIds, entryIds);
+  return { reply: describeResult(result), toolCalls: [], draftIds, entryIds };
+}
