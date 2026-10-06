@@ -68,6 +68,7 @@ function useBlink(active: boolean): boolean {
     return () => {
       clearInterval(timer)
       if (reopen) clearTimeout(reopen)
+      setClosed(false)
     }
   }, [active])
   return active && closed
