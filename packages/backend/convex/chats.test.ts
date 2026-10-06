@@ -244,6 +244,20 @@ describe("multi-chat (D12)", () => {
   });
 });
 
+describe("chat photo ownership", () => {
+  test("a photo the caller did not upload is refused before the turn is claimed or a model runs", async () => {
+    const { t, user, chatId } = await setup();
+    const other = t.withIdentity({ subject: "user_b" });
+    const theirs = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    await other.mutation(api.uploads.registerUpload, { storageId: theirs });
+    await expect(
+      user.action(api.chats.sendMessage, { chatId, submissionId: "img", text: "what is this", imageStorageId: theirs }),
+    ).rejects.toThrow(/Photo not found/);
+    expect(bodies).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("messages").take(10))).toHaveLength(0);
+  });
+});
+
 describe("chat logging runs the same pipeline", () => {
   test("add_entry items commit through the gate, linked to the chat message, with nutrients from foods", async () => {
     const { t, user, chatId, foods } = await setup();

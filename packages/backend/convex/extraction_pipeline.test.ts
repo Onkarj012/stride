@@ -586,6 +586,7 @@ describe("photo and voice input", () => {
   test("photo items use the photo model and are flagged estimated", async () => {
     const { t, user, foods } = await setup();
     const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    await user.mutation(api.uploads.registerUpload, { storageId });
     llm = () => extraction([{ food: "roti", quantity: 2, fromPhoto: true }]);
     const result = await user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } });
     expect(result.kind).toBe("committed");
@@ -601,9 +602,24 @@ describe("photo and voice input", () => {
     const storageId = await t.run((ctx) =>
       ctx.storage.store(new Blob([new Uint8Array(AI_INPUT_LIMITS.imageBytes + 1)], { type: "image/jpeg" })),
     );
+    await user.mutation(api.uploads.registerUpload, { storageId });
     await expect(
       user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } }),
     ).rejects.toThrow(/too large/);
+    expect(openRouterBodies).toHaveLength(0);
+  });
+
+  test("a photo the caller did not upload is refused before any model call", async () => {
+    const { t, user } = await setup();
+    const other = t.withIdentity({ subject: "user_b" });
+    const theirs = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    await other.mutation(api.uploads.registerUpload, { storageId: theirs });
+    const unregistered = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    for (const storageId of [theirs, unregistered]) {
+      await expect(
+        user.action(api.pipeline.log.logInput, { submissionId: `p-${storageId}`, input: { kind: "photo", storageId } }),
+      ).rejects.toThrow(/Photo not found/);
+    }
     expect(openRouterBodies).toHaveLength(0);
   });
 

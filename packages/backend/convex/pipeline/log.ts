@@ -4,6 +4,7 @@ import type { Id } from "../_generated/dataModel";
 import { action, internalQuery, type ActionCtx } from "../_generated/server";
 import { transcribeAudio } from "../ai";
 import { AI_INPUT_LIMITS, assertMaxChars } from "../ai_guard";
+import { requireOwnUpload } from "../uploads";
 import { extractItems, type ExtractedItem } from "./extract";
 import { logResultValidator, type InputKind, type LogResult, type UnresolvedItem } from "./resolve";
 import { runToolPass } from "./tools";
@@ -85,6 +86,7 @@ export const logInput = action({
     if (identity === null) throw new Error("Unauthenticated");
     const userId = identity.subject;
     if (submissionId.length === 0 || submissionId.length > 128) throw new Error("submissionId must be 1-128 characters");
+    if (input.kind === "photo") await requireOwnUpload(ctx, userId, input.storageId);
     const prior: LogResult | null = await ctx.runQuery(internal.pipeline.resolve.findLog, { userId, submissionId });
     if (prior !== null) return prior;
 

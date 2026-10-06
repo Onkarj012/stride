@@ -871,6 +871,15 @@ export default defineSchema({
     .index("by_userId_and_status", ["userId", "status"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
 
+  // Who uploaded each file in `_storage`. Inputs and account clears only touch files the caller owns.
+  uploads: defineTable({
+    userId: v.string(),
+    storageId: v.id("_storage"),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_storageId", ["storageId"]),
+
   // Food memory for the restart pipeline: text the user confirmed for a food. Maps text to a food only; never holds nutrients.
   food_links: defineTable({
     userId: v.string(),
