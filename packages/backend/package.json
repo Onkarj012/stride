@@ -10,6 +10,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@stride/core": "workspace:*",
     "convex": "^1.36.1"
   },
   "devDependencies": {

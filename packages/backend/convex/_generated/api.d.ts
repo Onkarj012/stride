@@ -34,6 +34,7 @@ import type * as foods from "../foods.js";
 import type * as goals from "../goals.js";
 import type * as history from "../history.js";
 import type * as insights from "../insights.js";
+import type * as ledger_validators from "../ledger_validators.js";
 import type * as lib_fetch_timeout from "../lib/fetch_timeout.js";
 import type * as meals from "../meals.js";
 import type * as nutrition_draft from "../nutrition_draft.js";
@@ -91,6 +92,7 @@ declare const fullApi: ApiFromModules<{
   goals: typeof goals;
   history: typeof history;
   insights: typeof insights;
+  ledger_validators: typeof ledger_validators;
   "lib/fetch_timeout": typeof lib_fetch_timeout;
   meals: typeof meals;
   nutrition_draft: typeof nutrition_draft;
