@@ -1,9 +1,10 @@
 import { roundNutrients, scaleNutrients, sumNutrients, totalNutrients, type Nutrients } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import schema from "./schema";
+import { CLEAR_LEDGER_BATCH } from "./users";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -333,5 +334,54 @@ describe("day totals", () => {
       entryCount: 0,
       nutrients: { kcal: 0, protein: 0, carbs: 0, fat: 0, fiber: 0, sugar: 0, sodiumMg: 0 },
     });
+  });
+});
+
+describe("account data", () => {
+  test("exportAllData includes and clearAllData removes only the caller's ledger rows", async () => {
+    const { t, user, rice } = await setup();
+    const other = t.withIdentity({ subject: "user_b" });
+    await other.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
+    const [entryId] = await user.mutation(api.entries.addEntries, { submissionId: "s1", items: [{ foodId: rice, grams: 100, source: "db", loggedAt: IST_LUNCH }] });
+    await user.mutation(api.weights.logWeight, { kg: 72, localDate: "2026-10-05" });
+    await other.mutation(api.entries.addEntries, { submissionId: "s1", items: [{ foodId: rice, grams: 50, source: "db", loggedAt: IST_LUNCH }] });
+    await other.mutation(api.weights.logWeight, { kg: 60, localDate: "2026-10-05" });
+
+    const exported = await user.query(api.users.exportAllData, {});
+    expect(exported.entries.map((e) => e.grams)).toEqual([100]);
+    expect(exported.day_totals.map((d) => d.localDate)).toEqual(["2026-10-05"]);
+    expect(exported.weights.map((w) => w.kg)).toEqual([72]);
+
+    vi.useFakeTimers();
+    try {
+      // More weights than one batch, so clearing has to reschedule itself.
+      await t.run(async (ctx) => {
+        for (let i = 0; i <= CLEAR_LEDGER_BATCH; i++) {
+          await ctx.db.insert("weights", { userId: "user_a", localDate: `2025-01-01#${i}`, kg: 72, loggedAt: 0 });
+        }
+      });
+      await user.mutation(api.users.clearAllData, {});
+
+      // Ledger writes wait until the scheduled batches finish.
+      expect(await user.query(api.users.ledgerClearPending, {})).toBe(true);
+      await expect(user.mutation(api.weights.logWeight, { kg: 71, localDate: "2026-10-06" })).rejects.toThrow(/being cleared/);
+      await expect(
+        user.mutation(api.entries.editEntry, { submissionId: "s2", entryId, grams: 150 }),
+      ).rejects.toThrow(/being cleared/);
+      expect(await other.query(api.users.ledgerClearPending, {})).toBe(false);
+
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await user.query(api.users.ledgerClearPending, {})).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+    const left = await t.run(async (ctx) => ({
+      entries: await ctx.db.query("entries").take(100),
+      dayTotals: await ctx.db.query("day_totals").take(100),
+      weights: await ctx.db.query("weights").take(100),
+    }));
+    expect(left.entries.map((e) => e.userId)).toEqual(["user_b"]);
+    expect(left.dayTotals.map((d) => d.userId)).toEqual(["user_b"]);
+    expect(left.weights.map((w) => w.userId)).toEqual(["user_b"]);
   });
 });

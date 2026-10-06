@@ -783,6 +783,9 @@ export default defineSchema({
     .index("by_sourceId", ["sourceId"])
     .searchIndex("search_name", { searchField: "name", filterFields: ["category"] }),
 
+  // One row per user while clearAllData's scheduled ledger deletion runs. Ledger writes refuse meanwhile.
+  ledger_clears: defineTable({ userId: v.string() }).index("by_userId", ["userId"]),
+
   weights: defineTable({
     userId: v.string(),
     localDate: v.string(),
