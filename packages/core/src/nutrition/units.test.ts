@@ -99,6 +99,7 @@ describe("household measures", () => {
 
   it("rejects unknown units and bad quantities", () => {
     expect(resolvePortion({ quantity: 1, unit: "handful" }, { foodName: "peanuts" })).toEqual({ status: "unresolved", reason: "unknown_unit" });
+    expect(resolvePortion({ quantity: 1, unit: "constructor" }, { foodName: "milk" })).toEqual({ status: "unresolved", reason: "unknown_unit" });
     expect(resolvePortion({ quantity: 0, unit: "g" }, { foodName: "peanuts" })).toEqual({ status: "unresolved", reason: "invalid_quantity" });
     expect(resolvePortion({ quantity: Number.NaN, unit: "g" }, { foodName: "peanuts" })).toEqual({ status: "unresolved", reason: "invalid_quantity" });
     expect(resolvePortion({ quantity: 1, unit: "piece" }, { foodName: "biryani" })).toEqual({ status: "unresolved", reason: "missing_piece_weight" });

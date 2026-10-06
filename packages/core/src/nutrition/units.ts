@@ -67,11 +67,16 @@ export type PortionResult =
   | { status: "resolved"; grams: number; confidence: number; method: PortionMethod }
   | { status: "unresolved"; reason: UnresolvedReason };
 
+/** Own-property lookup, so input like "constructor" never reaches Object.prototype. */
+function own<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 /** Maps any spelling of a unit to its canonical name. Empty input means a bare count, which is a piece. */
 export function normalizeUnit(unit: string | null | undefined): string {
   const text = normalizeText(unit ?? "");
   if (text === "") return PIECE_UNIT;
-  return UNIT_ALIASES[text] ?? UNIT_ALIASES[text.replace(/ /g, "")] ?? text;
+  return own(UNIT_ALIASES, text) ?? own(UNIT_ALIASES, text.replace(/ /g, "")) ?? text;
 }
 
 /** True when every key token appears in the name and no excluded token does. */
@@ -147,15 +152,15 @@ export function resolvePortion(
     return resolved(quantity * userMeasure.grams, PORTION_CONFIDENCE.userMeasure, "user_measure");
   }
 
-  const gramsPerMass = MASS_UNITS_G[unit];
+  const gramsPerMass = own(MASS_UNITS_G, unit);
   if (gramsPerMass !== undefined) return resolved(quantity * gramsPerMass, PORTION_CONFIDENCE.mass, "mass");
 
   const portionGrams = foodPortionGrams(unit, ctx.portions);
   if (portionGrams !== null) return resolved(quantity * portionGrams, PORTION_CONFIDENCE.foodPortion, "food_portion");
 
   const userMl = userMeasure && "ml" in userMeasure && userMeasure.ml > 0 ? userMeasure.ml : undefined;
-  const vessel = HOUSEHOLD_VESSELS[unit];
-  const mlPerUnit = userMl ?? VOLUME_UNITS_ML[unit] ?? vessel?.ml;
+  const vessel = own(HOUSEHOLD_VESSELS, unit);
+  const mlPerUnit = userMl ?? own(VOLUME_UNITS_ML, unit) ?? vessel?.ml;
   if (mlPerUnit !== undefined) {
     const density = resolveDensity(ctx);
     if (density === null) return { status: "unresolved", reason: "missing_density" };
