@@ -55,6 +55,17 @@ describe("volume", () => {
     expect(densityFor("Rice, white, long-grain, regular, raw, unenriched")).toBe(0.782);
     expect(densityFor("rice")).toBeNull();
   });
+
+  it("applies a seed density only when it names the food's head word", () => {
+    expect(densityFor("Amul Taaza toned milk")).toBe(1.031);
+    expect(densityFor("Chickpeas (garbanzo beans, bengal gram), mature seeds, cooked, boiled")).toBe(0.693);
+    expect(densityFor("Milk chocolate")).toBeNull();
+    expect(densityFor("Candies, milk chocolate")).toBeNull();
+    expect(densityFor("Fish, tuna, light, canned in oil")).toBeNull();
+    expect(resolvePortion({ quantity: 100, unit: "ml" }, { foodName: "Milk chocolate" })).toEqual({
+      status: "unresolved", reason: "missing_density",
+    });
+  });
 });
 
 describe("household measures", () => {
@@ -145,7 +156,7 @@ describe("properties", () => {
     const units = ["g", "cup", "katori", "piece", "tbsp"];
     fc.assert(
       fc.property(quantity, fc.constantFrom(...units), (q, unit) => {
-        const ctx = { foodName: "cooked rice roti" };
+        const ctx = { foodName: "cooked rice roti", densityGPerMl: 0.668 };
         const one = gramsOf(resolvePortion({ quantity: 1, unit }, ctx));
         expect(gramsOf(resolvePortion({ quantity: q, unit }, ctx))).toBeCloseTo(one * q, 6);
       }),

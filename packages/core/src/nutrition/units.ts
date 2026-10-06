@@ -101,9 +101,17 @@ function longestMatch<T extends { keys: readonly string[]; excludes?: readonly s
   return best;
 }
 
+/** Last word of the name's first comma part, without parentheses: "Milk, whole" gives "milk", "Milk chocolate" gives "chocolate". */
+function headToken(foodName: string): string | undefined {
+  return tokenize(foodName.replace(/\(.*?\)/g, "").split(",")[0] ?? "").at(-1);
+}
+
 /** Looks up a density in g/ml for a food name from the seed table, or null when none applies. */
 export function densityFor(foodName: string): number | null {
-  return longestMatch(foodName, DENSITIES)?.gPerMl ?? null;
+  // Only entries naming the food's head word apply, so "milk chocolate" never gets liquid milk's density.
+  const head = headToken(foodName);
+  const entries = DENSITIES.filter((d) => head !== undefined && d.keys.flatMap(tokenize).includes(head));
+  return longestMatch(foodName, entries)?.gPerMl ?? null;
 }
 
 /** Looks up grams per piece for a food name from the seed table, or null when none applies. */
