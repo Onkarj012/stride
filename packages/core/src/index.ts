@@ -5,3 +5,8 @@ export * from "./nutrition/household_measures.ts";
 export * from "./nutrition/units.ts";
 export * from "./nutrition/match.ts";
 export * from "./nutrition/gate.ts";
+export * from "./energy/bmr.ts";
+export * from "./energy/adaptive_tdee.ts";
+export * from "./energy/workout_burn.ts";
+export * from "./strength/e1rm.ts";
+export * from "./time/local_day.ts";
