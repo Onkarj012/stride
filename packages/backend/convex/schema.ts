@@ -223,6 +223,7 @@ export default defineSchema({
     .index("by_session", ["sessionId"])
     .index("by_user", ["userId"])
     .index("by_action_group", ["actionGroupId"])
+    .index("by_action_group_role", ["actionGroupId", "role"])
     .index("by_user_submission_and_role", ["userId", "clientSubmissionId", "role"]),
 
   food_cache: defineTable({

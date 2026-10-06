@@ -509,11 +509,10 @@ function reconcileCards(message: Doc<"chat_messages">, group: Doc<"actionGroups"
 
 /** Finds the earliest assistant message for an action group without reading the rest. */
 async function firstAssistantMessageForGroup(ctx: QueryCtx, actionGroupId: Id<"actionGroups">) {
-  // The index orders rows by creation time, so the first "ai" match is the earliest one.
+  // Rows with equal index keys are ordered by creation time, so first() is the earliest one.
   return await ctx.db
     .query("chat_messages")
-    .withIndex("by_action_group", (q) => q.eq("actionGroupId", actionGroupId))
-    .filter((q) => q.eq(q.field("role"), "ai"))
+    .withIndex("by_action_group_role", (q) => q.eq("actionGroupId", actionGroupId).eq("role", "ai"))
     .first();
 }
 
