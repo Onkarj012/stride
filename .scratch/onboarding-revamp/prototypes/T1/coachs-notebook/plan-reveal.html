@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stride — Coach's Notebook (Plan reveal)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --sunshine:#ffc93b; --mint:#b8e5c0;
+    --bg:#f8f8f8; --card:#ffffff;
+    --text:#0d101b; --text-muted:#6a7081; --text-subtle:#9099ad;
+    --border:#ebebef; --border-strong:#d9d9e0;
+    --font:"Manrope",system-ui,sans-serif; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:40px 20px;-webkit-font-smoothing:antialiased}
+
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:8px;z-index:10}
+  .badge .avatar{width:34px;height:34px;border-radius:9px;background:var(--card);border:1px solid var(--border-strong);overflow:hidden;display:grid;place-items:center}
+  .pixel-avatar{width:26px;height:26px}
+  .badge span{font-size:12px;font-weight:700;color:var(--text-muted)}
+
+  .receipt{width:100%;max-width:380px;background:var(--card);box-shadow:0 12px 32px rgba(13,16,27,.08);position:relative}
+  .receipt::before, .receipt::after{content:"";position:absolute;left:0;right:0;height:10px;background:
+    linear-gradient(135deg, transparent 50%, var(--bg) 50%) 0 0/10px 10px repeat-x;
+  }
+  .receipt::before{top:-1px}
+  .receipt::after{bottom:-1px;transform:scaleY(-1)}
+  .receipt-body{padding:34px 30px}
+
+  .r-head{text-align:center}
+  .r-head .hollow{font-size:60px;font-weight:800;letter-spacing:-2.5px;color:transparent;-webkit-text-stroke:2px var(--ink);line-height:1}
+  .r-head h1{font-size:20px;font-weight:800;margin-top:6px}
+  .r-head p{font-size:12.5px;color:var(--text-muted);margin-top:2px}
+
+  .r-rule{border-top:1px dashed var(--border-strong);margin:22px 0}
+  .r-line{display:flex;justify-content:space-between;font-size:13.5px;padding:7px 0;font-family:var(--mono)}
+  .r-line .lbl{color:var(--text-muted);font-family:var(--font)}
+  .r-line b{font-weight:700;font-variant-numeric:tabular-nums}
+  .r-total{display:flex;justify-content:space-between;align-items:baseline;padding-top:14px;border-top:1px solid var(--border-strong);margin-top:6px}
+  .r-total .lbl{font-weight:700;font-size:14px}
+  .r-total .val{font-size:28px;font-weight:800;font-family:var(--mono)}
+
+  .stamp{display:inline-flex;align-items:center;gap:6px;margin-top:16px;background:var(--mint);color:var(--ink);font-size:11px;font-weight:800;letter-spacing:.5px;padding:6px 12px;border-radius:9999px;text-transform:uppercase}
+
+  .btn{margin-top:24px;border-radius:9999px;padding:14px;font-weight:700;font-size:14px;border:none;cursor:pointer;background:var(--ink);color:#fff;width:100%;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--lavender);outline-offset:3px}
+  .caption{max-width:380px;margin:20px auto 0;color:var(--text-subtle);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+  <div class="badge"><span class="avatar"><span class="pixel-avatar" id="stry" role="img" aria-label="Stry"></span></span><span>Coached by Stry</span></div>
+  <div>
+  <div class="receipt">
+    <div class="receipt-body">
+      <div class="r-head">
+        <div class="hollow">04</div>
+        <h1>Your plan, Sandra</h1>
+        <p>Section 4 of 4 — complete</p>
+      </div>
+      <div class="r-rule"></div>
+      <div class="r-line"><span class="lbl">BMR (resting)</span><b>1,612</b></div>
+      <div class="r-line"><span class="lbl">NEAT — job</span><b>+340</b></div>
+      <div class="r-line"><span class="lbl">Workouts (avg/day)</span><b>+188</b></div>
+      <div class="r-line"><span class="lbl">Thermic effect</span><b>+94</b></div>
+      <div class="r-line"><span class="lbl">Goal adjustment</span><b>−410</b></div>
+      <div class="r-total"><span class="lbl">Calories / day</span><span class="val">2,140</span></div>
+      <div class="r-rule"></div>
+      <div class="r-line"><span class="lbl">Protein</span><b>168g</b></div>
+      <div class="r-line"><span class="lbl">Carbs</span><b>214g</b></div>
+      <div class="r-line"><span class="lbl">Fat</span><b>62g</b></div>
+      <div style="text-align:center"><span class="stamp">✓ Fully transparent math</span></div>
+      <button class="btn">Start using Stride</button>
+    </div>
+  </div>
+  <p class="caption">The plan reveal is styled as a torn intake-sheet receipt — the same hollow numeral that opened section 04 closes it, and the ledger's tabular right-aligned figures make the "no black box" promise visible, not just claimed.</p>
+  </div>
+
+<script>
+(function(){
+  var GRID = [
+    "________________","__XX________XX__","_XXXX______XXXX_","XXPXXX____XXXPXX",
+    "XPPXXXXXXXXXXPPX","XPYXXXXXXXXXXYPX","XXXXXIWXXIWXXXXX","XXXXXIIXXIIXXXXX",
+    "XXXXXXXXXXXXXXXX","XXXXXIIIIIIXXXXX","_XXXXXXXXXXXXXX_","__XXXXXXXXXXXX__",
+    "____XXXXXXXX____","_____XXXXXX_____","______XXXX______","_______XX_______"
+  ];
+  var PALETTE = { X:"#bcb4cc", Y:"#9ea5b8", Z:"#b3a0ff", I:"#0d101b", W:"#ffffff", K:"#1a1d2c", P:"#f4b5d6" };
+  document.querySelectorAll(".pixel-avatar").forEach(function(el){
+    var svg = '<svg viewBox="0 0 128 128" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    GRID.forEach(function(row, y){
+      for (var x = 0; x < row.length; x++){
+        var c = PALETTE[row[x]];
+        if (!c) continue;
+        svg += '<rect x="'+x*8+'" y="'+y*8+'" width="8" height="8" fill="'+c+'"/>';
+      }
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+  });
+})();
+</script>
+</body>
+</html>

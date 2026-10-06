@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Still Stage — Onboarding · Stride T1-final</title>
+<!--
+  VARIATION "STILL STAGE" (v3) — continued from auth.html.
+
+  No rail. No side numeral column. No character-art avatar anywhere. The step count now lives
+  as one small line of type INSIDE the stage's own header, and that line itself animates:
+  each digit rolls like an odometer wheel when it changes, and a thin progress hairline
+  tweens its width underneath it. That's the entire "progress instrument" — no separate
+  panel, no vertical tick rail. The sense of continuity comes from the stage never moving:
+  the same card, same position, same shape as auth.html and plan-reveal.html; only the
+  question inside it cycles through (translate+fade, ≤220ms/20px, per R1's motion ceiling).
+
+  Stry's presence = the same breathing signal dot from auth.html + one short line of voice
+  per step. No avatar, no character rendering, anywhere in this file — by design.
+
+  A11y (R1 ceiling, reused verbatim from the T1-combined refined pass):
+  - real role="progressbar" with aria-valuenow/min/max on the hairline
+  - focus moves to the step's <h2 tabindex="-1"> on every step change
+  - a single polite live region, used ONLY for validation — never simultaneously with the
+    focus move (the two are never fired on the same event)
+  - validate-before-advance; aria-invalid + aria-describedby wired to the error message
+  - prefers-reduced-motion collapses all translate to opacity-only, ≤90ms
+
+  3 steps shown here (Goal → Work → Lifestyle) are steps 3–5 of the real 8-step flow in
+  apps/web/src/pages/OnboardingPage.tsx (name, stats, goal, work, lifestyle, training, diet,
+  style precede "plan"); copy/options match that file's real GOALS/occupationType/lifestyle
+  fields — nothing invented.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+  @view-transition { navigation: auto; }
+
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --lav-dim:rgba(179,160,255,.5);
+    --bg:#f7f7f8; --card:#ffffff; --text:#0d101b; --muted:#6a7081; --subtle:#63697f;
+    --border:#ebebef; --border-strong:#d9d9e0; --error:#b3261e;
+    --dur:220ms; --dur-exit:150ms; --dur-exit-reduced:90ms;
+    --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;min-height:100dvh;-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;position:relative;overflow-x:hidden}
+  button{font:inherit}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+
+  #glow{
+    position:fixed;top:50%;left:50%;width:640px;height:640px;margin:-320px 0 0 -320px;
+    background:radial-gradient(circle, rgba(179,160,255,.15), rgba(179,160,255,0) 65%);
+    pointer-events:none;z-index:0;animation:breathe 4400ms var(--ease) infinite;view-transition-name:glow;
+  }
+  @keyframes breathe{ 0%,100%{opacity:.7;transform:scale(1)} 50%{opacity:1;transform:scale(1.045)} }
+
+  .topline{position:relative;z-index:1;display:flex;justify-content:space-between;align-items:center;padding:26px 30px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:2px;color:var(--subtle);text-transform:uppercase}
+  .topline .wordmark{color:var(--ink);font-weight:700;view-transition-name:wordmark}
+
+  main{position:relative;z-index:1;flex:1;display:flex;align-items:center;justify-content:center;padding:32px 24px}
+
+  .stage{
+    width:100%;max-width:420px;background:var(--card);border:1px solid var(--border-strong);
+    border-radius:28px;padding:40px 40px 36px;box-shadow:0 34px 80px -46px rgba(13,16,27,.18);
+    view-transition-name:stage;position:relative;overflow:hidden;
+  }
+
+  /* Header instrument — the only place a step count exists in this design. */
+  .stagehead{margin-bottom:22px;transition:opacity 160ms var(--ease)}
+  .stagehead.dim{opacity:.4}
+  .odrow{display:flex;align-items:baseline;gap:7px;font-family:"JetBrains Mono",monospace;font-size:12.5px;letter-spacing:1.6px;color:var(--subtle);text-transform:uppercase}
+  .odometer{display:inline-flex;font-size:12.5px;font-weight:700;color:var(--ink);letter-spacing:0}
+  .od-slot{display:inline-block;width:.64em;height:1em;overflow:hidden;position:relative}
+  .od-strip{position:absolute;top:0;left:0;width:100%;transform:translateY(calc(var(--d,0) * -1em));transition:transform var(--dur) var(--ease)}
+  .od-strip .r{height:1em;line-height:1em;display:flex;align-items:center;justify-content:center;font-variant-numeric:tabular-nums}
+  .track{margin-top:10px;height:3px;border-radius:9999px;background:var(--border);overflow:hidden}
+  .fill{height:100%;background:var(--lav);border-radius:9999px;width:0%;transition:width var(--dur) var(--ease)}
+
+  .persona-line{display:flex;align-items:center;gap:8px;color:var(--subtle);font-size:12.5px;font-style:italic;margin-bottom:12px;min-height:16px}
+  .dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--lav);box-shadow:0 0 8px 1.5px var(--lav-dim);animation:pulse 3s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .stagebody{position:relative;min-height:300px}
+  .step{transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease);will-change:opacity,transform}
+  .step.exit{opacity:0;transition:opacity var(--dur-exit) var(--ease-exit)}
+  .step.enter-below{opacity:0;transform:translateY(20px)}
+  .step.enter-above{opacity:0;transform:translateY(-20px)}
+
+  .gatetag{display:inline-block;background:var(--lav-soft);color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:500;letter-spacing:1px;padding:4px 10px;border-radius:9999px;text-transform:uppercase;margin-bottom:12px}
+  h2{font-size:23px;font-weight:800;letter-spacing:-.4px;line-height:1.28;outline:none}
+
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:20px}
+  .choice{position:relative;background:#f6f6f8;border:1px solid var(--border);border-radius:12px;padding:13px 14px;text-align:left;cursor:pointer;font-family:inherit;font-size:14px;font-weight:700;color:var(--text);transition:border-color .12s var(--ease),background-color .16s var(--ease),opacity .16s var(--ease)}
+  .choice:hover{border-color:var(--border-strong);background:#ececf1}
+  .choice[aria-pressed="true"]{background:rgba(179,160,255,.14);border-color:var(--lav)}
+  .choice[aria-pressed="true"]::after{content:"";position:absolute;top:11px;right:11px;width:7px;height:7px;border-radius:50%;background:var(--lav)}
+  .choice .sub{display:block;font-weight:500;color:var(--subtle);font-size:11.5px;margin-top:2px}
+  .choice:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  @keyframes choicePulse{0%{transform:scale(1)}45%{transform:scale(.965)}100%{transform:scale(1)}}
+  .choice.picked{animation:choicePulse 260ms var(--ease)}
+  .choices.deciding .choice:not([aria-pressed="true"]){opacity:.45}
+
+  .err{font-size:12.5px;color:var(--error);margin-top:14px;font-weight:600}
+  @keyframes errIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+  .err.show{animation:errIn 180ms var(--ease)}
+  .navrow{margin-top:26px;display:flex;justify-content:space-between;align-items:center}
+  .btn{border-radius:9999px;padding:11px 20px;font-weight:700;font-size:13px;border:none;cursor:pointer;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--lav);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff;transition:opacity .12s var(--ease)}
+  .btn.primary[aria-disabled="true"]{opacity:.35;cursor:not-allowed}
+  .btn.text{background:transparent;color:var(--muted)}
+  .btn.text:hover{color:var(--text)}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.4;z-index:2}
+  .proto-nav a{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .step,.step.exit{transition:opacity var(--dur-exit-reduced) linear !important}
+    .step.enter-below,.step.enter-above{transform:none}
+    .od-strip{transition:none}
+    .fill{transition:width var(--dur-exit-reduced) linear}
+    .stagehead{transition:opacity var(--dur-exit-reduced) linear}
+    .choice.picked{animation:none}
+    .choice{transition:border-color .12s linear,background-color .12s linear,opacity .12s linear}
+    .err.show{animation:none}
+    #glow{animation:none}
+  }
+  @media (max-width:420px){ .stage{padding:32px 24px 28px} .choices{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+  <div id="glow" aria-hidden="true"></div>
+  <div class="topline"><span class="wordmark">STRIDE</span><span id="topStatus">entry</span></div>
+
+  <main>
+    <div class="stage">
+      <div class="stagehead" id="stagehead">
+        <div class="odrow">
+          <span>Step</span>
+          <span class="odometer" id="odStep" aria-hidden="true"></span>
+          <span>of 08</span>
+        </div>
+        <div class="track"><div class="fill" id="fill" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3" aria-label="Onboarding progress"></div></div>
+      </div>
+
+      <div class="stagebody">
+        <div class="step" id="step">
+          <div class="persona-line"><span class="dot" aria-hidden="true"></span><span id="persona"></span></div>
+          <span class="gatetag" id="gate"></span>
+          <h2 tabindex="-1" id="q"></h2>
+          <div class="choices" id="options" role="group" aria-labelledby="q" aria-describedby="err" aria-invalid="false"></div>
+          <p class="err" id="err" hidden>Pick one to keep going.</p>
+          <div class="navrow">
+            <button class="btn text" id="back" type="button">Back</button>
+            <button class="btn primary" id="continue" type="button" aria-disabled="true">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="index.html">← restart</a> · <a href="auth.html">← auth</a> · <a href="plan-reveal.html">plan reveal →</a></p>
+
+<script>
+(function(){
+  var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var EXIT_MS = REDUCED ? 90 : 150;
+  var PICK_HOLD_MS = REDUCED ? 160 : 260;
+  var TOTAL = 8;
+
+  /* ---- Odometer: the ONE numeral-motion mechanic reused (bigger + slower) for the
+     calorie readout on plan-reveal.html. Digits roll like a mechanical counter. ---- */
+  function mountOdometer(el, digitCount){
+    el.innerHTML = "";
+    el._slots = [];
+    for (var i = 0; i < digitCount; i++){
+      var slot = document.createElement("span");
+      slot.className = "od-slot";
+      var strip = document.createElement("span");
+      strip.className = "od-strip";
+      for (var n = 0; n <= 9; n++){
+        var row = document.createElement("span");
+        row.className = "r";
+        row.textContent = String(n);
+        strip.appendChild(row);
+      }
+      slot.appendChild(strip);
+      el.appendChild(slot);
+      el._slots.push(strip);
+    }
+  }
+  function setOdometer(el, value, opts){
+    opts = opts || {};
+    var str = String(value).padStart(el._slots.length, "0");
+    var stagger = opts.stagger || 0;
+    for (var i = 0; i < el._slots.length; i++){
+      var strip = el._slots[i];
+      var digit = str[i];
+      var fromRight = el._slots.length - 1 - i;
+      strip.style.transitionDelay = REDUCED ? "0ms" : (fromRight * stagger) + "ms";
+      strip.style.setProperty("--d", digit);
+    }
+  }
+
+  var TOTAL_DIGITS = 2;
+  var odStep = document.getElementById("odStep");
+  mountOdometer(odStep, TOTAL_DIGITS);
+  setOdometer(odStep, 0);
+
+  var STEPS = [
+    { now:3, gate:"Goal", q:"What are you aiming for right now?",
+      persona:"This shapes the whole plan.",
+      options:[
+        {v:"aggressive_loss",name:"Lose fat fast",sub:"~25% deficit"},
+        {v:"moderate_loss",name:"Lose fat",sub:"~18% deficit"},
+        {v:"maintain",name:"Maintain",sub:"Stay here"},
+        {v:"recomp",name:"Recomp",sub:"Lose fat, gain muscle"},
+        {v:"lean_gain",name:"Lean gain",sub:"~10% surplus"},
+        {v:"muscle_gain",name:"Build muscle",sub:"~18% surplus"} ] },
+    { now:4, gate:"Work", q:"What is your job like during the day?",
+      persona:"Rough numbers are fine.",
+      options:[
+        {v:"desk",name:"Desk",sub:"Mostly seated"},
+        {v:"mixed",name:"Mixed",sub:"Sit + move"},
+        {v:"standing",name:"Standing",sub:"On your feet"},
+        {v:"physical",name:"Physical",sub:"Manual labor"} ] },
+    { now:5, gate:"Life", q:"Outside work and workouts, how much do you move?",
+      persona:"Honest beats optimistic. Three to go.",
+      options:[
+        {v:"sedentary",name:"Sedentary",sub:"Mostly sitting"},
+        {v:"light",name:"Light",sub:"Some walking"},
+        {v:"moderate",name:"Moderate",sub:"On feet often"},
+        {v:"active",name:"Active",sub:"Always moving"} ] }
+  ];
+  var i = 0, picked = null;
+  var $ = function(id){ return document.getElementById(id); };
+
+  function paint(){
+    var s = STEPS[i];
+    setOdometer(odStep, s.now, { stagger: 40 });
+    $("fill").style.width = Math.round((s.now / TOTAL) * 100) + "%";
+    $("fill").setAttribute("aria-valuenow", s.now);
+    $("topStatus").textContent = "step " + s.now + " / " + TOTAL;
+    $("gate").textContent = s.gate;
+    $("q").textContent = s.q;
+    $("persona").textContent = "“" + s.persona + "”";
+    var opts = $("options"); opts.innerHTML = ""; opts.classList.remove("deciding");
+    opts.setAttribute("aria-invalid","false");
+    s.options.forEach(function(o){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "choice"; b.setAttribute("aria-pressed","false");
+      b.innerHTML = "<span>"+o.name+"</span><span class=\"sub\">"+o.sub+"</span>";
+      b.addEventListener("click", function(){ select(o.v, b); });
+      opts.appendChild(b);
+    });
+    picked = null;
+    $("continue").setAttribute("aria-disabled","true");
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    $("q").setAttribute("tabindex","-1");
+    $("q").focus({ preventScroll:true });
+  }
+
+  /* Real vertical-drift choreography — the outgoing step gets its own faster exit
+     transition; the incoming state is committed across two rAFs before release, so the
+     browser actually paints the in-between frame (a single-tick add+remove would collapse
+     the drift into a plain fade). Same technique that anchors the arrive animation on
+     auth.html and the cascade on plan-reveal.html — one motion grammar, three screens. */
+  function render(dir){
+    var el = $("step");
+    if (!dir){ paint(); return; }
+    el.classList.add("exit");
+    $("stagehead").classList.add("dim");
+    setTimeout(function(){
+      el.classList.remove("exit");
+      el.classList.add(dir === 1 ? "enter-below" : "enter-above");
+      paint();
+      $("stagehead").classList.remove("dim");
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          el.classList.remove("enter-below","enter-above");
+        });
+      });
+    }, EXIT_MS);
+  }
+
+  function select(v, btn){
+    picked = v;
+    document.querySelectorAll(".choice").forEach(function(o){ o.setAttribute("aria-pressed", o === btn ? "true" : "false"); });
+    $("continue").setAttribute("aria-disabled","false");
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("options").setAttribute("aria-invalid","false");
+    $("options").classList.add("deciding");
+    if (!REDUCED){
+      btn.classList.remove("picked");
+      void btn.offsetWidth;
+      btn.classList.add("picked");
+    }
+    clearTimeout(select._t);
+    select._t = setTimeout(function(){ advance(1); }, PICK_HOLD_MS);
+  }
+
+  function advance(dir){
+    var next = i + dir;
+    if (dir > 0 && !picked){
+      $("err").hidden = false;
+      $("err").classList.remove("show"); void $("err").offsetWidth; $("err").classList.add("show");
+      $("options").setAttribute("aria-invalid","true");
+      $("live").textContent = "Pick one to keep going.";
+      return;
+    }
+    if (next < 0) return;
+    if (next >= STEPS.length){ location.href = "plan-reveal.html"; return; }
+    i = next; render(dir);
+  }
+
+  $("continue").addEventListener("click", function(){ advance(1); });
+  $("back").addEventListener("click", function(){ advance(-1); });
+  render(0);
+})();
+</script>
+</body>
+</html>

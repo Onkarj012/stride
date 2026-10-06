@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stride — Momentum Field (Onboarding step)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --lavender-soft:#EDE8FF;
+    --peach:#fdb572; --peach-soft:#FFEEDC;
+    --mint:#b8e5c0; --mint-soft:#E6F7EA;
+    --sky:#a0c6ff; --sky-soft:#E7F0FF;
+    --card:#ffffff; --input:#f6f4ff; --text:#0d101b; --text-muted:#565c6e; --text-subtle:#8b8fa6;
+    --border:#e4defc;
+    --font:"Manrope",system-ui,sans-serif;
+    --radius-xl:24px; --shadow-elev:0 20px 50px rgba(13,16,27,.10);
+    --dur-fast:150ms; --dur-base:250ms; --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--zone-soft, var(--lavender-soft));
+    color:var(--text);font-family:var(--font);min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:32px;
+    -webkit-font-smoothing:antialiased;
+    transition:background var(--dur-base) linear; /* flat tint crossfade only — never a moving/panning gradient */
+  }
+
+  .top-note{position:fixed;top:24px;left:24px;font-size:12px;font-weight:700;color:#565c6e;display:flex;align-items:center;gap:6px}
+  .top-note .brand{font-weight:800;color:var(--ink)}
+
+  .trail{position:fixed;top:24px;right:24px;display:flex;gap:5px;align-items:center}
+  .trail-seg{width:30px;height:7px;border-radius:5px;background:rgba(13,16,27,.08);transition:background var(--dur-base) var(--ease)}
+  .trail-seg.done{background:var(--zone-strong, var(--lavender))}
+  .trail-seg.current{background:var(--zone-strong, var(--lavender));transform:scaleY(1.3)}
+  .trail-label{margin-left:8px;font-size:11px;font-weight:800;color:var(--text-muted);letter-spacing:.5px}
+
+  .punch{width:100%;max-width:520px;background:var(--card);border-radius:var(--radius-xl);box-shadow:var(--shadow-elev);padding:46px 40px;text-align:left;position:relative}
+
+  .word{font-size:clamp(40px,7vw,64px);font-weight:800;letter-spacing:-2.5px;line-height:.92;color:var(--zone-strong, var(--lavender))}
+  .persona{margin-top:10px;color:var(--text-subtle);font-size:13px;font-style:italic}
+  h2{font-size:22px;font-weight:800;letter-spacing:-.3px;margin-top:14px;outline:none}
+
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:22px}
+  .choice{background:var(--input);border:1px solid var(--border);border-radius:14px;padding:14px;text-align:left;cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:700;color:var(--text);transition:border-color var(--dur-fast) var(--ease)}
+  .choice:hover{border-color:var(--zone-strong, var(--lavender))}
+  .choice[aria-pressed="true"]{border-color:var(--zone-strong, var(--lavender));background:var(--zone-soft, var(--lavender-soft))}
+  .choice .sub{display:block;font-weight:500;color:var(--text-subtle);font-size:11.5px;margin-top:2px}
+  .choice:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+  .nav{margin-top:30px;display:flex;justify-content:space-between;align-items:center}
+  .btn{border-radius:9999px;padding:12px 22px;font-weight:700;font-size:13.5px;border:none;cursor:pointer;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff}
+  .btn.text{background:transparent;color:var(--text-muted)}
+  .btn.text:hover{color:var(--text)}
+
+  /* Motion: slide + fade on step content only, <=250ms, translate <=24px.
+     Background zone change is a flat-tint crossfade via CSS var + transition above — no pan/parallax. */
+  .step-inner.enter-from-next{ opacity:0; transform:translateX(20px); }
+  .step-inner.enter-from-prev{ opacity:0; transform:translateX(-20px); }
+  .step-inner.enter-active{ opacity:1; transform:translateX(0); transition:opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease); }
+  @media (prefers-reduced-motion: reduce){
+    body{ transition:none; }
+    .step-inner.enter-from-next, .step-inner.enter-from-prev{ transform:none; }
+    .step-inner.enter-active{ transition:opacity var(--dur-base) linear; }
+  }
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+  .caption{max-width:520px;margin:20px auto 0;text-align:center;color:#7d81a6;font-size:12px}
+</style>
+</head>
+<body>
+  <div class="top-note"><span class="brand">Stride</span> &middot; onboarding</div>
+  <div class="trail" id="trail" role="progressbar" aria-valuemin="1" aria-valuemax="4" aria-valuenow="2" aria-label="Onboarding progress">
+    <span class="trail-seg done"></span><span class="trail-seg current"></span><span class="trail-seg"></span><span class="trail-seg"></span>
+    <span class="trail-label" id="trailLabel">TRAINING</span>
+  </div>
+
+  <div>
+  <div class="punch">
+    <div class="step-inner" id="stepInner">
+      <div class="word" id="word">GOAL.</div>
+      <div class="persona" id="persona">Panda's already warming up the meal plan for this.</div>
+      <h2 tabindex="-1" id="question">What are you aiming for right now?</h2>
+      <div class="choices" role="group" aria-label="Goal" id="choices">
+        <button class="choice" aria-pressed="true">Lose fat<span class="sub">~18% deficit</span></button>
+        <button class="choice" aria-pressed="false">Maintain<span class="sub">Stay here</span></button>
+        <button class="choice" aria-pressed="false">Recomp<span class="sub">Fat down, muscle up</span></button>
+        <button class="choice" aria-pressed="false">Build muscle<span class="sub">~18% surplus</span></button>
+      </div>
+      <div class="nav"><button class="btn text" id="backBtn">Back</button><button class="btn primary" id="nextBtn">Continue →</button></div>
+    </div>
+  </div>
+  <p class="caption">Direction C — Momentum Field. Advance through the demo: the flat background tint swaps to the next specialist's zone (goal → training → diet), while only the card's <em>content</em> slides + fades (≤250&nbsp;ms, ≤24&nbsp;px) — the background swap is an instant/short crossfade, never a moving gradient, to respect the "no pan" motion rule.</p>
+  </div>
+  <div class="sr-only" id="liveRegion" aria-live="polite"></div>
+
+<script>
+(function(){
+  var ZONES = [
+    { word:"GOAL.", persona:"Panda's already warming up the meal plan for this.", q:"What are you aiming for right now?", label:"GOAL", soft:"#EDE8FF", strong:"#b3a0ff",
+      choices:[["Lose fat","~18% deficit",true],["Maintain","Stay here",false],["Recomp","Fat down, muscle up",false],["Build muscle","~18% surplus",false]] },
+    { word:"TRAINING.", persona:"Tiger wants to know what a normal week looks like.", q:"How do you train in a normal week?", label:"TRAINING", soft:"#FFEEDC", strong:"#fdb572",
+      choices:[["0–1 / week","",false],["2–3 / week","",true],["4–5 / week","",false],["6+ / week","",false]] },
+    { word:"FOOD.", persona:"Panda again — last stop before your plan.", q:"Any dietary preferences or things to avoid?", label:"FOOD", soft:"#E6F7EA", strong:"#b8e5c0",
+      choices:[["No preference","",true],["Vegetarian","",false],["Vegan","",false],["Keto","",false]] }
+  ];
+  var idx = 0;
+  var root = document.documentElement;
+  var body = document.body;
+  var stepInner = document.getElementById("stepInner");
+  var trail = document.getElementById("trail");
+  var live = document.getElementById("liveRegion");
+
+  function render(dir){
+    var z = ZONES[idx];
+    body.style.setProperty("--zone-soft", z.soft);
+    body.style.setProperty("--zone-strong", z.strong);
+    document.getElementById("word").textContent = z.word;
+    document.getElementById("persona").textContent = z.persona;
+    document.getElementById("question").textContent = z.q;
+    document.getElementById("trailLabel").textContent = z.label;
+    var segs = trail.querySelectorAll(".trail-seg");
+    segs.forEach(function(s,i){ s.className = "trail-seg" + (i < idx ? " done" : "") + (i === idx ? " current" : ""); });
+    trail.setAttribute("aria-valuenow", idx + 1);
+
+    var html = "";
+    z.choices.forEach(function(c){
+      html += '<button class="choice" aria-pressed="'+c[2]+'">'+c[0]+(c[1] ? '<span class="sub">'+c[1]+'</span>' : '')+'</button>';
+    });
+    document.getElementById("choices").innerHTML = html;
+
+    var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduce && dir){
+      stepInner.classList.add(dir === "next" ? "enter-from-next" : "enter-from-prev");
+      requestAnimationFrame(function(){
+        stepInner.classList.add("enter-active");
+        requestAnimationFrame(function(){ stepInner.classList.remove("enter-from-next","enter-from-prev"); });
+      });
+      setTimeout(function(){ stepInner.classList.remove("enter-active"); }, 260);
+    }
+    document.getElementById("question").focus();
+    live.textContent = z.label + " — " + z.q;
+  }
+
+  document.getElementById("nextBtn").addEventListener("click", function(){
+    if (idx < ZONES.length - 1){ idx++; render("next"); }
+  });
+  document.getElementById("backBtn").addEventListener("click", function(){
+    if (idx > 0){ idx--; render("prev"); }
+  });
+  document.addEventListener("click", function(e){
+    if (e.target.matches(".choice")){
+      e.target.closest(".choices").querySelectorAll(".choice").forEach(function(c){ c.setAttribute("aria-pressed","false"); });
+      e.target.setAttribute("aria-pressed","true");
+    }
+  });
+
+  render(null);
+})();
+</script>
+</body>
+</html>

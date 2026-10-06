@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stride — Coach's Notebook (Onboarding step)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --sunshine:#ffc93b; --error:#d93025;
+    --bg:#f8f8f8; --card:#ffffff; --input:#f3f3f5;
+    --text:#0d101b; --text-muted:#6a7081; --text-subtle:#9099ad;
+    --border:#ebebef; --border-strong:#d9d9e0;
+    --font:"Manrope",system-ui,sans-serif;
+    --dur-fast:150ms; --dur-base:200ms; --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--font);min-height:100dvh;-webkit-font-smoothing:antialiased}
+
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:8px;z-index:10}
+  .badge .avatar{width:34px;height:34px;border-radius:9px;background:var(--card);border:1px solid var(--border-strong);overflow:hidden;display:grid;place-items:center}
+  .pixel-avatar{width:26px;height:26px}
+  .badge span{font-size:12px;font-weight:700;color:var(--text-muted)}
+
+  .layout{max-width:760px;margin:0 auto;padding:110px 32px 60px;display:grid;grid-template-columns:120px 1fr;gap:32px}
+  .rail{display:flex;flex-direction:column;align-items:center;gap:14px}
+  .hollow{font-size:76px;font-weight:800;letter-spacing:-3px;color:transparent;-webkit-text-stroke:2px var(--ink);line-height:1}
+  .ticks{display:flex;flex-direction:column;gap:6px;align-items:center}
+  .tick{width:3px;height:22px;background:var(--border-strong);border-radius:2px;transition:background var(--dur-base) var(--ease)}
+  .tick.on{background:var(--lavender)}
+  .step-of{font-size:11px;color:var(--text-subtle);font-weight:700;letter-spacing:.5px;writing-mode:vertical-rl;text-orientation:mixed}
+
+  .stage{position:relative;min-height:360px}
+  .step{position:absolute;inset:0}
+  .step[hidden]{display:none}
+  .persona-line{display:flex;align-items:center;gap:8px;color:var(--text-subtle);font-size:12.5px;font-style:italic;margin-bottom:10px}
+  .persona-line .dot{width:20px;height:20px;flex-shrink:0}
+  h2{font-size:26px;font-weight:800;letter-spacing:-.5px;outline:none;max-width:460px}
+  .hint{margin-top:8px;color:var(--text-muted);font-size:14px;max-width:440px}
+
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:26px;max-width:460px}
+  .choice{background:var(--input);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:left;cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:700;color:var(--text);transition:border-color var(--dur-fast) var(--ease)}
+  .choice:hover{border-color:var(--border-strong)}
+  .choice[aria-pressed="true"]{background:rgba(179,160,255,.14);border-color:var(--lavender)}
+  .choice .sub{display:block;font-weight:500;color:var(--text-subtle);font-size:11.5px;margin-top:2px}
+  .choice:focus-visible{outline:2px solid var(--lavender);outline-offset:2px}
+
+  .nav{margin-top:34px;display:flex;justify-content:space-between;align-items:center;max-width:460px}
+  .btn{border-radius:9999px;padding:12px 22px;font-weight:700;font-size:13.5px;border:none;cursor:pointer;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--lavender);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff}
+  .btn.text{background:transparent;color:var(--text-muted)}
+  .btn.text:hover{color:var(--text)}
+
+  /* checkpoint recap page */
+  .recap{background:var(--card);border:1px dashed var(--border-strong);border-radius:16px;padding:22px;max-width:460px}
+  .recap-title{font-size:11px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-subtle)}
+  .recap-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);font-size:14px}
+  .recap-row:last-child{border-bottom:none}
+  .recap-row b{font-weight:700}
+
+  /* Motion: subtle slide-up + fade, <=200ms, <=16px translate */
+  .step.enter-from-next{ opacity:0; transform:translateY(14px); }
+  .step.enter-from-prev{ opacity:0; transform:translateY(-14px); }
+  .step.enter-active{ opacity:1; transform:translateY(0); transition:opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease); }
+  @media (prefers-reduced-motion: reduce){
+    .step.enter-from-next, .step.enter-from-prev{ transform:none; }
+    .step.enter-active{ transition:opacity var(--dur-base) linear; }
+  }
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+  .caption{max-width:760px;margin:20px auto 60px;padding:0 32px;color:var(--text-subtle);font-size:12px}
+
+  @media(max-width:640px){
+    .layout{grid-template-columns:1fr;padding-top:96px}
+    .rail{flex-direction:row;justify-content:flex-start}
+    .ticks{flex-direction:row}
+    .tick{width:22px;height:3px}
+    .step-of{writing-mode:horizontal-tb}
+  }
+</style>
+</head>
+<body>
+  <div class="badge"><span class="avatar"><span class="pixel-avatar" id="stry" role="img" aria-label="Stry"></span></span><span>Coached by Stry</span></div>
+
+  <div class="layout">
+    <div class="rail">
+      <span class="hollow" id="hollowNum">02</span>
+      <div class="ticks" id="ticks" role="progressbar" aria-valuemin="1" aria-valuemax="5" aria-valuenow="2" aria-label="Onboarding progress"></div>
+      <span class="step-of">STEP 2 OF 5</span>
+    </div>
+
+    <div class="stage" id="stage">
+      <div class="step" data-step="1" hidden>
+        <div class="persona-line"><span class="pixel-avatar dot" id="stry1" role="img" aria-label=""></span> "First, the basics — this stays between us."</div>
+        <h2 tabindex="-1">Tell me your age, weight, height and sex.</h2>
+        <p class="hint">We use this to calculate your resting metabolism accurately — nothing more.</p>
+        <div class="nav"><span></span><button class="btn primary" data-next>Continue</button></div>
+      </div>
+
+      <div class="step" data-step="2">
+        <div class="persona-line"><span class="pixel-avatar dot" id="stry2" role="img" aria-label=""></span> "This shapes the whole plan."</div>
+        <h2 tabindex="-1">What are you aiming for right now?</h2>
+        <div class="choices" role="group" aria-label="Goal">
+          <button class="choice" aria-pressed="true">Lose fat<span class="sub">~18% deficit</span></button>
+          <button class="choice" aria-pressed="false">Maintain<span class="sub">Stay here</span></button>
+          <button class="choice" aria-pressed="false">Recomp<span class="sub">Fat down, muscle up</span></button>
+          <button class="choice" aria-pressed="false">Build muscle<span class="sub">~18% surplus</span></button>
+        </div>
+        <div class="nav"><button class="btn text" data-prev>Back</button><button class="btn primary" data-next>Continue</button></div>
+      </div>
+
+      <div class="step" data-step="3" hidden>
+        <div class="recap-title">CHECKPOINT — SO FAR</div>
+        <div class="recap" style="margin-top:12px">
+          <div class="recap-row"><span>Stats</span><b>29y · 71kg · 168cm</b></div>
+          <div class="recap-row"><span>Goal</span><b>Lose fat, ~18% deficit</b></div>
+        </div>
+        <p class="hint" style="margin-top:16px">Two more sections and your plan is ready.</p>
+        <div class="nav"><button class="btn text" data-prev>Back</button><button class="btn primary" data-next>Keep going</button></div>
+      </div>
+
+      <div class="step" data-step="4" hidden>
+        <div class="persona-line"><span class="pixel-avatar dot" id="stry3" role="img" aria-label=""></span> "Rough numbers are fine."</div>
+        <h2 tabindex="-1">How do you train in a normal week?</h2>
+        <div class="choices" role="group" aria-label="Training frequency">
+          <button class="choice" aria-pressed="false">0–1 / week</button>
+          <button class="choice" aria-pressed="true">2–3 / week</button>
+          <button class="choice" aria-pressed="false">4–5 / week</button>
+          <button class="choice" aria-pressed="false">6+ / week</button>
+        </div>
+        <div class="nav"><button class="btn text" data-prev>Back</button><button class="btn primary" data-next>Continue</button></div>
+      </div>
+
+      <div class="step" data-step="5" hidden>
+        <div class="persona-line"><span class="pixel-avatar dot" id="stry4" role="img" aria-label=""></span> "Last one before I build your plan."</div>
+        <h2 tabindex="-1">Any dietary preferences or things to avoid?</h2>
+        <div class="choices" role="group" aria-label="Dietary preference">
+          <button class="choice" aria-pressed="true">No preference</button>
+          <button class="choice" aria-pressed="false">Vegetarian</button>
+          <button class="choice" aria-pressed="false">Vegan</button>
+          <button class="choice" aria-pressed="false">Keto</button>
+        </div>
+        <div class="nav"><button class="btn text" data-prev>Back</button><button class="btn primary">Build my plan</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="sr-only" id="liveRegion" aria-live="polite"></div>
+  <p class="caption">Direction B — Coach's Notebook. The hollow numeral + tick rail carry step semantics AND the art direction at once. Step 3 is a checkpoint recap page (R1's "payoff before continuing" pattern). Motion is a quieter 200&nbsp;ms / 14&nbsp;px slide-up-fade — calmer than the ceiling, collapsing to opacity-only under reduced motion.</p>
+
+<script>
+(function(){
+  var GRID = [
+    "________________","__XX________XX__","_XXXX______XXXX_","XXPXXX____XXXPXX",
+    "XPPXXXXXXXXXXPPX","XPYXXXXXXXXXXYPX","XXXXXIWXXIWXXXXX","XXXXXIIXXIIXXXXX",
+    "XXXXXXXXXXXXXXXX","XXXXXIIIIIIXXXXX","_XXXXXXXXXXXXXX_","__XXXXXXXXXXXX__",
+    "____XXXXXXXX____","_____XXXXXX_____","______XXXX______","_______XX_______"
+  ];
+  var PALETTE = { X:"#bcb4cc", Y:"#9ea5b8", Z:"#b3a0ff", I:"#0d101b", W:"#ffffff", K:"#1a1d2c", P:"#f4b5d6" };
+  document.querySelectorAll(".pixel-avatar").forEach(function(el){
+    var svg = '<svg viewBox="0 0 128 128" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    GRID.forEach(function(row, y){
+      for (var x = 0; x < row.length; x++){
+        var c = PALETTE[row[x]];
+        if (!c) continue;
+        svg += '<rect x="'+x*8+'" y="'+y*8+'" width="8" height="8" fill="'+c+'"/>';
+      }
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+  });
+
+  var TOTAL = 5;
+  var current = 2;
+  var steps = document.querySelectorAll(".step");
+  var ticksEl = document.getElementById("ticks");
+  var hollowNum = document.getElementById("hollowNum");
+  var stepOf = document.querySelector(".step-of");
+  var live = document.getElementById("liveRegion");
+  var STEP_TITLES = { 1:"Your stats", 2:"Your goal", 3:"Checkpoint", 4:"Training", 5:"Diet" };
+
+  function renderTicks(){
+    ticksEl.innerHTML = "";
+    for (var i = 1; i <= TOTAL; i++){
+      var t = document.createElement("span");
+      t.className = "tick" + (i <= current ? " on" : "");
+      ticksEl.appendChild(t);
+    }
+    ticksEl.setAttribute("aria-valuenow", current);
+  }
+
+  function goTo(step, dir){
+    var reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    steps.forEach(function(s){ s.hidden = (Number(s.dataset.step) !== step); });
+    current = step;
+    hollowNum.textContent = String(step).padStart(2,"0");
+    stepOf.textContent = "STEP " + step + " OF " + TOTAL;
+    renderTicks();
+    var el = document.querySelector('.step[data-step="' + step + '"]');
+    if (!reduce) {
+      el.classList.add(dir === "next" ? "enter-from-next" : "enter-from-prev");
+      requestAnimationFrame(function(){
+        el.classList.add("enter-active");
+        requestAnimationFrame(function(){ el.classList.remove("enter-from-next","enter-from-prev"); });
+      });
+      setTimeout(function(){ el.classList.remove("enter-active"); }, 210);
+    }
+    var h2 = el.querySelector("h2") || el.querySelector(".recap-title");
+    if (h2) h2.setAttribute("tabindex","-1"), h2.focus();
+    live.textContent = "Step " + step + " of " + TOTAL + ": " + STEP_TITLES[step];
+  }
+
+  document.addEventListener("click", function(e){
+    if (e.target.matches("[data-next]") && current < TOTAL) goTo(current + 1, "next");
+    if (e.target.matches("[data-prev]") && current > 1) goTo(current - 1, "prev");
+    if (e.target.matches(".choice")){
+      e.target.closest(".choices").querySelectorAll(".choice").forEach(function(c){ c.setAttribute("aria-pressed","false"); });
+      e.target.setAttribute("aria-pressed","true");
+    }
+  });
+
+  renderTicks();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Darkroom — Plan reveal · Stride T1-batch2</title>
+<!--
+  DIRECTION: DARKROOM. The reveal is a spectrometer readout: one glowing number,
+  a single spectral macro bar (lavender/sky/peach — constant palette, not per-phase),
+  and a mono ledger with dotted leaders. Same chamber language as auth + onboarding.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --bg:#0c0e16; --card:#161927; --line:#21243a; --line-strong:#2c3045;
+    --text:#eceaf5; --muted:#8b91a6; --subtle:#5b6178;
+    --lav:#b3a0ff; --sky:#a0c6ff; --peach:#fdb572;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column}
+  .topline{display:flex;justify-content:space-between;align-items:center;padding:22px 28px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;color:var(--subtle);text-transform:uppercase}
+  .topline .brand{color:var(--text);font-weight:700}
+
+  main{flex:1;display:flex;align-items:center;justify-content:center;padding:24px}
+  .readout{width:100%;max-width:480px;animation:lit .25s var(--ease) both}
+  @keyframes lit{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+  .label{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.8px;color:var(--subtle);text-transform:uppercase;text-align:center}
+  .kcal{font-family:"JetBrains Mono",monospace;font-weight:700;font-size:clamp(56px,14vw,84px);line-height:1;text-align:center;margin-top:14px;text-shadow:0 0 44px rgba(179,160,255,.45);font-variant-numeric:tabular-nums}
+  .kcal .unit{display:block;font-family:"Manrope",sans-serif;font-size:12px;font-weight:700;letter-spacing:2.5px;color:var(--muted);margin-top:10px;text-shadow:none}
+  .who{text-align:center;font-size:13.5px;color:var(--muted);margin-top:16px;line-height:1.55}
+
+  .spectrum{margin-top:30px}
+  .bar{display:flex;height:12px;border-radius:9999px;overflow:hidden;background:var(--line)}
+  .bar span{display:block;height:100%}
+  .bar .p{width:27%;background:var(--lav);box-shadow:0 0 16px rgba(179,160,255,.5)}
+  .bar .c{width:40%;background:var(--sky)}
+  .bar .f{width:33%;background:var(--peach)}
+  .legend{display:flex;justify-content:space-between;margin-top:12px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted)}
+  .legend b{color:var(--text);font-weight:700}
+  .legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;font-style:normal}
+
+  details{margin-top:26px;border:1px solid var(--line-strong);border-radius:14px;background:var(--card);padding:16px 18px}
+  summary{cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.8px;text-transform:uppercase;color:var(--text)}
+  .rows{margin-top:14px;display:grid;gap:9px;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+  .rows div{display:flex;align-items:baseline;gap:8px}
+  .rows .dots{flex:1;border-bottom:1px dotted var(--line-strong);transform:translateY(-3px)}
+  .rows b{color:var(--text);font-weight:700;font-variant-numeric:tabular-nums}
+  .rows .total b{color:var(--lav)}
+
+  .actions{display:flex;gap:12px;margin-top:28px}
+  .back{flex:none;background:none;border:1px solid var(--line-strong);color:var(--muted);border-radius:9999px;padding:14px 18px;font:700 13px "Manrope",sans-serif;cursor:pointer}
+  .back:hover{color:var(--text)}
+  .cta{flex:1;background:var(--lav);color:#0d101b;border:none;border-radius:9999px;padding:16px;font:800 14px "Manrope",sans-serif;cursor:pointer;box-shadow:0 0 28px -6px rgba(179,160,255,.7);transition:box-shadow .15s}
+  .cta:hover{box-shadow:0 0 40px -4px rgba(179,160,255,.9)}
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--text)}
+  @media (prefers-reduced-motion: reduce){ .readout{animation:none} }
+</style>
+</head>
+<body>
+  <div class="topline"><span class="brand">STRIDE</span><span>readout / final</span></div>
+
+  <main>
+    <div class="readout">
+      <p class="label">Exposure complete — plan for Onkar</p>
+      <h1 class="kcal" tabindex="-1">2,140<span class="unit">kcal per day</span></h1>
+      <p class="who">Developed from your eight answers. Every line of the math is below.</p>
+
+      <div class="spectrum" role="group" aria-label="Daily macro split">
+        <div class="bar" aria-hidden="true"><span class="p"></span><span class="c"></span><span class="f"></span></div>
+        <div class="legend">
+          <span><i style="background:#b3a0ff"></i>PROTEIN <b>145g</b></span>
+          <span><i style="background:#a0c6ff"></i>CARBS <b>214g</b></span>
+          <span><i style="background:#fdb572"></i>FAT <b>71g</b></span>
+        </div>
+      </div>
+
+      <details>
+        <summary>Development ledger</summary>
+        <div class="rows">
+          <div><span>BMR (resting)</span><span class="dots"></span><b>1,685</b></div>
+          <div><span>NEAT — desk job</span><span class="dots"></span><b>+240</b></div>
+          <div><span>NEAT — lifestyle</span><span class="dots"></span><b>+180</b></div>
+          <div><span>Training average</span><span class="dots"></span><b>+210</b></div>
+          <div><span>Thermic effect</span><span class="dots"></span><b>+165</b></div>
+          <div><span>Maintenance (TDEE)</span><span class="dots"></span><b>2,480</b></div>
+          <div class="total"><span>Goal adj. — recomp</span><span class="dots"></span><b>−340</b></div>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button class="back" type="button" onclick="history.back()">← Re-shoot</button>
+        <button class="cta" type="button">Start using Stride</button>
+      </div>
+    </div>
+  </main>
+  <p class="proto-nav"><a href="../index.html">← all directions</a></p>
+</body>
+</html>

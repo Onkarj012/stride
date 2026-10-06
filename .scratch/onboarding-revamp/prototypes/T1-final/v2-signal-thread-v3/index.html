@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Thread (v3) — Stride T1-final</title>
+<!--
+  T1-final variation "SIGNAL THREAD" — v3 correction pass. This screen's content,
+  copy and ghost-"S" device are unchanged from refined — the human's correction
+  was specifically about onboarding.html's card/numeral, not this screen. The one
+  change here is proportional: .scene's max-width is nudged from 380px to 420px
+  so this screen doesn't look narrower than it needs to now that onboarding's
+  card reads as a wide desktop canvas — a small, considered bump for coherence
+  across the set, not a redesign.
+
+  This is the first beat of the whole cross-screen device: a giant, near-invisible
+  ghost "S" (Stride's own brand glyph, not the Stry mascot) establishes the
+  typographic motif that auth.html quiets into an "Entry" thread, onboarding.html
+  turns into a counted step-numeral (now lavender-tinted and corner-anchored — see
+  onboarding.html's comments), and plan-reveal.html finally resolves into the real
+  kcal number. Nothing here is a gallery link grid — "Begin" is the one real path
+  through the whole arc: index -> auth -> onboarding (8 steps) -> plan reveal.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --bg:#0c0e16; --line-strong:#2c3045;
+    --text:#eceaf5; --muted:#8b91a6; --subtle:#9aa0b8;
+    --lav:#b3a0ff;
+    --dur:260ms; --dur-exit:190ms; --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column;overflow-x:hidden}
+
+  .topline{display:flex;justify-content:space-between;align-items:center;padding:22px 28px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;color:var(--subtle);text-transform:uppercase}
+  .topline .brand{color:var(--text);font-weight:700}
+
+  main{flex:1;display:flex;align-items:center;justify-content:center;padding:24px}
+  .scene{position:relative;width:100%;max-width:420px;text-align:center;display:flex;flex-direction:column;align-items:center;animation:lit var(--dur) var(--ease) both;transition:opacity var(--dur-exit) var(--ease-exit),transform var(--dur-exit) var(--ease-exit)}
+  .scene.leaving{opacity:0;transform:translateY(-10px) scale(.985)}
+  @keyframes lit{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+
+  .ghost-s{position:absolute;top:-70px;left:50%;transform:translateX(-50%);font-size:400px;font-weight:800;line-height:1;color:transparent;-webkit-text-stroke:1.5px var(--lav);opacity:.055;pointer-events:none;z-index:0;user-select:none}
+
+  .content{position:relative;z-index:1}
+  .mark{width:14px;height:14px;border-radius:50%;background:var(--lav);box-shadow:0 0 18px 4px rgba(179,160,255,.55);margin:0 auto;animation:pulse 3s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  h1{font-size:32px;font-weight:800;letter-spacing:-.6px;margin-top:22px;line-height:1.15}
+  .sub{font-size:14px;color:var(--muted);margin-top:10px;line-height:1.6;max-width:320px;margin-inline:auto}
+
+  .begin{margin-top:32px;background:var(--lav);color:#0d101b;border:none;border-radius:9999px;padding:15px 34px;font:800 14px "Manrope",sans-serif;cursor:pointer;box-shadow:0 0 26px -6px rgba(179,160,255,.65);transition:box-shadow .15s,transform .15s}
+  .begin:hover{box-shadow:0 0 36px -4px rgba(179,160,255,.85)}
+  .begin:active{transform:scale(.98)}
+  .begin:focus-visible{outline:2px solid var(--lav);outline-offset:3px}
+
+  .variant{margin-top:26px;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.6px;color:var(--subtle);text-transform:uppercase}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.4;z-index:5}
+  .proto-nav a{color:var(--text)}
+  @media (prefers-reduced-motion: reduce){
+    .scene{animation:none;transition:opacity 90ms linear}
+    .scene.leaving{transform:none}
+    .mark{animation:none}
+  }
+</style>
+</head>
+<body>
+  <div class="topline"><span class="brand">STRIDE</span><span>signal thread — v3</span></div>
+
+  <main>
+    <div class="scene" id="scene">
+      <span class="ghost-s" aria-hidden="true">S</span>
+      <div class="content">
+        <div class="mark" aria-hidden="true"></div>
+        <h1>The studio, from the top.</h1>
+        <p class="sub">Sign in, answer eight focused questions — or just describe yourself in your own words — and watch the plan resolve. One continuous thread, start to finish.</p>
+        <button class="begin" type="button" id="beginBtn">Begin</button>
+        <p class="variant">T1-final · v3 · signal thread</p>
+      </div>
+    </div>
+  </main>
+  <p class="proto-nav"><a href="auth.html">auth</a> · <a href="onboarding.html">onboarding</a> · <a href="plan-reveal.html">plan reveal</a></p>
+
+<script>
+(function(){
+  var scene = document.getElementById("scene");
+  var REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var LEAVE_MS = REDUCED ? 90 : 190;
+  document.getElementById("beginBtn").addEventListener("click", function(){
+    scene.classList.add("leaving");
+    setTimeout(function(){ location.href = "auth.html"; }, LEAVE_MS);
+  });
+})();
+</script>
+</body>
+</html>

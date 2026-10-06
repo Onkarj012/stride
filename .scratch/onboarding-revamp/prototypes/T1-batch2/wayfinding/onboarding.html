@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wayfinding — Onboarding step · Stride T1-batch2</title>
+<!--
+  DIRECTION: WAYFINDING. The route line is persistent chrome; only the "stop" (sign + options)
+  moves — directional horizontal slide 24px + fade, 180ms; forward enters from the right,
+  back from the left (direction encodes travel). Opacity-only under reduced motion.
+  A11y (R1): focus → <h2 tabindex="-1">; ONE polite live region for validation ONLY;
+  progressbar + aria-current="step" on the route; validate-before-advance.
+  Stry's role: voice-only PA announcer. Colors are constant (ink/lavender) — no per-phase tinting.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f8f8f8; --card:#fff;
+    --line:#ebebef; --line-strong:#d9d9e0; --muted:#6a7081; --subtle:#9099ad;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  button{font:inherit}
+
+  .term{max-width:680px;margin:0 auto;width:100%;padding:26px 24px 0}
+  .routewrap{position:relative}
+  .route{display:flex;align-items:flex-start}
+  .station{display:flex;flex-direction:column;align-items:center;gap:6px;flex:none;width:44px}
+  .station .pip{width:10px;height:10px;border-radius:50%;border:2px solid var(--line-strong);background:var(--card);transition:background .2s,border-color .2s}
+  .station.done .pip{background:var(--lav);border-color:var(--lav)}
+  .station.here .pip{border-color:var(--ink);background:var(--lav);box-shadow:0 0 0 3px var(--lav-soft)}
+  .station .name{font-family:"JetBrains Mono",monospace;font-size:8.5px;letter-spacing:.3px;color:var(--subtle);text-transform:uppercase}
+  .station.here .name{color:var(--ink);font-weight:700}
+  .seg{flex:1;height:2px;background:var(--line-strong);margin:4px 2px 0}
+
+  main{flex:1;display:flex;align-items:center;justify-content:center;padding:26px 24px 50px}
+  .stop{width:100%;max-width:600px}
+
+  .step{transition:opacity .18s var(--ease),transform .18s var(--ease)}
+  .step.pre-fwd{opacity:0;transform:translateX(24px)}
+  .step.pre-back{opacity:0;transform:translateX(-24px)}
+  .step.gone{opacity:0}
+
+  .parow{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
+  .pa{font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--muted)}
+  .next{font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1px;color:var(--subtle);text-transform:uppercase}
+  .sign{background:var(--ink);color:#fff;border-radius:16px;padding:24px 26px;box-shadow:0 8px 24px rgba(13,16,27,.12)}
+  .gate{display:inline-block;background:var(--lav);color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:10.5px;font-weight:500;letter-spacing:1px;padding:5px 10px;border-radius:9999px;text-transform:uppercase}
+  .sign h2{font-family:"Archivo",sans-serif;font-weight:800;font-size:27px;letter-spacing:-.5px;line-height:1.12;margin-top:12px;outline:none}
+
+  .options{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:520px){ .options{grid-template-columns:1fr} }
+  .opt{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:var(--card);border:1px solid var(--line-strong);border-radius:14px;padding:14px 16px;cursor:pointer;transition:border-color .12s,background .12s}
+  .opt:hover{border-color:var(--ink)}
+  .opt:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .opt .tab{flex:none;width:4px;align-self:stretch;border-radius:2px;background:var(--lav)}
+  .opt .name{font-weight:800;font-size:14.5px;display:block}
+  .opt .sub{font-size:11.5px;color:var(--muted);display:block;margin-top:2px}
+  .opt[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+  .opt[aria-pressed="true"] .sub{color:rgba(255,255,255,.6)}
+
+  .err{font-size:12.5px;color:#b3261e;margin-top:12px;font-weight:600}
+  .actions{display:flex;justify-content:space-between;align-items:center;margin-top:22px}
+  .back{background:none;border:none;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);cursor:pointer;padding:8px 0}
+  .back:hover{color:var(--ink)}
+  .continue{background:var(--ink);color:#fff;border:none;border-radius:9999px;padding:13px 24px;font-weight:800;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:8px}
+  .continue[aria-disabled="true"]{opacity:.35;cursor:not-allowed}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--ink)}
+  @media (prefers-reduced-motion: reduce){
+    .step{transition:opacity .12s linear}
+    .step.pre-fwd,.step.pre-back{transform:none}
+  }
+</style>
+</head>
+<body>
+  <div class="term">
+    <div class="routewrap">
+      <div class="route" id="route"
+        role="progressbar" aria-label="Onboarding route progress" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3"></div>
+    </div>
+  </div>
+
+  <main>
+    <div class="stop">
+      <div class="step" id="step">
+        <div class="parow">
+          <p class="pa" id="persona"></p>
+          <p class="next" id="next"></p>
+        </div>
+        <div class="sign">
+          <span class="gate" id="gate"></span>
+          <h2 tabindex="-1" id="q"></h2>
+        </div>
+        <div class="options" id="options" role="group" aria-labelledby="q"></div>
+        <p class="err" id="err" hidden>Pick a line to continue.</p>
+        <div class="actions">
+          <button class="back" id="back" type="button">← previous stop</button>
+          <button class="continue" id="continue" type="button" aria-disabled="true">Continue <span aria-hidden="true">→</span></button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="../index.html">← all directions</a></p>
+
+<script>
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const STATIONS = ["YOU","BODY","GOAL","WORK","LIFE","GYM","DIET","STYLE","PLAN"];
+const STEPS = [
+  { now: 3, gate: "Stop 3 · Goal", next: "next → work", q: "What are you aiming for right now?",
+    persona: "‣ PA: Choose the closest fit — you can transfer any week.",
+    options: [
+      { v:"aggressive_loss", name:"Lose fat fast", sub:"~25% deficit" },
+      { v:"moderate_loss",  name:"Lose fat",      sub:"~18% deficit" },
+      { v:"maintain",       name:"Maintain",      sub:"Stay here" },
+      { v:"recomp",         name:"Recomp",        sub:"Lose fat, gain muscle" },
+      { v:"lean_gain",      name:"Lean gain",     sub:"~10% surplus" },
+      { v:"muscle_gain",    name:"Build muscle",  sub:"~18% surplus" } ] },
+  { now: 4, gate: "Stop 4 · Work", next: "next → life", q: "What is your job like during the day?",
+    persona: "‣ PA: This stop estimates the burn between workouts.",
+    options: [
+      { v:"desk",     name:"Desk",     sub:"Mostly seated" },
+      { v:"mixed",    name:"Mixed",    sub:"Sit + move" },
+      { v:"standing", name:"Standing", sub:"On your feet" },
+      { v:"physical", name:"Physical", sub:"Manual labor" } ] },
+  { now: 5, gate: "Stop 5 · Life", next: "next → gym", q: "Outside work and workouts, how much do you move?",
+    persona: "‣ PA: Honest beats optimistic. Three stops to the plan.",
+    options: [
+      { v:"sedentary", name:"Sedentary", sub:"Mostly sitting" },
+      { v:"light",     name:"Light",     sub:"Some walking" },
+      { v:"moderate",  name:"Moderate",  sub:"On feet often" },
+      { v:"active",    name:"Active",    sub:"Always moving" } ] }
+];
+let i = 0, picked = null;
+const $ = (id) => document.getElementById(id);
+
+function paintRoute(now) {
+  const r = $("route"); r.innerHTML = "";
+  STATIONS.forEach((name, idx) => {
+    const stopNo = idx + 1; // PLAN is the terminus display
+    const st = document.createElement("div");
+    st.className = "station" + (stopNo < now ? " done" : stopNo === now ? " here" : "");
+    if (stopNo === now) st.setAttribute("aria-current", "step");
+    st.innerHTML = `<span class="pip"></span><span class="name">${name}</span>`;
+    r.appendChild(st);
+    if (idx < STATIONS.length - 1) {
+      const seg = document.createElement("div"); seg.className = "seg"; r.appendChild(seg);
+    }
+  });
+  r.setAttribute("aria-valuenow", now);
+}
+
+function render(dir) {
+  const s = STEPS[i], el = $("step");
+  const paint = () => {
+    $("gate").textContent = s.gate;
+    $("q").textContent = s.q;
+    $("persona").textContent = s.persona;
+    $("next").textContent = s.next;
+    paintRoute(s.now);
+    $("options").innerHTML = "";
+    s.options.forEach((o) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "opt"; b.setAttribute("aria-pressed", "false");
+      b.innerHTML = `<span class="tab" aria-hidden="true"></span>
+        <span><span class="name">${o.name}</span><span class="sub">${o.sub}</span></span>`;
+      b.addEventListener("click", () => select(o.v, b));
+      $("options").appendChild(b);
+    });
+    picked = null; $("continue").setAttribute("aria-disabled", "true");
+    $("err").hidden = true;
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    el.classList.remove("pre-fwd", "pre-back", "gone");
+    $("q").focus({ preventScroll: true });
+  };
+  if (dir) {
+    el.classList.add("gone");
+    setTimeout(() => { el.classList.add(dir === 1 ? "pre-fwd" : "pre-back"); paint(); }, REDUCED ? 60 : 130);
+  } else paint();
+}
+
+function select(v, btn) {
+  picked = v;
+  document.querySelectorAll(".opt").forEach(o => o.setAttribute("aria-pressed", o === btn ? "true" : "false"));
+  $("continue").setAttribute("aria-disabled", "false");
+  $("err").hidden = true;
+  clearTimeout(select._t);
+  select._t = setTimeout(() => advance(1), 220);
+}
+
+function advance(dir) {
+  const next = i + dir;
+  if (dir > 0 && !picked) {
+    $("err").hidden = false;
+    $("live").textContent = "Pick a line to continue.";
+    return;
+  }
+  if (next < 0 || next >= STEPS.length) {
+    if (next >= STEPS.length) location.href = "plan-reveal.html";
+    return;
+  }
+  i = next; render(dir);
+}
+
+$("continue").addEventListener("click", () => advance(1));
+$("back").addEventListener("click", () => advance(-1));
+render(0);
+</script>
+</body>
+</html>

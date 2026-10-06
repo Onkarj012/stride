@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="0; url=auth.html">
+<title>Aloft Signal — Stride entry arc</title>
+<!--
+  Entry point for the demoable flow: auth.html → onboarding.html → plan-reveal.html.
+  Redirects immediately to auth.html (the arc's real start). The visible content
+  below is only a no-JS / no-refresh fallback so the link still works either way.
+-->
+<style>
+  :root{ --bg:#0c0e16; --text:#eceaf5; --muted:#8b91a6; --lav:#b3a0ff; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.55);animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  p{font-size:13px;color:var(--muted)}
+  a{color:var(--lav);font-weight:700;text-decoration:none}
+</style>
+</head>
+<body>
+  <span class="dot" aria-hidden="true"></span>
+  <p>Opening Stride… <a href="auth.html">continue</a></p>
+  <script>location.replace('auth.html');</script>
+</body>
+</html>

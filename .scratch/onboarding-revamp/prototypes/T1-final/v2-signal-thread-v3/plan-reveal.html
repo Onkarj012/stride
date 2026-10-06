@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Thread (v3) — Plan reveal · Stride T1-final</title>
+<!--
+  T1-final variation "SIGNAL THREAD" — v3 correction pass.
+
+  This is the payoff beat of the ghost-typography device seeded on auth.html and
+  carried through onboarding.html: the same giant display-type slot that showed a
+  hollow "S" (auth) then hollow step-numerals 01..08 (onboarding, now the real
+  8-phase flow) now resolves into the real, filled-in number — 2,140 kcal/day. On
+  load, a hollow "ghost" duplicate of the kcal figure fades out while the solid,
+  colored real figure fades in in the exact same type size/weight/tracking —
+  literally "ghost becomes payoff" rather than a generic number-counter animation.
+  Reduced motion drops straight to the resolved state with no transition.
+
+  The signal thread above the card is fully lit and settled (no more travelling
+  glint) — same component, same position, as auth's dim "Entry" state and
+  onboarding's counted progressbar, now reading "Complete" — and counts all 8
+  real segments.
+
+  CORRECTION vs refined: this card explicitly mirrors onboarding's silhouette, so
+  it picks up the same fix — 16:9 landscape (max-width:960px / min-height:540px,
+  collapsing to the original 480px-wide portrait card below 640px), using the
+  same card-padding clamp() formula as onboarding.html so the two screens read as
+  one system, not two independently-sized boxes. Unlike onboarding, there's no
+  ghost-numeral corner device to reserve space for here (this screen's ghost
+  device is the kcal-wrap swap below, self-contained), so the freed-up width is
+  spent as a light two-column split for the macro spectrum + development ledger
+  (.reveal-cols) instead of a corner reservation — "arrange content in a wider
+  single column, or a light two-column split where it helps," per the brief.
+  Nothing about the copy, the kcal-ghost/kcal-real mechanism, or the ledger's
+  numbers changed — only the frame and the reflow.
+
+  CONTINUITY (R2): the name carried across the auth/onboarding line via
+  localStorage on the earlier screen is read here (unchanged pattern). The
+  picked goal label is also persisted from onboarding.html and swapped into the
+  ledger's "Goal adjustment" row if present, falling back to the original static
+  "recomp" copy when it isn't (e.g. loading this page directly). No shared
+  DOM/state crosses the boundary — only localStorage, per R2's hard
+  session-boundary finding.
+
+  No mascot art anywhere. Content (macro split + development ledger row labels)
+  is lifted from apps/web/src/pages/OnboardingPage.tsx's real plan breakdown fields
+  (bmr / neatJob / neatLifestyle / eat / tef / finalTDEE / goalAdjustment).
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f7f6f9; --card:#ffffff;
+    --muted:#6a7081; --subtle:#8890a3; --border:#ebebef; --border-strong:#d9d9e0;
+    --sky:#a0c6ff; --peach:#fdb572;
+    --dur:220ms; --ease:cubic-bezier(.22,1,.36,1);
+
+    /* Same landscape silhouette as onboarding.html's card (16:9 — see that
+       file's comments for the full derivation) and the same content-width
+       cap logic, minus the numeral reservation this screen doesn't need. */
+    --card-w:960px; --card-min-h:540px;
+    --content-w:min(560px, 82%);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;overflow-x:hidden}
+  button{font:inherit}
+
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.5);animation:pulse 3s ease-in-out infinite;flex-shrink:0}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:9px;z-index:10;font-size:12px;font-weight:700;color:var(--muted)}
+
+  .stagearea{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:96px 24px 60px}
+
+  .thread-wrap{display:flex;flex-direction:column;align-items:center;gap:9px;margin-bottom:30px;width:100%;max-width:460px}
+  .thread{display:flex;gap:5px;width:100%}
+  .thread .seg{flex:1;height:3px;border-radius:99px;background:var(--lav);box-shadow:0 0 6px 0 rgba(179,160,255,.4)}
+  .step-of{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--lav);font-weight:700;letter-spacing:1.4px;text-transform:uppercase}
+
+  /* Same 16:9 landscape card as onboarding.html, same padding formula, so the
+     two screens share one silhouette instead of two independently-tuned
+     boxes. min-height (not height) so the ledger can still grow it taller
+     when the <details> is open. */
+  .card{position:relative;width:100%;max-width:var(--card-w);min-height:var(--card-min-h);background:var(--card);border:1px solid var(--border);border-radius:28px;padding:clamp(40px,6%,56px) clamp(32px,7%,68px) clamp(36px,5.4%,52px);box-shadow:0 30px 60px -40px rgba(13,16,27,.18)}
+
+  .cascade{opacity:0;transform:translateY(16px);animation:rise var(--dur) var(--ease) both}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .r1{animation-delay:0ms} .r2{animation-delay:70ms} .r3{animation-delay:150ms} .r4{animation-delay:230ms} .r5{animation-delay:310ms}
+
+  .label{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.8px;color:var(--subtle);text-transform:uppercase}
+
+  .kcal-wrap{position:relative;margin-top:10px;line-height:.95}
+  .kcal-wrap span.face{display:block;font-weight:800;letter-spacing:-3.5px;font-size:clamp(58px,13vw,82px);font-variant-numeric:tabular-nums}
+  .kcal-ghost{color:transparent;-webkit-text-stroke:2px var(--ink);opacity:.35}
+  .kcal-real{position:absolute;top:0;left:0;color:var(--ink);opacity:0}
+  @media (prefers-reduced-motion: no-preference){
+    .kcal-ghost{animation:ghostFade 760ms var(--ease) 120ms forwards}
+    .kcal-real{animation:realIn 760ms var(--ease) 160ms forwards}
+  }
+  @keyframes ghostFade{from{opacity:.35}to{opacity:0}}
+  @keyframes realIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion: reduce){
+    .kcal-ghost{opacity:0}
+    .kcal-real{opacity:1}
+    .cascade{animation-duration:0ms;transform:none;opacity:1}
+  }
+  .unit{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;letter-spacing:2.5px;color:var(--muted);margin-top:14px}
+  .who{font-size:13.5px;color:var(--muted);margin-top:12px;line-height:1.55;max-width:var(--content-w)}
+
+  /* ── Light two-column split: the one place this screen uses the card's
+       extra width, since there's no ghost-numeral corner here needing a
+       reservation. Macro spectrum + development ledger sit side by side
+       instead of stacked — same content, same copy, just laid out to use
+       the landscape frame instead of leaving it empty. Collapses back to a
+       single stacked column under 640px, alongside the card itself. ── */
+  .reveal-cols{display:grid;grid-template-columns:1fr 1fr;gap:44px;margin-top:26px;max-width:var(--content-w)}
+
+  .spectrum{margin:0}
+  .bar{display:flex;height:12px;border-radius:9999px;overflow:hidden;background:var(--border)}
+  .bar span{display:block;height:100%}
+  .bar .p{width:27%;background:var(--lav)}
+  .bar .c{width:40%;background:var(--sky)}
+  .bar .f{width:33%;background:var(--peach)}
+  .legend{display:flex;justify-content:space-between;margin-top:12px;font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--muted);flex-wrap:wrap;gap:6px}
+  .legend b{color:var(--ink);font-weight:700}
+  .legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;font-style:normal}
+
+  details{margin:0;border:1px solid var(--border-strong);border-radius:14px;background:var(--card);padding:16px 18px;height:fit-content}
+  summary{cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--ink)}
+  .rows{margin-top:14px;display:grid;gap:9px;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+  .rows div{display:flex;align-items:baseline;gap:8px}
+  .rows .dots{flex:1;border-bottom:1px dotted var(--border-strong);transform:translateY(-3px)}
+  .rows b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+  .rows .total b{color:var(--lav)}
+
+  .actions{display:flex;gap:12px;margin-top:26px;max-width:var(--content-w)}
+  .back{flex:none;background:none;border:1px solid var(--border-strong);color:var(--muted);border-radius:9999px;padding:14px 18px;font:700 13px "Manrope",sans-serif;cursor:pointer}
+  .back:hover{color:var(--ink)}
+  .cta{flex:1;background:var(--ink);color:#fff;border:none;border-radius:9999px;padding:16px;font:800 14px "Manrope",sans-serif;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+  .back:focus-visible,.cta:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:5}
+  .proto-nav a{color:var(--ink)}
+
+  /* Same mobile collapse as onboarding.html: back to the original refined
+     portrait card rather than a shrunk-down landscape one. */
+  @media(max-width:640px){
+    :root{ --card-w:480px; --card-min-h:0; --content-w:min(400px, 92%); }
+    .card{padding:32px 24px}
+    .thread-wrap{max-width:340px}
+    .kcal-wrap span.face{font-size:clamp(48px,16vw,66px)}
+    .reveal-cols{grid-template-columns:1fr;gap:20px}
+  }
+</style>
+</head>
+<body>
+  <div class="badge"><span class="dot" aria-hidden="true"></span><span>Coached by Stry</span></div>
+
+  <div class="stagearea">
+    <div class="thread-wrap">
+      <div class="thread" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="8" aria-label="Onboarding progress">
+        <span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+        <span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+      </div>
+      <span class="step-of">Complete</span>
+    </div>
+
+    <div class="card">
+      <p class="label cascade r1" id="planLabel">Plan for you — complete</p>
+
+      <div class="kcal-wrap cascade r2" tabindex="-1" id="kcalHeading">
+        <span class="face kcal-ghost" aria-hidden="true">2,140</span>
+        <span class="face kcal-real">2,140</span>
+      </div>
+      <span class="unit cascade r2">kcal per day</span>
+      <p class="who cascade r2">Eight steps in. Every line of the math is below — recalculated at every check-in.</p>
+
+      <div class="reveal-cols">
+        <div class="spectrum cascade r3" role="group" aria-label="Daily macro split">
+          <div class="bar" aria-hidden="true"><span class="p"></span><span class="c"></span><span class="f"></span></div>
+          <div class="legend">
+            <span><i style="background:#b3a0ff"></i>PROTEIN <b>145g</b></span>
+            <span><i style="background:#a0c6ff"></i>CARBS <b>214g</b></span>
+            <span><i style="background:#fdb572"></i>FAT <b>71g</b></span>
+          </div>
+        </div>
+
+        <details class="cascade r4">
+          <summary>Development ledger</summary>
+          <div class="rows">
+            <div><span>BMR (resting)</span><span class="dots"></span><b>1,685</b></div>
+            <div><span>NEAT — job</span><span class="dots"></span><b>+240</b></div>
+            <div><span>NEAT — lifestyle</span><span class="dots"></span><b>+180</b></div>
+            <div><span>Workouts (avg/day)</span><span class="dots"></span><b>+210</b></div>
+            <div><span>Thermic effect of food</span><span class="dots"></span><b>+165</b></div>
+            <div><span>Maintenance (TDEE)</span><span class="dots"></span><b>2,480</b></div>
+            <div class="total"><span id="goalLine">Goal adjustment — recomp</span><span class="dots"></span><b>−340</b></div>
+          </div>
+        </details>
+      </div>
+
+      <div class="actions cascade r5">
+        <button class="back" type="button" onclick="history.back()">← Back</button>
+        <button class="cta" type="button" id="startBtn">Start using Stride →</button>
+      </div>
+    </div>
+  </div>
+  <p class="proto-nav"><a href="index.html">← restart demo</a> · <a href="onboarding.html">← onboarding</a></p>
+
+<script>
+(function(){
+  try {
+    var name = (localStorage.getItem("strideProtoName") || "").trim();
+    if (name){
+      document.getElementById("planLabel").textContent = "Plan for " + name + " — complete";
+    }
+    var goalLabel = (localStorage.getItem("strideProtoGoalLabel") || "").trim();
+    if (goalLabel){
+      document.getElementById("goalLine").textContent = "Goal adjustment — " + goalLabel;
+    }
+  } catch (e) {}
+  document.getElementById("kcalHeading").focus({ preventScroll:true });
+  document.getElementById("startBtn").addEventListener("click", function(){
+    try {
+      localStorage.removeItem("strideProtoName");
+      localStorage.removeItem("strideProtoGoalLabel");
+    } catch (e) {}
+    location.href = "index.html";
+  });
+})();
+</script>
+</body>
+</html>

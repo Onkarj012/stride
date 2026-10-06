@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio Deck — Plan reveal · Stride T1-batch2</title>
+<!--
+  DIRECTION: STUDIO DECK. The reveal is the finished spec sheet: dimension-line callouts
+  around the calorie figure, a measured macro bar with tick marks, and a signed-off spec
+  table. Same rail + mono/grotesk language as auth + onboarding. Constant ink/lavender.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --paper:#fff; --bg:#f4f4f6;
+    --line:#e4e4e9; --muted:#6a7081; --subtle:#9099ad;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:grid;grid-template-columns:220px 1fr}
+  @media (max-width:760px){ body{grid-template-columns:1fr} .rail{border-right:none!important;border-bottom:1px solid var(--line);flex-direction:row!important;justify-content:space-between;align-items:center} .rail .idx,.rail .est{display:none} }
+  .rail{border-right:1px solid var(--line);padding:26px 22px;display:flex;flex-direction:column;gap:26px}
+  .brand{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:16px;letter-spacing:-.3px}
+  .brand span{color:var(--muted);font-weight:500}
+  .fraction{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:44px;line-height:1;letter-spacing:-1px}
+  .fraction small{font-size:15px;color:var(--subtle);font-weight:500}
+  .fraclab{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.6px;color:var(--subtle);text-transform:uppercase;margin-top:6px}
+  .idx{list-style:none;display:grid;gap:9px;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1px;color:var(--subtle);text-transform:uppercase}
+  .idx li{display:flex;gap:8px;align-items:center}
+  .idx li::before{content:"";width:6px;height:6px;background:var(--ink)}
+  .idx li.on{color:var(--ink);font-weight:700}
+  .idx li.on::before{background:var(--lav)}
+  .est{margin-top:auto;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.4px;color:var(--subtle);text-transform:uppercase}
+
+  main{display:flex;align-items:center;justify-content:center;padding:28px 24px 50px}
+  .sheet{width:100%;max-width:520px;animation:swap .15s var(--ease) both}
+  @keyframes swap{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+
+  .docno{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1.6px;color:var(--subtle);text-transform:uppercase}
+  .dim{display:flex;align-items:center;gap:10px;margin-top:26px;font-family:"JetBrains Mono",monospace;font-size:10px;color:var(--subtle);letter-spacing:1px}
+  .dim::before,.dim::after{content:"";flex:1;border-top:1px solid var(--ink);border-left:1px solid var(--ink);height:6px}
+  .dim::after{border-left:none;border-right:1px solid var(--ink)}
+  h1{font-family:"Space Grotesk",sans-serif;font-weight:700;font-size:clamp(58px,13vw,88px);letter-spacing:-3px;line-height:1;text-align:center;font-variant-numeric:tabular-nums}
+  .unit{text-align:center;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:2.5px;color:var(--muted);text-transform:uppercase;margin-top:10px}
+  .who{text-align:center;font-size:13px;color:var(--muted);margin-top:14px;line-height:1.55}
+
+  .measure{margin-top:30px}
+  .measure .mlab{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.2px;color:var(--subtle);text-transform:uppercase;margin-bottom:8px}
+  .bar{position:relative;display:flex;height:14px;background:var(--line)}
+  .bar span{display:block;height:100%}
+  .bar .p{width:27%;background:var(--lav)}
+  .bar .c{width:40%;background:var(--ink)}
+  .bar .f{width:33%;background:#d9d9e0}
+  .ticks{display:flex;justify-content:space-between;margin-top:6px}
+  .ticks i{width:1px;height:6px;background:var(--ink)}
+  .legend{display:flex;justify-content:space-between;margin-top:10px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted)}
+  .legend b{color:var(--ink)}
+
+  table{width:100%;border-collapse:collapse;margin-top:26px;font-size:12.5px}
+  caption{text-align:left;font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.6px;color:var(--subtle);text-transform:uppercase;padding-bottom:10px}
+  td,th{border-top:1px solid var(--line);padding:9px 2px;text-align:left}
+  th{font-family:"JetBrains Mono",monospace;font-size:9.5px;letter-spacing:1.5px;color:var(--subtle);text-transform:uppercase;font-weight:500}
+  td:last-child,th:last-child{text-align:right;font-variant-numeric:tabular-nums}
+  tr.total td{border-top:1px solid var(--ink);font-weight:800}
+
+  .actions{display:flex;gap:12px;margin-top:28px}
+  .back{flex:none;background:none;border:1px solid var(--line);color:var(--muted);border-radius:5px;padding:14px 18px;font:600 10.5px "JetBrains Mono",monospace;letter-spacing:1.5px;text-transform:uppercase;cursor:pointer}
+  .cta{flex:1;background:var(--ink);color:#fff;border:none;border-radius:5px;padding:16px;font:600 12px "JetBrains Mono",monospace;letter-spacing:2px;text-transform:uppercase;cursor:pointer}
+  .signoff{margin-top:18px;display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:9.5px;letter-spacing:1.4px;color:var(--subtle);text-transform:uppercase}
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--ink)}
+  @media (prefers-reduced-motion: reduce){ .sheet{animation:none} }
+</style>
+</head>
+<body>
+  <aside class="rail">
+    <div class="brand">STRIDE<span> / intake deck</span></div>
+    <div>
+      <div class="fraction">08<small> / 08</small></div>
+      <div class="fraclab">Sheet — Final spec</div>
+    </div>
+    <ul class="idx">
+      <li aria-current="step">08 — Plan issued</li>
+      <li>— Recalc at each check-in</li>
+    </ul>
+    <div class="est">Sheet No. S-2140 · Rev A</div>
+  </aside>
+
+  <main>
+    <div class="sheet">
+      <div class="docno"><span>Spec sheet — Onkar</span><span>2026-07-23</span></div>
+      <div class="dim" aria-hidden="true">MEASURED DAILY ENERGY TARGET</div>
+      <h1 tabindex="-1">2,140</h1>
+      <p class="unit">kcal / day · tolerance ±120 · recomp profile</p>
+      <p class="who">Derived from 8 measured inputs. Nothing estimated twice, nothing hidden.</p>
+
+      <div class="measure" role="group" aria-label="Daily macro split">
+        <div class="mlab"><span>Macro distribution</span><span>100%</span></div>
+        <div class="bar" aria-hidden="true"><span class="p"></span><span class="c"></span><span class="f"></span></div>
+        <div class="ticks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="legend">
+          <span>PROTEIN <b>145g · 27%</b></span>
+          <span>CARBS <b>214g · 40%</b></span>
+          <span>FAT <b>71g · 33%</b></span>
+        </div>
+      </div>
+
+      <table>
+        <caption>Calculation record</caption>
+        <tr><th>Line</th><th>Component</th><th>kcal</th></tr>
+        <tr><td>01</td><td>BMR (resting)</td><td>1,685</td></tr>
+        <tr><td>02</td><td>NEAT — desk job</td><td>+240</td></tr>
+        <tr><td>03</td><td>NEAT — lifestyle</td><td>+180</td></tr>
+        <tr><td>04</td><td>Training average</td><td>+210</td></tr>
+        <tr><td>05</td><td>Thermic effect of food</td><td>+165</td></tr>
+        <tr class="total"><td>06</td><td>Maintenance (TDEE)</td><td>2,480</td></tr>
+        <tr><td>07</td><td>Goal adjustment — recomp</td><td>−340</td></tr>
+      </table>
+
+      <div class="actions">
+        <button class="back" type="button" onclick="history.back()">← Re-measure</button>
+        <button class="cta" type="button">Approve & start</button>
+      </div>
+      <div class="signoff"><span>Drawn: Stride intake deck</span><span>Checked: Stride method</span></div>
+    </div>
+  </main>
+  <p class="proto-nav"><a href="../index.html">← all directions</a></p>
+</body>
+</html>

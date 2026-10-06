@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aloft Signal — Plan reveal · Stride T1-final</title>
+<!--
+  VARIATION "ALOFT SIGNAL" (v1 of 3, T1-final). Same centered single column as
+  onboarding.html, no side rail. The Beacon completes its arc here: the pulsing
+  signal dot settles (stops pulsing — it has arrived), the numeral readout is
+  replaced by a small checkmark, the label flips from "STEP N OF 8" to
+  "COMPLETE", and the tick row is fully lit — the same instrument that filled
+  up across onboarding, now finished. No character-grid mascot anywhere: presence
+  badge is dot + "Coached by Stry" text only, same as onboarding/auth.
+  Motion beyond fade: cascade-reveal stagger on the ledger rows (kept from the
+  original rail-drift reveal), plus a kcal count-up and a macro bar that grows
+  in from zero width — the ledger content animating, not just entering.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f8f8f8; --card:#ffffff;
+    --muted:#6a7081; --subtle:#63697f; --border:#ebebef; --border-strong:#d9d9e0;
+    --sky:#a0c6ff; --peach:#fdb572;
+    --dur:220ms; --dur-exit:150ms; --dur-exit-reduced:90ms;
+    --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;overflow-x:hidden}
+  button{font:inherit}
+
+  .topline{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:22px 28px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;color:var(--subtle);text-transform:uppercase;z-index:5}
+  .topline .brand{color:var(--ink);font-weight:700}
+  .presence{display:flex;align-items:center;gap:7px;font-family:"Manrope",sans-serif;text-transform:none;letter-spacing:0;font-weight:700;color:var(--muted);font-size:12px}
+  .presence .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);flex-shrink:0}
+
+  .arc{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:104px 24px 60px}
+
+  @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes pop{0%{transform:scale(.4);opacity:0}70%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+
+  .beacon{display:inline-flex;align-items:center;gap:11px;padding:9px 10px 9px 16px;border-radius:9999px;background:var(--card);border:1px solid var(--border-strong);animation:rise var(--dur) var(--ease) both}
+  .b-check{width:16px;height:16px;border-radius:50%;background:var(--lav);display:grid;place-items:center;flex-shrink:0;animation:pop 420ms var(--ease) 160ms both}
+  .b-check svg{width:9px;height:9px}
+  .b-div{width:1px;height:14px;background:var(--border-strong)}
+  .b-of{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.6px;color:var(--ink);text-transform:uppercase;background:var(--lav-soft);padding:5px 10px;border-radius:9999px}
+
+  .b-ticks{display:flex;gap:5px;animation:rise var(--dur) var(--ease) 60ms both}
+  .b-ticks .tick{width:14px;height:2.5px;border-radius:2px;background:var(--lav)}
+
+  .readout{width:100%;max-width:460px;text-align:center}
+  .cascade{opacity:0;transform:translateY(16px);animation:cascadeRise var(--dur) var(--ease) both}
+  @keyframes cascadeRise{to{opacity:1;transform:none}}
+  .r1{animation-delay:110ms} .r2{animation-delay:170ms} .r3{animation-delay:230ms} .r4{animation-delay:290ms} .r5{animation-delay:350ms}
+
+  .label{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.8px;color:var(--subtle);text-transform:uppercase}
+  .kcal{font-weight:800;letter-spacing:-3px;font-size:clamp(52px,13vw,76px);line-height:1;margin-top:10px;color:transparent;-webkit-text-stroke:2px var(--ink);text-shadow:0 0 34px rgba(179,160,255,.35);font-variant-numeric:tabular-nums;outline:none}
+  .kcal .unit{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;letter-spacing:2.5px;color:var(--muted);margin-top:10px;-webkit-text-stroke:0;text-shadow:none}
+  .who{font-size:13.5px;color:var(--muted);margin-top:12px;line-height:1.55}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:22px;padding:26px 26px 24px;margin-top:22px;text-align:left;box-shadow:0 24px 60px -36px rgba(13,16,27,.18)}
+
+  .spectrum{max-width:100%}
+  .bar{display:flex;height:12px;border-radius:9999px;overflow:hidden;background:var(--border)}
+  .bar span{display:block;height:100%;width:0;transition:width 700ms var(--ease) 420ms}
+  .bar .p{background:var(--lav)}
+  .bar .c{background:var(--sky)}
+  .bar .f{background:var(--peach)}
+  .grow .bar .p{width:27%}
+  .grow .bar .c{width:40%}
+  .grow .bar .f{width:33%}
+  .legend{display:flex;justify-content:space-between;margin-top:12px;font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--muted)}
+  .legend b{color:var(--ink);font-weight:700}
+  .legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;font-style:normal}
+
+  details{margin-top:20px;border-top:1px solid var(--border);padding-top:16px}
+  summary{cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--ink)}
+  .rows{margin-top:14px;display:grid;gap:9px;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+  .rows div{display:flex;align-items:baseline;gap:8px}
+  .rows .dots{flex:1;border-bottom:1px dotted var(--border-strong);transform:translateY(-3px)}
+  .rows b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+  .rows .total b{color:var(--lav)}
+
+  .actions{display:flex;gap:12px;margin-top:22px;max-width:460px;margin-left:auto;margin-right:auto}
+  .back{flex:none;background:none;border:1px solid var(--border-strong);color:var(--muted);border-radius:9999px;padding:14px 18px;font:700 13px "Manrope",sans-serif;cursor:pointer;transition:color .15s,transform .1s}
+  .back:hover{color:var(--ink)}
+  .cta{flex:1;background:var(--ink);color:#fff;border:none;border-radius:9999px;padding:16px;font:800 14px "Manrope",sans-serif;cursor:pointer;transition:transform .12s,box-shadow .15s}
+  .cta:hover{box-shadow:0 12px 28px -14px rgba(13,16,27,.5)}
+  .cta:active,.back:active{transform:scale(.97)}
+  .btn:focus-visible, .back:focus-visible, .cta:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:5}
+  .proto-nav a{color:var(--ink)}
+
+  body.leaving .arc{transition:opacity var(--dur-exit) var(--ease-exit),transform var(--dur-exit) var(--ease-exit);opacity:0;transform:translateY(-10px)}
+
+  @media (prefers-reduced-motion: reduce){
+    .beacon,.b-ticks{animation:none !important;opacity:1;transform:none}
+    .b-check{animation:none}
+    .cascade{transform:none;animation-duration:120ms;animation-delay:0ms !important}
+    .bar span{transition:none}
+    body.leaving .arc{transition:opacity var(--dur-exit-reduced) linear;transform:none}
+  }
+  @media(max-width:520px){
+    .actions{flex-direction:column}
+  }
+</style>
+</head>
+<body>
+  <div class="topline">
+    <span class="brand">STRIDE</span>
+    <span class="presence"><span class="dot" aria-hidden="true"></span>Coached by Stry</span>
+  </div>
+
+  <main class="arc">
+    <div class="beacon" aria-hidden="true">
+      <span class="b-check"><svg viewBox="0 0 12 12" fill="none"><path d="M2 6.2 4.6 9 10 2.5" stroke="#0d101b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="b-div"></span>
+      <span class="b-of">Complete</span>
+    </div>
+    <div class="b-ticks" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="8" aria-label="Onboarding progress — complete">
+      <span class="tick"></span><span class="tick"></span><span class="tick"></span><span class="tick"></span>
+      <span class="tick"></span><span class="tick"></span><span class="tick"></span><span class="tick"></span>
+    </div>
+
+    <div class="readout">
+      <p class="label cascade r1">Plan for Onkar — complete</p>
+      <h1 class="kcal cascade r2" id="kcal" tabindex="-1">0<span class="unit">kcal per day</span></h1>
+      <p class="who cascade r2">Eight steps in. Every line of the math is below — recalculated at every check-in.</p>
+
+      <div class="card cascade r3">
+        <div class="spectrum" id="spectrum" role="group" aria-label="Daily macro split">
+          <div class="bar" aria-hidden="true"><span class="p"></span><span class="c"></span><span class="f"></span></div>
+          <div class="legend">
+            <span><i style="background:#b3a0ff"></i>PROTEIN <b>145g</b></span>
+            <span><i style="background:#a0c6ff"></i>CARBS <b>214g</b></span>
+            <span><i style="background:#fdb572"></i>FAT <b>71g</b></span>
+          </div>
+        </div>
+
+        <details>
+          <summary>Development ledger</summary>
+          <div class="rows">
+            <div><span>BMR (resting)</span><span class="dots"></span><b>1,685</b></div>
+            <div><span>NEAT — desk job</span><span class="dots"></span><b>+240</b></div>
+            <div><span>NEAT — lifestyle</span><span class="dots"></span><b>+180</b></div>
+            <div><span>Training average</span><span class="dots"></span><b>+210</b></div>
+            <div><span>Thermic effect</span><span class="dots"></span><b>+165</b></div>
+            <div><span>Maintenance (TDEE)</span><span class="dots"></span><b>2,480</b></div>
+            <div class="total"><span>Goal adj. — recomp</span><span class="dots"></span><b>−340</b></div>
+          </div>
+        </details>
+      </div>
+
+      <div class="actions cascade r5">
+        <button class="back" type="button" onclick="location.href='onboarding.html'">← Back</button>
+        <button class="cta" type="button" id="startBtn">Start using Stride</button>
+      </div>
+    </div>
+  </main>
+  <p class="proto-nav"><a href="index.html">← all screens</a> · <a href="onboarding.html">← onboarding</a></p>
+
+<script>
+(function(){
+  var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  document.querySelector(".kcal").focus({ preventScroll:true });
+
+  // Count-up on the headline number — motion inside the content, not just an entrance.
+  var TARGET = 2140;
+  var kcalEl = document.getElementById("kcal");
+  if (REDUCED){
+    kcalEl.firstChild.textContent = TARGET.toLocaleString();
+  } else {
+    var start = null, DUR = 900;
+    function step(ts){
+      if (!start) start = ts;
+      var p = Math.min(1, (ts - start) / DUR);
+      var eased = 1 - Math.pow(1 - p, 3);
+      kcalEl.firstChild.textContent = Math.round(TARGET * eased).toLocaleString();
+      if (p < 1) requestAnimationFrame(step); else kcalEl.firstChild.textContent = TARGET.toLocaleString();
+    }
+    setTimeout(function(){ requestAnimationFrame(step); }, 230);
+  }
+
+  // Macro bar grows in from zero width (CSS handles the transition; this just triggers it).
+  requestAnimationFrame(function(){
+    requestAnimationFrame(function(){ document.getElementById("spectrum").classList.add("grow"); });
+  });
+
+  document.getElementById("startBtn").addEventListener("click", function(btn){
+    var el = document.getElementById("startBtn");
+    el.textContent = "Welcome to Stride ✓";
+    el.disabled = true;
+    setTimeout(function(){
+      document.body.classList.add("leaving");
+      setTimeout(function(){ location.href = "index.html"; }, REDUCED ? 0 : 190);
+    }, 500);
+  });
+})();
+</script>
+</body>
+</html>

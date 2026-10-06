@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broadsheet — Onboarding step · Stride T1-batch2</title>
+<!--
+  DIRECTION: BROADSHEET. One focused question per "article".
+  Persistent chrome: folio + masthead + progress rule never animate; only the article settles
+  (rise 16px + fade, 200ms; opacity-only under prefers-reduced-motion).
+  A11y (R1): focus moves to the step <h2 tabindex="-1"> on every change; ONE polite live region
+  is used for validation status ONLY — never at the same time as a focus move (no double speech).
+  Progress has role=progressbar with real values; options validate-before-advance.
+  Stry's role: minimized to a byline ("By Stry, wellness desk") — the editor's voice, not an on-page mascot.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lavender:#b3a0ff; --lavender-deep:#3b1f8c;
+    --paper:#faf8f2; --paper-deep:#f1ede1; --rule:#ddd8ca; --muted:#6a7081; --subtle:#9099ad;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  button{font:inherit}
+
+  .folio{max-width:680px;margin:0 auto;width:100%;padding:18px 24px 0}
+  .folio-row{display:flex;justify-content:space-between;align-items:baseline;font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .folio-rule{border-top:3px solid var(--ink);border-bottom:1px solid var(--ink);height:6px;margin-top:8px}
+  .progress{margin-top:14px}
+  .progress .track{height:3px;background:var(--rule);position:relative}
+  .progress .fill{position:absolute;inset:0 auto 0 0;background:var(--lavender-deep);width:37.5%;transition:width .25s var(--ease)}
+  .progress .meta{display:flex;justify-content:space-between;font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--subtle);margin-top:7px;font-weight:600}
+
+  main{flex:1;display:flex;justify-content:center;padding:34px 24px 60px}
+  .column{width:100%;max-width:560px}
+
+  /* Only this element animates between steps */
+  .step{transition:opacity .2s var(--ease),transform .2s var(--ease)}
+  .step.pre-fwd{opacity:0;transform:translateY(16px)}
+  .step.pre-back{opacity:0;transform:translateY(-16px)}
+  .step.gone{opacity:0}
+
+  .kicker{font-size:11px;letter-spacing:2.2px;text-transform:uppercase;color:var(--muted);font-weight:700;display:flex;align-items:center;gap:8px}
+  .kicker::before{content:"";width:8px;height:8px;background:var(--lavender);display:inline-block}
+  h2{font-family:"Fraunces",serif;font-weight:700;font-size:32px;line-height:1.15;letter-spacing:-.3px;margin-top:12px;outline:none}
+  .byline{display:flex;align-items:center;gap:8px;margin-top:12px;font-family:"Fraunces",serif;font-style:italic;font-size:14px;color:var(--muted);line-height:1.5}
+  .byline .mono-mark{width:20px;height:20px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center;font:700 10px "Manrope",sans-serif;font-style:normal;letter-spacing:0;flex:none}
+
+  .options{margin-top:22px;border-top:1px solid var(--ink)}
+  .opt{display:grid;grid-template-columns:34px 1fr auto;align-items:baseline;gap:4px 10px;width:100%;text-align:left;background:transparent;border:none;border-bottom:1px solid var(--rule);padding:13px 8px 13px 6px;cursor:pointer;position:relative;transition:background .12s}
+  .opt:hover{background:var(--paper-deep)}
+  .opt:focus-visible{outline:2px solid var(--lavender-deep);outline-offset:-2px}
+  .opt .idx{font-family:"Fraunces",serif;font-style:italic;font-size:15px;color:var(--muted)}
+  .opt .name{font-weight:800;font-size:15px}
+  .opt .sub{font-size:12px;color:var(--muted)}
+  .opt .mark{grid-row:span 1;width:9px;height:9px;border:1px solid var(--subtle);justify-self:end;align-self:center}
+  .opt[aria-pressed="true"]{background:var(--paper-deep);box-shadow:inset 3px 0 0 var(--lavender-deep)}
+  .opt[aria-pressed="true"] .mark{background:var(--ink);border-color:var(--ink)}
+
+  .err{font-size:12.5px;color:#8c1f14;margin-top:10px;font-weight:600}
+  .actions{display:flex;justify-content:space-between;align-items:center;margin-top:26px}
+  .back{background:none;border:none;font-size:11.5px;letter-spacing:1.8px;text-transform:uppercase;font-weight:700;color:var(--muted);cursor:pointer;padding:8px 0;border-bottom:1px solid transparent}
+  .back:hover{color:var(--ink);border-bottom-color:var(--ink)}
+  .continue{background:var(--ink);color:#fff;border:none;padding:13px 26px;font-size:12px;letter-spacing:2px;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;transition:background .15s}
+  .continue:hover{background:var(--lavender-deep)}
+  .continue[aria-disabled="true"]{opacity:.35;cursor:not-allowed}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--ink)}
+  @media (prefers-reduced-motion: reduce){
+    .step{transition:opacity .12s linear}
+    .step.pre-fwd,.step.pre-back{transform:none}
+    .progress .fill{transition:none}
+  }
+</style>
+</head>
+<body>
+  <div class="folio">
+    <div class="folio-row"><span>Stride — The Intake Edition</span><span>Vol. 01 · No. 03</span></div>
+    <div class="folio-rule" aria-hidden="true"></div>
+    <div class="progress">
+      <div class="track"><div class="fill" id="fill"
+        role="progressbar" aria-label="Intake progress" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3"></div></div>
+      <div class="meta"><span id="pageOf">Page 3 of 8</span><span>Two minutes, total</span></div>
+    </div>
+  </div>
+
+  <main>
+    <div class="column">
+      <div class="step" id="step">
+        <p class="kicker" id="kicker"></p>
+        <h2 tabindex="-1" id="q"></h2>
+        <p class="byline"><span class="mono-mark" aria-hidden="true">S</span><span id="persona"></span></p>
+        <div class="options" id="options" role="group" aria-labelledby="q"></div>
+        <p class="err" id="err" hidden>Pick the closest fit to continue.</p>
+        <div class="actions">
+          <button class="back" id="back" type="button">← Previous page</button>
+          <button class="continue" id="continue" type="button" aria-disabled="true">Continue</button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Single polite live region: validation/status ONLY. Step changes move focus instead — never both at once. -->
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="../index.html">← all directions</a></p>
+
+<script>
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const STEPS = [
+  { now: 3, kicker: "Section B · Your goal", q: "What are you aiming for right now?",
+    persona: "By Stry, wellness desk — “Choose the closest fit. You can revise it any week.”",
+    options: [
+      { v:"aggressive_loss", name:"Lose fat fast", sub:"~25% deficit" },
+      { v:"moderate_loss",  name:"Lose fat",      sub:"~18% deficit" },
+      { v:"maintain",       name:"Maintain",      sub:"Stay here" },
+      { v:"recomp",         name:"Recomp",        sub:"Lose fat, gain muscle" },
+      { v:"lean_gain",      name:"Lean gain",     sub:"~10% surplus" },
+      { v:"muscle_gain",    name:"Build muscle",  sub:"~18% surplus" } ] },
+  { now: 4, kicker: "Section C · Your work", q: "What is your job like during the day?",
+    persona: "By Stry, wellness desk — “This estimates the calories your workday burns.”",
+    options: [
+      { v:"desk",     name:"Desk",     sub:"Mostly seated" },
+      { v:"mixed",    name:"Mixed",    sub:"Sit + move" },
+      { v:"standing", name:"Standing", sub:"On your feet" },
+      { v:"physical", name:"Physical", sub:"Manual labor" } ] },
+  { now: 5, kicker: "Section D · Your days", q: "Outside work and workouts, how much do you move?",
+    persona: "By Stry, wellness desk — “Honest beats optimistic here. Almost done.”",
+    options: [
+      { v:"sedentary", name:"Sedentary", sub:"Mostly sitting" },
+      { v:"light",     name:"Light",     sub:"Some walking" },
+      { v:"moderate",  name:"Moderate",  sub:"On feet often" },
+      { v:"active",    name:"Active",    sub:"Always moving" } ] }
+];
+let i = 0, picked = null;
+const $ = (id) => document.getElementById(id);
+
+function render(dir) {
+  const s = STEPS[i], el = $("step");
+  const paint = () => {
+    $("kicker").textContent = s.kicker;
+    $("q").textContent = s.q;
+    $("persona").textContent = s.persona;
+    $("pageOf").textContent = `Page ${s.now} of 8`;
+    $("fill").style.width = (s.now / 8 * 100) + "%";
+    $("fill").setAttribute("aria-valuenow", s.now);
+    $("options").innerHTML = "";
+    s.options.forEach((o, n) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "opt"; b.setAttribute("aria-pressed", "false");
+      b.innerHTML = `<span class="idx">${String.fromCharCode(65 + n)}.</span>
+        <span><span class="name">${o.name}</span><br><span class="sub">${o.sub}</span></span>
+        <span class="mark" aria-hidden="true"></span>`;
+      b.addEventListener("click", () => select(o.v, b));
+      $("options").appendChild(b);
+    });
+    picked = null; $("continue").setAttribute("aria-disabled", "true");
+    $("err").hidden = true;
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    el.classList.remove("pre-fwd", "pre-back", "gone");
+    $("q").focus({ preventScroll: true }); // step change = focus move; live region stays silent
+  };
+  if (dir) {
+    el.classList.add("gone");
+    setTimeout(() => { el.classList.add(dir === 1 ? "pre-fwd" : "pre-back"); paint(); }, REDUCED ? 60 : 140);
+  } else paint();
+}
+
+function select(v, btn) {
+  picked = v;
+  document.querySelectorAll(".opt").forEach(o => o.setAttribute("aria-pressed", o === btn ? "true" : "false"));
+  $("continue").setAttribute("aria-disabled", "false");
+  $("err").hidden = true;
+  clearTimeout(select._t);
+  select._t = setTimeout(() => advance(1), 220); // micro-feedback beat, then advance
+}
+
+function advance(dir) {
+  const next = i + dir;
+  if (dir > 0 && !picked) { // validate-before-advance, announced as a status message
+    $("err").hidden = false;
+    $("live").textContent = "Pick the closest fit to continue.";
+    return;
+  }
+  if (next < 0 || next >= STEPS.length) {
+    if (next >= STEPS.length) location.href = "plan-reveal.html";
+    return;
+  }
+  i = next; render(dir);
+}
+
+$("continue").addEventListener("click", () => advance(1));
+$("back").addEventListener("click", () => advance(-1));
+render(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rail Drift — Plan reveal · Stride T1-combined</title>
+<!--
+  COMBINED DIRECTION — variation "RAIL DRIFT" (calm / vertical drift / side-rail numeral).
+  Blends T1-batch2/darkroom/plan-reveal.html (mono ledger w/ dotted leaders, glow numeral,
+  spectral macro bar) with T1-batch2/soft-terrain/plan-reveal.html (summit framing, layered
+  macro bar, trail-log copy) — rendered in the light register the onboarding rail lives in,
+  since auth is a separate mounted tree (R2) but onboarding→reveal are the same one.
+  The rail from onboarding carries over fully lit (08/08) so the numeral device reads as
+  one continuous instrument across both screens.
+  MOTION SIGNATURE: same calm vertical drift as this variation's onboarding step, but here
+  the ledger rows cascade in sequentially (60ms stagger, 220ms each, translateY 16px) —
+  a slow unveiling that matches "rail drift"'s patient pacing. Reduced motion: opacity only,
+  no stagger delay perceptible beyond a fast collective fade.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f8f8f8; --card:#ffffff;
+    --muted:#6a7081; --subtle:#9099ad; --border:#ebebef; --border-strong:#d9d9e0;
+    --sky:#a0c6ff; --peach:#fdb572;
+    --dur:220ms; --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh}
+  button{font:inherit}
+
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:8px;z-index:10}
+  .badge .avatar{width:34px;height:34px;border-radius:9px;background:var(--card);border:1px solid var(--border-strong);overflow:hidden;display:grid;place-items:center}
+  .pixel-avatar{width:26px;height:26px}
+  .badge span{font-size:12px;font-weight:700;color:var(--muted)}
+
+  .layout{max-width:760px;margin:0 auto;padding:110px 32px 60px;display:grid;grid-template-columns:120px 1fr;gap:32px}
+  .rail{display:flex;flex-direction:column;align-items:center;gap:14px}
+  .hollow{font-size:76px;font-weight:800;letter-spacing:-3px;color:transparent;-webkit-text-stroke:2px var(--lav);line-height:1}
+  .ticks{display:flex;flex-direction:column;gap:6px;align-items:center}
+  .tick{width:3px;height:22px;border-radius:2px;background:var(--lav)}
+  .step-of{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--subtle);font-weight:500;letter-spacing:.5px;writing-mode:vertical-rl;text-orientation:mixed}
+
+  .readout{max-width:480px}
+  .cascade{opacity:0;transform:translateY(16px);animation:rise var(--dur) var(--ease) both}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .r1{animation-delay:0ms} .r2{animation-delay:60ms} .r3{animation-delay:120ms} .r4{animation-delay:180ms} .r5{animation-delay:240ms}
+
+  .label{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.8px;color:var(--subtle);text-transform:uppercase}
+  .kcal{font-weight:800;letter-spacing:-3px;font-size:clamp(56px,13vw,80px);line-height:1;margin-top:12px;color:transparent;-webkit-text-stroke:2px var(--ink);text-shadow:0 0 34px rgba(179,160,255,.35);font-variant-numeric:tabular-nums;outline:none}
+  .kcal .unit{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;letter-spacing:2.5px;color:var(--muted);margin-top:10px;-webkit-text-stroke:0;text-shadow:none}
+  .who{font-size:13.5px;color:var(--muted);margin-top:14px;line-height:1.55;max-width:440px}
+
+  .spectrum{margin-top:26px;max-width:440px}
+  .bar{display:flex;height:12px;border-radius:9999px;overflow:hidden;background:var(--border)}
+  .bar span{display:block;height:100%}
+  .bar .p{width:27%;background:var(--lav)}
+  .bar .c{width:40%;background:var(--sky)}
+  .bar .f{width:33%;background:var(--peach)}
+  .legend{display:flex;justify-content:space-between;margin-top:12px;font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--muted)}
+  .legend b{color:var(--ink);font-weight:700}
+  .legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;font-style:normal}
+
+  details{margin-top:24px;border:1px solid var(--border-strong);border-radius:14px;background:var(--card);padding:16px 18px;max-width:440px}
+  summary{cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--ink)}
+  .rows{margin-top:14px;display:grid;gap:9px;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+  .rows div{display:flex;align-items:baseline;gap:8px}
+  .rows .dots{flex:1;border-bottom:1px dotted var(--border-strong);transform:translateY(-3px)}
+  .rows b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+  .rows .total b{color:var(--lav)}
+
+  .actions{display:flex;gap:12px;margin-top:26px;max-width:440px}
+  .back{flex:none;background:none;border:1px solid var(--border-strong);color:var(--muted);border-radius:9999px;padding:14px 18px;font:700 13px "Manrope",sans-serif;cursor:pointer}
+  .back:hover{color:var(--ink)}
+  .cta{flex:1;background:var(--ink);color:#fff;border:none;border-radius:9999px;padding:16px;font:800 14px "Manrope",sans-serif;cursor:pointer}
+  .btn:focus-visible, .back:focus-visible, .cta:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45}
+  .proto-nav a{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .cascade{transform:none;animation-duration:120ms;animation-delay:0ms !important}
+  }
+  @media(max-width:640px){
+    .layout{grid-template-columns:1fr;padding-top:96px}
+    .rail{flex-direction:row;justify-content:flex-start}
+    .ticks{flex-direction:row}
+    .tick{width:22px;height:3px}
+    .step-of{writing-mode:horizontal-tb}
+  }
+</style>
+</head>
+<body>
+  <div class="badge"><span class="avatar"><span class="pixel-avatar" id="stryBadge" role="img" aria-label="Stry"></span></span><span>Coached by Stry</span></div>
+
+  <div class="layout">
+    <div class="rail">
+      <span class="hollow">08</span>
+      <div class="ticks" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="8" aria-label="Onboarding progress">
+        <span class="tick"></span><span class="tick"></span><span class="tick"></span><span class="tick"></span>
+        <span class="tick"></span><span class="tick"></span><span class="tick"></span><span class="tick"></span>
+      </div>
+      <span class="step-of">STEP 8 OF 8</span>
+    </div>
+
+    <div class="readout">
+      <p class="label cascade r1">Plan for Onkar — complete</p>
+      <h1 class="kcal cascade r2" tabindex="-1">2,140<span class="unit">kcal per day</span></h1>
+      <p class="who cascade r2">Eight steps in. Every line of the math is below — recalculated at every check-in.</p>
+
+      <div class="spectrum cascade r3" role="group" aria-label="Daily macro split">
+        <div class="bar" aria-hidden="true"><span class="p"></span><span class="c"></span><span class="f"></span></div>
+        <div class="legend">
+          <span><i style="background:#b3a0ff"></i>PROTEIN <b>145g</b></span>
+          <span><i style="background:#a0c6ff"></i>CARBS <b>214g</b></span>
+          <span><i style="background:#fdb572"></i>FAT <b>71g</b></span>
+        </div>
+      </div>
+
+      <details class="cascade r4">
+        <summary>Development ledger</summary>
+        <div class="rows">
+          <div><span>BMR (resting)</span><span class="dots"></span><b>1,685</b></div>
+          <div><span>NEAT — desk job</span><span class="dots"></span><b>+240</b></div>
+          <div><span>NEAT — lifestyle</span><span class="dots"></span><b>+180</b></div>
+          <div><span>Training average</span><span class="dots"></span><b>+210</b></div>
+          <div><span>Thermic effect</span><span class="dots"></span><b>+165</b></div>
+          <div><span>Maintenance (TDEE)</span><span class="dots"></span><b>2,480</b></div>
+          <div class="total"><span>Goal adj. — recomp</span><span class="dots"></span><b>−340</b></div>
+        </div>
+      </details>
+
+      <div class="actions cascade r5">
+        <button class="back" type="button" onclick="history.back()">← Back</button>
+        <button class="cta" type="button">Start using Stride</button>
+      </div>
+    </div>
+  </div>
+  <p class="proto-nav"><a href="../index.html">← all variations</a> · <a href="onboarding.html">← onboarding</a></p>
+
+<script>
+(function(){
+  var GRID = [
+    "________________","__XX________XX__","_XXXX______XXXX_","XXPXXX____XXXPXX",
+    "XPPXXXXXXXXXXPPX","XPYXXXXXXXXXXYPX","XXXXXIWXXIWXXXXX","XXXXXIIXXIIXXXXX",
+    "XXXXXXXXXXXXXXXX","XXXXXIIIIIIXXXXX","_XXXXXXXXXXXXXX_","__XXXXXXXXXXXX__",
+    "____XXXXXXXX____","_____XXXXXX_____","______XXXX______","_______XX_______"
+  ];
+  var PALETTE = { X:"#bcb4cc", Y:"#9ea5b8", Z:"#b3a0ff", I:"#0d101b", W:"#ffffff", K:"#1a1d2c", P:"#f4b5d6" };
+  document.querySelectorAll(".pixel-avatar").forEach(function(el){
+    var svg = '<svg viewBox="0 0 128 128" width="100%" height="100%" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">';
+    GRID.forEach(function(row, y){
+      for (var x = 0; x < row.length; x++){
+        var c = PALETTE[row[x]];
+        if (!c) continue;
+        svg += '<rect x="'+x*8+'" y="'+y*8+'" width="8" height="8" fill="'+c+'"/>';
+      }
+    });
+    svg += '</svg>';
+    el.innerHTML = svg;
+  });
+  document.querySelector(".kcal").focus({ preventScroll:true });
+})();
+</script>
+</body>
+</html>

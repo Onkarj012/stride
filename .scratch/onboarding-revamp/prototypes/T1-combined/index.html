@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T1 Combined — Stride entry-arc prototypes</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f8f8f8; --card:#ffffff;
+    --muted:#6a7081; --subtle:#9099ad; --border:#ebebef; --border-strong:#d9d9e0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh}
+  .wrap{max-width:920px;margin:0 auto;padding:56px 28px 80px}
+  header p.kicker{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:2px;color:var(--subtle);text-transform:uppercase}
+  h1{font-size:34px;font-weight:800;letter-spacing:-1px;margin-top:10px;line-height:1.15}
+  .intro{color:var(--muted);font-size:15px;line-height:1.6;margin-top:14px;max-width:680px}
+  .intro b{color:var(--ink)}
+
+  .dna{margin-top:26px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px 22px}
+  .dna h2{font-size:13px;letter-spacing:1px;text-transform:uppercase;color:var(--subtle);font-weight:800}
+  .dna ul{margin-top:12px;padding-left:0;list-style:none;display:grid;gap:8px;font-size:13.5px;color:var(--muted)}
+  .dna li b{color:var(--ink)}
+
+  .variation{margin-top:34px;border:1px solid var(--border);border-radius:20px;padding:26px 26px 22px;background:var(--card)}
+  .variation h2{font-size:22px;font-weight:800;letter-spacing:-.4px;display:flex;align-items:baseline;gap:10px}
+  .variation h2 .tag{font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1.5px;color:var(--lav);background:var(--lav-soft);padding:4px 9px;border-radius:9999px;text-transform:uppercase}
+  .variation .desc{color:var(--muted);font-size:14px;line-height:1.6;margin-top:10px;max-width:640px}
+  .variation .desc b{color:var(--ink)}
+  .spec{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--subtle)}
+  .spec span b{color:var(--ink);font-weight:700}
+  .links{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}
+  .links a{display:inline-flex;align-items:center;gap:6px;background:var(--ink);color:#fff;border-radius:9999px;padding:10px 18px;font-size:13px;font-weight:700;text-decoration:none}
+  .links a:hover{background:#23263a}
+  .links a:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  footer{margin-top:40px;color:var(--subtle);font-size:12px;line-height:1.6}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <p class="kicker">Stride — T1 visual north-star · combined direction</p>
+      <h1>One identity, three motion characters</h1>
+      <p class="intro">
+        Synthesis of two rounds of prototypes into a single combined direction, built as
+        <b>3 variations</b> that share the same fonts, palette, numbered-progress device,
+        and core identity — but differ in how a step transitions, how the progress device
+        is arranged, and how the plan reveal choreographs. Auth is a deliberately dark,
+        mascot-minimized "chamber" in every variation (per R2: auth and onboarding cannot
+        share one mounted component, so continuity here is visual-language-only, not literal
+        continuity). Onboarding and plan-reveal share a light register and are the same
+        mounted tree.
+      </p>
+    </header>
+
+    <div class="dna">
+      <h2>Shared DNA (identical across all 3)</h2>
+      <ul>
+        <li><b>Type:</b> Manrope (400–800) for headlines/UI, JetBrains Mono for progress labels, mono ledgers and meta text.</li>
+        <li><b>Palette:</b> ink #0d101b + lavender #b3a0ff as the universal accent; light paper/card surfaces for onboarding + plan-reveal; a dark #0c0e16 "chamber" for auth.</li>
+        <li><b>Numbered-progress device:</b> a hollow, outline-only numeral (Manrope 800, -webkit-text-stroke) paired with a tick rail — from T1/coachs-notebook — reused in every variation, just re-arranged (side rail / top bar / centered dial).</li>
+        <li><b>Mascot:</b> Stry's pixel avatar (T1/coachs-notebook) is the full persona presence in onboarding + plan-reveal; reduced to a 6px signal dot at auth (T1-batch2/darkroom) — same reduction in all 3 variations.</li>
+        <li><b>A11y (R1):</b> focus → <code>&lt;h2 tabindex="-1"&gt;</code> per step; one polite live region for validation only; real <code>role="progressbar"</code> with true <code>aria-valuenow</code>; validate-before-advance; opacity-only under <code>prefers-reduced-motion</code>; ≤250ms, ≤24px translate everywhere.</li>
+      </ul>
+    </div>
+
+    <section class="variation">
+      <h2>Rail Drift <span class="tag">calm · vertical drift</span></h2>
+      <p class="desc">
+        The most patient of the three. The numeral + tick rail sits as a persistent
+        <b>vertical column beside the question</b> — coachs-notebook's exact side-rail
+        arrangement. Steps rise up from below and settle (220ms, translateY 20px,
+        cubic-bezier(.22,1,.36,1)), mirroring that source's up/down convention. The plan
+        reveal doesn't pop all at once — its ledger rows <b>cascade in sequentially</b>
+        (60ms stagger, vertical rise), the slowest and most deliberate unveiling of the
+        three. This is the direction that reads closest to a quiet, considered coaching
+        session.
+      </p>
+      <div class="spec">
+        <span><b>Transition:</b> directional vertical slide+fade</span>
+        <span><b>Timing:</b> 220ms / cubic-bezier(.22,1,.36,1) / 20px</span>
+        <span><b>Progress layout:</b> left vertical rail</span>
+        <span><b>Reveal choreography:</b> sequential vertical cascade</span>
+      </div>
+      <div class="links">
+        <a href="rail-drift/auth.html">Auth</a>
+        <a href="rail-drift/onboarding.html">Onboarding step</a>
+        <a href="rail-drift/plan-reveal.html">Plan reveal</a>
+      </div>
+    </section>
+
+    <section class="variation">
+      <h2>Route Swing <span class="tag">brisk · horizontal + staggered</span></h2>
+      <p class="desc">
+        The most energetic of the three. The numeral + tick rail is bent into a
+        <b>horizontal bar across the top</b> — wayfinding's route-line arrangement built
+        from the same hollow-numeral device. Steps swing in from the right (180ms,
+        translateX 24px, a snappier cubic-bezier(.32,.72,0,1)), and once the card lands,
+        the answer options themselves <b>stagger in individually</b> (28ms/item) — a
+        distinct transition style from the other two (staggered-element reveal, not a
+        single block fade). The plan reveal keeps the horizontal logic: the macro bar
+        <b>sweeps left-to-right</b> and the legend/ledger stagger in the same direction.
+      </p>
+      <div class="spec">
+        <span><b>Transition:</b> directional horizontal slide + staggered options</span>
+        <span><b>Timing:</b> 180ms / cubic-bezier(.32,.72,0,1) / 24px</span>
+        <span><b>Progress layout:</b> top horizontal bar</span>
+        <span><b>Reveal choreography:</b> left-to-right sweep + stagger</span>
+      </div>
+      <div class="links">
+        <a href="route-swing/auth.html">Auth</a>
+        <a href="route-swing/onboarding.html">Onboarding step</a>
+        <a href="route-swing/plan-reveal.html">Plan reveal</a>
+      </div>
+    </section>
+
+    <section class="variation">
+      <h2>Dial Snap <span class="tag">fast · pure crossfade</span></h2>
+      <p class="desc">
+        The fastest and simplest of the three — a deliberate contrast case. The numeral
+        is bent into a <b>centered circular dial</b> whose ring fills as you progress,
+        rather than a rail or bar. Steps don't slide in any direction at all: they
+        <b>crossfade only</b>, no translate, at 150ms — right at R1's motion floor. The
+        plan reveal follows suit: the whole card resolves in one fast fade, no cascade,
+        no stagger — the direct opposite of Rail Drift's sequential reveal and Route
+        Swing's staggered sweep. This is the direction for a user who wants to move
+        through the flow quickly without motion getting in the way.
+      </p>
+      <div class="spec">
+        <span><b>Transition:</b> pure opacity crossfade, no translate</span>
+        <span><b>Timing:</b> 150ms / ease-out / 0px</span>
+        <span><b>Progress layout:</b> centered dial</span>
+        <span><b>Reveal choreography:</b> single fast crossfade</span>
+      </div>
+      <div class="links">
+        <a href="dial-snap/auth.html">Auth</a>
+        <a href="dial-snap/onboarding.html">Onboarding step</a>
+        <a href="dial-snap/plan-reveal.html">Plan reveal</a>
+      </div>
+    </section>
+
+    <footer>
+      Throwaway prototypes for ticket T1 (Entry Experience Revamp). Not shipped code —
+      see <code>.scratch/onboarding-revamp/tickets/T1-visual-north-star.md</code>.
+      Source ingredients: <code>prototypes/T1/coachs-notebook/onboarding.html</code>,
+      <code>prototypes/T1-batch2/darkroom/{auth,plan-reveal}.html</code>,
+      <code>prototypes/T1-batch2/wayfinding/onboarding.html</code>,
+      <code>prototypes/T1-batch2/soft-terrain/{onboarding,plan-reveal}.html</code>.
+    </footer>
+  </div>
+</body>
+</html>

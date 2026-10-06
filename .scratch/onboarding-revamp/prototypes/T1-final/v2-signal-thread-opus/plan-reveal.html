@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Thread — Plan reveal · Stride T1-final</title>
+<!--
+  T1-final "SIGNAL THREAD" — plan reveal, matched to the fixed-frame onboarding.
+
+  PAYOFF MOTION (new):
+   - The kcal figure now COUNTS UP to 2,140 (easeOutCubic, ~1.3s, tabular-nums so the
+     width never jitters), the culmination of the 8 steps — replacing the old
+     ghost->real crossfade. Reduced motion drops straight to the final number.
+   - The macro bar grows from zero width alongside the count, so the number and its
+     composition resolve together.
+
+  CONTINUITY WITH ONBOARDING (the "questions -> plan" transition):
+   - Onboarding's last step lifts up and fades as it leaves; this screen ENTERS rising
+     up into place with the same easing — one continuous upward travel through the arc,
+     not a cut.
+   - The signal thread arrives and "completes": its 8 segments light left-to-right on
+     load (echoing the 8 answered steps snapping shut), then settle fully lit under a
+     "Complete" label — the same thread device from auth (dim "Entry") and onboarding
+     (counting progressbar), now resolved.
+   - Then the number counts, the bar grows, and the ledger rows cascade in — a short,
+     ordered reveal rather than everything appearing at once.
+
+  Continuity of DATA across the hard route boundary (R2) stays localStorage-only:
+  the name and picked-goal label persisted by onboarding are read here. No mascot art.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-deep:#6a5bbf; --lav-soft:#ede8ff; --bg:#f7f6f9; --card:#ffffff;
+    --muted:#6a7081; --subtle:#8890a3; --border:#ebebef; --border-strong:#d9d9e0;
+    --sky:#a0c6ff; --peach:#fdb572;
+    --dur:220ms; --ease:cubic-bezier(.22,1,.36,1); --ease-classy:cubic-bezier(.65,0,.35,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;overflow-x:hidden}
+  button{font:inherit}
+
+  .stagearea{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:56px 24px}
+
+  /* Whole stage rises up into place — continuous with onboarding's upward exit. */
+  .stage{display:flex;flex-direction:column;align-items:center;width:100%;animation:stageIn 320ms var(--ease) both}
+  @keyframes stageIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+
+  .thread-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;margin-bottom:28px;width:100%;max-width:360px}
+  .thread{display:flex;gap:5px;width:100%}
+  .thread .seg{flex:1;height:3px;border-radius:99px;background:var(--border-strong);transition:background 260ms var(--ease-classy),box-shadow 260ms var(--ease-classy)}
+  .thread .seg.on{background:var(--lav);box-shadow:0 0 6px 0 rgba(179,160,255,.4)}
+  .step-of{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--lav-deep);font-weight:700;letter-spacing:1.6px;text-transform:uppercase;opacity:0;transition:opacity 300ms var(--ease)}
+  .step-of.show{opacity:1}
+
+  .card{position:relative;width:100%;max-width:500px;background:var(--card);border:1px solid var(--border);border-radius:26px;padding:46px 44px 40px;box-shadow:0 40px 84px -52px rgba(13,16,27,.26)}
+
+  .cascade{opacity:0;transform:translateY(14px);animation:rise var(--dur) var(--ease) both}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .r1{animation-delay:60ms} .r2{animation-delay:120ms} .r3{animation-delay:360ms} .r4{animation-delay:440ms} .r5{animation-delay:520ms}
+
+  .label{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.8px;color:var(--subtle);text-transform:uppercase}
+
+  .kcal-wrap{margin-top:12px;line-height:.92;outline:none}
+  .kcal-num{display:block;font-weight:800;letter-spacing:-3.5px;font-size:clamp(60px,13vw,86px);color:var(--ink);font-variant-numeric:tabular-nums;text-shadow:0 0 40px rgba(179,160,255,.28)}
+  .unit{display:block;font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:500;letter-spacing:2.5px;color:var(--muted);margin-top:14px}
+  .who{font-size:13.5px;color:var(--muted);margin-top:12px;line-height:1.55;max-width:420px}
+
+  .spectrum{margin-top:28px;max-width:420px}
+  .bar{display:flex;height:12px;border-radius:9999px;overflow:hidden;background:var(--border)}
+  .bar span{display:block;height:100%;width:0;transition:width 900ms var(--ease)}
+  .bar.grow .p{width:27%} .bar.grow .c{width:40%} .bar.grow .f{width:33%}
+  .bar .p{background:var(--lav)} .bar .c{background:var(--sky)} .bar .f{background:var(--peach)}
+  .legend{display:flex;justify-content:space-between;margin-top:12px;font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--muted);flex-wrap:wrap;gap:6px}
+  .legend b{color:var(--ink);font-weight:700}
+  .legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;font-style:normal}
+
+  details{margin-top:24px;border:1px solid var(--border-strong);border-radius:14px;background:var(--card);padding:16px 18px;max-width:420px}
+  summary{cursor:pointer;font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--ink)}
+  .rows{margin-top:14px;display:grid;gap:9px;font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted)}
+  .rows div{display:flex;align-items:baseline;gap:8px}
+  .rows .dots{flex:1;border-bottom:1px dotted var(--border-strong);transform:translateY(-3px)}
+  .rows b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+  .rows .total b{color:var(--lav-deep)}
+
+  .actions{display:flex;gap:12px;margin-top:28px;max-width:420px}
+  .back{flex:none;background:none;border:1px solid var(--border-strong);color:var(--muted);border-radius:9999px;padding:14px 18px;font:700 13px "Manrope",sans-serif;cursor:pointer;transition:color .12s,border-color .12s}
+  .back:hover{color:var(--ink);border-color:var(--muted)}
+  .cta{flex:1;background:var(--ink);color:#fff;border:none;border-radius:9999px;padding:16px;font:800 14px "Manrope",sans-serif;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;box-shadow:0 12px 26px -12px rgba(13,16,27,.55);transition:transform .12s var(--ease)}
+  .cta .gly{transition:transform .16s var(--ease)}
+  .cta:hover .gly{transform:translateX(2px)}
+  .cta:active{transform:scale(.985)}
+  .back:focus-visible,.cta:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:5}
+  .proto-nav a{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .stage{animation:none}
+    .cascade{animation-duration:1ms;transform:none;opacity:1}
+    .bar span{transition:none}
+    .thread .seg{transition:none}
+    .step-of{transition:none;opacity:1}
+  }
+  @media(max-width:640px){
+    .card{padding:34px 26px}
+    .kcal-num{font-size:clamp(50px,16vw,68px)}
+  }
+</style>
+</head>
+<body>
+  <div class="stagearea">
+    <div class="stage" id="stage">
+      <div class="thread-wrap">
+        <div class="thread" id="thread" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="8" aria-label="Onboarding progress">
+          <span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+          <span class="seg"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span>
+        </div>
+        <span class="step-of" id="stepOf">Complete</span>
+      </div>
+
+      <div class="card">
+        <p class="label cascade r1" id="planLabel">Plan for you — complete</p>
+
+        <div class="kcal-wrap cascade r2" tabindex="-1" id="kcalHeading">
+          <span class="kcal-num" id="kcalNum">1,070</span>
+        </div>
+        <span class="unit cascade r2">kcal per day</span>
+        <p class="who cascade r2">Eight steps in. Every line of the math is below — recalculated at every check-in.</p>
+
+        <div class="spectrum cascade r3" role="group" aria-label="Daily macro split">
+          <div class="bar" id="macroBar" aria-hidden="true"><span class="p"></span><span class="c"></span><span class="f"></span></div>
+          <div class="legend">
+            <span><i style="background:#b3a0ff"></i>PROTEIN <b>145g</b></span>
+            <span><i style="background:#a0c6ff"></i>CARBS <b>214g</b></span>
+            <span><i style="background:#fdb572"></i>FAT <b>71g</b></span>
+          </div>
+        </div>
+
+        <details class="cascade r4">
+          <summary>The math behind it</summary>
+          <div class="rows">
+            <div><span>BMR (resting)</span><span class="dots"></span><b>1,685</b></div>
+            <div><span>NEAT — job</span><span class="dots"></span><b>+240</b></div>
+            <div><span>NEAT — lifestyle</span><span class="dots"></span><b>+180</b></div>
+            <div><span>Workouts (avg/day)</span><span class="dots"></span><b>+210</b></div>
+            <div><span>Thermic effect of food</span><span class="dots"></span><b>+165</b></div>
+            <div><span>Maintenance (TDEE)</span><span class="dots"></span><b>2,480</b></div>
+            <div class="total"><span id="goalLine">Goal adjustment — recomp</span><span class="dots"></span><b>−340</b></div>
+          </div>
+        </details>
+
+        <div class="actions cascade r5">
+          <button class="back" type="button" onclick="history.back()">← Back</button>
+          <button class="cta" type="button" id="startBtn">Start using Stride <span class="gly" aria-hidden="true">→</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="proto-nav"><a href="index.html">← restart demo</a> · <a href="onboarding.html">← onboarding</a></p>
+
+<script>
+(function(){
+  var REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var KCAL = 2140;
+  var $ = function(id){ return document.getElementById(id); };
+  function fmt(n){ return n.toLocaleString("en-US"); }
+
+  // Personalize from the fields onboarding persisted across the route boundary (R2).
+  try {
+    var name = (localStorage.getItem("strideProtoName") || "").trim();
+    if (name) $("planLabel").textContent = "Plan for " + name + " — complete";
+    var goalLabel = (localStorage.getItem("strideProtoGoalLabel") || "").trim();
+    if (goalLabel) $("goalLine").textContent = "Goal adjustment — " + goalLabel;
+  } catch (e) {}
+
+  var kcalEl = $("kcalNum");
+
+  // ── The 8 thread segments light left-to-right on arrival — the answered steps
+  //    "completing" — then the "Complete" label settles in. Continuity from
+  //    onboarding's counting progressbar to this resolved state.
+  function completeThread(){
+    var segs = $("thread").querySelectorAll(".seg");
+    if (REDUCED){
+      segs.forEach(function(s){ s.classList.add("on"); });
+      $("stepOf").classList.add("show");
+      return;
+    }
+    segs.forEach(function(s, k){
+      setTimeout(function(){ s.classList.add("on"); }, 120 + k * 55);
+    });
+    setTimeout(function(){ $("stepOf").classList.add("show"); }, 120 + segs.length * 55 + 80);
+  }
+
+  // ── kcal count-up: the culmination of the 8 steps. easeOutCubic, tabular-nums.
+  function countUp(){
+    if (REDUCED){ kcalEl.textContent = fmt(KCAL); return; }
+    var from = Math.round(KCAL * 0.5), dur = 1300, t0 = null;
+    kcalEl.textContent = fmt(from);
+    function frame(ts){
+      if (t0 == null) t0 = ts;
+      var p = Math.min(1, (ts - t0) / dur);
+      var e = 1 - Math.pow(1 - p, 3);
+      kcalEl.textContent = fmt(Math.round(from + (KCAL - from) * e));
+      if (p < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  }
+
+  completeThread();
+  // Sequence after the stage has risen into place: number counts, bar grows.
+  setTimeout(countUp, REDUCED ? 0 : 320);
+  setTimeout(function(){ $("macroBar").classList.add("grow"); }, REDUCED ? 0 : 520);
+
+  $("kcalHeading").focus({ preventScroll:true });
+  $("startBtn").addEventListener("click", function(){
+    try {
+      localStorage.removeItem("strideProtoName");
+      localStorage.removeItem("strideProtoGoalLabel");
+    } catch (e) {}
+    location.href = "index.html";
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Thread — Onboarding · Stride T1-final v2</title>
+<!--
+  T1-final variation "SIGNAL THREAD" (v2 of 3 parallel takes).
+
+  COMPOSITION — the brief flagged the old rail-drift onboarding as an asymmetric
+  two-column grid (numeral rail pinned left, content ragged beside it). This screen
+  throws that grid out. There is no vertical rail furniture anywhere. Everything sits
+  on one centered vertical axis: a slim horizontal SIGNAL THREAD (real progressbar)
+  above a single centered card. The "rail" idea survives only as texture *inside* the
+  card — a giant, barely-visible ghost numeral sitting behind the question, cropped by
+  the card's own edges. It is not furniture beside the content; it is the content's
+  own backdrop.
+
+  CROSS-SCREEN MOTION CONTINUITY — two devices carried straight from auth.html:
+    1. The signal thread itself: quiet/dim ("Entry") on auth, now a real, counted
+       progressbar here. Same segment shape, same lavender lit-state, same position
+       in the composition (top-center, above the card).
+    2. The ghost typographic device: auth showed a giant hollow "S" (brand mark).
+       Here that same hollow-outline treatment shows the step numeral instead —
+       01, 02, 03, 04 — cross-fading + drifting in lockstep with the card whenever a
+       step advances (same duration, same easing, so it reads as one coordinated
+       system, not a second, competing layer of parallax). On plan-reveal.html this
+       exact typographic slot resolves into the real, filled-in kcal number — ghost
+       becomes payoff.
+
+  NO MASCOT ART — Stry is present only as the same pulsing signal dot used on
+  auth.html (see .dot), next to a short persona line. No character art, no avatar
+  rendering of any kind — voice and motion carry the presence, not an illustration.
+
+  MOTION CEILING (R1) — step-card motion only, <=250ms, translate <=24px, opacity+
+  translate collapsing to opacity-only under prefers-reduced-motion. Real double-rAF
+  enter commit (carried over from rail-drift/onboarding-refined.html — the earlier
+  single-tick version never painted the in-between frame, so the drift silently
+  collapsed into a plain fade; fixed here the same way).
+
+  A11Y (R1) — one focused question per step (not a chat log); focus moves to the new
+  step's <h2 tabindex="-1">; a single polite live region announces "Step X of N: …"
+  slightly after the focus move (sequenced, never simultaneous, to avoid double-
+  speech); real role="progressbar" with aria-valuenow/min/max + aria-label; validate-
+  before-advance with aria-invalid + aria-describedby on the answer group/field.
+
+  REAL FIELDS — the 4 demoed steps (name / goal / work / style) map 1:1 onto real
+  phases + copy + option sets in apps/web/src/pages/OnboardingPage.tsx (QUESTIONS,
+  GOALS, work occupationType options, coachingStyle options). This prototype shows a
+  representative subset, not the full 8-phase flow, so the thread here counts 4 real
+  steps rather than pretending to skip through phases that aren't rendered.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --bg:#f7f6f9; --card:#ffffff;
+    --input:#f3f3f6; --text:#0d101b; --muted:#6a7081; --subtle:#5c6178;
+    --border:#ebebef; --border-strong:#d9d9e0; --error:#b3261e;
+    --dur:220ms; --dur-exit:150ms; --dur-exit-reduced:90ms;
+    --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;min-height:100dvh;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  button{font:inherit}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+
+  /* Stry's presence: the same pulsing dot from auth.html, never a mascot render. */
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.5);animation:pulse 3s ease-in-out infinite;flex-shrink:0}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .badge{position:fixed;top:24px;left:24px;display:flex;align-items:center;gap:9px;z-index:10;font-size:12px;font-weight:700;color:var(--muted)}
+
+  /* ── Single centered axis. No rail column, no side-by-side grid. ── */
+  .stagearea{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:96px 24px 60px}
+
+  .thread-wrap{display:flex;flex-direction:column;align-items:center;gap:9px;margin-bottom:30px;width:100%;max-width:300px}
+  .thread{display:flex;gap:6px;width:100%}
+  .thread .seg{flex:1;height:3px;border-radius:99px;background:var(--border-strong);transition:background var(--dur) var(--ease)}
+  .thread .seg.on{background:var(--lav);box-shadow:0 0 6px 0 rgba(179,160,255,.4)}
+  .step-of{font-family:"JetBrains Mono",monospace;font-size:10.5px;color:var(--subtle);font-weight:500;letter-spacing:1.4px;text-transform:uppercase;transition:opacity 160ms var(--ease)}
+  .step-of.dim{opacity:.35}
+
+  .card{position:relative;overflow:hidden;width:100%;max-width:480px;min-height:400px;background:var(--card);border:1px solid var(--border);border-radius:24px;padding:44px 40px;box-shadow:0 30px 60px -40px rgba(13,16,27,.18)}
+
+  /* ── Ghost numeral: giant hollow step-count, cropped by the card edge.
+       Same typographic slot resolves into the real kcal number on plan-reveal. ── */
+  .ghost-num{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:flex-end;padding:8px 4px 0 0;pointer-events:none;z-index:0;overflow:hidden}
+  .ghost-num span{font-family:"Manrope",sans-serif;font-weight:800;letter-spacing:-9px;font-size:clamp(150px,30vw,230px);line-height:.78;color:transparent;-webkit-text-stroke:2px var(--ink);opacity:.055;transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease);display:block}
+  .ghost-num span.exit{opacity:0;transform:translateY(14px);transition:opacity var(--dur-exit) var(--ease-exit),transform var(--dur-exit) var(--ease-exit)}
+  .ghost-num span.enter-from-below{opacity:0;transform:translateY(20px)}
+  .ghost-num span.enter-from-above{opacity:0;transform:translateY(-20px)}
+
+  .card-inner{position:relative;z-index:1}
+  .step{transition:opacity var(--dur) var(--ease),transform var(--dur) var(--ease);will-change:opacity,transform}
+  .step.exit{opacity:0;transition:opacity var(--dur-exit) var(--ease-exit)}
+  .step.enter-from-below{opacity:0;transform:translateY(20px)}
+  .step.enter-from-above{opacity:0;transform:translateY(-20px)}
+
+  .persona-line{display:flex;align-items:center;gap:9px;color:var(--subtle);font-size:12.5px;font-style:italic;margin-bottom:14px}
+  h2{font-size:25px;font-weight:800;letter-spacing:-.5px;line-height:1.28;outline:none;max-width:400px}
+  .gatetag{display:inline-block;background:var(--lav-soft);color:var(--ink);font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:500;letter-spacing:1px;padding:4px 10px;border-radius:9999px;text-transform:uppercase;margin-bottom:12px}
+
+  .field{margin-top:22px;max-width:400px}
+  .name-row{display:flex;gap:10px;margin-top:22px;max-width:400px}
+  .name-row input{flex:1;min-width:0;background:var(--input);border:1px solid var(--border);border-radius:12px;padding:13px 15px;font:600 15px "Manrope",sans-serif;color:var(--text);outline:none;transition:border-color .15s}
+  .name-row input:focus{border-color:var(--lav)}
+  .name-row input:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px;max-width:400px}
+  .choices.cols3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:520px){ .choices,.choices.cols3{grid-template-columns:1fr 1fr} }
+  .choice{position:relative;background:var(--input);border:1px solid var(--border);border-radius:12px;padding:13px;text-align:left;cursor:pointer;font-family:inherit;font-size:13.5px;font-weight:700;color:var(--text);transition:border-color .12s var(--ease),background-color .16s var(--ease),opacity .16s var(--ease)}
+  .choice:hover{border-color:var(--border-strong);background:#ececf1}
+  .choice[aria-pressed="true"]{background:rgba(179,160,255,.14);border-color:var(--lav)}
+  .choice[aria-pressed="true"]::after{content:"";position:absolute;top:11px;right:11px;width:7px;height:7px;border-radius:50%;background:var(--lav)}
+  .choice .sub{display:block;font-weight:500;color:var(--subtle);font-size:11px;margin-top:2px}
+  .choice:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  @keyframes choicePulse{0%{transform:scale(1)}45%{transform:scale(.965)}100%{transform:scale(1)}}
+  .choice.picked{animation:choicePulse 260ms var(--ease)}
+  .choices.deciding .choice:not([aria-pressed="true"]){opacity:.45}
+
+  .hours{display:flex;align-items:center;gap:8px;margin-top:14px}
+  .hours label{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.2px;color:var(--subtle);text-transform:uppercase}
+  .hours input{width:56px;text-align:center;background:var(--input);border:1px solid var(--border);border-radius:10px;padding:8px 6px;font:700 13.5px "Manrope",sans-serif;color:var(--text);outline:none}
+  .hours input:focus{border-color:var(--lav)}
+  .hours span{font-size:12px;color:var(--muted)}
+
+  .err{font-size:12.5px;color:var(--error);margin-top:14px;font-weight:600;max-width:400px}
+  @keyframes errIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+  .err.show{animation:errIn 180ms var(--ease)}
+
+  .nav{margin-top:28px;display:flex;justify-content:space-between;align-items:center;max-width:400px}
+  .btn{border-radius:9999px;padding:12px 22px;font-weight:700;font-size:13.5px;border:none;cursor:pointer;font-family:inherit}
+  .btn:focus-visible{outline:2px solid var(--lav);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff;transition:opacity .12s var(--ease)}
+  .btn.primary[aria-disabled="true"]{opacity:.35;cursor:not-allowed}
+  .btn.text{background:transparent;color:var(--muted)}
+  .btn.text:hover{color:var(--text)}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:5}
+  .proto-nav a{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .step,.step.exit,.ghost-num span,.ghost-num span.exit{transition:opacity var(--dur-exit-reduced) linear !important}
+    .step.enter-from-below,.step.enter-from-above,.ghost-num span.enter-from-below,.ghost-num span.enter-from-above{transform:none}
+    .thread .seg{transition:background var(--dur-exit-reduced) linear}
+    .step-of{transition:opacity var(--dur-exit-reduced) linear}
+    .choice.picked{animation:none}
+    .choice{transition:border-color .12s linear,background-color .12s linear,opacity .12s linear}
+    .err.show{animation:none}
+  }
+  @media(max-width:640px){
+    .card{padding:34px 24px;border-radius:20px}
+    .ghost-num span{font-size:clamp(110px,42vw,170px);letter-spacing:-6px}
+  }
+</style>
+</head>
+<body>
+  <div class="badge"><span class="dot" aria-hidden="true"></span><span>Coached by Stry</span></div>
+
+  <div class="stagearea">
+    <div class="thread-wrap">
+      <div class="thread" id="thread" role="progressbar" aria-valuemin="1" aria-valuemax="4" aria-valuenow="1" aria-label="Onboarding progress"></div>
+      <span class="step-of" id="stepOf">STEP 1 OF 4</span>
+    </div>
+
+    <div class="card" id="card">
+      <div class="ghost-num" aria-hidden="true"><span id="ghostNum">01</span></div>
+      <div class="card-inner">
+        <div class="step" id="step">
+          <div class="persona-line"><span class="dot" aria-hidden="true"></span><span id="persona"></span></div>
+          <span class="gatetag" id="gate"></span>
+          <h2 tabindex="-1" id="q"></h2>
+          <div id="controls"></div>
+          <p class="err" id="err" hidden></p>
+          <div class="nav">
+            <button class="btn text" id="back" type="button">Back</button>
+            <button class="btn primary" id="continue" type="button" aria-disabled="true">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="index.html">← start</a> · <a href="auth.html">auth</a> · <a href="plan-reveal.html">plan reveal →</a></p>
+
+<script>
+(function(){
+  var REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var EXIT_MS = REDUCED ? 90 : 150;
+  var PICK_HOLD_MS = REDUCED ? 160 : 260;
+  var LEAVE_MS = REDUCED ? 90 : 190;
+  var TOTAL = 4;
+
+  // Real fields/copy, lifted 1:1 from apps/web/src/pages/OnboardingPage.tsx
+  // (QUESTIONS, GOALS, work occupationType options, coachingStyle options).
+  var STEPS = [
+    { now:1, kind:"text", gate:"Intro", q:"First — what should I call you?",
+      persona:"“Hey, I'm Stry. I'll build you a science-based plan.”",
+      err:"Tell me what to call you to keep going." },
+    { now:2, kind:"choices", gate:"Goal", q:"What are you aiming for right now?",
+      persona:"“This shapes the whole plan.”", cols:2,
+      options:[
+        {v:"aggressive_loss",name:"Lose fat fast",sub:"~25% deficit"},
+        {v:"moderate_loss",name:"Lose fat",sub:"~18% deficit"},
+        {v:"maintain",name:"Maintain",sub:"Stay here"},
+        {v:"recomp",name:"Recomp",sub:"Lose fat, gain muscle"},
+        {v:"lean_gain",name:"Lean gain",sub:"~10% surplus"},
+        {v:"muscle_gain",name:"Build muscle",sub:"~18% surplus"} ],
+      autoAdvance:true, err:"Pick one to keep going." },
+    { now:3, kind:"choices+hours", gate:"Work", q:"What's your job like during the day?",
+      persona:"“Rough numbers are fine.”", cols:2,
+      options:[
+        {v:"desk",name:"Desk",sub:"Mostly seated"},
+        {v:"mixed",name:"Mixed",sub:"Sit + move"},
+        {v:"standing",name:"Standing",sub:"On your feet"},
+        {v:"physical",name:"Physical",sub:"Manual labor"} ],
+      err:"Pick one to keep going." },
+    { now:4, kind:"choices", gate:"Style", q:"How should I talk to you day to day?",
+      persona:"“Last thing.”", cols:3,
+      options:[
+        {v:"gentle",name:"Gentle",sub:"Warm"},
+        {v:"motivating",name:"Motivating",sub:"High-energy"},
+        {v:"analytical",name:"Analytical",sub:"Data-first"} ],
+      autoAdvance:true, err:"Pick one to keep going." }
+  ];
+
+  var i = 0, picked = null, nameVal = "", hoursVal = "8";
+  var $ = function(id){ return document.getElementById(id); };
+
+  function renderThread(now){
+    var el = $("thread"); el.innerHTML = "";
+    for (var n = 1; n <= TOTAL; n++){
+      var s = document.createElement("span");
+      s.className = "seg" + (n <= now ? " on" : "");
+      el.appendChild(s);
+    }
+    el.setAttribute("aria-valuenow", now);
+  }
+
+  function buildControls(step){
+    var host = $("controls"); host.innerHTML = "";
+    if (step.kind === "text"){
+      var row = document.createElement("div"); row.className = "name-row";
+      var input = document.createElement("input");
+      input.type = "text"; input.id = "nameInput"; input.placeholder = "Your name";
+      input.setAttribute("aria-label", "Your name"); input.setAttribute("aria-describedby", "err");
+      input.setAttribute("aria-invalid", "false");
+      input.value = nameVal; input.autocomplete = "given-name";
+      input.addEventListener("input", function(){
+        nameVal = input.value; updateContinue();
+        if (nameVal.trim()) input.setAttribute("aria-invalid", "false");
+      });
+      input.addEventListener("keydown", function(e){ if (e.key === "Enter") tryAdvance(); });
+      row.appendChild(input);
+      host.appendChild(row);
+      // Deliberately not auto-focusing this input: focus goes to the step <h2>
+      // (see paint()) for every step, text or choice, so the a11y contract stays
+      // uniform across the whole flow rather than special-casing the text step.
+      return;
+    }
+    var group = document.createElement("div");
+    group.className = "choices" + (step.cols === 3 ? " cols3" : "");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-labelledby", "q");
+    group.setAttribute("aria-describedby", "err");
+    group.setAttribute("aria-invalid", "false");
+    group.id = "options";
+    step.options.forEach(function(o){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "choice"; b.setAttribute("aria-pressed", "false");
+      b.innerHTML = "<span>" + o.name + "</span><span class=\"sub\">" + o.sub + "</span>";
+      b.addEventListener("click", function(){ select(o.v, b, step); });
+      group.appendChild(b);
+    });
+    host.appendChild(group);
+    if (step.kind === "choices+hours"){
+      var hrs = document.createElement("div"); hrs.className = "hours";
+      var lab = document.createElement("label"); lab.setAttribute("for", "hoursInput"); lab.textContent = "Work hours / day";
+      var inp = document.createElement("input");
+      inp.type = "number"; inp.id = "hoursInput"; inp.min = "1"; inp.max = "16"; inp.value = hoursVal;
+      inp.addEventListener("input", function(){ hoursVal = inp.value; });
+      var unit = document.createElement("span"); unit.textContent = "hrs";
+      hrs.appendChild(lab); hrs.appendChild(inp); hrs.appendChild(unit);
+      host.appendChild(hrs);
+    }
+  }
+
+  function isValid(step){
+    if (step.kind === "text") return nameVal.trim().length > 0;
+    return picked != null;
+  }
+
+  function updateContinue(){
+    var step = STEPS[i];
+    $("continue").setAttribute("aria-disabled", isValid(step) ? "false" : "true");
+  }
+
+  function paint(){
+    var s = STEPS[i];
+    $("ghostNum").textContent = String(s.now).padStart(2, "0");
+    $("stepOf").textContent = "STEP " + s.now + " OF " + TOTAL;
+    renderThread(s.now);
+    $("gate").textContent = s.gate;
+    $("q").textContent = s.q;
+    $("persona").textContent = s.persona;
+    picked = null;
+    buildControls(s);
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("err").textContent = s.err;
+    $("continue").setAttribute("aria-disabled", isValid(s) ? "false" : "true");
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    $("q").setAttribute("tabindex", "-1");
+    $("q").focus({ preventScroll:true });
+    clearTimeout(paint._live);
+    paint._live = setTimeout(function(){
+      $("live").textContent = "Step " + s.now + " of " + TOTAL + ": " + s.gate;
+    }, 60); // sequenced after the focus move — never announced in the same tick (R1)
+  }
+
+  // Card + ghost numeral drift together, same duration/easing — one coordinated
+  // system, not two competing speeds. Double-rAF commit so the browser actually
+  // paints the pre-transition frame before the transition class is removed.
+  function render(dir){
+    var el = $("step"), ghost = $("ghostNum");
+    if (!dir){ paint(); return; }
+    el.classList.add("exit");
+    ghost.classList.add("exit");
+    $("stepOf").classList.add("dim");
+    setTimeout(function(){
+      el.classList.remove("exit");
+      ghost.classList.remove("exit");
+      var enterCls = dir === 1 ? "enter-from-below" : "enter-from-above";
+      el.classList.add(enterCls);
+      ghost.classList.add(enterCls);
+      paint();
+      $("stepOf").classList.remove("dim");
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          el.classList.remove("enter-from-below", "enter-from-above");
+          ghost.classList.remove("enter-from-below", "enter-from-above");
+        });
+      });
+    }, EXIT_MS);
+  }
+
+  function select(v, btn, step){
+    picked = v;
+    document.querySelectorAll(".choice").forEach(function(o){ o.setAttribute("aria-pressed", o === btn ? "true" : "false"); });
+    $("continue").setAttribute("aria-disabled", "false");
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    var group = $("options"); if (group) group.setAttribute("aria-invalid", "false");
+    if (group) group.classList.add("deciding");
+    if (!REDUCED){
+      btn.classList.remove("picked"); void btn.offsetWidth; btn.classList.add("picked");
+    }
+    if (step.autoAdvance){
+      clearTimeout(select._t);
+      select._t = setTimeout(function(){ tryAdvance(); }, PICK_HOLD_MS);
+    }
+  }
+
+  function tryAdvance(){
+    var step = STEPS[i];
+    if (!isValid(step)){
+      $("err").hidden = false;
+      $("err").classList.remove("show"); void $("err").offsetWidth; $("err").classList.add("show");
+      var group = $("options"); if (group) group.setAttribute("aria-invalid", "true");
+      var input = $("nameInput"); if (input) input.setAttribute("aria-invalid", "true");
+      $("live").textContent = step.err;
+      return;
+    }
+    if (i + 1 >= STEPS.length){
+      // Real onboarding has a hard session/route boundary between screens (R2) —
+      // nothing stays mounted, so anything worth carrying forward (the name
+      // captured on step 1) has to survive via persistence, not shared state.
+      try { localStorage.setItem("strideProtoName", nameVal.trim()); } catch (e) {}
+      leaveTo("plan-reveal.html");
+      return;
+    }
+    i++; render(1);
+  }
+
+  function goBack(){
+    if (i === 0) return;
+    i--; render(-1);
+  }
+
+  function leaveTo(url){
+    var scene = $("card"), wrap = document.querySelector(".thread-wrap"), badge = document.querySelector(".badge");
+    [scene, wrap, badge].forEach(function(el){ if (el) el.style.transition = "opacity " + LEAVE_MS + "ms " + "cubic-bezier(.4,0,1,1)"; if (el) el.style.opacity = "0"; });
+    setTimeout(function(){ location.href = url; }, LEAVE_MS);
+  }
+
+  $("continue").addEventListener("click", tryAdvance);
+  $("back").addEventListener("click", goBack);
+  render(0);
+})();
+</script>
+</body>
+</html>

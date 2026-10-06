@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aloft Signal — Auth · Stride T1-final</title>
+<!--
+  VARIATION "ALOFT SIGNAL" (v1 of 3 parallel takes on Rail Drift, T1-final).
+  Composition call: kill the side rail entirely, on every screen, including this one.
+  What used to be a left-column tick-rail preview is now a single floating device —
+  "the Beacon" — centered ABOVE the card, dead-center composition, single column,
+  no asymmetric grid anywhere in the arc. The Beacon is the one thing that survives
+  the character-mascot's removal: presence via a pulsing signal dot + mono readout, never
+  character art. It is not one persisted DOM node (Clerk's <Show> boundary makes that
+  impossible per R2) — it's the same markup/CSS/motion signature re-rendered fresh on
+  every screen, so continuity is pure visual grammar: identical dot, identical type,
+  identical --dur/--ease timing, identical "rises up" entrance every time.
+  This screen keeps its approved chamber (dark, signal dot, "Studio's open") untouched.
+  The only change here is swapping the old side-rail preview for the Beacon, and adding
+  a matching EXIT rise (chamber lifts + fades on submit) timed to the ENTER rise the
+  next screen plays — so the seam between two separately-loaded files still reads as
+  one continuous motion, not a hard cut.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --bg:#0c0e16; --card:#161927; --line:#21243a; --line-strong:#2c3045;
+    --text:#eceaf5; --muted:#8b91a6; --subtle:#63697f;
+    --lav:#b3a0ff; --sky:#a0c6ff;
+    --dur:220ms; --dur-exit:190ms; --dur-exit-reduced:90ms;
+    --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;overflow-x:hidden}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  button{font:inherit}
+
+  .topline{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:22px 28px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;color:var(--subtle);text-transform:uppercase;z-index:5}
+  .topline .brand{color:var(--text);font-weight:700}
+
+  .arc{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;padding:110px 24px 60px}
+
+  /* ── The Beacon: the cross-screen continuity device ── */
+  .rise{opacity:0;transform:translateY(14px);animation:rise var(--dur) var(--ease) both}
+  @keyframes rise{to{opacity:1;transform:none}}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+
+  .beacon{display:inline-flex;align-items:center;gap:10px;padding:9px 18px;border-radius:9999px;background:var(--card);border:1px solid var(--line-strong);animation:rise var(--dur) var(--ease) both, bob 4.5s ease-in-out 220ms infinite}
+  .b-dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.55);animation:pulse 3s ease-in-out infinite;flex-shrink:0}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  .b-label{font-family:"JetBrains Mono",monospace;font-size:10.5px;letter-spacing:2px;color:var(--subtle);text-transform:uppercase}
+  .b-ticks{display:flex;gap:5px;animation:rise var(--dur) var(--ease) 60ms both}
+  .b-ticks .tick{width:14px;height:2.5px;border-radius:2px;background:var(--line-strong)}
+  .b-ticks .tick.on{background:var(--lav)}
+
+  .chamber{width:100%;max-width:360px;animation:rise var(--dur) var(--ease) 110ms both}
+
+  .signal{display:flex;align-items:center;gap:9px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:1.5px;color:var(--muted);text-transform:uppercase}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.55);animation:pulse 3s ease-in-out infinite}
+  h1{font-size:27px;font-weight:800;letter-spacing:-.5px;margin-top:16px;line-height:1.2}
+  .sub{font-size:13.5px;color:var(--muted);margin-top:8px;line-height:1.55}
+
+  form{margin-top:28px;display:grid;gap:18px}
+  label{display:grid;gap:7px}
+  .lab{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.8px;color:var(--subtle);text-transform:uppercase}
+  input{background:transparent;border:none;border-bottom:1px solid var(--line-strong);padding:9px 2px;color:var(--text);font:500 15px "Manrope",sans-serif;outline:none;transition:border-color .15s,box-shadow .15s;border-radius:0}
+  input:focus{border-bottom-color:var(--lav);box-shadow:0 1px 0 0 var(--lav),0 12px 28px -18px rgba(179,160,255,.8)}
+  input::placeholder{color:var(--subtle)}
+  .submit{margin-top:8px;background:var(--lav);color:#0d101b;border:none;border-radius:9999px;padding:14px;font:800 13.5px "Manrope",sans-serif;cursor:pointer;box-shadow:0 0 24px -6px rgba(179,160,255,.65);transition:box-shadow .15s,transform .12s}
+  .submit:hover{box-shadow:0 0 34px -4px rgba(179,160,255,.85)}
+  .submit:active{transform:scale(.98)}
+  .submit:focus-visible, .google:focus-visible, input:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  .or{display:flex;align-items:center;gap:12px;color:var(--subtle);font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:2px;margin:2px 0}
+  .or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+  .google{display:flex;align-items:center;justify-content:center;gap:10px;background:transparent;border:1px solid var(--line-strong);color:var(--text);border-radius:9999px;padding:13px;font:700 13px "Manrope",sans-serif;cursor:pointer;transition:border-color .15s,transform .12s}
+  .google:hover{border-color:var(--muted)}
+  .google:active{transform:scale(.98)}
+  .switch{text-align:center;font-size:12.5px;color:var(--muted);margin-top:24px}
+  .switch a{color:var(--lav);font-weight:700;text-decoration:none}
+  /* In production: <div id="clerk-captcha"> sits inside this form on the sign-up variant; the chamber is height-flexible. */
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:5}
+  .proto-nav a{color:var(--text)}
+
+  body.leaving .arc{transition:opacity var(--dur-exit) var(--ease-exit),transform var(--dur-exit) var(--ease-exit);opacity:0;transform:translateY(-10px)}
+
+  @media (prefers-reduced-motion: reduce){
+    .chamber,.beacon,.b-ticks{animation:none !important;opacity:1;transform:none}
+    .dot,.b-dot{animation:none}
+    body.leaving .arc{transition:opacity var(--dur-exit-reduced) linear;transform:none}
+  }
+</style>
+</head>
+<body>
+  <div class="topline"><span class="brand">STRIDE</span><span>arc · 00</span></div>
+
+  <main class="arc">
+    <div class="beacon" aria-hidden="true">
+      <span class="b-dot"></span>
+      <span class="b-label">Entry</span>
+    </div>
+    <div class="b-ticks" aria-hidden="true">
+      <span class="tick on"></span><span class="tick"></span><span class="tick"></span><span class="tick"></span>
+    </div>
+
+    <div class="chamber">
+      <p class="signal"><span class="dot" aria-hidden="true"></span>Studio's open</p>
+      <h1 tabindex="-1">Back in the studio.</h1>
+      <p class="sub">Your plan kept the light on. Sign in to continue.</p>
+
+      <form id="signinForm">
+        <label><span class="lab">Email</span>
+          <input type="email" placeholder="you@example.com" autocomplete="email">
+        </label>
+        <label><span class="lab">Password</span>
+          <input type="password" placeholder="••••••••" autocomplete="current-password">
+        </label>
+        <button class="submit" type="submit">Sign in</button>
+        <div class="or">or</div>
+        <button class="google" type="button" id="googleBtn">
+          <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Continue with Google
+        </button>
+      </form>
+      <p class="switch">First visit? <a href="onboarding.html" id="switchLink">Create your studio</a></p>
+    </div>
+  </main>
+  <p class="proto-nav"><a href="index.html">← all screens</a> · <a href="onboarding.html">onboarding →</a></p>
+
+<script>
+(function(){
+  var REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function leave(href){
+    document.body.classList.add('leaving');
+    setTimeout(function(){ location.href = href; }, REDUCED ? 0 : 190);
+  }
+  document.getElementById('signinForm').addEventListener('submit', function(e){
+    e.preventDefault(); leave('onboarding.html');
+  });
+  document.getElementById('googleBtn').addEventListener('click', function(){ leave('onboarding.html'); });
+  document.getElementById('switchLink').addEventListener('click', function(e){ e.preventDefault(); leave('onboarding.html'); });
+})();
+</script>
+</body>
+</html>

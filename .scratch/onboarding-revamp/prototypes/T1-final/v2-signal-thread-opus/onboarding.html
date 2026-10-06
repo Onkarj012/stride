@@ -1,0 +1,844 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Thread (fixed frame) — Onboarding · Stride T1-final</title>
+<!--
+  T1-final "SIGNAL THREAD" — LANDSCAPE, FIXED-FRAME pass (orchestrator's own version).
+
+  Structural change this pass: the card is now a FIXED-SIZE frame (fixed width AND
+  height) — content swaps inside it, the frame itself never resizes between steps.
+  That makes the whole composition stable: the progress thread sits in one fixed
+  place, the left sidebar and right form each animate inside their own stationary
+  region instead of the card growing/shrinking and shoving everything around (the
+  source of the jitter). Steps taller than the frame (the training builder with many
+  rows) scroll INSIDE the fixed content region, so the frame still never grows.
+
+  - Left sidebar carries the moving voice: the step's gate label + Stry's persona
+    line + the hero ghost numeral, all animating freely in their fixed column.
+  - Right side carries the form only: question + controls, on one shared content
+    width so every input / choice / field lines up to the same left AND right edge
+    (no ragged right gap, no dead right padding).
+  - Removed the "Coached by Stry" badge and the "STEP 02 · STATS" caption per note.
+  - Choice cards sized down to a natural rectangle (no oversized hardcoded box).
+
+  Everything else carried forward: real 8-phase flow, free-text on every choice step,
+  plain inputs, ghost-numeral typography (soft lavender, its own non-bouncy beat), no
+  mascot/pixel art. Step content stays within the R1 ceiling (<=250ms, <=24px, opacity
+  under reduced motion); one focused question per step, focus-to-h2, single polite
+  live region sequenced after focus, real progressbar, validate-before-advance.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-deep:#6a5bbf; --lav-soft:#ede8ff; --bg:#f7f6f9; --card:#ffffff;
+    --rail:#faf9fe; --input:#f3f3f6; --text:#0d101b; --muted:#6a7081; --subtle:#5c6178;
+    --border:#ebebef; --border-strong:#d9d9e0; --error:#b3261e;
+
+    --dur:220ms; --dur-exit:150ms; --dur-child:240ms; --dur-exit-reduced:110ms;
+    --ease:cubic-bezier(.22,1,.36,1); --ease-exit:cubic-bezier(.4,0,1,1);
+
+    --ease-classy:cubic-bezier(.65,0,.35,1);
+    --dur-num-enter:600ms; --dur-num-exit:280ms; --dur-num-reduced:110ms;
+    --dur-side:340ms; --dur-side-exit:150ms;
+
+    --dur-thread:360ms;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:"Manrope",system-ui,sans-serif;min-height:100dvh;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+  button{font:inherit}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--lav);box-shadow:0 0 10px 2px rgba(179,160,255,.5);animation:pulse 3s ease-in-out infinite;flex-shrink:0}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  .stagearea{min-height:100dvh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:44px 24px}
+
+  /* ── Fixed-size landscape frame: fixed width AND height. Content swaps inside;
+       the frame never resizes between steps. ── */
+  .card{
+    position:relative;width:100%;max-width:940px;height:576px;
+    display:grid;grid-template-columns:316px 1fr;
+    background:var(--card);border:1px solid var(--border);border-radius:28px;overflow:hidden;
+    box-shadow:0 44px 90px -55px rgba(13,16,27,.28);
+    animation:cardIn 340ms var(--ease) both;
+  }
+  @keyframes cardIn{from{opacity:0;transform:translateY(16px) scale(.992)}to{opacity:1;transform:none}}
+  .card.leaving{opacity:0;transform:translateY(-10px) scale(.99);transition:opacity 190ms var(--ease-exit),transform 190ms var(--ease-exit)}
+
+  /* ── Left sidebar: gate + persona (the moving voice) up top, hero numeral below.
+       All three animate freely inside this fixed column. ── */
+  .rail{position:relative;background:linear-gradient(180deg,#fbfaff,var(--rail));border-right:1px solid var(--border);padding:40px 34px 34px;display:flex;flex-direction:column;overflow:hidden}
+  .rail::before{content:"";position:absolute;left:-46px;bottom:-90px;width:340px;height:340px;border-radius:50%;background:radial-gradient(circle,rgba(179,160,255,.18),transparent 68%);pointer-events:none}
+
+  .rail-text{position:relative;z-index:2;transition:opacity var(--dur-side) var(--ease),transform var(--dur-side) var(--ease);will-change:opacity,transform}
+  .rail-text.exit{opacity:0;transform:translateY(-7px);transition:opacity var(--dur-side-exit) var(--ease-exit),transform var(--dur-side-exit) var(--ease-exit)}
+  .rail-text.enter-from-below{opacity:0;transform:translateY(16px)}
+  .rail-text.enter-from-above{opacity:0;transform:translateY(-16px)}
+  .gatetag{display:inline-block;background:var(--lav-soft);color:var(--lav-deep);font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:600;letter-spacing:1.3px;padding:5px 11px;border-radius:9999px;text-transform:uppercase}
+  .persona{margin-top:16px;color:var(--muted);font-size:14.5px;font-style:italic;line-height:1.5;max-width:220px}
+
+  .rail-num{margin-top:auto;position:relative;z-index:1;pointer-events:none;user-select:none;line-height:.7}
+  .rail-num span{
+    display:block;font-family:"Manrope",sans-serif;font-weight:800;letter-spacing:-9px;
+    font-size:180px;color:transparent;-webkit-text-stroke:2px var(--lav);opacity:.26;
+    transform:translateY(0) scale(1);
+    transition:opacity var(--dur-num-enter) var(--ease-classy),transform var(--dur-num-enter) var(--ease-classy);
+  }
+  .rail-num span.exit{opacity:0;transform:translateY(12px) scale(.96);transition:opacity var(--dur-num-exit) var(--ease-classy),transform var(--dur-num-exit) var(--ease-classy)}
+  .rail-num span.enter-from-below{opacity:0;transform:translateY(30px) scale(.94)}
+  .rail-num span.enter-from-above{opacity:0;transform:translateY(-30px) scale(.94)}
+
+  /* ── Right panel: fixed frame, flex column. Thread static up top, form in the
+       middle (scrolls internally if a step overflows), nav static at the bottom. ── */
+  .main{display:flex;flex-direction:column;padding:38px 44px 32px;min-width:0}
+
+  .thread{display:flex;gap:5px;width:100%;margin-bottom:30px}
+  .thread .seg{flex:1;height:3px;border-radius:99px;background:var(--border-strong);transition:background var(--dur-thread) var(--ease-classy),box-shadow var(--dur-thread) var(--ease-classy)}
+  .thread .seg.on{background:var(--lav);box-shadow:0 0 6px 0 rgba(179,160,255,.4)}
+  .thread .seg.lit-now{animation:segPop 460ms var(--ease-classy)}
+  @keyframes segPop{0%{box-shadow:0 0 0 0 rgba(179,160,255,.5)}40%{box-shadow:0 0 10px 1px rgba(179,160,255,.7)}100%{box-shadow:0 0 6px 0 rgba(179,160,255,.4)}}
+
+  .stepwrap{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+  .step{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:6px;margin-right:-6px}
+  .step.exit{opacity:0;transition:opacity var(--dur-exit) var(--ease-exit)}
+  .step.entering > h2{animation:childRise var(--dur-child) var(--ease) both;animation-delay:0ms}
+  .step.entering > #controls{animation:childRise var(--dur-child) var(--ease) both;animation-delay:70ms}
+  .step.entering > .err{animation:childRise var(--dur-child) var(--ease) both;animation-delay:70ms}
+  @keyframes childRise{from{opacity:0;transform:translateY(11px)}to{opacity:1;transform:none}}
+  /* thin, unobtrusive scrollbar for the internal overflow (training builder) */
+  .step::-webkit-scrollbar{width:6px}
+  .step::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:99px}
+
+  h2{font-size:26px;font-weight:800;letter-spacing:-.6px;line-height:1.25;outline:none}
+
+  /* ── One shared content width. Every control fills the panel to the same edges. ── */
+  #controls{margin-top:24px}
+  .name-row{display:flex;gap:10px}
+  .name-row input,.text-input{flex:1;min-width:0;background:var(--input);border:1px solid var(--border);border-radius:12px;padding:14px 16px;font:600 15px "Manrope",sans-serif;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s}
+  .name-row input::placeholder,.text-input::placeholder{color:var(--subtle);font-weight:500}
+  .name-row input:focus,.text-input:focus{border-color:var(--lav);box-shadow:0 0 0 3px rgba(179,160,255,.14)}
+  .name-row input:focus-visible,.text-input:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  .text-input{display:block;width:100%;margin-top:12px;font-weight:500;font-size:14px}
+
+  .field-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .field-grid label{display:flex;flex-direction:column;gap:6px}
+  .field-grid .flab{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.1px;color:var(--subtle);text-transform:uppercase}
+  .field-grid input{background:var(--input);border:1px solid var(--border);border-radius:11px;padding:13px 14px;font:600 15px "Manrope",sans-serif;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s;width:100%}
+  .field-grid input::placeholder{color:var(--subtle);font-weight:500}
+  .field-grid input:focus{border-color:var(--lav);box-shadow:0 0 0 3px rgba(179,160,255,.14)}
+  .field-grid input:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  /* Uniform choice rectangles — natural height, not an oversized hardcoded box. */
+  .choices{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .choices.cols3{grid-template-columns:repeat(3,1fr)}
+  .choice{
+    position:relative;min-height:70px;display:flex;flex-direction:column;justify-content:center;gap:3px;
+    background:var(--input);border:1px solid var(--border);border-radius:13px;padding:14px 16px;
+    text-align:left;cursor:pointer;font-family:inherit;color:var(--text);
+    transition:border-color .14s var(--ease),background-color .16s var(--ease),opacity .18s var(--ease),transform .16s var(--ease),box-shadow .16s var(--ease);
+  }
+  .choice:hover{border-color:var(--border-strong);background:#ececeff2;transform:translateY(-2px);box-shadow:0 10px 22px -16px rgba(13,16,27,.4)}
+  .choice:active{transform:translateY(0)}
+  .choice[aria-pressed="true"]{background:rgba(179,160,255,.15);border-color:var(--lav);box-shadow:0 0 0 1px var(--lav) inset}
+  .choice[aria-pressed="true"]::after{content:"";position:absolute;top:12px;right:12px;width:7px;height:7px;border-radius:50%;background:var(--lav);box-shadow:0 0 8px 1px rgba(179,160,255,.6)}
+  .choice .label{display:block;font-size:14px;font-weight:700;line-height:1.25;color:var(--text)}
+  .choice .sub{display:block;font-weight:500;color:var(--subtle);font-size:11.5px;margin-top:2px;line-height:1.3}
+  .choice:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  @keyframes choicePulse{0%{transform:scale(1)}42%{transform:scale(.965)}100%{transform:scale(1)}}
+  .choice.picked{animation:choicePulse 260ms var(--ease)}
+  .choices.deciding .choice:not([aria-pressed="true"]){opacity:.38}
+
+  .hours{display:flex;align-items:center;gap:9px;margin-top:16px}
+  .hours label{font-family:"JetBrains Mono",monospace;font-size:10px;letter-spacing:1.2px;color:var(--subtle);text-transform:uppercase}
+  .hours input{width:64px;text-align:center;background:var(--input);border:1px solid var(--border);border-radius:10px;padding:10px 6px;font:700 14px "Manrope",sans-serif;color:var(--text);outline:none;transition:border-color .15s,box-shadow .15s}
+  .hours input:focus{border-color:var(--lav);box-shadow:0 0 0 3px rgba(179,160,255,.14)}
+  .hours span{font-size:12px;color:var(--muted)}
+
+  .train-rows{display:flex;flex-direction:column;gap:8px}
+  .train-row{display:flex;align-items:center;gap:10px;background:var(--input);border:1px solid var(--border);border-radius:12px;padding:10px 10px 10px 16px;transition:border-color .15s}
+  .train-row:focus-within{border-color:var(--lav)}
+  .train-row select{flex:1;min-width:0;background:transparent;border:none;outline:none;font:700 14px "Manrope",sans-serif;color:var(--text);cursor:pointer}
+  .train-row .num{display:flex;align-items:center;gap:5px;flex-shrink:0}
+  .train-row .num input{width:48px;text-align:center;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:7px 4px;font:700 13px "Manrope",sans-serif;color:var(--text);outline:none}
+  .train-row .num input:focus{border-color:var(--lav)}
+  .train-row .num span{font-size:10.5px;color:var(--muted)}
+  .train-row .rm{flex-shrink:0;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:var(--muted);cursor:pointer;transition:color .12s,background-color .12s}
+  .train-row .rm:hover{color:var(--error);background:rgba(179,38,30,.08)}
+  .train-row .rm:focus-visible{outline:2px solid var(--lav);outline-offset:1px}
+  .train-add{width:100%;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:7px;border:1.5px dashed var(--border-strong);border-radius:12px;padding:13px;font:700 13px "Manrope",sans-serif;color:var(--muted);background:transparent;cursor:pointer;transition:color .14s,border-color .14s,background-color .14s}
+  .train-add:hover{color:var(--text);border-color:var(--lav);background:rgba(179,160,255,.05)}
+  .train-add:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+
+  /* Free-text alt-input — introduced by a real divider. */
+  .freetext{margin-top:8px}
+  .ftx-or{display:flex;align-items:center;gap:12px;margin:20px 0 12px;color:var(--subtle);font-family:"JetBrains Mono",monospace;font-size:9px;letter-spacing:1.8px;text-transform:uppercase}
+  .ftx-or::before,.ftx-or::after{content:"";flex:1;height:1px;background:var(--border)}
+  .freetext-pill{display:flex;align-items:center;gap:9px;background:var(--card);border:1px solid var(--border);border-radius:9999px;padding:8px 8px 8px 15px;transition:border-color .15s var(--ease),box-shadow .15s var(--ease)}
+  .freetext-pill:focus-within{border-color:var(--lav);box-shadow:0 0 0 3px rgba(179,160,255,.12)}
+  .freetext-pill .spark{color:var(--lav);flex-shrink:0;display:flex}
+  .freetext-pill input{flex:1;min-width:0;background:transparent;border:none;outline:none;font:500 13.5px "Manrope",sans-serif;color:var(--text)}
+  .freetext-pill input::placeholder{color:var(--subtle)}
+  .freetext-pill input:focus-visible{outline:none}
+  .freetext-send{flex-shrink:0;width:32px;height:32px;border-radius:50%;background:var(--ink);color:#fff;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:opacity .12s var(--ease),transform .12s var(--ease)}
+  .freetext-send:hover{opacity:.85}
+  .freetext-send:active{transform:scale(.92)}
+  .freetext-send:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  .ack{margin-top:9px;padding-left:5px;font-size:12px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px}
+  .ack::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--lav);flex-shrink:0}
+  @keyframes ackIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+  .ack.show{animation:ackIn 200ms var(--ease)}
+
+  .err{font-size:12.5px;color:var(--error);margin-top:14px;font-weight:600}
+  @keyframes errIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+  .err.show{animation:errIn 180ms var(--ease)}
+
+  .nav{margin-top:22px;padding-top:22px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .nav-left{display:flex;align-items:center;gap:14px}
+  .btn{display:inline-flex;align-items:center;gap:7px;border-radius:9999px;padding:13px 27px;font-weight:700;font-size:13.5px;border:none;cursor:pointer;font-family:inherit;transition:opacity .14s var(--ease),transform .12s var(--ease),color .12s,box-shadow .18s var(--ease)}
+  .btn .gly{font-size:14px;line-height:1;transition:transform .16s var(--ease)}
+  .btn:focus-visible{outline:2px solid var(--lav);outline-offset:3px}
+  .btn.primary{background:var(--ink);color:#fff}
+  .btn.primary:not([aria-disabled="true"]){box-shadow:0 10px 24px -12px rgba(13,16,27,.55)}
+  .btn.primary:hover .gly{transform:translateX(2px)}
+  .btn.primary:active{transform:scale(.98)}
+  .btn.primary[aria-disabled="true"]{opacity:.35;cursor:not-allowed;box-shadow:none}
+  .btn.primary[aria-disabled="true"]:hover .gly{transform:none}
+  .btn.text{background:transparent;color:var(--muted);padding:13px 0}
+  .btn.text:hover{color:var(--text)}
+  .btn.text:hover .gly{transform:translateX(-2px)}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:5}
+  .proto-nav a{color:var(--ink)}
+
+  @media (prefers-reduced-motion: reduce){
+    .card{animation:none}
+    .step.exit{transition:opacity var(--dur-exit-reduced) linear}
+    .step.entering > *{animation:childFade var(--dur-exit-reduced) linear both !important;animation-delay:0ms !important}
+    @keyframes childFade{from{opacity:0}to{opacity:1}}
+    .rail-text,.rail-text.exit{transition:opacity var(--dur-exit-reduced) linear !important;transform:none !important}
+    .rail-text.enter-from-below,.rail-text.enter-from-above{transform:none}
+    .rail-num span,.rail-num span.exit{transition:opacity var(--dur-num-reduced) linear !important;transform:none !important}
+    .rail-num span.enter-from-below,.rail-num span.enter-from-above{transform:none}
+    .thread .seg{transition:background var(--dur-exit-reduced) linear}
+    .thread .seg.lit-now{animation:none}
+    .choice.picked{animation:none}
+    .choice:hover{transform:none}
+    .err.show,.ack.show{animation:none}
+  }
+
+  /* ── Below 860px: portrait card, natural height. Rail becomes a top strip. ── */
+  @media(max-width:860px){
+    .stagearea{padding:28px 16px;align-items:stretch}
+    .card{grid-template-columns:1fr;height:auto;min-height:0;max-width:520px;margin:0 auto}
+    .rail{flex-direction:row;align-items:center;justify-content:space-between;gap:16px;border-right:none;border-bottom:1px solid var(--border);padding:20px 24px}
+    .rail::before{bottom:auto;top:-140px;right:-70px;left:auto}
+    .rail-text{flex:1;min-width:0}
+    .persona{margin-top:8px;max-width:none;font-size:13px}
+    .rail-num{margin-top:0;flex-shrink:0}
+    .rail-num span{font-size:78px;letter-spacing:-4px;opacity:.3}
+    .main{padding:26px 22px 24px}
+    .step{overflow:visible}
+    .stepwrap{overflow:visible}
+  }
+  @media(max-width:420px){
+    .choices,.choices.cols3{grid-template-columns:1fr 1fr}
+    .main{padding:22px 18px 20px}
+  }
+</style>
+</head>
+<body>
+  <div class="stagearea">
+    <div class="card" id="card">
+      <div class="rail">
+        <div class="rail-text" id="railText">
+          <span class="gatetag" id="gate"></span>
+          <p class="persona" id="persona"></p>
+        </div>
+        <div class="rail-num" aria-hidden="true"><span id="ghostNum">01</span></div>
+      </div>
+      <div class="main">
+        <div class="thread" id="thread" role="progressbar" aria-valuemin="1" aria-valuemax="8" aria-valuenow="1" aria-label="Onboarding progress"></div>
+        <div class="stepwrap">
+          <div class="step" id="step">
+            <h2 tabindex="-1" id="q"></h2>
+            <div id="controls"></div>
+            <p class="err" id="err" hidden></p>
+          </div>
+        </div>
+        <div class="nav">
+          <div class="nav-left">
+            <button class="btn text" id="back" type="button"><span class="gly" aria-hidden="true">←</span> Back</button>
+            <button class="btn text" id="skip" type="button" hidden>Skip</button>
+          </div>
+          <button class="btn primary" id="continue" type="button" aria-disabled="true">Continue <span class="gly" aria-hidden="true">→</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="index.html">← start</a> · <a href="auth.html">auth</a> · <a href="plan-reveal.html">plan reveal →</a></p>
+
+<script>
+(function(){
+  var REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var EXIT_MS = REDUCED ? 90 : 150;              // step-card exit (R1 ceiling)
+  var NUM_EXIT_MS = REDUCED ? 90 : 280;          // ghost-numeral exit — its own, slower beat
+  var SWAP_WAIT_MS = Math.max(EXIT_MS, NUM_EXIT_MS);
+  var PICK_HOLD_MS = REDUCED ? 160 : 260;        // quick tap -> advance
+  var PARSE_HOLD_MS = REDUCED ? 300 : 900;       // free-text parse -> advance (ack must be readable first)
+  var LEAVE_MS = REDUCED ? 90 : 190;
+  var TOTAL = 8;
+  var $ = function(id){ return document.getElementById(id); };
+
+  /* ── Real option sets, lifted 1:1 from apps/web/src/pages/OnboardingPage.tsx ── */
+  var GOALS = [
+    { v:"aggressive_loss", name:"Lose fat fast", sub:"~25% deficit" },
+    { v:"moderate_loss", name:"Lose fat", sub:"~18% deficit" },
+    { v:"maintain", name:"Maintain", sub:"Stay here" },
+    { v:"recomp", name:"Recomp", sub:"Lose fat, gain muscle" },
+    { v:"lean_gain", name:"Lean gain", sub:"~10% surplus" },
+    { v:"muscle_gain", name:"Build muscle", sub:"~18% surplus" }
+  ];
+  var WORK_OPTS = [
+    { v:"desk", name:"Desk", sub:"Mostly seated" },
+    { v:"mixed", name:"Mixed", sub:"Sit + move" },
+    { v:"standing", name:"Standing", sub:"On your feet" },
+    { v:"physical", name:"Physical", sub:"Manual labor" }
+  ];
+  var LIFESTYLE_OPTS = [
+    { v:"sedentary", name:"Sedentary", sub:"Mostly sitting" },
+    { v:"light", name:"Light", sub:"Some walking" },
+    { v:"moderate", name:"Moderate", sub:"On feet often" },
+    { v:"active", name:"Active", sub:"Always moving" }
+  ];
+  var DIET_OPTS = [
+    { v:"none", name:"No preference", sub:"Eats anything" },
+    { v:"vegetarian", name:"Vegetarian", sub:"No meat" },
+    { v:"vegan", name:"Vegan", sub:"No animal products" },
+    { v:"pescatarian", name:"Pescatarian", sub:"Fish, no meat" },
+    { v:"keto", name:"Keto", sub:"Very low carb" }
+  ];
+  var STYLE_OPTS = [
+    { v:"gentle", name:"Gentle", sub:"Warm" },
+    { v:"motivating", name:"Motivating", sub:"High-energy" },
+    { v:"analytical", name:"Analytical", sub:"Data-first" }
+  ];
+  var WORKOUT_TYPES = ["strength","run_slow","run_fast","cycling","hiit","yoga","swim","walk","sport"];
+  var WORKOUT_LABEL = { strength:"Strength", run_slow:"Easy run", run_fast:"Fast run", cycling:"Cycling", hiit:"HIIT", yoga:"Yoga", swim:"Swim", walk:"Walk", sport:"Sport" };
+
+  var STEPS = [
+    { key:"name", gate:"Intro",
+      personaFn:function(){ return "Hey, I'm Stry. I'll build you a science-based plan."; },
+      q:"First — what should I call you?", err:"Tell me what to call you to keep going." },
+    { key:"stats", gate:"Stats",
+      personaFn:function(s){ return "Nice to meet you, " + (s.firstName.trim() || "friend") + "!"; },
+      q:"Tell me your age, weight, height and sex.", err:"Fill in age, weight, height and sex to continue." },
+    { key:"goal", gate:"Goal",
+      personaFn:function(){ return "This shapes the whole plan."; },
+      q:"What are you aiming for right now?", err:"Pick one to keep going." },
+    { key:"work", gate:"Work",
+      personaFn:function(){ return "Rough numbers are fine."; },
+      q:"What's your job like during the day?", err:"Pick one to keep going." },
+    { key:"lifestyle", gate:"Lifestyle",
+      personaFn:function(){ return "Think beyond the workouts too."; },
+      q:"And outside of work and workouts — how active are you day-to-day?", err:"Pick one to keep going." },
+    { key:"training", gate:"Training",
+      personaFn:function(){ return "Optional — skip it if you'd rather wing it."; },
+      q:"How do you train in a normal week?", err:"" },
+    { key:"diet", gate:"Diet",
+      personaFn:function(){ return "Anything to steer clear of, I've got it."; },
+      q:"Any dietary preferences or things to avoid?", err:"Pick one to keep going." },
+    { key:"style", gate:"Style",
+      personaFn:function(){ return "Last thing."; },
+      q:"Last thing — how should I talk to you?", err:"Pick one to keep going." }
+  ];
+
+  var state = {
+    firstName:"", age:"", sex:"", weight:"", height:"", bodyFat:"",
+    goal:"", occupationType:"", workHoursPerDay:"8",
+    lifestyleActivity:"", weeklyWorkouts:[],
+    dietaryPreference:"", allergies:"",
+    coachingStyle:""
+  };
+
+  var i = 0;
+  var prevNow = 0;
+  var autoAdvanceTimer = null;
+  function scheduleAutoAdvance(delay){ clearTimeout(autoAdvanceTimer); autoAdvanceTimer = setTimeout(tryAdvance, delay == null ? PICK_HOLD_MS : delay); }
+
+  function sparkSVG(){ return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.6 4.6L18 9l-4.4 1.4L12 15l-1.6-4.6L6 9l4.4-1.4L12 3z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"/></svg>'; }
+  function sendSVG(){ return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'; }
+  function plusSVG(){ return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>'; }
+  function xSVG(){ return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>'; }
+
+  function renderThread(now){
+    var el = $("thread"); el.innerHTML = "";
+    for (var n = 1; n <= TOTAL; n++){
+      var s = document.createElement("span");
+      var on = n <= now;
+      s.className = "seg" + (on ? " on" : "") + (on && n === now && now > prevNow && !REDUCED ? " lit-now" : "");
+      el.appendChild(s);
+    }
+    el.setAttribute("aria-valuenow", now);
+  }
+
+  function isValid(key){
+    switch (key){
+      case "name": return state.firstName.trim().length > 0;
+      case "stats": {
+        var age = parseFloat(state.age), w = parseFloat(state.weight), h = parseFloat(state.height);
+        return state.sex !== "" &&
+          isFinite(age) && age >= 10 && age <= 120 &&
+          isFinite(w) && w > 0 && w < 500 &&
+          isFinite(h) && h > 0 && h < 300;
+      }
+      case "goal": return state.goal !== "";
+      case "work": return state.occupationType !== "";
+      case "lifestyle": return state.lifestyleActivity !== "";
+      case "training": return true;
+      case "diet": return state.dietaryPreference !== "";
+      case "style": return state.coachingStyle !== "";
+      default: return false;
+    }
+  }
+
+  function updateContinue(){
+    $("continue").setAttribute("aria-disabled", isValid(STEPS[i].key) ? "false" : "true");
+  }
+
+  function fieldInput(labelText, value, onChange, placeholder, id){
+    var label = document.createElement("label");
+    var lab = document.createElement("span"); lab.className = "flab"; lab.textContent = labelText;
+    var input = document.createElement("input");
+    input.type = "number"; input.id = id; input.value = value; input.placeholder = placeholder || "";
+    input.addEventListener("input", function(){ onChange(input.value); });
+    label.appendChild(lab); label.appendChild(input);
+    return label;
+  }
+
+  function makeChoiceGroup(options, cols, activeGetter, onPick){
+    var group = document.createElement("div");
+    group.className = "choices" + (cols === 3 ? " cols3" : "");
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-labelledby", "q");
+    group.setAttribute("aria-describedby", "err");
+    group.setAttribute("aria-invalid", "false");
+    group.id = "options";
+    options.forEach(function(o){
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "choice"; b.dataset.v = o.v;
+      b.setAttribute("aria-pressed", activeGetter() === o.v ? "true" : "false");
+      b.innerHTML = "<span class=\"label\">" + o.name + "</span>" + (o.sub ? "<span class=\"sub\">" + o.sub + "</span>" : "");
+      b.addEventListener("click", function(){
+        Array.prototype.forEach.call(group.querySelectorAll(".choice"), function(x){ x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+        $("err").hidden = true; $("err").classList.remove("show"); group.setAttribute("aria-invalid", "false");
+        if (!REDUCED){ b.classList.remove("picked"); void b.offsetWidth; b.classList.add("picked"); }
+        onPick(o.v, b, group);
+      });
+      group.appendChild(b);
+    });
+    return group;
+  }
+  function refreshChoiceGroup(group, activeGetter){
+    Array.prototype.forEach.call(group.querySelectorAll(".choice"), function(b){
+      b.setAttribute("aria-pressed", b.dataset.v === activeGetter() ? "true" : "false");
+    });
+  }
+
+  function buildFreeText(host, cfg){
+    var wrap = document.createElement("div"); wrap.className = "freetext";
+    var orDiv = document.createElement("div"); orDiv.className = "ftx-or"; orDiv.innerHTML = "<span>or, in your words</span>";
+    var pill = document.createElement("div"); pill.className = "freetext-pill";
+    var iconSpan = document.createElement("span"); iconSpan.className = "spark"; iconSpan.innerHTML = sparkSVG();
+    var input = document.createElement("input");
+    input.type = "text"; input.placeholder = cfg.placeholder;
+    input.setAttribute("aria-label", "Describe in your own words instead");
+    var send = document.createElement("button");
+    send.type = "button"; send.className = "freetext-send"; send.setAttribute("aria-label", "Send"); send.innerHTML = sendSVG();
+    pill.appendChild(iconSpan); pill.appendChild(input); pill.appendChild(send);
+    var ack = document.createElement("p"); ack.className = "ack"; ack.setAttribute("role", "status"); ack.hidden = true;
+    wrap.appendChild(orDiv); wrap.appendChild(pill); wrap.appendChild(ack);
+    function submit(){
+      var text = input.value.trim(); if (!text) return;
+      var result = cfg.onParse(text) || {};
+      ack.hidden = false; ack.textContent = result.message || "Got it.";
+      if (!REDUCED){ ack.classList.remove("show"); void ack.offsetWidth; ack.classList.add("show"); }
+      if (result.clear !== false) input.value = "";
+      if (result.advance) scheduleAutoAdvance(PARSE_HOLD_MS);
+    }
+    send.addEventListener("click", submit);
+    input.addEventListener("keydown", function(e){ if (e.key === "Enter"){ e.preventDefault(); submit(); } });
+    host.appendChild(wrap);
+  }
+
+  function parseTrainingText(text){
+    var chunks = text.split(/,| and /i), out = [];
+    chunks.forEach(function(chunk){
+      var t = chunk.toLowerCase(), type = null;
+      if (/strength|lift|weights|gym/.test(t)) type = "strength";
+      else if (/sprint|fast run/.test(t)) type = "run_fast";
+      else if (/run|jog/.test(t)) type = "run_slow";
+      else if (/cycl|bike/.test(t)) type = "cycling";
+      else if (/hiit/.test(t)) type = "hiit";
+      else if (/yoga/.test(t)) type = "yoga";
+      else if (/swim/.test(t)) type = "swim";
+      else if (/walk/.test(t)) type = "walk";
+      else if (/sport|basketball|football|tennis|soccer/.test(t)) type = "sport";
+      if (!type) return;
+      var sessM = t.match(/(\d+)\s*x/) || t.match(/(\d+)\s*(?:times|sessions)/);
+      var durM = t.match(/(\d+)\s*(?:min|minutes|h\b|hour|hr)/);
+      var dur = 60;
+      if (durM){ dur = parseInt(durM[1], 10); if (/h\b|hour|hr/.test(durM[0])) dur *= 60; }
+      var sess = sessM ? Math.max(1, parseInt(sessM[1], 10)) : 3;
+      out.push({ type:type, durationMin:dur, sessionsPerWeek:sess });
+    });
+    return out;
+  }
+
+  function buildControls(host, step){
+    host.innerHTML = "";
+    switch (step.key){
+
+      case "name": {
+        var row = document.createElement("div"); row.className = "name-row";
+        var input = document.createElement("input");
+        input.type = "text"; input.id = "nameInput"; input.placeholder = "Your name";
+        input.setAttribute("aria-label", "Your name"); input.setAttribute("aria-describedby", "err");
+        input.setAttribute("aria-invalid", "false");
+        input.value = state.firstName; input.autocomplete = "given-name";
+        input.addEventListener("input", function(){
+          state.firstName = input.value; updateContinue();
+          if (input.value.trim()) input.setAttribute("aria-invalid", "false");
+        });
+        input.addEventListener("keydown", function(e){ if (e.key === "Enter") tryAdvance(); });
+        row.appendChild(input); host.appendChild(row);
+        break;
+      }
+
+      case "stats": {
+        var grid = document.createElement("div"); grid.className = "field-grid";
+        grid.appendChild(fieldInput("Age", state.age, function(v){ state.age = v; updateContinue(); }, "28", "ageInput"));
+        grid.appendChild(fieldInput("Weight (kg)", state.weight, function(v){ state.weight = v; updateContinue(); }, "65", "weightInput"));
+        grid.appendChild(fieldInput("Height (cm)", state.height, function(v){ state.height = v; updateContinue(); }, "170", "heightInput"));
+        grid.appendChild(fieldInput("Body fat % (optional)", state.bodyFat, function(v){ state.bodyFat = v; updateContinue(); }, "18", "bodyFatInput"));
+        host.appendChild(grid);
+
+        var sexGroup = makeChoiceGroup(
+          [{ v:"female", name:"Female" }, { v:"male", name:"Male" }], 2,
+          function(){ return state.sex; },
+          function(v){ state.sex = v; updateContinue(); }
+        );
+        sexGroup.style.marginTop = "12px";
+        host.appendChild(sexGroup);
+
+        buildFreeText(host, {
+          placeholder: "…or: 28yo male, 80kg, 178cm",
+          onParse: function(text){
+            var t = text, found = 0;
+            var ageM = t.match(/(\d{1,3})\s*(?:yo\b|y\.?o\.?\b|years?\s*old|yrs?\b)/i) || t.match(/\bage\s*(\d{1,3})/i);
+            if (ageM){ state.age = ageM[1]; $("ageInput").value = ageM[1]; found++; }
+            var wM = t.match(/(\d{2,3}(?:\.\d+)?)\s*kg/i);
+            if (wM){ state.weight = wM[1]; $("weightInput").value = wM[1]; found++; }
+            var hM = t.match(/(\d{2,3})\s*cm/i);
+            if (hM){ state.height = hM[1]; $("heightInput").value = hM[1]; found++; }
+            var bfM = t.match(/(\d{1,2})\s*%\s*(?:bf|body\s*fat)?/i);
+            if (bfM){ state.bodyFat = bfM[1]; $("bodyFatInput").value = bfM[1]; found++; }
+            var sexM = /\b(male|man|guy)\b/i.test(t) ? "male" : (/\b(female|woman|girl)\b/i.test(t) ? "female" : null);
+            if (sexM){ state.sex = sexM; refreshChoiceGroup(sexGroup, function(){ return state.sex; }); found++; }
+            updateContinue();
+            if (found > 0) return { message:"Got it — filled in what I could from that.", advance:false };
+            return { message:"Didn't catch specifics there — try the fields above or a clearer sentence.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "goal": {
+        var goalGroup = makeChoiceGroup(GOALS, 3, function(){ return state.goal; }, function(v, b, group){
+          state.goal = v; updateContinue(); group.classList.add("deciding"); scheduleAutoAdvance();
+        });
+        host.appendChild(goalGroup);
+        buildFreeText(host, {
+          placeholder: "…or describe your goal",
+          onParse: function(text){
+            var t = text.toLowerCase();
+            var match = GOALS.find(function(g){ return t.indexOf(g.name.toLowerCase()) > -1; });
+            if (!match){
+              if (/fast|quick|aggressive/.test(t) && /lose|fat|cut/.test(t)) match = GOALS.find(function(g){ return g.v === "aggressive_loss"; });
+              else if (/lose|cut|fat loss|deficit|shred/.test(t)) match = GOALS.find(function(g){ return g.v === "moderate_loss"; });
+              else if (/maintain|stay|same weight/.test(t)) match = GOALS.find(function(g){ return g.v === "maintain"; });
+              else if (/recomp|both|tone up/.test(t)) match = GOALS.find(function(g){ return g.v === "recomp"; });
+              else if (/lean gain|lean bulk|slow gain/.test(t)) match = GOALS.find(function(g){ return g.v === "lean_gain"; });
+              else if (/muscle|bulk|gain weight|build/.test(t)) match = GOALS.find(function(g){ return g.v === "muscle_gain"; });
+            }
+            if (match){
+              state.goal = match.v; refreshChoiceGroup(goalGroup, function(){ return state.goal; }); goalGroup.classList.add("deciding"); updateContinue();
+              return { message:"Got it — set to “" + match.name + ".”", advance:true };
+            }
+            return { message:"Didn't catch a goal there — try one of the options above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "work": {
+        var workGroup = makeChoiceGroup(WORK_OPTS, 2, function(){ return state.occupationType; }, function(v){
+          state.occupationType = v; updateContinue();
+        });
+        host.appendChild(workGroup);
+        var hrs = document.createElement("div"); hrs.className = "hours";
+        var lab = document.createElement("label"); lab.setAttribute("for", "hoursInput"); lab.textContent = "Work hours / day";
+        var hinp = document.createElement("input");
+        hinp.type = "number"; hinp.id = "hoursInput"; hinp.min = "1"; hinp.max = "16"; hinp.value = state.workHoursPerDay;
+        hinp.addEventListener("input", function(){ state.workHoursPerDay = hinp.value; });
+        var unit = document.createElement("span"); unit.textContent = "hrs";
+        hrs.appendChild(lab); hrs.appendChild(hinp); hrs.appendChild(unit);
+        host.appendChild(hrs);
+        buildFreeText(host, {
+          placeholder: "…or: desk job, about 9 hours",
+          onParse: function(text){
+            var t = text.toLowerCase(), found = false;
+            var opt = WORK_OPTS.find(function(o){ return t.indexOf(o.name.toLowerCase()) > -1; });
+            if (!opt){
+              if (/desk|sit|office|computer/.test(t)) opt = WORK_OPTS.find(function(o){ return o.v === "desk"; });
+              else if (/mixed|some sit|some stand/.test(t)) opt = WORK_OPTS.find(function(o){ return o.v === "mixed"; });
+              else if (/stand|retail|teach/.test(t)) opt = WORK_OPTS.find(function(o){ return o.v === "standing"; });
+              else if (/manual|labor|physical|construction|warehouse/.test(t)) opt = WORK_OPTS.find(function(o){ return o.v === "physical"; });
+            }
+            if (opt){ state.occupationType = opt.v; refreshChoiceGroup(workGroup, function(){ return state.occupationType; }); found = true; }
+            var hM = t.match(/(\d{1,2})\s*(?:hours?|hrs?|h\b)/);
+            if (hM){ state.workHoursPerDay = hM[1]; hinp.value = hM[1]; found = true; }
+            updateContinue();
+            if (found) return { message:"Got it — filled in what I could.", advance:false };
+            return { message:"Didn't catch a job type there — try the choices above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "lifestyle": {
+        var lsGroup = makeChoiceGroup(LIFESTYLE_OPTS, 2, function(){ return state.lifestyleActivity; }, function(v, b, group){
+          state.lifestyleActivity = v; updateContinue(); group.classList.add("deciding"); scheduleAutoAdvance();
+        });
+        host.appendChild(lsGroup);
+        buildFreeText(host, {
+          placeholder: "…or: pretty lazy outside the gym",
+          onParse: function(text){
+            var t = text.toLowerCase(), match = null;
+            if (/sedentary|barely move|lazy|mostly sit/.test(t)) match = LIFESTYLE_OPTS.find(function(o){ return o.v === "sedentary"; });
+            else if (/light|some walk/.test(t)) match = LIFESTYLE_OPTS.find(function(o){ return o.v === "light"; });
+            else if (/moderate|on my feet/.test(t)) match = LIFESTYLE_OPTS.find(function(o){ return o.v === "moderate"; });
+            else if (/active|always moving|very active/.test(t)) match = LIFESTYLE_OPTS.find(function(o){ return o.v === "active"; });
+            if (match){
+              state.lifestyleActivity = match.v; refreshChoiceGroup(lsGroup, function(){ return state.lifestyleActivity; }); lsGroup.classList.add("deciding"); updateContinue();
+              return { message:"Got it — set to “" + match.name + ".”", advance:true };
+            }
+            return { message:"Didn't catch that — try one of the options above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "training": {
+        var rowsWrap = document.createElement("div"); rowsWrap.className = "train-rows";
+        function renderRows(){
+          rowsWrap.innerHTML = "";
+          state.weeklyWorkouts.forEach(function(w, idx){
+            var trow = document.createElement("div"); trow.className = "train-row";
+            var sel = document.createElement("select"); sel.setAttribute("aria-label", "Workout type");
+            WORKOUT_TYPES.forEach(function(t){
+              var op = document.createElement("option"); op.value = t; op.textContent = WORKOUT_LABEL[t];
+              if (t === w.type) op.selected = true;
+              sel.appendChild(op);
+            });
+            sel.addEventListener("change", function(){ state.weeklyWorkouts[idx].type = sel.value; });
+            var numDur = document.createElement("div"); numDur.className = "num";
+            var durInput = document.createElement("input");
+            durInput.type = "number"; durInput.min = "1"; durInput.value = w.durationMin; durInput.setAttribute("aria-label", "Minutes per session");
+            durInput.addEventListener("input", function(){ state.weeklyWorkouts[idx].durationMin = Math.max(1, +durInput.value || 0); });
+            var durUnit = document.createElement("span"); durUnit.textContent = "min";
+            numDur.appendChild(durInput); numDur.appendChild(durUnit);
+            var numSess = document.createElement("div"); numSess.className = "num";
+            var sessInput = document.createElement("input");
+            sessInput.type = "number"; sessInput.min = "1"; sessInput.max = "14"; sessInput.value = w.sessionsPerWeek; sessInput.setAttribute("aria-label", "Sessions per week");
+            sessInput.addEventListener("input", function(){ state.weeklyWorkouts[idx].sessionsPerWeek = Math.max(1, +sessInput.value || 0); });
+            var sessUnit = document.createElement("span"); sessUnit.textContent = "/wk";
+            numSess.appendChild(sessInput); numSess.appendChild(sessUnit);
+            var rm = document.createElement("button"); rm.type = "button"; rm.className = "rm"; rm.setAttribute("aria-label", "Remove workout"); rm.innerHTML = xSVG();
+            rm.addEventListener("click", function(){ state.weeklyWorkouts.splice(idx, 1); renderRows(); });
+            trow.appendChild(sel); trow.appendChild(numDur); trow.appendChild(numSess); trow.appendChild(rm);
+            rowsWrap.appendChild(trow);
+          });
+        }
+        renderRows();
+        host.appendChild(rowsWrap);
+        var addBtn = document.createElement("button");
+        addBtn.type = "button"; addBtn.className = "train-add"; addBtn.innerHTML = plusSVG() + " Add a workout";
+        addBtn.addEventListener("click", function(){ state.weeklyWorkouts.push({ type:"strength", durationMin:60, sessionsPerWeek:3 }); renderRows(); });
+        host.appendChild(addBtn);
+        buildFreeText(host, {
+          placeholder: "…or: lift 4x/week ~1h, run twice 30min",
+          onParse: function(text){
+            var parsed = parseTrainingText(text);
+            if (parsed.length){
+              state.weeklyWorkouts = state.weeklyWorkouts.concat(parsed); renderRows(); updateContinue();
+              return { message:"Got it — added " + parsed.length + " workout" + (parsed.length > 1 ? "s" : "") + ".", advance:false };
+            }
+            return { message:"Didn't catch a workout there — try the builder above or a clearer sentence.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "diet": {
+        var dietGroup = makeChoiceGroup(DIET_OPTS, 3, function(){ return state.dietaryPreference; }, function(v){
+          state.dietaryPreference = v; updateContinue();
+        });
+        host.appendChild(dietGroup);
+        var allergyInput = document.createElement("input");
+        allergyInput.type = "text"; allergyInput.id = "allergyInput"; allergyInput.className = "text-input";
+        allergyInput.placeholder = "Allergies / avoid (optional)"; allergyInput.value = state.allergies;
+        allergyInput.setAttribute("aria-label", "Allergies or foods to avoid, optional");
+        allergyInput.addEventListener("input", function(){ state.allergies = allergyInput.value; });
+        host.appendChild(allergyInput);
+        buildFreeText(host, {
+          placeholder: "…or: vegetarian, allergic to peanuts",
+          onParse: function(text){
+            var t = text.toLowerCase(), found = false;
+            var opt = DIET_OPTS.find(function(o){ return t.indexOf(o.name.toLowerCase()) > -1; });
+            if (!opt && /no preference|anything|omnivore|eat everything/.test(t)) opt = DIET_OPTS.find(function(o){ return o.v === "none"; });
+            if (opt){ state.dietaryPreference = opt.v; refreshChoiceGroup(dietGroup, function(){ return state.dietaryPreference; }); found = true; }
+            var avoidM = text.match(/(?:allergic to|allergy to|avoid|no)\s+([a-zA-Z ,]+)/i);
+            if (avoidM){ state.allergies = avoidM[1].trim(); allergyInput.value = state.allergies; found = true; }
+            updateContinue();
+            if (found) return { message:"Got it — noted.", advance:false };
+            return { message:"Didn't catch a preference there — try the choices above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+
+      case "style": {
+        var styleGroup = makeChoiceGroup(STYLE_OPTS, 3, function(){ return state.coachingStyle; }, function(v, b, group){
+          state.coachingStyle = v; updateContinue(); group.classList.add("deciding"); scheduleAutoAdvance();
+        });
+        host.appendChild(styleGroup);
+        buildFreeText(host, {
+          placeholder: "…or: keep it warm and simple",
+          onParse: function(text){
+            var t = text.toLowerCase(), match = null;
+            if (/gentle|warm|kind|soft/.test(t)) match = STYLE_OPTS.find(function(o){ return o.v === "gentle"; });
+            else if (/motivat|energy|hype|push|intense/.test(t)) match = STYLE_OPTS.find(function(o){ return o.v === "motivating"; });
+            else if (/analyt|data|numbers|logic/.test(t)) match = STYLE_OPTS.find(function(o){ return o.v === "analytical"; });
+            if (match){
+              state.coachingStyle = match.v; refreshChoiceGroup(styleGroup, function(){ return state.coachingStyle; }); styleGroup.classList.add("deciding"); updateContinue();
+              return { message:"Got it — set to “" + match.name + ".”", advance:true };
+            }
+            return { message:"Didn't catch a style there — try one of the options above.", advance:false, clear:false };
+          }
+        });
+        break;
+      }
+    }
+  }
+
+  function paint(){
+    var step = STEPS[i], now = i + 1;
+    $("ghostNum").textContent = String(now).padStart(2, "0");
+    renderThread(now);
+    prevNow = now;
+    $("gate").textContent = step.gate;
+    $("persona").textContent = step.personaFn(state);
+    $("q").textContent = step.q;
+    $("skip").hidden = step.key !== "training";
+    buildControls($("controls"), step);
+    $("step").scrollTop = 0;
+    $("err").hidden = true;
+    $("err").classList.remove("show");
+    $("err").textContent = step.err;
+    $("continue").setAttribute("aria-disabled", isValid(step.key) ? "false" : "true");
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    $("q").setAttribute("tabindex", "-1");
+    $("q").focus({ preventScroll:true });
+    clearTimeout(paint._live);
+    paint._live = setTimeout(function(){
+      $("live").textContent = "Step " + now + " of " + TOTAL + ": " + step.gate;
+    }, 60); // sequenced after the focus move — never announced in the same tick (R1)
+  }
+
+  function stagger(){
+    var el = $("step");
+    el.classList.remove("entering"); void el.offsetWidth; el.classList.add("entering");
+  }
+
+  function render(dir){
+    var el = $("step"), ghost = $("ghostNum"), rtext = $("railText");
+    clearTimeout(autoAdvanceTimer);
+    if (!dir){ paint(); stagger(); return; }
+    el.classList.add("exit");
+    ghost.classList.add("exit");
+    rtext.classList.add("exit");
+    setTimeout(function(){
+      el.classList.remove("exit");
+      ghost.classList.remove("exit");
+      rtext.classList.remove("exit");
+      var enterCls = dir === 1 ? "enter-from-below" : "enter-from-above";
+      ghost.classList.add(enterCls);
+      rtext.classList.add(enterCls);
+      paint();
+      stagger();
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){
+          ghost.classList.remove("enter-from-below", "enter-from-above");
+          rtext.classList.remove("enter-from-below", "enter-from-above");
+        });
+      });
+    }, SWAP_WAIT_MS);
+  }
+
+  function tryAdvance(){
+    var step = STEPS[i];
+    if (!isValid(step.key)){
+      $("err").hidden = false;
+      $("err").classList.remove("show"); void $("err").offsetWidth; $("err").classList.add("show");
+      var group = $("options"); if (group) group.setAttribute("aria-invalid", "true");
+      var input = $("nameInput"); if (input) input.setAttribute("aria-invalid", "true");
+      $("live").textContent = step.err;
+      return;
+    }
+    if (i + 1 >= STEPS.length){
+      // Real onboarding has a hard session/route boundary between screens (R2) —
+      // nothing stays mounted, so anything worth carrying forward survives via
+      // persistence, not shared state (name + picked goal label).
+      try {
+        localStorage.setItem("strideProtoName", state.firstName.trim());
+        var goalOpt = GOALS.find(function(g){ return g.v === state.goal; });
+        if (goalOpt) localStorage.setItem("strideProtoGoalLabel", goalOpt.name.toLowerCase());
+      } catch (e) {}
+      leaveTo("plan-reveal.html");
+      return;
+    }
+    i++; render(1);
+  }
+
+  function goBack(){
+    if (i === 0) return;
+    i--; render(-1);
+  }
+
+  function leaveTo(url){
+    $("card").classList.add("leaving");
+    setTimeout(function(){ location.href = url; }, LEAVE_MS);
+  }
+
+  $("continue").addEventListener("click", tryAdvance);
+  $("back").addEventListener("click", goBack);
+  $("skip").addEventListener("click", tryAdvance);
+  render(0);
+})();
+</script>
+</body>
+</html>

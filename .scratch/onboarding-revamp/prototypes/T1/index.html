@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T1 — Entry-arc visual directions</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap');
+  :root{ --ink:#0d101b; --lavender:#b3a0ff; --bg:#f8f8f8; --card:#fff; --border:#ebebef; --muted:#6a7081; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;padding:48px 24px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto}
+  h1{font-size:28px;font-weight:800;letter-spacing:-.6px}
+  .lede{color:var(--muted);margin-top:8px;font-size:15px;max-width:640px;line-height:1.55}
+  .dir{margin-top:36px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:26px 28px}
+  .dir h2{font-size:19px;font-weight:800}
+  .dir .pitch{color:var(--muted);font-size:14px;margin-top:6px;line-height:1.6;max-width:640px}
+  .links{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .links a{background:#f3f1ff;color:var(--ink);text-decoration:none;font-weight:700;font-size:13px;padding:9px 14px;border-radius:9999px;border:1px solid #e4defc}
+  .links a:hover{background:var(--lavender)}
+  footer{margin-top:40px;color:#9099ad;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>T1 — Entry-arc visual directions</h1>
+  <p class="lede">Three throwaway prototypes for the landing → auth → onboarding → plan-reveal arc. Open each screen directly in a browser — no build step. Nothing here is merged into the app.</p>
+
+  <div class="dir">
+    <h2>A — Pixel Companion</h2>
+    <p class="pitch">A retro handheld-console frame wraps every screen; Stry the pixel-art elephant is rendered large and animated as an on-screen companion, with a literal pixel-notch XP bar for progress. Dark-mode native.</p>
+    <div class="links">
+      <a href="pixel-companion/landing.html">Landing</a>
+      <a href="pixel-companion/auth.html">Sign up</a>
+      <a href="pixel-companion/onboarding.html">Onboarding step (try it — click Continue/Back)</a>
+      <a href="pixel-companion/plan-reveal.html">Plan reveal</a>
+    </div>
+  </div>
+
+  <div class="dir">
+    <h2>B — Coach's Notebook</h2>
+    <p class="pitch">A calm, structured intake notebook: Stride's own giant hollow-outline numeral becomes literal step chrome, Stry shrinks to a small fixed badge, and the plan reveal is a torn-receipt ledger with tabular macro math. Light mode.</p>
+    <div class="links">
+      <a href="coachs-notebook/landing.html">Landing</a>
+      <a href="coachs-notebook/auth.html">Sign up</a>
+      <a href="coachs-notebook/onboarding.html">Onboarding step (try it — includes a checkpoint recap)</a>
+      <a href="coachs-notebook/plan-reveal.html">Plan reveal</a>
+    </div>
+  </div>
+
+  <div class="dir">
+    <h2>C — Momentum Field</h2>
+    <p class="pitch">Full-bleed soft-tint color zones drawn from Stride's existing seven-specialist palette carry the wayfinding — each onboarding phase is washed in its owning specialist's hue, resolving into an assembled "coaching team" at the plan reveal. Light mode, most saturated of the three.</p>
+    <div class="links">
+      <a href="momentum-field/landing.html">Landing</a>
+      <a href="momentum-field/auth.html">Sign up</a>
+      <a href="momentum-field/onboarding.html">Onboarding step (try it — watch the zone tint swap)</a>
+      <a href="momentum-field/plan-reveal.html">Plan reveal</a>
+    </div>
+  </div>
+
+  <footer>Built for ticket T1 (onboarding-revamp map). No decision is made here — see the conversation summary for constraint compliance per direction.</footer>
+</div>
+</body>
+</html>

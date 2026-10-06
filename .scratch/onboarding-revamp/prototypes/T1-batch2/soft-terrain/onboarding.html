@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Soft Terrain — Onboarding step · Stride T1-batch2</title>
+<!--
+  DIRECTION: SOFT TERRAIN. Persistent chrome: ridge-line trail with the cairn marker.
+  Only the white step card moves (rise 20px + fade, 220ms; opacity-only when reduced).
+  The cairn advances along the trail with a 250ms left-tween (jumps instantly under reduced motion).
+  A11y (R1): focus → <h2 tabindex="-1">; ONE polite live region for validation ONLY;
+  role=progressbar with real values; validate-before-advance.
+  Stry's role: REIMAGINED as the cairn — a small static trail marker, no face, no animation.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+  :root{
+    --ink:#0d101b; --lav:#b3a0ff; --lav-soft:#ede8ff; --paper:#f7f4ee;
+    --card:#fff; --line:#e9e4d8; --muted:#6a7081; --subtle:#9099ad;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);font-family:"Manrope",system-ui,sans-serif;-webkit-font-smoothing:antialiased;min-height:100dvh;display:flex;flex-direction:column;position:relative;overflow-x:hidden}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  button{font:inherit}
+  .contours{position:fixed;inset:0;pointer-events:none;z-index:0}
+
+  header{position:relative;z-index:1;max-width:560px;margin:0 auto;width:100%;padding:30px 24px 0}
+  .trailwrap{position:relative;padding:0 10px}
+  .trailmeta{display:flex;justify-content:space-between;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--subtle);margin-bottom:6px}
+  .trailmeta b{color:var(--ink)}
+  .ridge{display:block;width:100%;height:44px}
+  .cairn{position:absolute;top:20px;left:37.5%;transform:translateX(-50%);transition:left .25s var(--ease)}
+
+  main{position:relative;z-index:1;flex:1;display:flex;align-items:flex-start;justify-content:center;padding:18px 24px 60px}
+  .card{width:100%;max-width:520px}
+
+  .step{transition:opacity .22s var(--ease),transform .22s var(--ease)}
+  .step.pre-fwd{opacity:0;transform:translateY(20px)}
+  .step.pre-back{opacity:0;transform:translateY(-20px)}
+  .step.gone{opacity:0}
+
+  .note{display:flex;align-items:flex-start;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:13px 16px;font-size:13px;color:var(--muted);line-height:1.5}
+  .note svg{flex:none;margin-top:1px}
+  .questioncard{margin-top:14px;background:var(--card);border:1px solid var(--line);border-radius:24px;padding:26px 26px 22px;box-shadow:0 2px 10px rgba(13,16,27,.05)}
+  h2{font-size:26px;font-weight:800;letter-spacing:-.5px;line-height:1.2;outline:none}
+
+  .options{margin-top:20px;display:grid;gap:10px}
+  .opt{display:flex;align-items:center;gap:12px;width:100%;text-align:left;background:#fbf9f4;border:1px solid var(--line);border-radius:18px;padding:14px 16px;cursor:pointer;transition:border-color .12s,background .12s}
+  .opt:hover{border-color:var(--lav)}
+  .opt:focus-visible{outline:2px solid var(--lav);outline-offset:2px}
+  .opt .dot{flex:none;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--subtle)}
+  .opt .name{font-weight:800;font-size:14.5px;display:block}
+  .opt .sub{font-size:12px;color:var(--muted);display:block;margin-top:2px}
+  .opt[aria-pressed="true"]{background:var(--lav-soft);border-color:var(--lav)}
+  .opt[aria-pressed="true"] .dot{background:var(--lav);border-color:var(--lav)}
+
+  .err{font-size:12.5px;color:#b3261e;margin-top:12px;font-weight:600}
+  .actions{display:flex;justify-content:space-between;align-items:center;margin-top:22px}
+  .back{background:none;border:none;font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);cursor:pointer;padding:8px 0}
+  .back:hover{color:var(--ink)}
+  .continue{background:var(--ink);color:#fff;border:none;border-radius:9999px;padding:13px 26px;font-weight:800;font-size:14px;cursor:pointer}
+  .continue[aria-disabled="true"]{opacity:.35;cursor:not-allowed}
+
+  .proto-nav{position:fixed;right:14px;bottom:12px;font:600 11px/1 "Manrope",sans-serif;opacity:.45;z-index:2}
+  .proto-nav a{color:var(--ink)}
+  @media (prefers-reduced-motion: reduce){
+    .step{transition:opacity .12s linear}
+    .step.pre-fwd,.step.pre-back{transform:none}
+    .cairn{transition:none}
+  }
+</style>
+</head>
+<body>
+  <svg class="contours" width="100%" height="100%" viewBox="0 0 800 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <g fill="none" stroke="#0d101b" stroke-opacity=".055" stroke-width="1.2">
+      <path d="M-60 180 Q 200 60 420 170 T 900 140"/>
+      <path d="M-60 240 Q 210 120 430 230 T 900 200"/>
+      <path d="M-60 310 Q 220 190 440 300 T 900 270"/>
+      <path d="M-60 560 Q 240 430 470 550 T 900 520"/>
+      <path d="M-60 640 Q 250 510 480 630 T 900 600"/>
+      <path d="M-60 720 Q 260 590 490 710 T 900 680"/>
+      <ellipse cx="640" cy="330" rx="120" ry="60"/>
+      <ellipse cx="640" cy="330" rx="200" ry="105"/>
+      <ellipse cx="640" cy="330" rx="280" ry="150"/>
+    </g>
+  </svg>
+
+  <header>
+    <div class="trailwrap"
+      role="progressbar" aria-label="Trail progress" aria-valuemin="1" aria-valuemax="8" aria-valuenow="3" id="progress">
+      <div class="trailmeta"><span>Marker <b id="stepno">3 of 8</b></span><span id="summit">Summit: your plan</span></div>
+      <svg class="ridge" viewBox="0 0 520 44" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 36 C 60 30, 110 22, 170 26 S 300 34, 360 22 S 470 8, 520 14"
+          fill="none" stroke="#e9e4d8" stroke-width="2.5" stroke-linecap="round"/>
+        <path id="ridgefill" d="M0 36 C 60 30, 110 22, 170 26 S 300 34, 360 22 S 470 8, 520 14"
+          fill="none" stroke="#b3a0ff" stroke-width="2.5" stroke-linecap="round"
+          stroke-dasharray="560" stroke-dashoffset="350"/>
+      </svg>
+      <div class="cairn" id="cairn" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 20 20"><g fill="#0d101b"><rect x="5" y="13" width="10" height="4" rx="2"/><rect x="6.5" y="8.5" width="7" height="3.5" rx="1.75"/><rect x="8" y="4.5" width="4" height="3" rx="1.5"/></g></svg>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="step" id="step">
+        <div class="note">
+          <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><g fill="#b3a0ff"><rect x="5" y="13" width="10" height="4" rx="2"/><rect x="6.5" y="8.5" width="7" height="3.5" rx="1.75"/><rect x="8" y="4.5" width="4" height="3" rx="1.5"/></g></svg>
+          <span id="persona"></span>
+        </div>
+        <div class="questioncard" style="margin-top:14px">
+          <h2 tabindex="-1" id="q"></h2>
+          <div class="options" id="options" role="group" aria-labelledby="q"></div>
+          <p class="err" id="err" hidden>Choose one to keep walking.</p>
+          <div class="actions">
+            <button class="back" id="back" type="button">← Back down</button>
+            <button class="continue" id="continue" type="button" aria-disabled="true">Keep going</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <p class="sr-only" role="status" aria-live="polite" id="live"></p>
+  <p class="proto-nav"><a href="../index.html">← all directions</a></p>
+
+<script>
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const STEPS = [
+  { now: 3, q: "What are you aiming for right now?",
+    persona: "Trail note from Stry — pick the closest fit; you can re-route any week.",
+    options: [
+      { v:"aggressive_loss", name:"Lose fat fast", sub:"~25% deficit" },
+      { v:"moderate_loss",  name:"Lose fat",      sub:"~18% deficit" },
+      { v:"maintain",       name:"Maintain",      sub:"Stay here" },
+      { v:"recomp",         name:"Recomp",        sub:"Lose fat, gain muscle" },
+      { v:"lean_gain",      name:"Lean gain",     sub:"~10% surplus" },
+      { v:"muscle_gain",    name:"Build muscle",  sub:"~18% surplus" } ] },
+  { now: 4, q: "What is your job like during the day?",
+    persona: "Trail note from Stry — this reads the climb your workday makes for you.",
+    options: [
+      { v:"desk",     name:"Desk",     sub:"Mostly seated" },
+      { v:"mixed",    name:"Mixed",    sub:"Sit + move" },
+      { v:"standing", name:"Standing", sub:"On your feet" },
+      { v:"physical", name:"Physical", sub:"Manual labor" } ] },
+  { now: 5, q: "Outside work and workouts, how much do you move?",
+    persona: "Trail note from Stry — honest beats optimistic. The summit is close.",
+    options: [
+      { v:"sedentary", name:"Sedentary", sub:"Mostly sitting" },
+      { v:"light",     name:"Light",     sub:"Some walking" },
+      { v:"moderate",  name:"Moderate",  sub:"On feet often" },
+      { v:"active",    name:"Active",    sub:"Always moving" } ] }
+];
+let i = 0, picked = null;
+const $ = (id) => document.getElementById(id);
+const DASH_TOTAL = 560;
+
+function render(dir) {
+  const s = STEPS[i], el = $("step");
+  const paint = () => {
+    $("q").textContent = s.q;
+    $("persona").textContent = s.persona;
+    $("stepno").textContent = `${s.now} of 8`;
+    $("ridgefill").style.strokeDashoffset = DASH_TOTAL * (1 - s.now / 8);
+    $("cairn").style.left = (s.now / 8 * 100) + "%";
+    $("progress").setAttribute("aria-valuenow", s.now);
+    $("options").innerHTML = "";
+    s.options.forEach((o) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "opt"; b.setAttribute("aria-pressed", "false");
+      b.innerHTML = `<span class="dot" aria-hidden="true"></span>
+        <span><span class="name">${o.name}</span><span class="sub">${o.sub}</span></span>`;
+      b.addEventListener("click", () => select(o.v, b));
+      $("options").appendChild(b);
+    });
+    picked = null; $("continue").setAttribute("aria-disabled", "true");
+    $("err").hidden = true;
+    $("back").style.visibility = i === 0 ? "hidden" : "visible";
+    el.classList.remove("pre-fwd", "pre-back", "gone");
+    $("q").focus({ preventScroll: true });
+  };
+  if (dir) {
+    el.classList.add("gone");
+    setTimeout(() => { el.classList.add(dir === 1 ? "pre-fwd" : "pre-back"); paint(); }, REDUCED ? 60 : 150);
+  } else paint();
+}
+
+function select(v, btn) {
+  picked = v;
+  document.querySelectorAll(".opt").forEach(o => o.setAttribute("aria-pressed", o === btn ? "true" : "false"));
+  $("continue").setAttribute("aria-disabled", "false");
+  $("err").hidden = true;
+  clearTimeout(select._t);
+  select._t = setTimeout(() => advance(1), 220);
+}
+
+function advance(dir) {
+  const next = i + dir;
+  if (dir > 0 && !picked) {
+    $("err").hidden = false;
+    $("live").textContent = "Choose one to keep walking.";
+    return;
+  }
+  if (next < 0 || next >= STEPS.length) {
+    if (next >= STEPS.length) location.href = "plan-reveal.html";
+    return;
+  }
+  i = next; render(dir);
+}
+
+$("continue").addEventListener("click", () => advance(1));
+$("back").addEventListener("click", () => advance(-1));
+render(0);
+</script>
+</body>
+</html>
