@@ -10,6 +10,7 @@ import {
   nutrientsValidator,
 } from "./ledger_validators";
 import { requireUserId } from "./time_zone";
+import { assertLedgerWritable } from "./users";
 
 /** Most rows one import call may upsert. The load script sends 200. */
 export const MAX_IMPORT_BATCH = 500;
@@ -212,6 +213,7 @@ export const createUserFood = mutation({
   returns: v.id("foods"),
   handler: async (ctx, { name, aliases, per100g }): Promise<Id<"foods">> => {
     const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
     const key = normalizeText(name);
     if (key === "" || name.length > 120) throw new Error("Food name must be 1-120 characters");
     const cleanAliases = (aliases ?? []).map((a) => a.trim()).filter((a) => a !== "").slice(0, 10);

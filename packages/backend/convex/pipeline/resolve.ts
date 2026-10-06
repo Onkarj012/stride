@@ -24,6 +24,7 @@ import { insertEntries, MAX_BATCH, type NewEntry } from "../entries";
 import { isVisibleFood, MAX_USER_FOODS, searchVisibleFoodRows } from "../foods_db";
 import { inputKindValidator, matchSourceValidator } from "../ledger_validators";
 import { resolveLocalDay } from "../time_zone";
+import { assertLedgerWritable } from "../users";
 import { extractedItemValidator, type ExtractedItem } from "./extract";
 
 /** A confirmed food memory is the user's own choice, so it scores as an exact match. */
@@ -433,8 +434,14 @@ export const commitLog = internalMutation({
   returns: logResultValidator,
   handler: async (ctx, args): Promise<LogResult> => {
     const { userId, submissionId, inputKind, items, picks } = args;
+    await assertLedgerWritable(ctx, userId);
     const existing = await existingLog(ctx, userId, submissionId);
     if (existing !== null) return existing;
+    // A chat turn can outlive its chat (deleted, or cleared with the account). Its late writes must not reappear.
+    if (args.chatId !== undefined && (await ctx.db.get("chats", args.chatId))?.userId !== userId) throw new Error("Chat not found");
+    if (args.messageId !== undefined && (await ctx.db.get("messages", args.messageId))?.userId !== userId) {
+      throw new Error("Message not found");
+    }
     if (items.length === 0) return { kind: "empty", submissionId, lines: [] };
     const links = {
       ...(args.chatId === undefined ? {} : { chatId: args.chatId }),

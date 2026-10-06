@@ -25,6 +25,7 @@ import { callOpenRouter, PIPELINE_MODEL, type ChatMessage, type JsonValue, type 
 import { resolveFoodPortion, userFoodsOf, userMeasuresOf, type LogResult } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
 import { requireUserId, resolveLocalDay } from "./time_zone";
+import { assertLedgerWritable } from "./users";
 
 /** Title a chat gets until its first message names it. */
 export const DEFAULT_CHAT_TITLE = "New chat";
@@ -88,6 +89,7 @@ export const createChat = mutation({
   returns: v.id("chats"),
   handler: async (ctx, { title }) => {
     const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
     const clean = (title ?? "").trim().slice(0, MAX_TITLE_CHARS);
     return await ctx.db.insert("chats", { userId, title: clean === "" ? DEFAULT_CHAT_TITLE : clean, updatedAt: Date.now() });
   },
@@ -215,6 +217,7 @@ export const claimTurn = internalMutation({
   },
   returns: claimValidator,
   handler: async (ctx, args): Promise<Claim> => {
+    await assertLedgerWritable(ctx, args.userId);
     const chat = await ownChat(ctx, args.userId, args.chatId);
     const existing = await messageBySubmission(ctx, args.userId, args.submissionId);
     const now = Date.now();
@@ -318,6 +321,7 @@ export const insertAssistantMessage = internalMutation({
   },
   returns: v.id("messages"),
   handler: async (ctx, args): Promise<Id<"messages">> => {
+    await assertLedgerWritable(ctx, args.userId);
     const chat = await ctx.db.get("chats", args.chatId);
     const replyKey = `${args.submissionId}:reply`;
     const existing = await messageBySubmission(ctx, args.userId, replyKey);
