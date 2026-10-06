@@ -1,4 +1,6 @@
+import { FOOD_SPECIFIC_MEASURES, HOUSEHOLD_VESSELS, MASS_UNITS_G, VOLUME_UNITS_ML } from "./household_measures.ts";
 import { tokenize } from "./text.ts";
+import { UNIT_ALIASES } from "./units.ts";
 
 /** Scores for each kind of name agreement. Anything weaker falls back to token Jaccard. */
 export const MATCH_SCORES = { exact: 1, prefix: 0.88, contains: 0.78 } as const;
@@ -58,9 +60,28 @@ function isNumber(token: string): boolean {
   return /^\d/.test(token);
 }
 
-/** Each number joined to the word after it, sorted, so a quantity stays attached to its food. */
+/** Unit words and "of" that sit between a number and its food, as in "2 cups of rice". */
+const QUANTITY_FILLERS: ReadonlySet<string> = new Set(
+  [
+    ...Object.keys(MASS_UNITS_G),
+    ...Object.keys(VOLUME_UNITS_ML),
+    ...Object.keys(HOUSEHOLD_VESSELS),
+    ...FOOD_SPECIFIC_MEASURES,
+    ...Object.keys(UNIT_ALIASES),
+    "of",
+  ].flatMap(tokenize),
+);
+
+/** Each number joined to the first food word after it, sorted, so a quantity stays attached to its food. */
 function quantityKey(tokens: readonly string[]): string {
-  return tokens.flatMap((t, i) => (isNumber(t) ? [`${t} ${tokens[i + 1] ?? ""}`] : [])).sort().join("|");
+  return tokens
+    .flatMap((t, i) => {
+      if (!isNumber(t)) return [];
+      const food = tokens.slice(i + 1).find((w) => !QUANTITY_FILLERS.has(w));
+      return [`${t} ${food ?? ""}`];
+    })
+    .sort()
+    .join("|");
 }
 
 /** Scores one query against one name. Word-boundary prefix and containment, in either direction. */

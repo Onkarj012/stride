@@ -25,6 +25,7 @@ describe("HANDOFF #2: food memory respects quantity", () => {
   it("does not match swapped amounts: '2 rotis and 1 dal' vs a saved '1 roti and 2 dal'", () => {
     expect(selectMatch(rankCandidates("2 rotis and 1 dal", [{ name: "1 roti and 2 dal" }]))).toEqual({ status: "no_match" });
     expect(selectMatch(rankCandidates("2 rotis and 1 dal", [{ name: "1 dal and 2 chapatis" }]))).toMatchObject({ status: "matched" });
+    expect(selectMatch(rankCandidates("2 cups of rice and 1 cup dal", [{ name: "1 cup rice and 2 cups dal" }]))).toEqual({ status: "no_match" });
   });
 });
 
