@@ -157,10 +157,12 @@ export async function callOpenRouter(ctx: ActionCtx, userId: string, request: Ch
       const content = message !== undefined && typeof message.content === "string" ? message.content : null;
       const toolCalls = readToolCalls(message?.tool_calls);
       const finishReason = isRecord(choice) ? choice.finish_reason : undefined;
+      // Tool-call arguments are output too, so a tool-only reply is not settled as one token.
+      const outputChars = (content ?? "").length + (toolCalls.length === 0 ? 0 : JSON.stringify(toolCalls).length);
       const usage = usageFromResponse(
         readUsage(data.usage),
         estimatedInputTokens,
-        Math.min(estimatedOutputTokens, Math.max(1, Math.ceil((content ?? "").length / 3))),
+        Math.min(estimatedOutputTokens, Math.max(1, Math.ceil(outputChars / 3))),
       );
       await ctx.runMutation(internal.ai_guard.settleUsage, {
         reservationId: reservation.reservationId,

@@ -402,6 +402,24 @@ describe("HANDOFF #7: rejected or deleted memories are never used", () => {
     expect(third.kind).toBe("draft");
   });
 
+  test("many old deleted memories never hide a newer confirmed choice", async () => {
+    const { t, user, foods } = await setup();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 12; i++) {
+        await ctx.db.insert("food_links", { userId: "user_a", key: "ghar ka paneer", foodId: foods.paneer, status: "deleted", uses: 1, updatedAt: i });
+      }
+    });
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g" }]);
+    const first = await logText(user, "100 g ghar ka paneer", "sub-1");
+    if (first.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: first.draftId, corrections: [{ index: 0, foodId: foods.paneer }] });
+
+    const second = await logText(user, "100 g ghar ka paneer", "sub-2");
+    expect(second.kind).toBe("committed");
+    expect((await entryRows(t)).at(-1)).toMatchObject({ foodId: foods.paneer, source: "memory" });
+    expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toHaveLength(1);
+  });
+
   test("picking a different food rejects the old memory", async () => {
     const { t, user, foods } = await setup();
     await t.run((ctx) =>

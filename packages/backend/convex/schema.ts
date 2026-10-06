@@ -831,6 +831,7 @@ export default defineSchema({
     entryIds: v.optional(v.array(v.id("entries"))),
     submissionId: v.optional(v.string()),
     claimedAt: v.optional(v.number()), // user messages: when a chat turn last started work on it
+    audioPending: v.optional(v.boolean()), // user voice messages: claimed, transcript not saved yet
   })
     .index("by_chatId", ["chatId"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
@@ -878,5 +879,5 @@ export default defineSchema({
     status: v.union(v.literal("active"), v.literal("rejected"), v.literal("deleted")),
     uses: v.number(),
     updatedAt: v.number(),
-  }).index("by_userId_and_key", ["userId", "key"]),
+  }).index("by_userId_and_status_and_key", ["userId", "status", "key"]),
 });

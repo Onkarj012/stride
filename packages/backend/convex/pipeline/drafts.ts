@@ -81,15 +81,16 @@ async function requireVisibleFood(ctx: MutationCtx, userId: string, foodId: Id<"
 async function rememberLink(ctx: MutationCtx, userId: string, text: string, foodId: Id<"foods">): Promise<void> {
   const key = linkKey(text);
   if (key === "") return;
+  // Only active rows are read, so old rejected and deleted rows never crowd a newer choice out of the window.
   const rows = await ctx.db
     .query("food_links")
-    .withIndex("by_userId_and_key", (q) => q.eq("userId", userId).eq("key", key))
+    .withIndex("by_userId_and_status_and_key", (q) => q.eq("userId", userId).eq("status", "active").eq("key", key))
     .take(10);
   const now = Date.now();
   for (const row of rows) {
-    if (row.foodId !== foodId && row.status === "active") await ctx.db.patch("food_links", row._id, { status: "rejected", updatedAt: now });
+    if (row.foodId !== foodId) await ctx.db.patch("food_links", row._id, { status: "rejected", updatedAt: now });
   }
-  const same = rows.find((row) => row.foodId === foodId && row.status !== "deleted");
+  const same = rows.find((row) => row.foodId === foodId);
   if (same !== undefined) await ctx.db.patch("food_links", same._id, { status: "active", uses: same.uses + 1, updatedAt: now });
   else await ctx.db.insert("food_links", { userId, key, foodId, status: "active", uses: 1, updatedAt: now });
 }
@@ -261,11 +262,9 @@ export const listFoodLinks = query({
     const userId = await requireUserId(ctx);
     const rows = await ctx.db
       .query("food_links")
-      .withIndex("by_userId_and_key", (q) => q.eq("userId", userId))
+      .withIndex("by_userId_and_status_and_key", (q) => q.eq("userId", userId).eq("status", "active"))
       .take(MAX_LINKS_LISTED);
-    return rows
-      .filter((row) => row.status === "active")
-      .map((row) => ({ _id: row._id, key: row.key, foodId: row.foodId, uses: row.uses }));
+    return rows.map((row) => ({ _id: row._id, key: row.key, foodId: row.foodId, uses: row.uses }));
   },
 });
 

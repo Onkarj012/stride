@@ -118,9 +118,9 @@ export async function activeLinkFood(ctx: Ctx, userId: string, key: string): Pro
   if (key === "") return null;
   const links = await ctx.db
     .query("food_links")
-    .withIndex("by_userId_and_key", (q) => q.eq("userId", userId).eq("key", key))
+    .withIndex("by_userId_and_status_and_key", (q) => q.eq("userId", userId).eq("status", "active").eq("key", key))
     .take(MAX_LINKS_PER_KEY);
-  const active = links.filter((link) => link.status === "active").sort((a, b) => b.updatedAt - a.updatedAt);
+  const active = links.sort((a, b) => b.updatedAt - a.updatedAt);
   for (const link of active) {
     const food = await ctx.db.get("foods", link.foodId);
     if (food !== null && isVisibleFood(food, userId)) return food;

@@ -16,20 +16,26 @@ const DAL: Nutrients = { kcal: 116.3, protein: 9.02, carbs: 20.13, fat: 0.38, fi
 interface LlmReply {
   content?: string | null;
   toolCalls?: { name: string; args: Record<string, unknown> }[];
+  noUsage?: boolean;
 }
 type RequestBody = Record<string, unknown>;
 
 let llm: (body: RequestBody, n: number) => LlmReply;
 let bodies: RequestBody[];
+let groqCalls: number;
 
 /** A JSON response. */
 function json(value: unknown): Response {
   return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
 }
 
-/** Mocked OpenRouter. Any other URL fails the test. */
+/** Mocked OpenRouter and Groq. Any other URL fails the test. */
 async function fakeFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  if (url.startsWith("https://api.groq.com/")) {
+    groqCalls++;
+    return json({ text: "two rotis" });
+  }
   if (url !== OPENROUTER_CHAT_URL) throw new Error(`Unexpected fetch: ${url}`);
   const body: unknown = JSON.parse(String(init?.body));
   if (!isRecord(body)) throw new Error("bad body");
@@ -42,7 +48,7 @@ async function fakeFetch(input: string | URL | Request, init?: RequestInit): Pro
   }));
   return json({
     choices: [{ message: { content: reply.content ?? null, tool_calls: toolCalls }, finish_reason: "stop" }],
-    usage: { prompt_tokens: 300, completion_tokens: 30 },
+    ...(reply.noUsage === true ? {} : { usage: { prompt_tokens: 300, completion_tokens: 30 } }),
   });
 }
 
@@ -60,9 +66,11 @@ function afterToolResult(body: RequestBody): boolean {
 
 beforeEach(() => {
   bodies = [];
+  groqCalls = 0;
   llm = () => ({ content: "Hi!" });
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
   vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  vi.stubEnv("GROQ_API_KEY", "test-key");
 });
 
 afterEach(() => {
@@ -197,7 +205,42 @@ describe("multi-chat (D12)", () => {
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(
       /already being handled/,
     );
+    const audio = { data: btoa("fake audio bytes"), mimeType: "audio/webm" };
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", audio })).rejects.toThrow(/already being handled/);
     expect(bodies).toHaveLength(0);
+    expect(groqCalls).toBe(0);
+  });
+
+  test("a submissionId with ':' is refused, so it cannot take another turn's reply key", async () => {
+    const { user, chatId } = await setup();
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "x:reply", text: "hi" })).rejects.toThrow(/no ':'/);
+    expect(bodies).toHaveLength(0);
+  });
+
+  test("a voice retry reuses the saved transcript instead of paying Groq again", async () => {
+    const { t, user, chatId } = await setup();
+    const audio = { data: btoa("fake audio bytes"), mimeType: "audio/webm" };
+    llm = () => ({});
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "v1", audio })).rejects.toThrow();
+    expect(groqCalls).toBe(1);
+
+    llm = () => ({ content: "Logged." });
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "v1", audio });
+    expect(turn.reply).toBe("Logged.");
+    expect(groqCalls).toBe(1);
+    const message = await t.run((ctx) => ctx.db.get("messages", turn.userMessageId));
+    expect(message).toMatchObject({ text: "two rotis" });
+    expect(message?.audioPending).toBeUndefined();
+    expect((await user.query(api.chats.listChats, {})).map((c) => c.title)).toEqual(["two rotis"]);
+  });
+
+  test("a tool-only reply without usage settles its tool arguments as output", async () => {
+    const { t, user, chatId } = await setup();
+    llm = (_body, n) =>
+      n === 1 ? { noUsage: true, toolCalls: [{ name: "delete_entry", args: { entry_id: "x".repeat(900) } }] } : { content: "Done." };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "delete it" });
+    const [first] = await t.run((ctx) => ctx.db.query("ai_usage_reservations").take(10));
+    expect(first?.settledOutputTokens).toBeGreaterThanOrEqual(300);
   });
 });
 

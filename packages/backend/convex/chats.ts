@@ -71,6 +71,10 @@ const turnResultValidator = v.object({
 });
 type TurnResult = Infer<typeof turnResultValidator>;
 
+/** A claimed turn: its user message, whether an earlier attempt ran, and the text saved so far. */
+const claimValidator = v.object({ messageId: v.id("messages"), retry: v.boolean(), text: v.string(), audioPending: v.boolean() });
+type Claim = Infer<typeof claimValidator>;
+
 /** Loads one of the user's chats or throws. */
 async function ownChat(ctx: QueryCtx | MutationCtx, userId: string, chatId: Id<"chats">): Promise<Doc<"chats">> {
   const chat = await ctx.db.get("chats", chatId);
@@ -207,9 +211,10 @@ export const claimTurn = internalMutation({
     submissionId: v.string(),
     text: v.string(),
     attachments: v.array(v.object({ kind: v.union(v.literal("image"), v.literal("audio")), storageId: v.id("_storage") })),
+    audioPending: v.boolean(),
   },
-  returns: v.object({ messageId: v.id("messages"), retry: v.boolean() }),
-  handler: async (ctx, args): Promise<{ messageId: Id<"messages">; retry: boolean }> => {
+  returns: claimValidator,
+  handler: async (ctx, args): Promise<Claim> => {
     const chat = await ownChat(ctx, args.userId, args.chatId);
     const existing = await messageBySubmission(ctx, args.userId, args.submissionId);
     const now = Date.now();
@@ -218,7 +223,7 @@ export const claimTurn = internalMutation({
       const running = existing.claimedAt !== undefined && now - existing.claimedAt < TURN_LEASE_MS;
       if (reply !== null || running) throw new Error("This message is already being handled. Try again in a moment.");
       await ctx.db.patch("messages", existing._id, { claimedAt: now });
-      return { messageId: existing._id, retry: true };
+      return { messageId: existing._id, retry: true, text: existing.text, audioPending: existing.audioPending === true };
     }
     const id = await ctx.db.insert("messages", {
       userId: args.userId,
@@ -230,20 +235,42 @@ export const claimTurn = internalMutation({
       draftIds: [],
       submissionId: args.submissionId,
       claimedAt: now,
+      ...(args.audioPending ? { audioPending: true } : {}),
     });
-    const title = chat.title === DEFAULT_CHAT_TITLE && args.text !== "" ? args.text.slice(0, MAX_TITLE_CHARS) : chat.title;
-    await ctx.db.patch("chats", chat._id, { title, updatedAt: now });
-    return { messageId: id, retry: false };
+    await ctx.db.patch("chats", chat._id, { title: titleFor(chat, args.text), updatedAt: now });
+    return { messageId: id, retry: false, text: args.text, audioPending: args.audioPending };
   },
 });
 
-/** Frees a failed turn's claim so the client can retry it right away. */
+/** An untitled chat takes its first message text as its title. */
+function titleFor(chat: Doc<"chats">, text: string): string {
+  return chat.title === DEFAULT_CHAT_TITLE && text !== "" ? text.slice(0, MAX_TITLE_CHARS) : chat.title;
+}
+
+/** Saves a claimed voice message's full text once Groq has transcribed it, so a retry never pays for it again. */
+export const saveTranscript = internalMutation({
+  args: { userId: v.string(), messageId: v.id("messages"), text: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { userId, messageId, text }) => {
+    const message = await ctx.db.get("messages", messageId);
+    if (message === null || message.userId !== userId) throw new Error("Message not found");
+    await ctx.db.patch("messages", messageId, { text, audioPending: undefined });
+    const chat = await ctx.db.get("chats", message.chatId);
+    if (chat !== null) await ctx.db.patch("chats", chat._id, { title: titleFor(chat, text) });
+    return null;
+  },
+});
+
+/** Frees a failed turn's claim so the client can retry it right away. A voice message with no transcript yet is removed. */
 export const releaseTurn = internalMutation({
   args: { userId: v.string(), messageId: v.id("messages") },
   returns: v.null(),
   handler: async (ctx, { userId, messageId }) => {
     const message = await ctx.db.get("messages", messageId);
-    if (message !== null && message.userId === userId) await ctx.db.patch("messages", messageId, { claimedAt: undefined });
+    if (message === null || message.userId !== userId) return null;
+    // Nothing ran yet for a message still waiting on its transcript, so it leaves no empty bubble behind.
+    if (message.audioPending === true) await ctx.db.delete("messages", messageId);
+    else await ctx.db.patch("messages", messageId, { claimedAt: undefined });
     return null;
   },
 });
@@ -619,6 +646,12 @@ async function runChatTurn(
   return { reply: notes.length === 0 ? "Sorry, I couldn't finish that. Try again?" : notes.join(" "), toolCalls, draftIds, entryIds };
 }
 
+/** Refuses an empty or oversized message before any model work. */
+function checkMessage(text: string, imageStorageId: Id<"_storage"> | undefined): void {
+  assertMaxChars(text, AI_INPUT_LIMITS.messageChars, "message");
+  if (text === "" && imageStorageId === undefined) throw new Error("Message is empty");
+}
+
 const SLOTS: readonly MealSlot[] = ["breakfast", "lunch", "snack", "dinner"];
 
 /** True when a value is one of the four meal slots. */
@@ -643,26 +676,33 @@ export const sendMessage = action({
     const identity = await ctx.auth.getUserIdentity();
     if (identity === null) throw new Error("Unauthenticated");
     const userId = identity.subject;
-    if (args.submissionId.length === 0 || args.submissionId.length > MAX_SUBMISSION_ID_CHARS) {
-      throw new Error(`submissionId must be 1-${MAX_SUBMISSION_ID_CHARS} characters`);
+    // Turn writes use `${submissionId}:...` keys, so a ':' in a client id could collide with another turn's keys.
+    if (args.submissionId.length === 0 || args.submissionId.length > MAX_SUBMISSION_ID_CHARS || args.submissionId.includes(":")) {
+      throw new Error(`submissionId must be 1-${MAX_SUBMISSION_ID_CHARS} characters with no ':'`);
     }
     const prior: TurnResult | null = await ctx.runQuery(internal.chats.findTurn, { userId, submissionId: args.submissionId });
     if (prior !== null) return prior;
 
-    let text = (args.text ?? "").trim();
-    if (args.audio !== undefined) text = [text, await transcribeAudio(ctx, userId, args.audio.data, args.audio.mimeType)].join(" ").trim();
-    assertMaxChars(text, AI_INPUT_LIMITS.messageChars, "message");
-    if (text === "" && args.imageStorageId === undefined) throw new Error("Message is empty");
-
-    const claim: { messageId: Id<"messages">; retry: boolean } = await ctx.runMutation(internal.chats.claimTurn, {
+    const typed = (args.text ?? "").trim();
+    if (args.audio === undefined) checkMessage(typed, args.imageStorageId);
+    // Claim before transcribing, so a concurrent duplicate is refused before it pays for a Groq call.
+    const claim: Claim = await ctx.runMutation(internal.chats.claimTurn, {
       userId,
       chatId: args.chatId,
       submissionId: args.submissionId,
-      text,
+      text: typed,
       attachments: args.imageStorageId === undefined ? [] : [{ kind: "image", storageId: args.imageStorageId }],
+      audioPending: args.audio !== undefined,
     });
     const userMessageId = claim.messageId;
     try {
+      let text = claim.text;
+      if (claim.audioPending) {
+        if (args.audio === undefined) throw new Error("Send the voice note again.");
+        text = [text, await transcribeAudio(ctx, userId, args.audio.data, args.audio.mimeType)].join(" ").trim();
+        checkMessage(text, args.imageStorageId);
+        await ctx.runMutation(internal.chats.saveTranscript, { userId, messageId: userMessageId, text });
+      }
       const turn = await runTurn(ctx, userId, args, text, userMessageId, claim.retry);
       const assistantMessageId: Id<"messages"> = await ctx.runMutation(internal.chats.insertAssistantMessage, {
         userId,
