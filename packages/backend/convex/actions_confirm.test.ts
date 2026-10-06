@@ -118,7 +118,7 @@ describe("large-batch confirmation", () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "confirm-user" });
     const { id: sessionId } = await asUser.mutation(api.chat.createSession, { title: "Hydrated result" });
-    const staged = await t.mutation((internal as any).ai.stageClarificationGroup, {
+    const staged = await t.mutation(internal.ai.stageClarificationGroup, {
       userId: "confirm-user",
       groupIdempotencyKey: "hydrated-logged-items",
       sourceSurface: "chat",
@@ -158,9 +158,9 @@ describe("large-batch confirmation", () => {
       actionIds: actions.map((action) => action._id),
     });
 
-    const confirmed = await asUser.action((api as any).ai.confirmGroup, {
+    const confirmed = await asUser.action(api.ai.confirmGroup, {
       groupId: staged.groupId,
-      decisions: [0, 1, 2].map((ordinal) => ({ ordinal, action: "confirm" })),
+      decisions: [0, 1, 2].map((ordinal) => ({ ordinal, action: "confirm" as const })),
     }) as any;
     const byType = new Map(confirmed.loggedItems.map((item: any) => [item.type, item.data]));
     expect(byType.get("meal")).toMatchObject({ name: "Dal bowl", calories: 400, protein: 20 });
@@ -168,8 +168,8 @@ describe("large-batch confirmation", () => {
     expect(byType.get("water")).toMatchObject({ ml: 650 });
     expect(JSON.stringify(confirmed.loggedItems)).not.toMatch(/undefined|NaN/);
 
-    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: actions[0]._id });
-    const reloaded = await asUser.action((api as any).ai.confirmGroup, { groupId: staged.groupId, decisions: [] }) as any;
+    await asUser.mutation(api.actions_undo.undoAction, { actionId: actions[0]._id });
+    const reloaded = await asUser.action(api.ai.confirmGroup, { groupId: staged.groupId, decisions: [] }) as any;
     expect(reloaded.loggedItems.map((item: any) => item.type).sort()).toEqual(["water", "workout"]);
     expect(reloaded.loggedItems.some((item: any) => item.data.actionId === actions[0]._id)).toBe(false);
   });
@@ -304,7 +304,7 @@ describe("large-batch confirmation", () => {
     });
     await t.run((ctx) => ctx.db.patch(staged.groupId, { createdAt: Date.now() - CONFIRMATION_TTL_MS - 1 }));
 
-    const result = await asUser.action((api as any).ai.resolveClarification, {
+    const result = await asUser.action(api.ai.resolveClarification, {
       groupId: staged.groupId,
       date: "2026-07-16",
     }) as any;

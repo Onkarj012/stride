@@ -67,6 +67,7 @@ const sendIcon = (
   </svg>
 )
 
+/** Grows the textarea to fit its content, up to 120px. */
 function resizeTextarea(el: HTMLTextAreaElement) {
   el.style.height = 'auto'
   el.style.height = `${Math.min(el.scrollHeight, 120)}px`

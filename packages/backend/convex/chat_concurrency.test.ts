@@ -82,18 +82,18 @@ function mealPayload(name: string, time: string) {
 
 async function stageGroup(t: ReturnType<typeof convexTest>, key: string, count = 2, createdAt = Date.now()) {
   const userId = "concurrency-user";
-  const { groupId } = await t.mutation((internal as any).ai.stageClarificationGroup, {
+  const { groupId } = await t.mutation(internal.ai.stageClarificationGroup, {
     userId,
     groupIdempotencyKey: key,
     sourceSurface: "chat",
     rawInput: key,
     createdAt,
     members: Array.from({ length: count }, (_, ordinal) => ({
-      actionType: "meal",
+      actionType: "meal" as const,
       memberIdempotencyKey: `${key}-member-${ordinal}`,
       payload: mealPayload(`${key}-${ordinal}`, `${String(8 + ordinal).padStart(2, "0")}:00`),
-      provenance: "ai_extracted",
-      validation: { status: "valid", messages: [] },
+      provenance: "ai_extracted" as const,
+      validation: { status: "valid" as const, messages: [] },
       reversible: true,
       resolvedDate: "2026-07-16",
       resolvedTime: `${String(8 + ordinal).padStart(2, "0")}:00`,
@@ -251,7 +251,7 @@ describe("chat logging concurrency invariants", () => {
     const asUser = t.withIdentity({ subject: "concurrency-user" });
     const staged = await stageGroup(t, "mixed-recovery");
     const actions = await t.run((ctx) => ctx.db.query("actions").collect()).then((rows) => rows.filter((row) => row.groupId === staged.groupId));
-    await Promise.all(actions.map((action) => t.mutation((internal as any).ai.recordConfirmationMemberFailure, { actionId: action._id, error: "Looks like a duplicate" })));
+    await Promise.all(actions.map((action) => t.mutation(internal.ai.recordConfirmationMemberFailure, { actionId: action._id, error: "Looks like a duplicate" })));
     const existingMessage = await t.run((ctx) => ctx.db.query("chat_messages").collect()).then((rows) => rows.find((row) => row.actionGroupId === staged.groupId));
     await t.run(async (ctx) => {
       if (!existingMessage) throw new Error("Missing staged assistant message");
@@ -274,7 +274,7 @@ describe("chat logging concurrency invariants", () => {
       };
       await ctx.db.patch(existingMessage._id, { content: "I couldn't save that. Please try again.", turnOutcome: "failed", turnCards: [duplicateCard] } as any);
     });
-    await t.mutation((internal as any).ai.finalizeConfirmationGroup, { groupId: staged.groupId });
+    await t.mutation(internal.ai.finalizeConfirmationGroup, { groupId: staged.groupId });
     process.env.STRIDE_CHAT_RECONCILE_BARRIER = "paused";
     const logAnyway = asUser.action(api.ai.logAnywayForAction, { actionId: actions[0]._id });
     const confirm = asUser.action(api.ai.confirmGroup, { groupId: staged.groupId, decisions: [{ ordinal: 1, action: "confirm" }] });
@@ -296,7 +296,7 @@ describe("chat logging concurrency invariants", () => {
     process.env.STRIDE_CHAT_RECONCILE_BARRIER = "paused";
     const clarifying = asUser.action(api.ai.resolveClarification, { groupId, date: "2026-07-16" });
     await waitFor(() => t.run((ctx) => ctx.db.query("meals").collect()), (rows) => rows.length === 2);
-    const undo = await asUser.mutation((api as any).actions_undo.undoAction, { actionId: actions[0]._id });
+    const undo = await asUser.mutation(api.actions_undo.undoAction, { actionId: actions[0]._id });
     process.env.STRIDE_CHAT_RECONCILE_BARRIER = "released";
     const clarified = await clarifying as any;
     expect(undo.status).toBe("undone");
@@ -322,7 +322,7 @@ describe("chat logging concurrency invariants", () => {
     const asUser = t.withIdentity({ subject: "concurrency-user" });
 
     const failedDiscarded = await stageGroup(t, "failed-discarded", 2);
-    await t.mutation((internal as any).ai.recordConfirmationMemberFailure, {
+    await t.mutation(internal.ai.recordConfirmationMemberFailure, {
       actionId: failedDiscarded.actions[0]._id,
       error: "Provider rejected this item",
     });

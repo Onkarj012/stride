@@ -145,18 +145,22 @@ export type ChatTurnCard =
   | { version: 1; kind: 'failure'; data: FailureCardData }
   | { version: 1; kind: 'undo'; data: UndoCardData }
 
+/** Narrows an unknown value to a plain object. */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+/** Accepts a missing value or a string. */
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string'
 }
 
+/** Accepts a missing value or a known resolution reason. */
 function isOptionalResolutionReason(value: unknown): boolean {
   return value === undefined || value === 'discarded' || value === 'expired' || value === 'mixed'
 }
 
+/** Validates meal macros, including optional reported and estimate values. */
 function isMacroValues(value: unknown): value is ConfirmationMacroData {
   if (!isRecord(value)) return false
   const fields = ['calories', 'protein', 'carbs', 'fat']
@@ -171,10 +175,12 @@ function isMacroValues(value: unknown): value is ConfirmationMacroData {
   return true
 }
 
+/** Narrows a value to a card action type. */
 function isActionType(value: unknown): value is ChatTurnActionType {
   return value === 'meal' || value === 'workout' || value === 'recovery'
 }
 
+/** Validates the fields every card row shares. */
 function isItemBase(value: unknown): value is CardItemBase {
   if (!isRecord(value)) return false
   return Number.isInteger(value.ordinal)
@@ -192,10 +198,12 @@ function isItemBase(value: unknown): value is CardItemBase {
     && (value.macros === undefined || isMacroValues(value.macros))
 }
 
+/** Validates a saved row reference. */
 function isRecordRef(value: unknown): value is ChatTurnRecordRef {
   return isRecord(value) && typeof value.table === 'string' && typeof value.id === 'string'
 }
 
+/** Checks that a value is an array of valid card rows that also pass a kind-specific check. */
 function everyItem(value: unknown, validate: (item: Record<string, unknown>) => boolean): boolean {
   return Array.isArray(value)
     && value.every((item) => isItemBase(item) && validate(item as Record<string, unknown>))
@@ -258,10 +266,12 @@ export function isChatTurnCard(value: unknown): value is ChatTurnCard {
   return false
 }
 
+/** Throws when a value is not a valid chat turn card. */
 export function assertChatTurnCard(value: unknown): asserts value is ChatTurnCard {
   if (!isChatTurnCard(value)) throw new Error('Invalid chat turn card')
 }
 
+/** Throws when a value is not an array of valid chat turn cards. */
 export function assertChatTurnCards(value: unknown): asserts value is ChatTurnCard[] {
   if (!Array.isArray(value)) throw new Error('Invalid chat turn cards')
   for (const card of value) assertChatTurnCard(card)

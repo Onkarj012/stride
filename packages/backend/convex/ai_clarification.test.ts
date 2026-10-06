@@ -411,7 +411,7 @@ describe("clarification flow", () => {
     const typedRetry = await asUser.action(api.ai.chat, typedRequest) as any;
     expect(typedRetry).toMatchObject({ messageId: typedResult.messageId, outcome: typedResult.outcome, cards: typedResult.cards });
     const action = await t.run((ctx) => ctx.db.query("actions").first());
-    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: action!._id });
+    await asUser.mutation(api.actions_undo.undoAction, { actionId: action!._id });
 
     const assistantMessages = (await t.run((ctx) => ctx.db.query("chat_messages").collect())).filter((message) => message.role === "ai");
     expect(assistantMessages).toHaveLength(1);
@@ -429,7 +429,7 @@ describe("clarification flow", () => {
     const asUser = t.withIdentity({ subject: "user1" });
     mockChatReply(Array.from({ length: 5 }, (_, index) => `⟦LOG_WATER⟧{"ml":${500 + index},"date":"2026-07-16"}⟦/LOG_WATER⟧`).join(""));
     const initial = await asUser.action(api.ai.chat, { message: "five glasses", today: "2026-07-16" }) as any;
-    const discarded = await asUser.action((api as any).ai.confirmGroup, {
+    const discarded = await asUser.action(api.ai.confirmGroup, {
       groupId: initial.confirmation.groupId,
       decisions: initial.confirmation.items.map((item: any) => ({ ordinal: item.ordinal, action: "discard" })),
     }) as any;

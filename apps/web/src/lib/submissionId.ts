@@ -16,6 +16,7 @@ export function newSubmissionId(): string {
 export function useSubmissionId(): { idFor: (key: string) => string; clear: () => void } {
   const ref = useRef<{ key: string; id: string } | null>(null);
 
+  // Returns the retained id for this key, or starts a new one.
   const idFor = useCallback((key: string) => {
     if (ref.current?.key === key) return ref.current.id;
     const id = newSubmissionId();
@@ -23,6 +24,7 @@ export function useSubmissionId(): { idFor: (key: string) => string; clear: () =
     return id;
   }, []);
 
+  // Forgets the retained id once the submission has landed.
   const clear = useCallback(() => {
     ref.current = null;
   }, []);

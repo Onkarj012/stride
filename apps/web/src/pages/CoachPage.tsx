@@ -65,6 +65,7 @@ const GREETING: Record<CoachingStyle, string> = {
 const MAX_IMAGE_EDGE = 1600;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
+/** Returns the value when it is a finite number, else undefined. */
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -187,6 +188,7 @@ export function CoachPage() {
 
   const scroll = useCallback(() => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50), []);
 
+  // Adds a memory-approval note to the transcript when an action created any.
   const addMemoryApprovals = useCallback((entries: MemoryApprovalEntry[]) => {
     if (entries.length === 0) return;
     setNotes((prev) => [...prev, { kind: "memory-approval", id: `memory-${Date.now()}`, entries }]);

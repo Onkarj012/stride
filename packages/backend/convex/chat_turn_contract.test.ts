@@ -154,7 +154,7 @@ describe("persisted chat-turn outcome contract", () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "turn-user" });
     const { id: sessionId } = await asUser.mutation(api.chat.createSession, { title: "Safe retry" });
-    const staged = await t.mutation((internal as any).ai.stageClarificationGroup, {
+    const staged = await t.mutation(internal.ai.stageClarificationGroup, {
       userId: "turn-user",
       groupIdempotencyKey: "safe-failed-retry",
       sourceSurface: "chat",
@@ -206,14 +206,14 @@ describe("persisted chat-turn outcome contract", () => {
       actionIds: [action!._id],
     });
 
-    const first = await asUser.action((api as any).ai.confirmGroup, {
+    const first = await asUser.action(api.ai.confirmGroup, {
       groupId: staged.groupId,
       decisions: [{ ordinal: 0, action: "confirm" }],
     }) as any;
     expect(first.status).toBe("failed");
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(0);
 
-    const retry = await asUser.action((api as any).ai.confirmGroup, {
+    const retry = await asUser.action(api.ai.confirmGroup, {
       groupId: staged.groupId,
       decisions: [{
         ordinal: 0,

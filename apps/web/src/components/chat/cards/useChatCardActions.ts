@@ -42,12 +42,14 @@ type Options = {
   onSettled?: () => void;
 };
 
+/** Returns a copy of the set with the id added. */
 function withId(set: ReadonlySet<string>, id: string): Set<string> {
   const next = new Set(set);
   next.add(id);
   return next;
 }
 
+/** Returns a copy of the set with the id removed. */
 function withoutId(set: ReadonlySet<string>, id: string): Set<string> {
   const next = new Set(set);
   next.delete(id);
@@ -61,11 +63,11 @@ function withoutId(set: ReadonlySet<string>, id: string): Set<string> {
  * that are currently in flight.
  */
 export function useChatCardActions(options: Options = {}): { handlers: ChatCardHandlers; state: ChatCardState } {
-  const confirmGroup = useAction((api as any).ai.confirmGroup);
+  const confirmGroup = useAction(api.ai.confirmGroup);
   const resolveClarification = useAction(api.ai.resolveClarification);
   const logAnywayForAction = useAction(api.ai.logAnywayForAction);
-  const undoAction = useMutation((api as any).actions_undo.undoAction);
-  const undoGroup = useMutation((api as any).actions_undo.undoGroup);
+  const undoAction = useMutation(api.actions_undo.undoAction);
+  const undoGroup = useMutation(api.actions_undo.undoGroup);
   const toast = useToast();
 
   const [pendingGroupIds, setPendingGroupIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -73,6 +75,7 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
 
   const { onConfirmResult, onSettled } = options;
 
+  // Sends confirmation decisions for a group, ignoring repeat clicks while one is in flight.
   const onConfirm = useCallback(async (groupId: string, decisions: ConfirmationDecision[]) => {
     let alreadyPending = false;
     setPendingGroupIds((current) => {
@@ -95,6 +98,7 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     }
   }, [confirmGroup, onConfirmResult, onSettled, toast]);
 
+  // Resolves a clarification group with the chosen date.
   const onClarify = useCallback(async (groupId: string, date: string) => {
     let alreadyPending = false;
     setPendingGroupIds((current) => {
@@ -115,6 +119,7 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     }
   }, [onSettled, resolveClarification, toast]);
 
+  // Undoes one saved action.
   const onUndoItem = useCallback(async (_groupId: string, actionId: string) => {
     let alreadyPending = false;
     setPendingActionIds((current) => {
@@ -144,6 +149,7 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     }
   }, [onSettled, toast, undoAction]);
 
+  // Undoes every saved action in a group.
   const onUndoAll = useCallback(async (groupId: string) => {
     const pendingKey = `group:${groupId}`;
     let alreadyPending = false;
@@ -185,6 +191,7 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     }
   }, [onSettled, toast, undoGroup]);
 
+  // Saves an action that the duplicate check blocked.
   const onLogAnyway = useCallback(async (_groupId: string, item: DuplicateCardData["items"][number]) => {
     let alreadyPending = false;
     setPendingActionIds((current) => {

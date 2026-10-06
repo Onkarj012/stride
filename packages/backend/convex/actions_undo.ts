@@ -42,6 +42,7 @@ type UndoResult = {
   actionType?: DerivedActionType;
 };
 
+/** Copies a persisted assistant message into the turn shape clients render after undo. */
 function canonicalTurnSnapshot(message: Doc<"chat_messages"> | null, groupId: Doc<"actionGroups">["_id"]) {
   if (!message) return undefined;
   return {

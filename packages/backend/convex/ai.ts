@@ -1,5 +1,6 @@
 import { action, mutation, query, internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc, Id, TableNames } from "./_generated/dataModel";
+import schema from "./schema";
 import { internal, api } from "./_generated/api";
 import { deriveGroupKey, deriveLogicalMemberKey, deriveMemberKey, deriveSubmissionFingerprint, ensureGroup, ensureMember } from "./actions_idempotency";
 import { ConvexError, v } from "convex/values";
@@ -18,7 +19,7 @@ import { insertActionTelemetry } from "./telemetry";
 import { assertValidDate, assertValidTime, stableHash } from "./validation";
 import { finalizeActionGroup as finalizeActionGroupInMutation } from "./actions_group";
 import { assertCurrentChatClaim, hasCompleteChatClaim } from "./chat_claim";
-import type { ChatTurnCard, ChatTurnOutcome, ConfirmationMacroData, ResultCardItem } from "../../shared/src/chat-turn";
+import type { ChatTurnCard, ChatTurnOutcome, ConfirmationCardData, ConfirmationMacroData, ResultCardItem } from "../../shared/src/chat-turn";
 
 async function recordActionTelemetry(ctx: any, input: Parameters<typeof insertActionTelemetry>[1]) {
   await ctx.runMutation((internal as any).telemetry.record, { input });
@@ -178,6 +179,7 @@ type TurnClaim = {
   claimVersion?: number;
 };
 
+/** Hashes a chat request so a reused submission id with different details is rejected. */
 function turnSubmissionFingerprint(input: {
   userId: string;
   sessionId?: Id<"chat_sessions">;
@@ -198,6 +200,7 @@ function turnSubmissionFingerprint(input: {
   }));
 }
 
+/** Creates a unique owner token for one attempt at processing a submission. */
 function newTurnClaimOwner(clientSubmissionId: string) {
   return stableHash(`${clientSubmissionId}:${Date.now()}:${Math.random()}`);
 }
@@ -209,6 +212,7 @@ function isVerifiedVitestRuntime() {
 
 let chatMemberBarrierToken: string | undefined;
 
+/** Pauses after a member write when a test sets the barrier env var, so races are deterministic. */
 async function waitForChatMemberWriteBarrier() {
   const barrier = process.env.STRIDE_CHAT_MEMBER_WRITE_BARRIER;
   if (!isVerifiedVitestRuntime() || !barrier?.startsWith("paused-once:") || chatMemberBarrierToken === barrier) return;
@@ -218,6 +222,7 @@ async function waitForChatMemberWriteBarrier() {
   }
 }
 
+/** Pauses before reconciliation when a test sets the barrier env var. */
 async function waitForChatReconciliationBarrier() {
   if (process.env.STRIDE_CHAT_RECONCILE_BARRIER !== "paused") return;
   if (!isVerifiedVitestRuntime()) return;
@@ -226,6 +231,7 @@ async function waitForChatReconciliationBarrier() {
   }
 }
 
+/** Pauses before loading chat context when a test sets the barrier env var. */
 async function waitForChatContextBarrier() {
   if (!isVerifiedVitestRuntime()) return;
   if (process.env.STRIDE_CHAT_CONTEXT_BARRIER !== "paused") return;
@@ -234,13 +240,30 @@ async function waitForChatContextBarrier() {
   }
 }
 
-function activeCommittedActionIds(actions: any[]) {
+/** A pending memory approval prompt tied to the action that created it. */
+type MemoryApproval = {
+  memoryId: string;
+  kind: "food" | "workout";
+  label: string;
+  sourceActionId?: string;
+  sourceActionIds?: string[];
+};
+
+/** A saved log row returned to chat clients alongside the turn. */
+type ChatLoggedItem = { type: string; data: Record<string, unknown> };
+
+/** The logged-item shape chat clients expect: one item, a multi-item wrapper, or nothing. */
+type ChatLoggedItemResult = ChatLoggedItem | { type: "multiple"; items: ChatLoggedItem[] } | null;
+
+/** Collects ids of actions that are committed and still point at a saved row. */
+function activeCommittedActionIds(actions: Doc<"actions">[]) {
   return new Set(actions
     .filter((action) => action.status === "committed" && action.committedRowRef)
     .map((action) => String(action._id)));
 }
 
-function canonicalMemoryApprovals(approvals: any[], actions: any[]) {
+/** Keeps only memory approvals whose source action is still committed. */
+function canonicalMemoryApprovals(approvals: MemoryApproval[], actions: Doc<"actions">[]) {
   const activeIds = activeCommittedActionIds(actions);
   return approvals.filter((approval) => {
     const sourceIds = approval.sourceActionIds ?? (approval.sourceActionId ? [approval.sourceActionId] : []);
@@ -248,7 +271,8 @@ function canonicalMemoryApprovals(approvals: any[], actions: any[]) {
   });
 }
 
-function canonicalMemoryApprovalsForCards(approvals: any[], cards: ChatTurnCard[]) {
+/** Keeps only memory approvals whose source action is committed in the persisted cards. */
+function canonicalMemoryApprovalsForCards(approvals: MemoryApproval[], cards: ChatTurnCard[]) {
   const activeIds = new Set(cards.flatMap((card) => card.kind === "result"
     ? card.data.items.filter((item) => item.status === "committed").map((item) => String(item.actionId))
     : []));
@@ -258,7 +282,8 @@ function canonicalMemoryApprovalsForCards(approvals: any[], cards: ChatTurnCard[
   });
 }
 
-function canonicalConfirmationResults(actions: any[], alreadyCommittedIds?: Set<string>) {
+/** Builds per-member confirmation results from the group's current action rows. */
+function canonicalConfirmationResults(actions: Doc<"actions">[], alreadyCommittedIds?: Set<string>) {
   return actions.map((action) => ({
     ordinal: confirmationOrdinal(action),
     actionType: action.actionType,
@@ -273,7 +298,8 @@ function canonicalConfirmationResults(actions: any[], alreadyCommittedIds?: Set<
   }));
 }
 
-function turnSnapshot(message: any, groupId: Id<"actionGroups">) {
+/** Copies a persisted assistant message into the turn shape clients render. */
+function turnSnapshot(message: Doc<"chat_messages"> | null | undefined, groupId: Id<"actionGroups">) {
   if (!message) return undefined;
   return {
     content: message.content,
@@ -285,6 +311,7 @@ function turnSnapshot(message: any, groupId: Id<"actionGroups">) {
   };
 }
 
+/** Builds the legacy clarification payload from a persisted clarification card. */
 function clarificationPayloadFromCards(cards: ChatTurnCard[]) {
   const data = cards.find((card) => card.kind === "clarification")?.data;
   return data ? { ...data, question: data.prompt } : undefined;
@@ -471,6 +498,7 @@ export const stageClarificationGroup = internalMutation({
   },
 });
 
+/** Records an action group for a turn that failed before any member was staged. */
 export const recordFailedTurnGroup = internalMutation({
   args: {
     userId: v.string(),
@@ -514,35 +542,36 @@ export const recordFailedTurnGroup = internalMutation({
 
 type ResolveClarificationResult = {
   groupId: string;
-  loggedItems: any[];
-  memoryApprovals?: any[];
+  loggedItems: ChatLoggedItem[];
+  memoryApprovals?: MemoryApproval[];
   errors?: string[];
   content: string;
   turnOutcome: ChatTurnOutcome;
   turnCards: ChatTurnCard[];
   actionIds: Id<"actions">[];
-  messageId?: string;
+  messageId?: Id<"chat_messages">;
 };
 
+/** Reconciles a clarification group and returns its persisted outcome. */
 async function canonicalClarificationResult(
-  ctx: any,
+  ctx: ActionCtx,
   userId: string,
-  groupId: string,
+  groupId: Id<"actionGroups">,
   claim: TurnClaim = {},
   errors?: string[],
 ): Promise<ResolveClarificationResult> {
   const reconciled = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
     userId,
-    actionGroupId: groupId as any,
+    actionGroupId: groupId,
     claimOwner: claim.claimOwner,
     claimVersion: claim.claimVersion,
     claimSubmissionId: claim.clientSubmissionId,
   });
-  const canonicalActions = reconciled?.actions ?? await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
+  const canonicalActions: Doc<"actions">[] = reconciled?.actions ?? await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId });
   const updatedMessage = reconciled?.message;
   const memoryApprovals = canonicalMemoryApprovals((await Promise.all(canonicalActions
-    .filter((action: any) => action.status === "committed" && action.committedRowRef)
-    .map((action: any) => pendingMemoryApprovalsForAction(ctx, userId, action._id)))).flat(), canonicalActions);
+    .filter((action) => action.status === "committed" && action.committedRowRef)
+    .map((action) => pendingMemoryApprovalsForAction(ctx, userId, action._id)))).flat(), canonicalActions);
   const result: ResolveClarificationResult = {
     groupId,
     loggedItems: await loggedItemsFromCards(ctx, userId, (updatedMessage?.turnCards ?? []) as ChatTurnCard[]),
@@ -551,14 +580,14 @@ async function canonicalClarificationResult(
     content: updatedMessage?.content ?? "I couldn't save that. Please try again.",
     turnOutcome: (updatedMessage?.turnOutcome ?? "failed") as ChatTurnOutcome,
     turnCards: (updatedMessage?.turnCards ?? []) as ChatTurnCard[],
-    actionIds: (updatedMessage?.actionIds ?? canonicalActions.map((member: any) => member._id)) as Id<"actions">[],
+    actionIds: updatedMessage?.actionIds ?? canonicalActions.map((member) => member._id),
     messageId: updatedMessage?._id,
   };
   if (claim.clientSubmissionId && claim.claimOwner && claim.claimVersion !== undefined && result.messageId) {
     await ctx.runMutation(internal.chat.linkResolvedTurnMessage, {
       userId,
       clientSubmissionId: claim.clientSubmissionId,
-      resolvedTurnMessageId: result.messageId as any,
+      resolvedTurnMessageId: result.messageId,
       claimOwner: claim.claimOwner,
       claimVersion: claim.claimVersion,
     });
@@ -566,14 +595,15 @@ async function canonicalClarificationResult(
   return result;
 }
 
+/** Marks unsaved clarification members failed and returns the group's final outcome. */
 async function terminalizeClarificationFailure(
   ctx: ActionCtx,
   userId: string,
-  groupId: string,
+  groupId: Id<"actionGroups">,
   claim: TurnClaim,
   error: unknown,
 ) {
-  const members: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
+  const members: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId });
   const reason = error instanceof Error ? error.message : String(error);
   for (const member of members) {
     if (member.status === "pending" || member.status === "failed") {
@@ -591,13 +621,13 @@ async function terminalizeClarificationFailure(
   return canonicalClarificationResult(ctx, userId, groupId, claim, [reason]);
 }
 
-async function executeClarificationResolution(ctx: any, userId: string, groupId: string, date: string, claim: TurnClaim = {}): Promise<ResolveClarificationResult> {
-  const group = await ctx.runQuery(internal.ai.getActionGroupForClarification, { groupId: groupId as any });
+async function executeClarificationResolution(ctx: ActionCtx, userId: string, groupId: Id<"actionGroups">, date: string, claim: TurnClaim = {}): Promise<ResolveClarificationResult> {
+  const group: Doc<"actionGroups"> | null = await ctx.runQuery(internal.ai.getActionGroupForClarification, { groupId });
   if (!group) throw new Error("Clarification group not found");
   if (group.userId !== userId) throw new Error("Not authorized");
   if (["pending", "partial", "failed"].includes(group.status) && Date.now() - group.createdAt > CONFIRMATION_TTL_MS) {
     await ctx.runMutation(internal.ai.expireActionGroup, {
-      groupId: groupId as any,
+      groupId,
       claimSubmissionId: claim.clientSubmissionId,
       claimOwner: claim.claimOwner,
       claimVersion: claim.claimVersion,
@@ -711,13 +741,13 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
 
   const reconciled = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
     userId,
-    actionGroupId: groupId as any,
+    actionGroupId: groupId,
     claimOwner: claim.claimOwner,
     claimVersion: claim.claimVersion,
     claimSubmissionId: claim.clientSubmissionId,
   });
   const updatedMessage = reconciled?.message;
-  const canonicalActions = reconciled?.actions ?? await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId: groupId as any });
+  const canonicalActions: Doc<"actions">[] = reconciled?.actions ?? await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId });
   const resolvedActionIds = new Set(loggedItems.map((item) => String(item.data?.actionId)).filter(Boolean));
 
   const memoryApprovals = canonicalMemoryApprovals((await Promise.all(loggedItems.map((item) =>
@@ -734,14 +764,14 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
     content: updatedMessage?.content ?? "I couldn't save that. Please try again.",
     turnOutcome: (updatedMessage?.turnOutcome ?? "failed") as ChatTurnOutcome,
     turnCards: (updatedMessage?.turnCards ?? []) as ChatTurnCard[],
-    actionIds: (updatedMessage?.actionIds ?? canonicalActions.map((member: any) => member._id)) as Id<"actions">[],
+    actionIds: updatedMessage?.actionIds ?? canonicalActions.map((member) => member._id),
     messageId: updatedMessage?._id,
   };
   if (claim.clientSubmissionId && claim.claimOwner && claim.claimVersion !== undefined && result.messageId) {
     await ctx.runMutation(internal.chat.linkResolvedTurnMessage, {
       userId,
       clientSubmissionId: claim.clientSubmissionId,
-      resolvedTurnMessageId: result.messageId as any,
+      resolvedTurnMessageId: result.messageId,
       claimOwner: claim.claimOwner,
       claimVersion: claim.claimVersion,
     });
@@ -749,9 +779,9 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   return result;
 }
 
-async function finalizeActionGroup(ctx: ActionCtx, groupId: string, claim: TurnClaim = {}): Promise<ActionGroupStatus> {
+async function finalizeActionGroup(ctx: ActionCtx, groupId: Id<"actionGroups">, claim: TurnClaim = {}): Promise<ActionGroupStatus> {
   const group: Doc<"actionGroups"> | null = await ctx.runMutation(internal.ai.finalizeConfirmationGroup, {
-    groupId: groupId as any,
+    groupId,
     claimSubmissionId: claim.clientSubmissionId,
     claimOwner: claim.claimOwner,
     claimVersion: claim.claimVersion,
@@ -769,7 +799,7 @@ export const resolveClarification = action({
   handler: async (ctx, { groupId, date }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
-    return executeClarificationResolution(ctx, identity.subject, groupId as unknown as string, date);
+    return executeClarificationResolution(ctx, identity.subject, groupId, date);
   },
 });
 
@@ -932,7 +962,7 @@ type LogAnywayForActionResult = {
   turn: {
     content: string;
     turnContractVersion: 1;
-    turnOutcome: "committed";
+    turnOutcome: ChatTurnOutcome;
     turnCards: ChatTurnCard[];
     actionGroupId: Id<"actionGroups">;
     actionIds: Id<"actions">[];
@@ -990,16 +1020,17 @@ function confirmationDescription(member: any): string {
   return member.payload?.name ?? member.payload?.description ?? member.actionType;
 }
 
-function confirmationMacros(payload: any): ConfirmationMacroData | undefined {
-  if (!payload || typeof payload !== "object") return undefined;
-  const values = [payload.calories, payload.protein, payload.carbs, payload.fat];
-  if (!values.every((value) => typeof value === "number" && Number.isFinite(value))) return undefined;
-  return {
-    calories: payload.calories,
-    protein: payload.protein,
-    carbs: payload.carbs,
-    fat: payload.fat,
-  };
+/** Checks for a finite number. */
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** Extracts editable meal macros from a payload when all four are finite numbers. */
+function confirmationMacros(payload: unknown): ConfirmationMacroData | undefined {
+  if (!isRecord(payload)) return undefined;
+  const { calories, protein, carbs, fat } = payload;
+  if (!isFiniteNumber(calories) || !isFiniteNumber(protein) || !isFiniteNumber(carbs) || !isFiniteNumber(fat)) return undefined;
+  return { calories, protein, carbs, fat };
 }
 
 function confirmationOrdinal(member: any): number {
@@ -1025,6 +1056,7 @@ function confirmationLoggedItem(member: any, rowId: string, payload: any, action
   };
 }
 
+/** Builds result card rows for committed and failed actions. */
 function resultCardItemsForActions(actions: Doc<"actions">[]): ResultCardItem[] {
   const items: ResultCardItem[] = [];
   for (const action of actions) {
@@ -1205,7 +1237,7 @@ export const confirmGroup = action({
       actionGroupId: groupId,
     });
     const persistedMessage = reconciled?.message;
-    const canonicalActions = reconciled?.actions ?? await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
+    const canonicalActions: Doc<"actions">[] = reconciled?.actions ?? await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId });
     const canonicalGroup = reconciled?.group;
     return {
       groupId,
@@ -1213,8 +1245,8 @@ export const confirmGroup = action({
       results: canonicalConfirmationResults(canonicalActions, alreadyCommittedIds),
       loggedItems: await loggedItemsFromCards(ctx, userId, (persistedMessage?.turnCards ?? []) as ChatTurnCard[]),
       unresolvedItems: canonicalActions
-        .filter((action: any) => action.status === "pending" || action.status === "failed")
-        .map((action: any) => ({ ordinal: confirmationOrdinal(action), actionType: action.actionType, status: action.status, error: action.validation?.messages?.at(-1) })),
+        .filter((action) => action.status === "pending" || action.status === "failed")
+        .map((action) => ({ ordinal: confirmationOrdinal(action), actionType: action.actionType, status: action.status, error: action.validation?.messages?.at(-1) })),
       memoryApprovals: canonicalMemoryApprovals(memoryApprovals, canonicalActions),
       turn: persistedMessage
         ? {
@@ -1239,14 +1271,14 @@ export const logAnywayForAction = action({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
-    const aiInternal = (internal as any).ai;
+    const aiInternal = internal.ai;
     const member: Doc<"actions"> | null = await ctx.runQuery(aiInternal.getActionMember, { actionId });
     if (!member || member.userId !== userId) throw new Error("Not found");
     const group: Doc<"actionGroups"> | null = await ctx.runQuery(aiInternal.getActionGroupForClarification, {
       groupId: member.groupId,
     });
     if (!group || group.userId !== userId) throw new Error("Not found");
-    const message: Doc<"chat_messages"> = await ctx.runQuery((internal as any).chat.getAssistantOutcomeForGroup, {
+    const message: Doc<"chat_messages"> | null = await ctx.runQuery(internal.chat.getAssistantOutcomeForGroup, {
       userId,
       actionGroupId: group._id,
     });
@@ -1298,13 +1330,13 @@ export const logAnywayForAction = action({
     };
 
     if (member.actionType === "meal") {
-      await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: groupInput, member: memberInput });
+      await ctx.runMutation(internal.actions_writer.writeMealAction, { group: groupInput, member: memberInput });
     } else if (member.actionType === "workout") {
-      await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: groupInput, member: memberInput });
+      await ctx.runMutation(internal.actions_writer.writeWorkoutAction, { group: groupInput, member: memberInput });
     } else {
-      await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: groupInput, member: memberInput });
+      await ctx.runMutation(internal.actions_writer.writeRecoveryAction, { group: groupInput, member: memberInput });
     }
-    await finalizeActionGroup(ctx, String(group._id));
+    await finalizeActionGroup(ctx, group._id);
     await waitForChatReconciliationBarrier();
 
     const currentMembers: Doc<"actions">[] = await ctx.runQuery(aiInternal.getPendingMembersForClarification, { groupId: group._id });
@@ -1318,7 +1350,7 @@ export const logAnywayForAction = action({
     });
     const updatedMessage = reconciled?.message;
     if (!updatedMessage) throw new Error("Assistant outcome was not found");
-    const reconciledMember = await ctx.runQuery(aiInternal.getActionMember, { actionId });
+    const reconciledMember: Doc<"actions"> | null = await ctx.runQuery(aiInternal.getActionMember, { actionId });
     if (!reconciledMember || reconciledMember.status !== "committed" || !reconciledMember.committedRowRef) {
       throw new Error("Action was undone before log-anyway completed");
     }
@@ -1327,7 +1359,7 @@ export const logAnywayForAction = action({
       actionGroupId: group._id,
       status: "committed",
       record: reconciledMember.committedRowRef,
-      turn: turnSnapshot(updatedMessage, group._id)! as any,
+      turn: turnSnapshot(updatedMessage, group._id)!,
     };
   },
 });
@@ -1419,7 +1451,7 @@ ${NUTRITION_ACCURACY_RULES}
 
 Return ONLY a JSON object with keys: calories (number), protein (number in grams), carbs (number in grams), fat (number in grams). No explanation.`;
     const content = await callAI(ctx, userId, [{ role: "user", content: prompt }], 200, model);
-    const result = parseJSON<any>(content, { calories: 0, protein: 0, carbs: 0, fat: 0 });
+    const result = parseJSON<{ calories?: number; protein?: number; carbs?: number; fat?: number }>(content, { calories: 0, protein: 0, carbs: 0, fat: 0 });
     return { calories: result.calories || 0, protein: result.protein || 0, carbs: result.carbs || 0, fat: result.fat || 0 };
   },
 });
@@ -1678,6 +1710,21 @@ export const logWorkout = action({
   },
 });
 
+/** What the chat action returns to web and mobile clients. */
+type ChatActionResult = {
+  reply: string;
+  loggedItem: ChatLoggedItemResult;
+  memoryApprovals: MemoryApproval[];
+  failedItems: FailedLogItem[];
+  clarification?: ReturnType<typeof clarificationPayloadFromCards>;
+  confirmation?: ConfirmationCardData;
+  restricted: boolean;
+  outcome: ChatTurnOutcome;
+  cards: ChatTurnCard[];
+  messageId?: Id<"chat_messages">;
+  processingError?: string;
+};
+
 export const chat = action({
   args: {
     message: v.string(),
@@ -1687,7 +1734,7 @@ export const chat = action({
     clarificationGroupId: v.optional(v.id("actionGroups")),
     clientSubmissionId: v.optional(v.string()),
   },
-  handler: async (ctx, { message, sessionId, today: todayArg, image, clarificationGroupId, clientSubmissionId }): Promise<any> => {
+  handler: async (ctx, { message, sessionId, today: todayArg, image, clarificationGroupId, clientSubmissionId }): Promise<ChatActionResult> => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     assertMaxChars(message, AI_INPUT_LIMITS.messageChars, "chat message");
@@ -1810,11 +1857,11 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
         if (resolved.status === "resolved") answerDate = resolved.date;
       }
       if (answerDate) {
-        const resolved = await executeClarificationResolution(ctx, userId, clarificationGroupId as unknown as string, answerDate, turnClaim);
+        const resolved = await executeClarificationResolution(ctx, userId, clarificationGroupId, answerDate, turnClaim);
         if (sessionId) {
           await ctx.runMutation(internal.chat.touchSession, { userId, sessionId });
         }
-        const loggedItem = resolved.loggedItems.length === 1
+        const loggedItem: ChatLoggedItemResult = resolved.loggedItems.length === 1
           ? resolved.loggedItems[0]
           : resolved.loggedItems.length > 1
             ? { type: "multiple", items: resolved.loggedItems }
@@ -2007,8 +2054,8 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
     } catch (error) {
       if (clarificationGroupId) {
         try {
-          const resolved = await terminalizeClarificationFailure(ctx, userId, String(clarificationGroupId), turnClaim, error);
-          const loggedItem = resolved.loggedItems.length === 1
+          const resolved = await terminalizeClarificationFailure(ctx, userId, clarificationGroupId, turnClaim, error);
+          const loggedItem: ChatLoggedItemResult = resolved.loggedItems.length === 1
             ? resolved.loggedItems[0]
             : resolved.loggedItems.length > 1
               ? { type: "multiple", items: resolved.loggedItems }
@@ -2439,6 +2486,7 @@ type StructuredExtraction = {
   };
 };
 
+/** Validates the model's structured log extraction, returning null when it is malformed. */
 function validateStructuredExtraction(value: unknown, today: string): { isQuestion: boolean; items: StructuredLogItem[] } | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
@@ -2487,6 +2535,7 @@ function validateStructuredExtraction(value: unknown, today: string): { isQuesti
   return { isQuestion: candidate.isQuestion, items };
 }
 
+/** Builds the system prompt that asks the model to extract loggable items. */
 function structuredExtractionPrompt(today: string): string {
   const yesterday = new Date(new Date(today).getTime() - 86_400_000).toISOString().split("T")[0];
   const twoDaysAgo = new Date(new Date(today).getTime() - 2 * 86_400_000).toISOString().split("T")[0];
@@ -2522,6 +2571,7 @@ Rules:
 - Pure advice/conversation returns {"isQuestion":true,"items":[]}.`;
 }
 
+/** Asks the model which loggable items a chat message contains. */
 async function extractStructuredLogItems(input: {
   ctx: ActionCtx;
   userId: string;
@@ -2595,6 +2645,7 @@ async function extractStructuredLogItems(input: {
   };
 }
 
+/** Detects a generic meal name the parser could not estimate, so it is not saved as zeros. */
 export function isUnusablePlaceholderMeal(description: string, parsed: {
   calories?: unknown;
   protein?: unknown;
@@ -2613,6 +2664,7 @@ export function isUnusablePlaceholderMeal(description: string, parsed: {
   return genericPlaceholder && typeof parsed.parseError === "string" && allZero;
 }
 
+/** Numbers repeated card titles so identical items can be told apart. */
 export function disambiguateCardTitles(titles: string[]): string[] {
   const normalized = titles.map((title) => title.trim().toLowerCase());
   const counts = new Map<string, number>();
@@ -2628,6 +2680,7 @@ export function disambiguateCardTitles(titles: string[]): string[] {
   });
 }
 
+/** Turns extracted log items into meal, workout, and recovery drafts. */
 async function parseStructuredLogItems(input: {
   ctx: ActionCtx;
   userId: string;
@@ -2646,6 +2699,7 @@ async function parseStructuredLogItems(input: {
     ctx, userId, items, image, today, settingsModel, visionModel, userMacros,
   } = input;
   const hasUserMacros = Object.values(userMacros).some((value) => value != null);
+  // Attaches the extraction's description, date, and validation hints to a draft.
   const withTurnMetadata = (draft: any, item: StructuredLogItem) => ({
     ...draft,
     _turnDescription: item.description,
@@ -2716,7 +2770,7 @@ async function parseStructuredLogItems(input: {
           continue;
         }
 
-        const parsed = await parseMealDescription(description, "unspecified", "", ctx, userId, settingsModel, userIngredients as any[]);
+        const parsed = await parseMealDescription(description, "unspecified", "", ctx, userId, settingsModel, userIngredients);
         if (isUnusablePlaceholderMeal(description, parsed)) {
           failedItems.push({
             kind: "meal",
@@ -2876,6 +2930,7 @@ type TurnCandidate = {
   ordinal: number;
 };
 
+/** Converts a parsed draft into an action candidate with validation and a confirm reason. */
 function turnCandidateFromDraft(draft: any, ordinal: number): TurnCandidate {
   if (draft.kind === "meal") {
     const canonicalDraft = draft.ingredientBreakdown as MealDraft;
@@ -3073,8 +3128,8 @@ type TurnPolicyResult = {
   cards: ChatTurnCard[];
   groupId?: Id<"actionGroups">;
   actionIds: Id<"actions">[];
-  loggedItems: any[];
-  memoryApprovals: any[];
+  loggedItems: ChatLoggedItem[];
+  memoryApprovals: MemoryApproval[];
   confirmation?: {
     groupId: string;
     items: Array<{
@@ -3087,9 +3142,14 @@ type TurnPolicyResult = {
       ordinal: number;
     }>;
   };
-  clarification?: { groupId: string; items: any[]; question: string };
+  clarification?: {
+    groupId: string;
+    items: Array<{ actionType: string; description: string; reason: string; resolvedDate?: string; confidence?: number }>;
+    question: string;
+  };
 };
 
+/** Builds the staged action member for a turn candidate. */
 function turnMember(
   groupKey: string,
   candidate: TurnCandidate,
@@ -3109,6 +3169,7 @@ function turnMember(
   };
 }
 
+/** Stages a turn's candidates, auto-saves the safe ones, and builds the turn's cards. */
 async function executeTurnPolicy(input: {
   ctx: ActionCtx;
   userId: string;
@@ -3135,8 +3196,8 @@ async function executeTurnPolicy(input: {
     model,
     clientLocalDate: today,
   };
-  const loggedItems: any[] = [];
-  const memoryApprovals: any[] = [];
+  const loggedItems: ChatLoggedItem[] = [];
+  const memoryApprovals: MemoryApproval[] = [];
   const writeErrors = new Map<number, { message: string; code?: string }>();
 
   let groupId: Id<"actionGroups"> | undefined;
@@ -3182,13 +3243,13 @@ async function executeTurnPolicy(input: {
         let rowId: string;
         let previous: unknown;
         if (candidate.actionType === "meal") {
-          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeMealAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member }));
+          rowId = String(await ctx.runMutation(internal.actions_writer.writeMealAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member }));
         } else if (candidate.actionType === "workout") {
-          rowId = String(await ctx.runMutation((internal as any).actions_writer.writeWorkoutAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member }));
+          rowId = String(await ctx.runMutation(internal.actions_writer.writeWorkoutAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member }));
         } else {
-          const result = await ctx.runMutation((internal as any).actions_writer.writeRecoveryAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member });
-          rowId = String(result?.id ?? result);
-          previous = result?.previous;
+          const result = await ctx.runMutation(internal.actions_writer.writeRecoveryAction, { group: { ...groupInput, claimSubmissionId: claim.clientSubmissionId, claimOwner: claim.claimOwner, claimVersion: claim.claimVersion }, member });
+          rowId = String(typeof result === "object" && result ? result.id : result);
+          previous = typeof result === "object" && result && "previous" in result ? result.previous : undefined;
         }
         await waitForChatMemberWriteBarrier();
         const table = candidate.actionType === "meal"
@@ -3217,7 +3278,7 @@ async function executeTurnPolicy(input: {
         const message = getConvexErrorMessage(error) ?? (error instanceof Error ? error.message : String(error));
         const code = getConvexErrorCode(error);
         writeErrors.set(candidate.ordinal, { message, code });
-        const members: any[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId });
+        const members: Doc<"actions">[] = await ctx.runQuery(internal.ai.getPendingMembersForClarification, { groupId });
         const action = members.find((item) => confirmationOrdinal(item) === candidate.ordinal);
         if (action) {
           await ctx.runMutation(internal.ai.recordConfirmationMemberFailure, {
@@ -3230,7 +3291,7 @@ async function executeTurnPolicy(input: {
         }
       }
     }
-    await finalizeActionGroup(ctx, String(groupId), claim);
+    await finalizeActionGroup(ctx, groupId, claim);
   }
 
   const actions: Doc<"actions">[] = groupId
@@ -3438,6 +3499,7 @@ async function executeTurnPolicy(input: {
   };
 }
 
+/** Strips sentences where the model claims it saved something. */
 function sanitizeConversationalReply(reply: string): string {
   return reply
     .split(/(?<=[.!?])\s+|\n+/)
@@ -3452,6 +3514,7 @@ function sanitizeConversationalReply(reply: string): string {
     .trim();
 }
 
+/** Builds the status line for a turn from its result card. */
 function turnOutcomeText(result: TurnPolicyResult): string {
   const resultCard = result.cards.find((card) => card.kind === "result");
   const committed = resultCard?.kind === "result"
@@ -3481,6 +3544,12 @@ type LoggedItemCardRef = {
   rowId: string;
 };
 
+/** Narrows a stored table name to one the schema defines. */
+function isTableName(table: string): table is TableNames {
+  return Object.hasOwn(schema.tables, table);
+}
+
+/** Returns the committed actions and saved rows that are still live for the given card refs. */
 export const getActiveCanonicalLoggedItems = internalQuery({
   args: {
     userId: v.string(),
@@ -3491,9 +3560,10 @@ export const getActiveCanonicalLoggedItems = internalQuery({
     })),
   },
   handler: async (ctx, { userId, items }) => {
-    const active: Array<{ action: Doc<"actions">; row: any }> = [];
+    const active: Array<{ action: Doc<"actions">; row: Record<string, unknown> }> = [];
     for (const item of items) {
-      const action = await ctx.db.get(item.actionId as any) as Doc<"actions"> | null;
+      const actionId = ctx.db.normalizeId("actions", item.actionId);
+      const action = actionId ? await ctx.db.get(actionId) : null;
       if (
         !action
         || action.userId !== userId
@@ -3501,7 +3571,8 @@ export const getActiveCanonicalLoggedItems = internalQuery({
         || action.committedRowRef?.table !== item.table
         || action.committedRowRef.id !== item.rowId
       ) continue;
-      const row: any = await ctx.db.get(item.rowId as any);
+      const rowId = isTableName(item.table) ? ctx.db.normalizeId(item.table, item.rowId) : null;
+      const row: Record<string, unknown> | null = rowId ? await ctx.db.get(rowId) : null;
       if (!row || row.userId !== userId || row.undoneAt || row.sourceActionId !== String(action._id)) continue;
       active.push({ action, row });
     }
@@ -3509,6 +3580,7 @@ export const getActiveCanonicalLoggedItems = internalQuery({
   },
 });
 
+/** Maps an action and its table to the logged-item type clients expect. */
 function loggedItemType(actionType: string, table: string): string {
   if (actionType !== "recovery") return actionType;
   return ({
@@ -3520,7 +3592,8 @@ function loggedItemType(actionType: string, table: string): string {
   } as Record<string, string>)[table] ?? table.replace(/_logs$/, "");
 }
 
-async function loggedItemFromCards(ctx: ActionCtx, userId: string, cards: ChatTurnCard[]): Promise<any> {
+/** Returns the turn's live logged items in the single-or-multiple shape chat clients expect. */
+async function loggedItemFromCards(ctx: ActionCtx, userId: string, cards: ChatTurnCard[]): Promise<ChatLoggedItemResult> {
   const loggedItems = await loggedItemsFromCards(ctx, userId, cards);
   return loggedItems.length === 0
     ? null
@@ -3529,12 +3602,13 @@ async function loggedItemFromCards(ctx: ActionCtx, userId: string, cards: ChatTu
       : { type: "multiple", items: loggedItems };
 }
 
+/** Loads the saved rows behind a turn's committed result items, skipping undone ones. */
 async function loggedItemsFromCards(
   ctx: ActionCtx,
   userId: string,
   cards: ChatTurnCard[],
   onlyActionIds?: Set<string>,
-): Promise<any[]> {
+): Promise<ChatLoggedItem[]> {
   const committedItems = cards.flatMap((card) =>
     card.kind === "result"
       ? card.data.items.filter((item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed")
@@ -3547,10 +3621,10 @@ async function loggedItemsFromCards(
     table: item.record.table,
     rowId: item.record.id,
   }));
-  const rows = await ctx.runQuery((internal as any).ai.getActiveCanonicalLoggedItems, { userId, items: refs }) as Array<{
-    action: Doc<"actions">;
-    row: Record<string, unknown>;
-  }>;
+  const rows: Array<{ action: Doc<"actions">; row: Record<string, unknown> }> = await ctx.runQuery(
+    internal.ai.getActiveCanonicalLoggedItems,
+    { userId, items: refs },
+  );
   const activeByActionId = new Map(rows.map(({ action, row }) => [String(action._id), { action, row }]));
   return committedItems.flatMap((item) => {
     const active = activeByActionId.get(String(item.actionId));
@@ -3572,7 +3646,16 @@ async function loggedItemsFromCards(
   });
 }
 
-async function chatResponseFromPersistedTurn(ctx: ActionCtx, userId: string, turn: any, restricted: boolean) {
+/** Persisted assistant turn fields needed to replay a finished chat submission. */
+type PersistedTurn = {
+  messageId: Id<"chat_messages">;
+  content: string;
+  turnOutcome: ChatTurnOutcome;
+  turnCards?: unknown;
+};
+
+/** Rebuilds the chat response for a submission that already finished. */
+async function chatResponseFromPersistedTurn(ctx: ActionCtx, userId: string, turn: PersistedTurn, restricted: boolean): Promise<ChatActionResult> {
   const cards = (turn.turnCards ?? []) as ChatTurnCard[];
   return {
     reply: turn.content,
@@ -3588,10 +3671,12 @@ async function chatResponseFromPersistedTurn(ctx: ActionCtx, userId: string, tur
   };
 }
 
+/** Detects the error thrown when another attempt has taken over a submission. */
 function isChatClaimFenceError(error: unknown): boolean {
   return error instanceof Error && error.message === "Chat submission lease is no longer current";
 }
 
+/** Reconciles a group's assistant message and returns it. */
 async function reconcileAssistantOutcome(ctx: ActionCtx, userId: string, actionGroupId: Id<"actionGroups">, claim: TurnClaim = {}) {
   const reconciled = await ctx.runMutation(internal.chat.updateAssistantOutcomeForGroup, {
     userId,
@@ -3603,6 +3688,7 @@ async function reconcileAssistantOutcome(ctx: ActionCtx, userId: string, actionG
   return reconciled?.message;
 }
 
+/** Saves the assistant message for a turn that threw, keeping any items already saved. */
 async function persistFailedChatTurn(
   ctx: ActionCtx,
   userId: string,

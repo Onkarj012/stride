@@ -58,15 +58,18 @@ export function parseChatTurnCards(value: unknown): ChatTurnCard[] {
   return value.filter((card): card is ChatTurnCard => isChatTurnCard(card))
 }
 
+/** Throws when an action returns turn cards that fail the shared contract. */
 export function assertReturnedTurnCards(value: unknown): asserts value is ChatTurnCard[] {
   assertChatTurnCards(value)
 }
 
+/** Joins an item's date and time for its meta line, or null when both are missing. */
 function itemDateLine(item: { date?: string; time?: string }): string | null {
   if (!item.date && !item.time) return null
   return [item.date, item.time].filter(Boolean).join(' · ')
 }
 
+/** Renders an item's action type label and title. */
 function ItemHeader({ actionType, title }: { actionType: string; title: string }) {
   const t = useTheme()
   return (
@@ -77,21 +80,25 @@ function ItemHeader({ actionType, title }: { actionType: string; title: string }
   )
 }
 
+/** Renders secondary card text. */
 function Meta({ children }: { children: string }) {
   const t = useTheme()
   return <Text style={{ fontFamily: 'Manrope_500Medium', fontSize: 13, color: t.textMuted, lineHeight: 19 }}>{children}</Text>
 }
 
+/** Renders the shared card container. */
 function CardSurface({ children, borderColor }: { children: ReactNode; borderColor?: string }) {
   const t = useTheme()
   return <View style={[{ width: '100%', backgroundColor: t.card, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: borderColor ?? t.border, padding: SPACE.lg, gap: SPACE.md }, t.cardShadow]}>{children}</View>
 }
 
+/** Renders one bordered item row, tinted when it needs attention. */
 function ItemRow({ children, warning = false }: { children: ReactNode; warning?: boolean }) {
   const t = useTheme()
   return <View style={{ borderWidth: 1, borderColor: warning ? 'rgba(244,181,214,0.45)' : t.border, borderRadius: RADIUS.md, padding: SPACE.md, gap: SPACE.xs }}>{children}</View>
 }
 
+/** Shows which items were saved, failed, discarded, or expired. */
 function ResultCard({ data }: { data: ResultCardData }) {
   const t = useTheme()
   const committed = data.items.filter(item => item.status === 'committed').length
@@ -122,6 +129,7 @@ function ResultCard({ data }: { data: ResultCardData }) {
   )
 }
 
+/** Lets the user undo saved items one at a time or all at once. */
 function UndoCard({ data, handlers, state }: { data: UndoCardData; handlers: ChatCardHandlers; state: ChatCardState }) {
   const t = useTheme()
   const pending = state.pendingActionIds ?? EMPTY_SET
@@ -145,6 +153,7 @@ function UndoCard({ data, handlers, state }: { data: UndoCardData; handlers: Cha
   )
 }
 
+/** Asks for the missing date before pending items can be saved. */
 function ClarificationCard({ data, handlers, state }: { data: ClarificationCardData; handlers: ChatCardHandlers; state: ChatCardState }) {
   const t = useTheme()
   const [date, setDate] = useState(data.items[0]?.date ?? '')
@@ -164,6 +173,7 @@ function ClarificationCard({ data, handlers, state }: { data: ClarificationCardD
   )
 }
 
+/** Shows items blocked as possible duplicates, with a log-anyway option. */
 function DuplicateCard({ data, handlers, state }: { data: DuplicateCardData; handlers: ChatCardHandlers; state: ChatCardState }) {
   const t = useTheme()
   const pending = state.pendingActionIds ?? EMPTY_SET
@@ -178,11 +188,13 @@ function DuplicateCard({ data, handlers, state }: { data: DuplicateCardData; han
   )
 }
 
+/** Shows that nothing was saved and why. */
 function FailureCard({ data }: { data: FailureCardData }) {
   const t = useTheme()
   return <CardSurface borderColor="rgba(244,181,214,0.55)"><View style={{ flexDirection: 'row', gap: SPACE.sm }}><Icon name="info" size={19} color={t.accent} /><View style={{ flex: 1, gap: SPACE.xs }}><Text style={{ fontFamily: 'Manrope_800ExtraBold', fontSize: 15, color: t.text }}>Nothing was logged</Text><Text style={{ fontFamily: 'Manrope_500Medium', fontSize: 14, color: t.text, lineHeight: 21 }}>{data.message}</Text><Meta>{data.retriable ? "Send it again — retries are safe and won't double-log." : 'Please re-enter this one.'}</Meta></View></View>{data.items.map((item, index) => <ItemRow key={item.actionId ?? `${item.ordinal}-${index}`}><ItemHeader actionType={item.actionType} title={item.title} /><Meta>{item.reason}</Meta></ItemRow>)}</CardSurface>
 }
 
+/** Lets the user edit, confirm, or discard a batch of pending items. */
 function ConfirmationCard({ data, handlers, state }: { data: ConfirmationCardData; handlers: ChatCardHandlers; state: ChatCardState }) {
   const t = useTheme()
   const [drafts, setDrafts] = useState(() => data.items.map(item => ({ ordinal: item.ordinal, selected: true, date: item.date ?? '', description: item.description ?? item.title })))
@@ -191,7 +203,9 @@ function ConfirmationCard({ data, handlers, state }: { data: ConfirmationCardDat
   const readOnly = expired || data.state === 'resolved' || (state.resolvedGroupIds ?? EMPTY_SET).has(data.groupId) || !handlers.onConfirm
   const resolutionLabel = data.state === 'resolved' ? data.reason === 'expired' ? 'EXPIRED' : data.reason === 'discarded' ? 'DISCARDED' : 'RESOLVED' : expired ? 'EXPIRED' : 'RESOLVED'
   const resolutionTitle = data.state === 'resolved' ? data.reason === 'expired' ? 'Confirmation expired' : data.reason === 'discarded' ? 'Discarded' : 'Review resolved' : 'Review these actions'
+  // Updates one item's local draft.
   const patch = (ordinal: number, value: Partial<(typeof drafts)[number]>) => setDrafts(current => current.map(draft => draft.ordinal === ordinal ? { ...draft, ...value } : draft))
+  /** Sends confirm or discard decisions for the batch. */
   function submit(mode: 'all' | 'selected' | 'discard') {
     if (!handlers.onConfirm) return
     handlers.onConfirm(data.groupId, drafts.map(draft => {
@@ -204,11 +218,13 @@ function ConfirmationCard({ data, handlers, state }: { data: ConfirmationCardDat
   return <CardSurface><View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: SPACE.md }}><View style={{ flex: 1, gap: SPACE.xs }}><Text style={{ fontFamily: 'Manrope_800ExtraBold', fontSize: 15, color: t.text }}>{resolutionTitle}</Text><Meta>{readOnly ? 'This batch is closed — nothing here is waiting on you.' : 'Edit details or remove anything you do not want to save.'}</Meta></View>{readOnly && <Text style={{ fontFamily: 'Manrope_800ExtraBold', fontSize: 13, color: t.textMuted }}>{resolutionLabel}</Text>}</View>{data.items.map(item => { const draft = drafts.find(candidate => candidate.ordinal === item.ordinal); const resolutionCopy = item.resolution === 'expired' ? 'Confirmation expired' : item.resolution === 'discarded' ? 'Discarded by you' : null; return <ItemRow key={item.ordinal}><View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: SPACE.sm }}>{!readOnly && <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: draft?.selected ?? true }} disabled={pending} onPress={() => patch(item.ordinal, { selected: !(draft?.selected ?? true) })} style={{ minWidth: TAP_MIN, minHeight: TAP_MIN, alignItems: 'center', justifyContent: 'center' }}><View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: draft?.selected ? t.accent : t.borderMid, backgroundColor: draft?.selected ? t.accent : 'transparent', alignItems: 'center', justifyContent: 'center' }}>{draft?.selected && <Icon name="check" size={15} color={t.textOnInk} sw={3} />}</View></Pressable>}<View style={{ flex: 1, gap: SPACE.xs }}><ItemHeader actionType={item.actionType} title={item.title} />{readOnly ? <><Text style={{ fontFamily: 'Manrope_500Medium', fontSize: 14, color: t.text }}>{item.description ?? item.title}</Text>{resolutionCopy && <Meta>{resolutionCopy}</Meta>}</> : <TextInput value={draft?.description} onChangeText={description => patch(item.ordinal, { description })} editable={!pending} style={{ minHeight: TAP_MIN, borderWidth: 1, borderColor: t.borderMid, borderRadius: RADIUS.sm, paddingHorizontal: SPACE.sm, color: t.text, fontFamily: 'Manrope_500Medium', fontSize: 14 }} />}{readOnly ? item.date && <Meta>{item.date}</Meta> : <TextInput value={draft?.date} onChangeText={date => patch(item.ordinal, { date })} placeholder="YYYY-MM-DD" placeholderTextColor={t.textSubtle} editable={!pending} style={{ minHeight: TAP_MIN, borderWidth: 1, borderColor: t.borderMid, borderRadius: RADIUS.sm, paddingHorizontal: SPACE.sm, color: t.text, fontFamily: 'Manrope_500Medium', fontSize: 14 }} />}{item.validationMessages.length > 0 && <Meta>{item.validationMessages.join(' · ')}</Meta>}</View></View></ItemRow>})}{!readOnly && <View style={{ gap: SPACE.sm }}><Button label={pending ? 'Saving…' : 'Confirm all'} icon="check" disabled={pending} onPress={() => submit('all')} /><Button label="Confirm selected" variant="secondary" icon="check" disabled={pending} onPress={() => submit('selected')} /><Button label="Discard all" variant="ghost" icon="back" disabled={pending} onPress={() => submit('discard')} /></View>}</CardSurface>
 }
 
+/** Renders every card for one assistant turn. */
 export function ChatTurnCards({ cards, handlers = {}, state = {} }: { cards: ChatTurnCard[]; handlers?: ChatCardHandlers; state?: ChatCardState }) {
   if (cards.length === 0) return null
   return <View style={{ width: '100%', gap: SPACE.md }}>{cards.map((card, index) => <ChatTurnCardView key={`${card.kind}-${index}`} card={card} handlers={handlers} state={state} />)}</View>
 }
 
+/** Renders one card by its kind. */
 function ChatTurnCardView({ card, handlers, state }: { card: ChatTurnCard; handlers: ChatCardHandlers; state: ChatCardState }) {
   switch (card.kind) {
     case 'confirmation': return <ConfirmationCard data={card.data} handlers={handlers} state={state} />

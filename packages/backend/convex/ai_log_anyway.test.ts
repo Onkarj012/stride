@@ -52,7 +52,7 @@ async function setupDuplicateTurn(t: ReturnType<typeof convexTest>, userId = "lo
     payloadFingerprint: JSON.stringify(payload),
     ordinal: 0,
   });
-  const staged = await t.mutation((internal as any).ai.stageClarificationGroup, {
+  const staged = await t.mutation(internal.ai.stageClarificationGroup, {
     userId,
     groupIdempotencyKey,
     sourceSurface: "chat",
@@ -75,7 +75,7 @@ async function setupDuplicateTurn(t: ReturnType<typeof convexTest>, userId = "lo
   const action = (await t.run((ctx) => ctx.db.query("actions").collect()))
     .find((candidate) => candidate.groupId === staged.groupId);
   if (!action) throw new Error("Test action was not staged");
-  await expect(t.mutation((internal as any).actions_writer.writeMealAction, {
+  await expect(t.mutation(internal.actions_writer.writeMealAction, {
     group: {
       userId,
       groupIdempotencyKey,
@@ -96,11 +96,11 @@ async function setupDuplicateTurn(t: ReturnType<typeof convexTest>, userId = "lo
     },
   })).rejects.toThrow("NEAR_DUPLICATE");
   const reason = "Looks like you already logged this — log anyway?";
-  await t.mutation((internal as any).ai.recordConfirmationMemberFailure, {
+  await t.mutation(internal.ai.recordConfirmationMemberFailure, {
     actionId: action._id,
     error: reason,
   });
-  await t.mutation((internal as any).ai.finalizeConfirmationGroup, { groupId: staged.groupId });
+  await t.mutation(internal.ai.finalizeConfirmationGroup, { groupId: staged.groupId });
   await t.mutation(internal.chat.addMessage, {
     userId,
     sessionId,
@@ -161,7 +161,7 @@ describe("duplicate log-anyway recovery", () => {
     const t = convexTest(schema, modules);
     const { asUser, actionId, groupId } = await setupDuplicateTurn(t);
 
-    const result = await asUser.action((api as any).ai.logAnywayForAction, { actionId }) as any;
+    const result = await asUser.action(api.ai.logAnywayForAction, { actionId }) as any;
 
     expect(result).toMatchObject({
       actionId,
@@ -182,8 +182,8 @@ describe("duplicate log-anyway recovery", () => {
     const t = convexTest(schema, modules);
     const { asUser, actionId } = await setupDuplicateTurn(t);
 
-    const first = await asUser.action((api as any).ai.logAnywayForAction, { actionId }) as any;
-    const second = await asUser.action((api as any).ai.logAnywayForAction, { actionId }) as any;
+    const first = await asUser.action(api.ai.logAnywayForAction, { actionId }) as any;
+    const second = await asUser.action(api.ai.logAnywayForAction, { actionId }) as any;
 
     expect(second.record).toEqual(first.record);
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(2);
@@ -196,7 +196,7 @@ describe("duplicate log-anyway recovery", () => {
     const { actionId } = await setupDuplicateTurn(t);
     const asOtherUser = t.withIdentity({ subject: "log-anyway-other" });
 
-    await expect(asOtherUser.action((api as any).ai.logAnywayForAction, { actionId })).rejects.toThrow("Not found");
+    await expect(asOtherUser.action(api.ai.logAnywayForAction, { actionId })).rejects.toThrow("Not found");
 
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(1);
     expect(await t.run((ctx) => ctx.db.get(actionId))).toMatchObject({ status: "failed" });
@@ -206,7 +206,7 @@ describe("duplicate log-anyway recovery", () => {
     const t = convexTest(schema, modules);
     const { asUser, sessionId, actionId, groupId } = await setupDuplicateTurn(t);
 
-    const result = await asUser.action((api as any).ai.logAnywayForAction, { actionId }) as any;
+    const result = await asUser.action(api.ai.logAnywayForAction, { actionId }) as any;
     const messages = await asUser.query(api.chat.getMessages, { sessionId });
     const assistant = messages.find((message) => message.role === "ai") as any;
 

@@ -145,7 +145,7 @@ async function prepareMember(ctx: MutationCtx, actionType: ActionType, args: Wri
     candidate.memberIdempotencyKey === memberIdempotencyKey
     || (hasCompleteChatClaim(args.group)
       && candidate.actionType === actionType
-      && (candidate.payload as any)?._confirmationOrdinal === (member.payload as any)?._confirmationOrdinal),
+      && candidate.payload?._confirmationOrdinal === member.payload?._confirmationOrdinal),
   );
   // Claimed turn retries must execute the persisted member, never overwrite it
   // with a fresh extraction that happens to have the same logical ordinal.

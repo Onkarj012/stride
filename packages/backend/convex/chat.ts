@@ -1,7 +1,15 @@
-import { query, mutation, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import { query, mutation, internalQuery, internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
-import { assertChatTurnCards } from "../../shared/src/chat-turn";
+import {
+  assertChatTurnCards,
+  type ChatTurnActionType,
+  type ChatTurnCard,
+  type ClarificationCardData,
+  type ConfirmationCardData,
+  type ConfirmationMacroData,
+  type ResultCardItem,
+} from "../../shared/src/chat-turn";
 import { stableHash } from "./validation";
 import { CONFIRMATION_TTL_MS } from "./actions_envelope";
 import { assertCurrentChatClaim } from "./chat_claim";
@@ -16,11 +24,18 @@ const turnOutcomeValidator = v.union(
 const CHAT_TURN_LEASE_MS = 120_000;
 
 type ChatTurnOutcome = "committed" | "confirmation_required" | "failed" | "no_action";
+type ConfirmationCard = Extract<ChatTurnCard, { kind: "confirmation" }>;
+type ClarificationCard = Extract<ChatTurnCard, { kind: "clarification" }>;
+type ConfirmationItem = ConfirmationCardData["items"][number];
+type ClarificationItem = ClarificationCardData["items"][number];
+type FailedResultItem = Extract<ResultCardItem, { status: "failed" }>;
 
+/** Compares two optional ids, where two missing ids count as equal. */
 function sameOptionalId(left: unknown, right: unknown): boolean {
   return String(left ?? "") === String(right ?? "");
 }
 
+/** Fingerprints a turn's cards so callers can compare persisted outcomes. */
 function turnCardsHash(cards: unknown): string {
   return stableHash(JSON.stringify(cards ?? []));
 }
@@ -188,17 +203,19 @@ export const addMessage = internalMutation({
       }
     }
     const { claimOwner: _claimOwner, claimVersion: _claimVersion, ...messageArgs } = args;
-    const id = await ctx.db.insert("chat_messages", messageArgs as any);
+    const id = await ctx.db.insert("chat_messages", messageArgs);
     return id;
   },
 });
 
-function confirmationOrdinal(action: any): number {
+/** Reads the confirmation ordinal stamped on an action's payload. */
+function confirmationOrdinal(action: Doc<"actions">): number {
   if (typeof action.payload?._confirmationOrdinal === "number") return action.payload._confirmationOrdinal;
   return typeof action.originalPayload?._confirmationOrdinal === "number" ? action.originalPayload._confirmationOrdinal : -1;
 }
 
-function confirmationDescription(action: any): string {
+/** Builds the default card label for an action from its payload. */
+function confirmationDescription(action: Doc<"actions">): string {
   if (action.actionType === "recovery") {
     if (action.payload?.kind === "water") return `Water ${action.payload.ml}ml`;
     if (action.payload?.kind === "sleep") return `Sleep ${action.payload.hours}h (${action.payload.quality})`;
@@ -208,20 +225,33 @@ function confirmationDescription(action: any): string {
   return action.payload?.name ?? action.payload?.description ?? action.actionType;
 }
 
-function cardActionType(action: any): "meal" | "workout" | "recovery" | null {
+/** Maps an action to a card action type, or null when cards cannot show it. */
+function cardActionType(action: Doc<"actions">): ChatTurnActionType | null {
   return action.actionType === "meal" || action.actionType === "workout" || action.actionType === "recovery"
     ? action.actionType
     : null;
 }
 
-function confirmationMacros(payload: any) {
-  if (!payload || typeof payload !== "object") return undefined;
-  const values = [payload.calories, payload.protein, payload.carbs, payload.fat];
-  if (!values.every((value) => typeof value === "number" && Number.isFinite(value))) return undefined;
-  return { calories: payload.calories, protein: payload.protein, carbs: payload.carbs, fat: payload.fat };
+/** Narrows an unknown value to a plain object. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function actionCardBase(action: any) {
+/** Checks for a finite number. */
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** Extracts editable meal macros from a payload when all four are finite numbers. */
+function confirmationMacros(payload: unknown): ConfirmationMacroData | undefined {
+  if (!isRecord(payload)) return undefined;
+  const { calories, protein, carbs, fat } = payload;
+  if (!isFiniteNumber(calories) || !isFiniteNumber(protein) || !isFiniteNumber(carbs) || !isFiniteNumber(fat)) return undefined;
+  return { calories, protein, carbs, fat };
+}
+
+/** Builds the card fields every action row shares. */
+function actionCardBase(action: Doc<"actions">) {
   return {
     ordinal: confirmationOrdinal(action),
     actionType: cardActionType(action) ?? "recovery",
@@ -232,8 +262,9 @@ function actionCardBase(action: any) {
   };
 }
 
-function resultCardItemsForActions(actions: any[]): any[] {
-  return actions.reduce<any[]>((items, action) => {
+/** Builds result card rows for committed, failed, discarded, and expired actions. */
+function resultCardItemsForActions(actions: Doc<"actions">[]): ResultCardItem[] {
+  return actions.reduce<ResultCardItem[]>((items, action) => {
     const actionType = cardActionType(action);
     if (!actionType) return items;
     const base = {
@@ -268,7 +299,8 @@ function resultCardItemsForActions(actions: any[]): any[] {
   }, []);
 }
 
-function resolvedReason(actions: any[]): "discarded" | "expired" | "mixed" | undefined {
+/** Summarizes why a group's actions resolved without saving. */
+function resolvedReason(actions: Doc<"actions">[]): "discarded" | "expired" | "mixed" | undefined {
   const hasDiscarded = actions.some((action) => action.status === "discarded");
   const hasExpired = actions.some((action) => action.status === "expired");
   if (hasDiscarded && hasExpired) return "mixed";
@@ -277,11 +309,17 @@ function resolvedReason(actions: any[]): "discarded" | "expired" | "mixed" | und
   return undefined;
 }
 
-function pendingCardItems(actions: any[], existingCard: any): any[] {
-  return actions.reduce<any[]>((items, action) => {
+/** Rebuilds pending confirmation or clarification rows, keeping labels from the existing card. */
+function pendingCardItems(actions: Doc<"actions">[], existingCard: ClarificationCard): ClarificationItem[];
+function pendingCardItems(actions: Doc<"actions">[], existingCard: ConfirmationCard | undefined): ConfirmationItem[];
+function pendingCardItems(
+  actions: Doc<"actions">[],
+  existingCard: ConfirmationCard | ClarificationCard | undefined,
+): Array<ConfirmationItem | ClarificationItem> {
+  return actions.reduce<Array<ConfirmationItem | ClarificationItem>>((items, action) => {
     const actionType = cardActionType(action);
     if (!actionType || action.status !== "pending") return items;
-    const previous = existingCard?.data?.items?.find((item: any) => item.actionId === String(action._id));
+    const previous = existingCard?.data?.items?.find((item) => item.actionId === String(action._id));
     const base = {
       ...actionCardBase(action),
       ...(previous?.title ? { title: previous.title } : {}),
@@ -296,7 +334,8 @@ function pendingCardItems(actions: any[], existingCard: any): any[] {
         : {}),
     };
     if (existingCard?.kind === "clarification") {
-      items.push({ ...base, reason: previous?.reason ?? action.validation?.messages?.at(-1) ?? "Confirmation is required" });
+      const previousReason = previous && "reason" in previous ? previous.reason : undefined;
+      items.push({ ...base, reason: previousReason ?? action.validation?.messages?.at(-1) ?? "Confirmation is required" });
       return items;
     }
     items.push({
@@ -307,8 +346,9 @@ function pendingCardItems(actions: any[], existingCard: any): any[] {
   }, []);
 }
 
-function reconcileCards(message: any, group: any, actions: any[]) {
-  const existingCards: any[] = Array.isArray(message.turnCards) ? message.turnCards : [];
+/** Rebuilds a turn's chat cards, outcome, and reply text from the group's current action states. */
+function reconcileCards(message: Doc<"chat_messages">, group: Doc<"actionGroups">, actions: Doc<"actions">[]) {
+  const existingCards: ChatTurnCard[] = Array.isArray(message.turnCards) ? message.turnCards : [];
   const actionById = new Map(actions.map((action) => [String(action._id), action]));
   const pending = actions.filter((action) => action.status === "pending" && cardActionType(action));
   const activeCommitted = actions.filter((action) => action.status === "committed" && action.committedRowRef && cardActionType(action));
@@ -317,38 +357,37 @@ function reconcileCards(message: any, group: any, actions: any[]) {
   const priorResultItems = existingCards
     .filter((card) => card.kind === "result")
     .flatMap((card) => card.data.items);
-  const resultItems = resultCardItemsForActions(actions).map((item: any) => {
-    const prior = priorResultItems.find((candidate: any) => candidate.actionId === item.actionId);
+  const resultItems = resultCardItemsForActions(actions).map((item) => {
+    const prior = priorResultItems.find((candidate) => candidate.actionId === item.actionId);
     return prior ? { ...item, title: prior.title, description: prior.description } : item;
   });
-  const preservedResultFailures = priorResultItems.filter((item: any) => !item.actionId && item.status === "failed");
+  const preservedResultFailures = priorResultItems.filter((item): item is FailedResultItem => !item.actionId && item.status === "failed");
   const existingPending = existingCards.find((card) => card.kind === "confirmation" || card.kind === "clarification");
-  const preserved = existingCards.flatMap((card) => {
+  const preserved = existingCards.flatMap((card): ChatTurnCard[] => {
     if (card.kind === "result" || card.kind === "undo" || card.kind === "confirmation" || card.kind === "clarification") return [];
     if (card.kind === "duplicate") {
-      const items = card.data.items.filter((item: any) => {
+      const items = card.data.items.filter((item) => {
         const action = actionById.get(String(item.actionId));
         return Boolean(action && action.status === "failed" && action.validation?.messages?.some((message: string) => /duplicate/i.test(message)));
       });
       return items.length > 0 ? [{ ...card, data: { ...card.data, items } }] : [];
     }
     if (card.kind === "failure") {
-      const items = card.data.items.filter((item: any) => !item.actionId || !actionById.has(String(item.actionId)));
+      const items = card.data.items.filter((item) => !item.actionId || !actionById.has(String(item.actionId)));
       return items.length > 0 || card.data.items.length === 0 ? [{ ...card, data: { ...card.data, items } }] : [];
     }
     return [card];
   });
-  const cards: any[] = [...preserved];
+  const cards: ChatTurnCard[] = [...preserved];
   const resolutionReason = resolvedReason(actions);
   const allResolved = actions.length > 0 && actions.every((action) => action.status === "discarded" || action.status === "expired");
 
   if (pending.length > 0) {
-    const items = pendingCardItems(pending, existingPending);
     if (existingPending?.kind === "clarification") {
       cards.push({
         version: 1,
         kind: "clarification",
-        data: { groupId: String(group._id), prompt: existingPending.data.prompt, items },
+        data: { groupId: String(group._id), prompt: existingPending.data.prompt, items: pendingCardItems(pending, existingPending) },
       });
     } else {
       cards.push({
@@ -357,13 +396,13 @@ function reconcileCards(message: any, group: any, actions: any[]) {
         data: {
           groupId: String(group._id),
           expiresAt: group.createdAt + CONFIRMATION_TTL_MS,
-          items,
+          items: pendingCardItems(pending, existingPending),
         },
       });
     }
   }
 
-  const hasResolvedItems = resultItems.some((item: any) => item.status === "discarded" || item.status === "expired");
+  const hasResolvedItems = resultItems.some((item) => item.status === "discarded" || item.status === "expired");
   if (activeCommitted.length > 0 || (hasResolvedItems && !allResolved)) {
     cards.push({
       version: 1,
@@ -383,8 +422,8 @@ function reconcileCards(message: any, group: any, actions: any[]) {
         code: "ACTION_GROUP_FAILED",
         message: "No items were saved.",
         retriable: true,
-        items: [...resultItems.filter((item: any) => item.status === "failed"), ...preservedResultFailures]
-          .map(({ status: _status, retriable: _retriable, ...item }: any) => item),
+        items: [...resultItems.filter((item) => item.status === "failed"), ...preservedResultFailures]
+          .map(({ status: _status, retriable: _retriable, ...item }) => item),
       },
     });
   }
@@ -395,12 +434,14 @@ function reconcileCards(message: any, group: any, actions: any[]) {
       kind: "undo",
       data: {
         groupId: String(group._id),
-        items: [...activeCommitted, ...undone].map((action) => ({
-          ...actionCardBase(action),
-          actionId: String(action._id),
-          record: action.committedRowRef,
-          state: action.status === "undone" ? "undone" : "available",
-        })),
+        items: [...activeCommitted, ...undone].flatMap((action) => action.committedRowRef
+          ? [{
+              ...actionCardBase(action),
+              actionId: String(action._id),
+              record: action.committedRowRef,
+              state: action.status === "undone" ? "undone" as const : "available" as const,
+            }]
+          : []),
       },
     });
   }
@@ -422,7 +463,7 @@ function reconcileCards(message: any, group: any, actions: any[]) {
             : {}),
           confidence: action.confidence,
           validationMessages: action.validation?.messages ?? [],
-          resolution: action.status,
+          resolution: action.status === "discarded" || action.status === "expired" ? action.status : undefined,
         })),
       },
     });
@@ -440,8 +481,8 @@ function reconcileCards(message: any, group: any, actions: any[]) {
         : "no_action";
   const savedTitles = activeCommitted.map((action) => {
     const priorCardItem = existingCards
-      .flatMap((card) => card.kind === "result" || card.kind === "undo" ? card.data.items : [])
-      .find((item: any) => item.actionId === String(action._id));
+      .flatMap((card): Array<{ actionId?: string; title: string }> => card.kind === "result" || card.kind === "undo" ? card.data.items : [])
+      .find((item) => item.actionId === String(action._id));
     return priorCardItem?.title ?? confirmationDescription(action);
   });
   const generatedContent = turnOutcome === "confirmation_required"
@@ -466,6 +507,17 @@ function reconcileCards(message: any, group: any, actions: any[]) {
   return { content, turnOutcome, turnCards: cards, actionIds: actions.map((action) => action._id) };
 }
 
+/** Finds the earliest assistant message for an action group without reading the rest. */
+async function firstAssistantMessageForGroup(ctx: QueryCtx, actionGroupId: Id<"actionGroups">) {
+  // The index orders rows by creation time, so the first "ai" match is the earliest one.
+  return await ctx.db
+    .query("chat_messages")
+    .withIndex("by_action_group", (q) => q.eq("actionGroupId", actionGroupId))
+    .filter((q) => q.eq(q.field("role"), "ai"))
+    .first();
+}
+
+/** Rewrites the group's assistant message cards and outcome inside the caller's transaction. */
 export async function reconcileAssistantOutcomeInMutation(
   ctx: MutationCtx,
   userId: string,
@@ -476,13 +528,7 @@ export async function reconcileAssistantOutcomeInMutation(
 ) {
   const group = await ctx.db.get("actionGroups", actionGroupId);
   if (!group || group.userId !== userId) throw new Error("Not found");
-  const messages = await ctx.db
-    .query("chat_messages")
-    .withIndex("by_action_group", (q) => q.eq("actionGroupId", actionGroupId))
-    .collect();
-  const message = messages
-    .filter((candidate) => candidate.role === "ai")
-    .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
+  const message = await firstAssistantMessageForGroup(ctx, actionGroupId);
   if (!message) {
     return {
       group,
@@ -514,6 +560,7 @@ export async function reconcileAssistantOutcomeInMutation(
   };
 }
 
+/** Reconciles a group's assistant message from current action states. */
 export const updateAssistantOutcomeForGroup = internalMutation({
   args: {
     userId: v.string(),
@@ -527,6 +574,7 @@ export const updateAssistantOutcomeForGroup = internalMutation({
   },
 });
 
+/** Claims a chat submission for processing, or returns its finished or in-progress state. */
 export const claimTurn = internalMutation({
   args: {
     userId: v.string(),
@@ -548,12 +596,13 @@ export const claimTurn = internalMutation({
     if (userMessage) {
       if (!sameOptionalId(userMessage.sessionId, args.sessionId)) throw new Error("Submission already belongs to a different chat session");
       if (userMessage.content !== args.content) throw new Error("Submission already belongs to different content");
-      const storedFingerprint = (userMessage as any).submissionFingerprint;
+      const storedFingerprint = userMessage.submissionFingerprint;
       if (storedFingerprint && storedFingerprint !== args.submissionFingerprint) {
         throw new Error("Submission already belongs to different request details");
       }
     }
-    const turnFromAssistant = (assistant: any) => assistant && assistant.turnContractVersion === 1 && assistant.turnOutcome
+    // Returns the persisted terminal turn for a finished assistant message, else null.
+    const turnFromAssistant = (assistant: Doc<"chat_messages"> | null) => assistant && assistant.turnContractVersion === 1 && assistant.turnOutcome
       ? {
           state: "terminal" as const,
           turn: {
@@ -570,8 +619,8 @@ export const claimTurn = internalMutation({
         }
       : null;
 
-    const referencedTurn = (userMessage as any)?.resolvedTurnMessageId
-      ? await ctx.db.get((userMessage as any).resolvedTurnMessageId)
+    const referencedTurn = userMessage?.resolvedTurnMessageId
+      ? await ctx.db.get(userMessage.resolvedTurnMessageId)
       : null;
     const referencedTerminal = turnFromAssistant(referencedTurn);
     if (referencedTerminal) return referencedTerminal;
@@ -584,17 +633,17 @@ export const claimTurn = internalMutation({
       .first();
     if (assistant) {
       if (!sameOptionalId(assistant.sessionId, args.sessionId)) throw new Error("Submission already belongs to a different chat session");
-      if (userMessage && !(userMessage as any).submissionFingerprint) {
-        await ctx.db.patch(userMessage._id, { submissionFingerprint: args.submissionFingerprint } as any);
+      if (userMessage && !userMessage.submissionFingerprint) {
+        await ctx.db.patch(userMessage._id, { submissionFingerprint: args.submissionFingerprint });
       }
       const terminal = turnFromAssistant(assistant);
       if (terminal) return terminal;
       return { state: "in_progress" as const };
     }
     const now = Date.now();
-    const currentVersion = (userMessage as any)?.processingLeaseVersion ?? 0;
-    const currentOwner = (userMessage as any)?.processingLeaseOwner;
-    const currentExpiry = (userMessage as any)?.processingLeaseExpiresAt;
+    const currentVersion = userMessage?.processingLeaseVersion ?? 0;
+    const currentOwner = userMessage?.processingLeaseOwner;
+    const currentExpiry = userMessage?.processingLeaseExpiresAt;
     if (userMessage && currentExpiry && currentExpiry > now && currentOwner !== args.claimOwner) {
       return { state: "in_progress" as const };
     }
@@ -606,7 +655,7 @@ export const claimTurn = internalMutation({
       processingLeaseExpiresAt: now + CHAT_TURN_LEASE_MS,
     };
     if (userMessage) {
-      await ctx.db.patch(userMessage._id, claimFields as any);
+      await ctx.db.patch(userMessage._id, claimFields);
       return { state: "claimed" as const, messageId: userMessage._id, claimVersion: nextVersion };
     }
     const id = await ctx.db.insert("chat_messages", {
@@ -616,11 +665,12 @@ export const claimTurn = internalMutation({
       content: args.content,
       clientSubmissionId: args.clientSubmissionId,
       ...claimFields,
-    } as any);
+    });
     return { state: "claimed" as const, messageId: id, claimVersion: nextVersion };
   },
 });
 
+/** Points a clarification submission at the assistant turn it resolved. */
 export const linkResolvedTurnMessage = internalMutation({
   args: {
     userId: v.string(),
@@ -646,18 +696,14 @@ export const linkResolvedTurnMessage = internalMutation({
   },
 });
 
+/** Returns the group's first assistant message for the owning user. */
 export const getAssistantOutcomeForGroup = internalQuery({
   args: {
     userId: v.string(),
     actionGroupId: v.id("actionGroups"),
   },
   handler: async (ctx, { userId, actionGroupId }) => {
-    const message = (await ctx.db
-      .query("chat_messages")
-      .withIndex("by_action_group", (q) => q.eq("actionGroupId", actionGroupId))
-      .collect())
-      .filter((candidate) => candidate.role === "ai")
-      .sort((a, b) => (a._creationTime ?? 0) - (b._creationTime ?? 0))[0];
+    const message = await firstAssistantMessageForGroup(ctx, actionGroupId);
     if (!message) return null;
     if (message.userId !== userId || message.role !== "ai") throw new Error("Not found");
     return message;

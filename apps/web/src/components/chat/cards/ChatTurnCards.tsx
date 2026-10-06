@@ -71,11 +71,13 @@ export function parseChatTurnCards(value: unknown): ChatTurnCard[] {
   return value.filter((card): card is ChatTurnCard => isChatTurnCard(card));
 }
 
+/** Joins an item's date and time for its meta line, or null when both are missing. */
 function itemDateLine(item: { date?: string; time?: string }): string | null {
   if (!item.date && !item.time) return null;
   return [item.date, item.time].filter(Boolean).join(" · ");
 }
 
+/** Renders an item's action type label and title. */
 function ItemHeader({ actionType, title }: { actionType: string; title: string }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -87,6 +89,7 @@ function ItemHeader({ actionType, title }: { actionType: string; title: string }
 
 /* ── Result ──────────────────────────────────────────────────────────────── */
 
+/** Shows which items were saved, failed, discarded, or expired. */
 function ResultCard({ data }: { data: ResultCardData }) {
   const committed = data.items.filter((item) => item.status === "committed");
   const failed = data.items.filter((item) => item.status === "failed");
@@ -153,6 +156,7 @@ function ResultCard({ data }: { data: ResultCardData }) {
 
 /* ── Undo ────────────────────────────────────────────────────────────────── */
 
+/** Lets the user undo saved items one at a time or all at once. */
 function UndoCard({ data, handlers, state }: { data: UndoCardData; handlers: ChatCardHandlers; state: ChatCardState }) {
   const pendingActionIds = state.pendingActionIds ?? EMPTY_SET;
   const available = data.items.filter((item) => item.state === "available");
@@ -217,6 +221,7 @@ function UndoCard({ data, handlers, state }: { data: UndoCardData; handlers: Cha
 
 /* ── Clarification ───────────────────────────────────────────────────────── */
 
+/** Asks for the missing date before pending items can be saved. */
 function ClarificationCard({
   data,
   handlers,
@@ -280,6 +285,7 @@ function ClarificationCard({
 
 /* ── Duplicate ───────────────────────────────────────────────────────────── */
 
+/** Shows items blocked as possible duplicates, with a log-anyway option. */
 function DuplicateCard({
   data,
   handlers,
@@ -341,6 +347,7 @@ function DuplicateCard({
 
 /* ── Failure ─────────────────────────────────────────────────────────────── */
 
+/** Shows that nothing was saved and why. */
 function FailureCard({ data }: { data: FailureCardData }) {
   return (
     <section data-card-kind="failure" data-card-state="resolved" aria-label="Log failed" className={cn(CHAT_CARD_SURFACE, "border-bubblegum/40")}>
@@ -370,6 +377,7 @@ function FailureCard({ data }: { data: FailureCardData }) {
 
 /* ── Dispatch ────────────────────────────────────────────────────────────── */
 
+/** Renders one card by its kind. */
 export function ChatTurnCardView({
   card,
   handlers = {},

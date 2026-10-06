@@ -27,6 +27,7 @@ export async function assertCurrentChatClaim(
   }
 }
 
+/** Reports whether the caller passed any claim field, which means the full claim must be checked. */
 export function hasCompleteChatClaim(args: {
   claimOwner?: string;
   claimVersion?: number;

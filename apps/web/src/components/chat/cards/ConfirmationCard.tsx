@@ -42,11 +42,13 @@ type Draft = {
   macros?: ConfirmationMacroData;
 };
 
+/** Turns a confidence score into a short label, or null when there is none. */
 function confidenceBand(confidence?: number): string | null {
   if (confidence == null) return null;
   return confidence >= 0.8 ? "high confidence" : confidence >= 0.6 ? "medium confidence" : "low confidence";
 }
 
+/** Lets the user edit, confirm, or discard a batch of pending items. */
 export function ConfirmationCard({ data, pending = false, resolved = false, now = Date.now(), onConfirm }: Props) {
   const [drafts, setDrafts] = useState<Draft[]>(() => data.items.map((item) => ({
     ordinal: item.ordinal,
@@ -64,10 +66,13 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
   const resolutionTitle = data.state === "resolved"
     ? data.reason === "expired" ? "Confirmation expired" : data.reason === "discarded" ? "Discarded" : "Review resolved"
     : "Review these actions";
+  // Finds the local draft for an item.
   const draftFor = (ordinal: number) => drafts.find((draft) => draft.ordinal === ordinal);
+  // Updates one item's local draft.
   const patchDraft = (ordinal: number, patch: Partial<Draft>) =>
     setDrafts((current) => current.map((draft) => draft.ordinal === ordinal ? { ...draft, ...patch } : draft));
 
+  /** Sends confirm or discard decisions for the batch. */
   function submit(mode: "all" | "selected" | "discard") {
     if (!onConfirm) return;
     onConfirm(data.groupId, drafts.map((draft) => {

@@ -24,14 +24,17 @@ type TurnOverride = CanonicalTurn & { baseline: string }
 
 const GREETING = "Hey — I'm Stry. Tell me what you ate, trained, or how you're feeling, and I'll keep the log canonical."
 
+/** Reads the action group id a card belongs to, if it has one. */
 function groupIdForCard(card: ChatTurnCard): string | undefined {
   return 'groupId' in card.data ? card.data.groupId : undefined
 }
 
+/** Fingerprints a message's visible state so a local override is dropped once the server copy changes. */
 function messageSignature(message: PersistedChatMessage): string {
   return JSON.stringify([message.content, message.turnOutcome, message.turnCards, message.actionGroupId])
 }
 
+/** Finds the action group a persisted assistant message belongs to. */
 function messageGroupId(message: PersistedChatMessage): string | undefined {
   return message.actionGroupId ?? parseChatTurnCards(message.turnCards).map(groupIdForCard).find(Boolean)
 }
@@ -83,11 +86,11 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
   const submissionIds = useSubmissionId()
   const createSession = useMutation(api.chat.createSession)
   const sendToAI = useAction(api.ai.chat)
-  const confirmGroup = useAction((api as any).ai.confirmGroup)
+  const confirmGroup = useAction(api.ai.confirmGroup)
   const resolveClarification = useAction(api.ai.resolveClarification)
-  const undoAction = useMutation((api as any).actions_undo.undoAction)
-  const undoGroup = useMutation((api as any).actions_undo.undoGroup)
-  const logAnywayForAction = useAction((api as any).ai.logAnywayForAction)
+  const undoAction = useMutation(api.actions_undo.undoAction)
+  const undoGroup = useMutation(api.actions_undo.undoGroup)
+  const logAnywayForAction = useAction(api.ai.logAnywayForAction)
   const persistedMessages = useQuery(api.chat.getMessages, activeSessionId ? { sessionId: activeSessionId } : 'skip') as PersistedChatMessage[] | undefined
   const messages = persistedMessages ?? []
 
@@ -107,8 +110,11 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     undoneActionIds: undoneActions,
   }
 
+  // Marks a group or action id as having a request in flight.
   const addPending = (setter: Dispatch<SetStateAction<ReadonlySet<string>>>, key: string) => setter(current => new Set(current).add(key))
+  // Clears an in-flight marker once its request settles.
   const removePending = (setter: Dispatch<SetStateAction<ReadonlySet<string>>>, key: string) => setter(current => { const next = new Set(current); next.delete(key); return next })
+  // Shows a returned turn right away until the persisted message catches up.
   const applyTurnOverride = (groupId: string, turn: CanonicalTurn | undefined) => {
     if (!turn || typeof turn.content !== 'string') return
     assertReturnedTurnCards(turn.turnCards)
@@ -128,6 +134,7 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     return () => clearTimeout(timer)
   }, [messages, pendingSend, running, notice])
 
+  /** Sends a chat message, creating a session first if needed. */
   async function submit(rawText: string, clarificationGroupId?: string) {
     const text = rawText.trim()
     if (!text || running) return
@@ -161,6 +168,7 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     }
   }
 
+  /** Confirms, edits, or discards the members of a confirmation card. */
   function handleConfirm(groupId: string, decisions: ConfirmationDecision[]) {
     if (pendingGroups.has(groupId)) return
     addPending(setPendingGroups, groupId)
@@ -192,6 +200,7 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     })()
   }
 
+  /** Resolves a clarification card with the chosen date. */
   function handleClarify(groupId: string, date: string) {
     if (pendingGroups.has(groupId)) return
     addPending(setPendingGroups, groupId)
@@ -206,6 +215,7 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     })()
   }
 
+  /** Undoes one saved item. */
   function handleUndoItem(groupId: string, actionId: string) {
     if (pendingActions.has(actionId)) return
     addPending(setPendingActions, actionId)
@@ -229,6 +239,7 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     })()
   }
 
+  /** Undoes every saved item in a group and reports any that were skipped. */
   function handleUndoAll(groupId: string) {
     const key = `group:${groupId}`
     if (pendingActions.has(key)) return
@@ -269,6 +280,7 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     })()
   }
 
+  /** Saves an item that the duplicate check blocked. */
   function handleLogAnyway(groupId: string, item: DuplicateCardItem) {
     if (pendingActions.has(item.actionId)) return
     addPending(setPendingActions, item.actionId)

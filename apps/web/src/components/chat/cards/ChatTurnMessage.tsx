@@ -55,6 +55,7 @@ export function ChatTurnMessage({ message, handlers, state, fresh, entrance, bad
   const cards = useMemo(() => parseChatTurnCards(displayedMessage.turnCards), [displayedMessage.turnCards]);
   const cardHandlers = useMemo<ChatCardHandlers | undefined>(() => {
     if (!handlers) return handlers;
+    // Shows a returned turn right away until the persisted message catches up.
     const applyTurn = (turn: ChatTurnResolution | void) => {
       if (turn) setResolvedTurn({ turn, baseline: messageSignature });
       return turn;
