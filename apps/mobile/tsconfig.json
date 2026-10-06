@@ -2,28 +2,9 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "allowImportingTsExtensions": true,
     "paths": {
-      "@/*": [
-        "./*"
-      ],
-      "@convex/_generated/api": [
-        "./lib/convex-api-shim.ts"
-      ],
-      "@convex/*": [
-        "../../packages/backend/convex/*"
-      ],
-      "@stride/shared": [
-        "../../packages/shared/src/index.ts"
-      ]
+      "@/*": ["./src/*"]
     }
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx",
-    ".expo/types/**/*.d.ts",
-    "expo-env.d.ts",
-    "nativewind-env.d.ts",
-    ".expo/types/**/*.ts"
-  ]
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }
