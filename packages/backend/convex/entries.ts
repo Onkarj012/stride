@@ -80,10 +80,12 @@ function checkGrams(grams: number): void {
   }
 }
 
-/** Loads a food or throws, so an entry never points at a missing row. */
-async function requireFood(ctx: MutationCtx, foodId: Id<"foods">): Promise<Doc<"foods">> {
+/** Loads a food the user may log or throws, so an entry never points at a missing row or another user's food. */
+async function requireFood(ctx: MutationCtx, foodId: Id<"foods">, userId: string): Promise<Doc<"foods">> {
   const food = await ctx.db.get("foods", foodId);
-  if (food === null) throw new Error(`Unknown food: ${foodId}`);
+  if (food === null || (food.ownerUserId !== undefined && food.ownerUserId !== userId)) {
+    throw new Error(`Unknown food: ${foodId}`);
+  }
   return food;
 }
 
@@ -123,7 +125,7 @@ export async function insertEntries(
     }
     const loggedAt = item.loggedAt ?? now;
     if (!Number.isFinite(loggedAt)) throw new Error("loggedAt must be a finite timestamp");
-    const food = await requireFood(ctx, item.foodId);
+    const food = await requireFood(ctx, item.foodId, userId);
     const day = await resolveLocalDay(ctx, userId, loggedAt);
     const row: EntryRow = {
       userId,
@@ -232,6 +234,62 @@ export const addEntries = mutation({
   },
 });
 
+/** The changes an edit may make. Grams always come from the caller or a portion resolver, never from a model. */
+export interface EntryEdit {
+  submissionId: string;
+  entryId: Id<"entries">;
+  grams?: number;
+  foodId?: Id<"foods">;
+  slot?: Infer<typeof mealSlotValidator>;
+  localDate?: string;
+}
+
+/** Writes an edit revision on behalf of `createdBy`. Shared by `editEntry` and the chat correction tools. */
+export async function editEntryAs(
+  ctx: MutationCtx,
+  userId: string,
+  edit: EntryEdit,
+  createdBy: CreatedBy,
+): Promise<Id<"entries">> {
+  const { submissionId, entryId, grams, foodId, slot, localDate } = edit;
+  const replayed = await replayedRevision(ctx, userId, submissionId, "edit", entryId);
+  if (replayed !== null) return replayed;
+  if (grams === undefined && foodId === undefined && slot === undefined && localDate === undefined) {
+    throw new Error("editEntry needs at least one change");
+  }
+  const head = await loadHead(ctx, userId, entryId);
+  if (head.status === "deleted") throw new Error("Entry is deleted. Undo the delete first.");
+  if (grams !== undefined) checkGrams(grams);
+  if (localDate !== undefined && !isLocalDate(localDate)) throw new Error(`Not a YYYY-MM-DD date: ${localDate}`);
+
+  const content = contentOf(head);
+  if (grams !== undefined || foodId !== undefined) {
+    const food = await requireFood(ctx, foodId ?? head.foodId, userId);
+    content.foodId = food._id;
+    content.foodName = food.name;
+    content.grams = grams ?? head.grams;
+    content.nutrients = scaleNutrients(food.per100g, content.grams);
+  }
+  if (slot !== undefined) content.slot = slot;
+  if (localDate !== undefined) content.localDate = localDate;
+  return await writeRevision(ctx, head, content, "edit", submissionId, createdBy);
+}
+
+/** Writes a deleted revision on behalf of `createdBy`. Shared by `deleteEntry` and the chat correction tools. */
+export async function deleteEntryAs(
+  ctx: MutationCtx,
+  userId: string,
+  submissionId: string,
+  entryId: Id<"entries">,
+  createdBy: CreatedBy,
+): Promise<Id<"entries">> {
+  const replayed = await replayedRevision(ctx, userId, submissionId, "delete", entryId);
+  if (replayed !== null) return replayed;
+  const head = await loadHead(ctx, userId, entryId);
+  if (head.status === "deleted") throw new Error("Entry is already deleted");
+  return await writeRevision(ctx, head, { ...contentOf(head), deletedAt: Date.now() }, "delete", submissionId, createdBy);
+}
+
 /** Changes grams, food, slot or date of a live entry by writing a new revision. Returns the new revision id. */
 export const editEntry = mutation({
   args: {
@@ -243,29 +301,9 @@ export const editEntry = mutation({
     localDate: v.optional(v.string()),
   },
   returns: v.id("entries"),
-  handler: async (ctx, { submissionId, entryId, grams, foodId, slot, localDate }) => {
+  handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
-    const replayed = await replayedRevision(ctx, userId, submissionId, "edit", entryId);
-    if (replayed !== null) return replayed;
-    if (grams === undefined && foodId === undefined && slot === undefined && localDate === undefined) {
-      throw new Error("editEntry needs at least one change");
-    }
-    const head = await loadHead(ctx, userId, entryId);
-    if (head.status === "deleted") throw new Error("Entry is deleted. Undo the delete first.");
-    if (grams !== undefined) checkGrams(grams);
-    if (localDate !== undefined && !isLocalDate(localDate)) throw new Error(`Not a YYYY-MM-DD date: ${localDate}`);
-
-    const content = contentOf(head);
-    if (grams !== undefined || foodId !== undefined) {
-      const food = await requireFood(ctx, foodId ?? head.foodId);
-      content.foodId = food._id;
-      content.foodName = food.name;
-      content.grams = grams ?? head.grams;
-      content.nutrients = scaleNutrients(food.per100g, content.grams);
-    }
-    if (slot !== undefined) content.slot = slot;
-    if (localDate !== undefined) content.localDate = localDate;
-    return await writeRevision(ctx, head, content, "edit", submissionId, "user");
+    return await editEntryAs(ctx, userId, args, "user");
   },
 });
 
@@ -275,11 +313,7 @@ export const deleteEntry = mutation({
   returns: v.id("entries"),
   handler: async (ctx, { submissionId, entryId }) => {
     const userId = await requireUserId(ctx);
-    const replayed = await replayedRevision(ctx, userId, submissionId, "delete", entryId);
-    if (replayed !== null) return replayed;
-    const head = await loadHead(ctx, userId, entryId);
-    if (head.status === "deleted") throw new Error("Entry is already deleted");
-    return await writeRevision(ctx, head, { ...contentOf(head), deletedAt: Date.now() }, "delete", submissionId, "user");
+    return await deleteEntryAs(ctx, userId, submissionId, entryId, "user");
   },
 });
 

@@ -32,6 +32,10 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   "openai/gpt-4o-mini": { input: 0.15, output: 0.60 },
   "anthropic/claude-haiku-4.5": { input: 1, output: 5 },
   "anthropic/claude-sonnet-4.6": { input: 3, output: 15 },
+  // Restart pipeline models (plan 007 D13), OpenRouter list prices read 2026-10-06.
+  "openai/gpt-5.6-luna": { input: 0.2, output: 1.2 },
+  // Introductory rate; Google lists $1.50 / $7.50 from 2027-01-01.
+  "google/gemini-3.8-flash": { input: 0.75, output: 3.75 },
 } satisfies Record<AIModelId, { input: number; output: number }>;
 
 type UsageLike = {

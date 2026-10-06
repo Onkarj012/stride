@@ -4,6 +4,8 @@ import {
   createdByValidator,
   entrySourceValidator,
   foodSourceValidator,
+  inputKindValidator,
+  matchSourceValidator,
   mealSlotValidator,
   nutrientsValidator,
   revisionOpValidator,
@@ -671,9 +673,11 @@ export default defineSchema({
     source: foodSourceValidator,
     sourceId: v.string(),
     verified: v.boolean(),
+    ownerUserId: v.optional(v.string()), // set on source "user" rows; only that user sees them
   })
     .index("by_source_and_sourceId", ["source", "sourceId"])
-    .searchIndex("search_text", { searchField: "searchText", filterFields: ["source", "verified"] }),
+    .index("by_ownerUserId", ["ownerUserId"])
+    .searchIndex("search_text", { searchField: "searchText", filterFields: ["source", "verified", "ownerUserId"] }),
 
   food_portions: defineTable({
     foodId: v.id("foods"),
@@ -824,7 +828,10 @@ export default defineSchema({
       }),
     ),
     draftIds: v.array(v.id("drafts")),
+    entryIds: v.optional(v.array(v.id("entries"))),
     submissionId: v.optional(v.string()),
+    claimedAt: v.optional(v.number()), // user messages: when a chat turn last started work on it
+    audioPending: v.optional(v.boolean()), // user voice messages: claimed, transcript not saved yet
   })
     .index("by_chatId", ["chatId"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
@@ -843,15 +850,34 @@ export default defineSchema({
         unit: v.optional(v.string()),
         slot: v.optional(mealSlotValidator),
         localDate: v.optional(v.string()),
+        requestedDate: v.optional(v.string()), // a date the gate refused; confirm needs a valid one
         foodId: v.optional(v.id("foods")),
         grams: v.optional(v.number()),
         score: v.optional(v.number()),
         unresolved: v.optional(v.string()),
+        portionScale: v.optional(v.number()),
+        cookingOil: v.optional(v.boolean()),
+        fromPhoto: v.optional(v.boolean()),
+        confidence: v.optional(v.number()),
+        matchSource: v.optional(matchSourceValidator),
+        reasons: v.optional(v.array(v.string())),
+        candidateIds: v.optional(v.array(v.id("foods"))),
       }),
     ),
+    inputKind: v.optional(inputKindValidator),
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()),
   })
     .index("by_userId_and_status", ["userId", "status"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
+
+  // Food memory for the restart pipeline: text the user confirmed for a food. Maps text to a food only; never holds nutrients.
+  food_links: defineTable({
+    userId: v.string(),
+    key: v.string(), // canonical tokens of the item text, e.g. "roti"
+    foodId: v.id("foods"),
+    status: v.union(v.literal("active"), v.literal("rejected"), v.literal("deleted")),
+    uses: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId_and_status_and_key", ["userId", "status", "key"]),
 });
