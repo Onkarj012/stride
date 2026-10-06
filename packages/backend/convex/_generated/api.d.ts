@@ -25,6 +25,7 @@ import type * as calorie_engine from "../calorie_engine.js";
 import type * as chat from "../chat.js";
 import type * as chat_claim from "../chat_claim.js";
 import type * as chat_turn_test_helpers from "../chat_turn_test_helpers.js";
+import type * as chats from "../chats.js";
 import type * as coaches from "../coaches.js";
 import type * as day_totals from "../day_totals.js";
 import type * as derived_state from "../derived_state.js";
@@ -96,6 +97,7 @@ declare const fullApi: ApiFromModules<{
   chat: typeof chat;
   chat_claim: typeof chat_claim;
   chat_turn_test_helpers: typeof chat_turn_test_helpers;
+  chats: typeof chats;
   coaches: typeof coaches;
   day_totals: typeof day_totals;
   derived_state: typeof derived_state;
