@@ -32,6 +32,19 @@ test("wipeLegacyLedger empties only the listed old tables, across batches", asyn
     const sessionId = await ctx.db.insert("chat_sessions", { userId: "user_a", title: "Chat", updatedAt: 1 });
     await ctx.db.insert("chat_messages", { userId: "user_a", sessionId, role: "user", content: "dal rice" });
     await ctx.db.insert("weight_logs", { userId: "user_a", date: "2026-10-05", weightKg: 72, source: "profile", createdAt: 1 });
+    await ctx.db.insert("food_memory", {
+      userId: "user_a",
+      normalizedName: "dal rice",
+      displayName: "Dal rice",
+      aliases: [],
+      kcal: 500,
+      protein: 15,
+      carbs: 80,
+      fat: 10,
+      timesLogged: 3,
+      source: "learned",
+      lastUsedDate: "2026-10-05",
+    });
     await ctx.db.insert("users", { clerkId: "user_a", email: "a@example.com", name: "A" });
     await ctx.db.insert("user_profiles", { userId: "user_a", activityLevel: "moderate" });
     await ctx.db.insert("food_cache", {

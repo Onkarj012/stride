@@ -4,7 +4,7 @@ import { internalMutation } from "./_generated/server";
 
 // WARNING: wipeLegacyLedger DELETES EVERY ROW OF THE TABLES BELOW FOR ALL USERS, IRREVERSIBLY. Owner runs it once by hand when slice 4 lands.
 
-/** Pre-restart ledger tables: logs, the chat transcript ledger and data derived from them. Profiles, settings and caches stay. */
+/** Pre-restart ledger tables: logs, the chat transcript ledger and data derived from them, including AI-estimated food_memory macros. Profiles, settings and caches stay. */
 export const LEGACY_LEDGER_TABLES = [
   "meals",
   "workouts",
@@ -22,6 +22,7 @@ export const LEGACY_LEDGER_TABLES = [
   "derived_state_versions",
   "insights",
   "weekly_summaries",
+  "food_memory",
 ] as const;
 
 /** Rows deleted per transaction. Small enough for chat_messages documents to stay inside read limits. */

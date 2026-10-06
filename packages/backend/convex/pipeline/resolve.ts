@@ -24,6 +24,7 @@ import { insertEntries, MAX_BATCH, type NewEntry } from "../entries";
 import { isVisibleFood, MAX_USER_FOODS, searchVisibleFoodRows } from "../foods_db";
 import { inputKindValidator, matchSourceValidator } from "../ledger_validators";
 import { resolveLocalDay } from "../time_zone";
+import { assertLedgerWritable } from "../users";
 import { extractedItemValidator, type ExtractedItem } from "./extract";
 
 /** A confirmed food memory is the user's own choice, so it scores as an exact match. */
@@ -433,6 +434,7 @@ export const commitLog = internalMutation({
   returns: logResultValidator,
   handler: async (ctx, args): Promise<LogResult> => {
     const { userId, submissionId, inputKind, items, picks } = args;
+    await assertLedgerWritable(ctx, userId);
     const existing = await existingLog(ctx, userId, submissionId);
     if (existing !== null) return existing;
     if (items.length === 0) return { kind: "empty", submissionId, lines: [] };

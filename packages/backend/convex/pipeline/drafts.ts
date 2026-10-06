@@ -6,6 +6,7 @@ import { insertEntries, type NewEntry } from "../entries";
 import { isVisibleFood } from "../foods_db";
 import { inputKindValidator, mealSlotValidator, nutrientsValidator } from "../ledger_validators";
 import { requireUserId, resolveLocalDay } from "../time_zone";
+import { assertLedgerWritable } from "../users";
 import {
   committedResult,
   draftLines,
@@ -164,6 +165,7 @@ export const confirmDraft = mutation({
   returns: logResultValidator,
   handler: async (ctx, { draftId, corrections }): Promise<LogResult> => {
     const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
     const draft = await ownDraft(ctx, userId, draftId);
     if (draft.status === "committed") {
       const done = await committedResult(ctx, userId, draft.submissionId);
@@ -274,6 +276,7 @@ export const forgetFoodLink = mutation({
   returns: v.null(),
   handler: async (ctx, { linkId }) => {
     const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
     const link = await ctx.db.get("food_links", linkId);
     if (link === null || link.userId !== userId) throw new Error("Memory not found");
     await ctx.db.patch("food_links", link._id, { status: "deleted", updatedAt: Date.now() });
