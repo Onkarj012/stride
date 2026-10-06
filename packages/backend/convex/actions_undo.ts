@@ -42,6 +42,18 @@ type UndoResult = {
   actionType?: DerivedActionType;
 };
 
+function canonicalTurnSnapshot(message: Doc<"chat_messages"> | null, groupId: Doc<"actionGroups">["_id"]) {
+  if (!message) return undefined;
+  return {
+    content: message.content,
+    turnContractVersion: 1 as const,
+    turnOutcome: message.turnOutcome,
+    turnCards: message.turnCards ?? [],
+    actionGroupId: groupId,
+    actionIds: message.actionIds ?? [],
+  };
+}
+
 async function recordUndoTelemetry(
   ctx: MutationCtx,
   group: Doc<"actionGroups">,
@@ -338,10 +350,8 @@ export const undoAction = mutation({
     }
     const group = await ctx.db.get(action.groupId);
     if (group) await recordUndoTelemetry(ctx, group, action, result, derivedStateVersion);
-    if (result.status === "undone" || result.status === "already_undone") {
-      await reconcileAssistantOutcomeInMutation(ctx, userId, action.groupId);
-    }
-    return result;
+    const reconciled = await reconcileAssistantOutcomeInMutation(ctx, userId, action.groupId);
+    return { ...result, turn: canonicalTurnSnapshot(reconciled.message, action.groupId) };
   },
 });
 
@@ -388,8 +398,8 @@ export const undoGroup = mutation({
         : undefined;
       await recordUndoTelemetry(ctx, group, action, result, derived?.version);
     }
-    await reconcileAssistantOutcomeInMutation(ctx, userId, groupId);
-    return { groupId, results };
+    const reconciled = await reconcileAssistantOutcomeInMutation(ctx, userId, groupId);
+    return { groupId, results, turn: canonicalTurnSnapshot(reconciled.message, groupId) };
   },
 });
 

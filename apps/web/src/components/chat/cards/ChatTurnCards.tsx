@@ -40,8 +40,8 @@ export type ChatTurnResolution = {
 export type ChatCardHandlers = {
   onConfirm?: (groupId: string, decisions: ConfirmationDecision[]) => void;
   onClarify?: (groupId: string, date: string) => void;
-  onUndoItem?: (groupId: string, actionId: string) => void;
-  onUndoAll?: (groupId: string) => void;
+  onUndoItem?: (groupId: string, actionId: string) => Promise<ChatTurnResolution | void> | void;
+  onUndoAll?: (groupId: string) => Promise<ChatTurnResolution | void> | void;
   onLogAnyway?: (
     groupId: string,
     item: DuplicateCardData["items"][number],
@@ -90,25 +90,38 @@ function ItemHeader({ actionType, title }: { actionType: string; title: string }
 function ResultCard({ data }: { data: ResultCardData }) {
   const committed = data.items.filter((item) => item.status === "committed");
   const failed = data.items.filter((item) => item.status === "failed");
-  const resolved = data.items.filter((item) => item.status === "discarded" || item.status === "expired");
+  const discarded = data.items.filter((item) => item.status === "discarded");
+  const expired = data.items.filter((item) => item.status === "expired");
+  const title = committed.length > 0
+    ? `Logged ${committed.length} item${committed.length === 1 ? "" : "s"}`
+    : failed.length === 0 && discarded.length > 0 && expired.length === 0
+      ? "Discarded"
+      : failed.length === 0 && expired.length > 0 && discarded.length === 0
+        ? "Confirmation expired"
+        : "Nothing was logged";
+  const outcomeParts = [
+    failed.length > 0 ? `${failed.length} item${failed.length === 1 ? "" : "s"} could not be saved.` : "",
+    discarded.length > 0 ? `${discarded.length} discarded.` : "",
+    expired.length > 0 ? `${expired.length} expired.` : "",
+  ].filter(Boolean);
+  const detail = outcomeParts.join(" ") || "Saved to your log — undo below if this isn't right.";
+  const badge = committed.length > 0
+    ? "Saved"
+    : data.reason === "expired"
+      ? "Expired"
+      : data.reason === "discarded"
+        ? "Discarded"
+        : "Resolved";
   return (
     <section data-card-kind="result" data-card-state="resolved" aria-label="Logged" className={CHAT_CARD_SURFACE}>
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <p className={CHAT_CARD_TITLE}>
-            {committed.length > 0 ? `Logged ${committed.length} item${committed.length === 1 ? "" : "s"}` : "Nothing was logged"}
-          </p>
-          <p className={cn(CHAT_CARD_META, "mt-1")}>
-            {failed.length > 0
-              ? `${failed.length} item${failed.length === 1 ? "" : "s"} could not be saved.`
-              : resolved.length > 0 && committed.length === 0
-                ? `${resolved.length} item${resolved.length === 1 ? "" : "s"} were resolved without being saved.`
-                : "Saved to your log — undo below if this isn't right."}
-          </p>
+          <p className={CHAT_CARD_TITLE}>{title}</p>
+          <p className={cn(CHAT_CARD_META, "mt-1")}>{detail}</p>
         </div>
-        {committed.length > 0 && (
+        {(committed.length > 0 || data.reason) && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-mint/20 px-2.5 py-1 text-[13px] font-extrabold uppercase tracking-[0.04em] text-ink/70 dark:text-mint">
-            <Check className="h-3.5 w-3.5" strokeWidth={3} />Saved
+            {committed.length > 0 && <Check className="h-3.5 w-3.5" strokeWidth={3} />}{badge}
           </span>
         )}
       </div>
@@ -128,7 +141,7 @@ function ResultCard({ data }: { data: ResultCardData }) {
               <p className={cn(CHAT_CARD_META, "mt-1")}>
                 {item.status === "committed"
                   ? [dateLine, `saved to ${item.record.table}`].filter(Boolean).join(" · ")
-                  : [dateLine, item.status === "expired" ? "Confirmation expired" : item.status === "discarded" ? "Discarded" : item.reason].filter(Boolean).join(" · ")}
+                  : [dateLine, item.reason].filter(Boolean).join(" · ")}
               </p>
             </li>
           );

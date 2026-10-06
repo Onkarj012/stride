@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import type { Modality } from "@/components/ui-kit";
 import {
@@ -37,28 +37,44 @@ type Props = {
  * a card looks and behaves identically wherever the conversation happens.
  */
 export function ChatTurnMessage({ message, handlers, state, fresh, entrance, badge, modality, chip, onEdit }: Props) {
-  const [resolvedTurn, setResolvedTurn] = useState<ChatTurnResolution | null>(null);
-  const displayedMessage = resolvedTurn
+  const messageSignature = JSON.stringify([message.content, message.turnOutcome, message.turnCards, message.actionGroupId]);
+  const [resolvedTurn, setResolvedTurn] = useState<{ turn: ChatTurnResolution; baseline: string } | null>(null);
+  const activeOverride = resolvedTurn?.baseline === messageSignature ? resolvedTurn.turn : null;
+  useEffect(() => {
+    if (resolvedTurn && resolvedTurn.baseline !== messageSignature) setResolvedTurn(null);
+  }, [messageSignature, resolvedTurn]);
+  const displayedMessage = activeOverride
     ? {
         ...message,
-        content: resolvedTurn.content,
-        turnOutcome: resolvedTurn.turnOutcome,
-        turnCards: resolvedTurn.turnCards,
-        actionGroupId: resolvedTurn.actionGroupId,
+        content: activeOverride.content,
+        turnOutcome: activeOverride.turnOutcome,
+        turnCards: activeOverride.turnCards,
+        actionGroupId: activeOverride.actionGroupId,
       }
     : message;
   const cards = useMemo(() => parseChatTurnCards(displayedMessage.turnCards), [displayedMessage.turnCards]);
   const cardHandlers = useMemo<ChatCardHandlers | undefined>(() => {
-    if (!handlers?.onLogAnyway) return handlers;
+    if (!handlers) return handlers;
+    const applyTurn = (turn: ChatTurnResolution | void) => {
+      if (turn) setResolvedTurn({ turn, baseline: messageSignature });
+      return turn;
+    };
     return {
       ...handlers,
-      onLogAnyway: async (groupId, item) => {
+      ...(handlers.onLogAnyway ? { onLogAnyway: async (groupId: string, item: Parameters<NonNullable<ChatCardHandlers["onLogAnyway"]>>[1]) => {
         const turn = await handlers.onLogAnyway?.(groupId, item);
-        if (turn) setResolvedTurn(turn);
-        return turn;
-      },
+        return applyTurn(turn);
+      } } : {}),
+      ...(handlers.onUndoItem ? { onUndoItem: async (groupId: string, actionId: string) => {
+        const turn = await handlers.onUndoItem?.(groupId, actionId);
+        return applyTurn(turn);
+      } } : {}),
+      ...(handlers.onUndoAll ? { onUndoAll: async (groupId: string) => {
+        const turn = await handlers.onUndoAll?.(groupId);
+        return applyTurn(turn);
+      } } : {}),
     };
-  }, [handlers]);
+  }, [handlers, messageSignature]);
   const role = displayedMessage.role === "user" ? "user" : "ai";
   return (
     <div className="space-y-3">

@@ -6,8 +6,10 @@ import { ChatTurnMessage, type PersistedChatMessage } from "./ChatTurnMessage";
 import { hasMinimumTouchTarget } from "./cardSizing";
 import { useChatCardActions } from "./useChatCardActions";
 
-const { logAnywayForAction, toastError, toastSuccess } = vi.hoisted(() => ({
+const { logAnywayForAction, undoAction, undoGroup, toastError, toastSuccess } = vi.hoisted(() => ({
   logAnywayForAction: vi.fn(),
+  undoAction: vi.fn(),
+  undoGroup: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
 }));
@@ -23,7 +25,11 @@ vi.mock("@convex/_generated/api", () => {
 
 vi.mock("convex/react", () => ({
   useAction: (ref: unknown) => String(ref) === "ai.logAnywayForAction" ? logAnywayForAction : vi.fn(),
-  useMutation: () => vi.fn(),
+  useMutation: (ref: unknown) => String(ref) === "actions_undo.undoAction"
+    ? undoAction
+    : String(ref) === "actions_undo.undoGroup"
+      ? undoGroup
+      : vi.fn(),
 }));
 
 vi.mock("@/context/ToastContext", () => ({
@@ -229,6 +235,108 @@ describe("chat turn cards", () => {
     expect(duplicate).toHaveAttribute("data-card-state", "active");
     expect(within(duplicate).getAllByRole("button", { name: "Log anyway" })[0]).toBeEnabled();
     expect(screen.queryByRole("region", { name: "Logged" })).toBeNull();
+  });
+
+  it("treats canonical already-undone as success while skipped undo stays active with an error", async () => {
+    toastError.mockClear();
+    toastSuccess.mockClear();
+    const message = persistedMessage([allCardKinds()[3], allCardKinds()[5]]);
+    const alreadyUndoneCards = JSON.parse(JSON.stringify(message.turnCards)) as ChatTurnCard[];
+    const alreadyUndoCard = alreadyUndoneCards.find((card) => card.kind === "undo");
+    if (!alreadyUndoCard || alreadyUndoCard.kind !== "undo") throw new Error("Missing undo fixture");
+    alreadyUndoCard.data.items[0].state = "undone";
+    undoAction.mockResolvedValue({
+      actionId: "action-6",
+      groupId: "group-6",
+      status: "already_undone",
+      turn: {
+        content: "That log was undone.",
+        turnContractVersion: 1,
+        turnOutcome: "no_action",
+        turnCards: alreadyUndoneCards,
+        actionGroupId: "group-6",
+        actionIds: ["action-6"],
+      },
+    });
+
+    const already = render(<ActionHarness message={message} />);
+    fireEvent.click(screen.getByRole("button", { name: "Undo Chicken bowl" }));
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Already undone", "That entry was already reversed"));
+    expect(toastError).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Chicken bowl reversed" })).toBeDisabled();
+    already.unmount();
+
+    undoAction.mockClear();
+    toastError.mockClear();
+    toastSuccess.mockClear();
+    undoAction.mockResolvedValue({
+      actionId: "action-6",
+      groupId: "group-6",
+      status: "skipped",
+      reason: "Row has changed since the action was committed",
+      turn: {
+        content: message.content,
+        turnContractVersion: 1,
+        turnOutcome: "committed",
+        turnCards: message.turnCards,
+        actionGroupId: "group-6",
+        actionIds: ["action-6"],
+      },
+    });
+
+    const skippedRender = render(<ActionHarness message={message} />);
+    fireEvent.click(screen.getByRole("button", { name: "Undo Chicken bowl" }));
+
+    await waitFor(() => expect(undoAction).toHaveBeenCalledWith({ actionId: "action-6" }));
+    expect(toastError).toHaveBeenCalledWith("Couldn't undo", "Row has changed since the action was committed");
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Undo Chicken bowl" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /reversed/i })).toBeNull();
+    skippedRender.unmount();
+
+    undoGroup.mockClear();
+    toastError.mockClear();
+    toastSuccess.mockClear();
+    const groupMessage = persistedMessage([{
+      version: 1,
+      kind: "undo",
+      data: {
+        groupId: "group-mixed-undo",
+        items: [
+          { ordinal: 0, actionType: "meal", title: "Oatmeal", actionId: "action-oatmeal", record: { table: "meals", id: "meal-oatmeal" }, state: "available" },
+          { ordinal: 1, actionType: "workout", title: "5k run", actionId: "action-run", record: { table: "workouts", id: "workout-run" }, state: "available" },
+        ],
+      },
+    }]);
+    const groupTurnCards = JSON.parse(JSON.stringify(groupMessage.turnCards)) as ChatTurnCard[];
+    const groupUndoCard = groupTurnCards.find((card) => card.kind === "undo");
+    if (!groupUndoCard || groupUndoCard.kind !== "undo") throw new Error("Missing group undo fixture");
+    groupUndoCard.data.items[0].state = "undone";
+    undoGroup.mockResolvedValue({
+      groupId: "group-mixed-undo",
+      results: [
+        { actionId: "action-oatmeal", status: "already_undone" },
+        { actionId: "action-run", status: "skipped", reason: "Workout row changed" },
+      ],
+      turn: {
+        content: "One entry was already undone; one could not be reversed.",
+        turnContractVersion: 1,
+        turnOutcome: "committed",
+        turnCards: groupTurnCards,
+        actionGroupId: "group-mixed-undo",
+        actionIds: ["action-oatmeal", "action-run"],
+      },
+    });
+
+    render(<ActionHarness message={groupMessage} />);
+    fireEvent.click(screen.getByRole("button", { name: "Undo all" }));
+
+    await waitFor(() => expect(undoGroup).toHaveBeenCalledWith({ groupId: "group-mixed-undo" }));
+    expect(toastSuccess).toHaveBeenCalledWith("Already undone", "1 saved item was already reversed");
+    expect(toastError).toHaveBeenCalledWith("Couldn't undo", "Workout row changed");
+    expect(screen.getByRole("button", { name: "Oatmeal reversed" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Undo 5k run" })).toBeEnabled();
   });
 
   it("renders the expected structure for every card kind in the contract", () => {

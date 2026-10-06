@@ -114,6 +114,66 @@ describe("large-batch confirmation", () => {
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(2);
   });
 
+  test("canonical loggedItems hydrate complete meal, workout, and water rows and exclude undone records", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = t.withIdentity({ subject: "confirm-user" });
+    const { id: sessionId } = await asUser.mutation(api.chat.createSession, { title: "Hydrated result" });
+    const staged = await t.mutation((internal as any).ai.stageClarificationGroup, {
+      userId: "confirm-user",
+      groupIdempotencyKey: "hydrated-logged-items",
+      sourceSurface: "chat",
+      rawInput: "meal workout water",
+      createdAt: Date.now(),
+      members: [
+        { actionType: "meal", memberIdempotencyKey: "hydrated-meal", payload: mealPayload("Dal bowl"), provenance: "ai_extracted", validation: { status: "valid", messages: [] }, reversible: true, resolvedDate: "2026-07-16", resolvedTime: "08:00", ordinal: 0 },
+        { actionType: "workout", memberIdempotencyKey: "hydrated-workout", payload: { name: "Run", sets: "1", duration: "35 min", intensity: "MODERATE", caloriesBurned: 280, date: "2026-07-16", timestamp: "09:00", logSource: "chat" }, provenance: "ai_extracted", validation: { status: "valid", messages: [] }, reversible: true, resolvedDate: "2026-07-16", resolvedTime: "09:00", ordinal: 1 },
+        { actionType: "recovery", memberIdempotencyKey: "hydrated-water", payload: { kind: "water", ml: 650, date: "2026-07-16", time: "10:00", source: "ai_extracted" }, provenance: "ai_extracted", validation: { status: "valid", messages: [] }, reversible: true, resolvedDate: "2026-07-16", resolvedTime: "10:00", ordinal: 2 },
+      ],
+    });
+    const actions = await t.run((ctx) => ctx.db.query("actions").collect())
+      .then((rows) => rows.filter((row) => row.groupId === staged.groupId).sort((a, b) => (a.payload._confirmationOrdinal ?? 0) - (b.payload._confirmationOrdinal ?? 0)));
+    await t.mutation(internal.chat.addMessage, {
+      userId: "confirm-user",
+      sessionId,
+      role: "ai",
+      content: "3 items need review.",
+      turnContractVersion: 1,
+      turnOutcome: "confirmation_required",
+      turnCards: [{
+        version: 1,
+        kind: "confirmation",
+        data: {
+          groupId: String(staged.groupId),
+          expiresAt: Date.now() + CONFIRMATION_TTL_MS,
+          items: actions.map((action, ordinal) => ({
+            ordinal,
+            actionType: action.actionType,
+            title: action.payload.name ?? (action.payload.kind === "water" ? `Water ${action.payload.ml}ml` : action.actionType),
+            actionId: String(action._id),
+            validationMessages: [],
+          })),
+        },
+      }],
+      actionGroupId: staged.groupId,
+      actionIds: actions.map((action) => action._id),
+    });
+
+    const confirmed = await asUser.action((api as any).ai.confirmGroup, {
+      groupId: staged.groupId,
+      decisions: [0, 1, 2].map((ordinal) => ({ ordinal, action: "confirm" })),
+    }) as any;
+    const byType = new Map(confirmed.loggedItems.map((item: any) => [item.type, item.data]));
+    expect(byType.get("meal")).toMatchObject({ name: "Dal bowl", calories: 400, protein: 20 });
+    expect(byType.get("workout")).toMatchObject({ name: "Run", duration: "35 min", caloriesBurned: 280 });
+    expect(byType.get("water")).toMatchObject({ ml: 650 });
+    expect(JSON.stringify(confirmed.loggedItems)).not.toMatch(/undefined|NaN/);
+
+    await asUser.mutation((api as any).actions_undo.undoAction, { actionId: actions[0]._id });
+    const reloaded = await asUser.action((api as any).ai.confirmGroup, { groupId: staged.groupId, decisions: [] }) as any;
+    expect(reloaded.loggedItems.map((item: any) => item.type).sort()).toEqual(["water", "workout"]);
+    expect(reloaded.loggedItems.some((item: any) => item.data.actionId === actions[0]._id)).toBe(false);
+  });
+
   test("supports partial confirmation and discard decisions", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "confirm-user" });

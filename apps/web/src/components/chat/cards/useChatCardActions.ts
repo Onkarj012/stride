@@ -21,6 +21,20 @@ type LogAnywayResult = {
   turn: ChatTurnResolution;
 };
 
+type UndoActionResult = {
+  status: "undone" | "already_undone" | "skipped";
+  reason?: string;
+  turn?: ChatTurnResolution;
+};
+
+type UndoGroupResult = {
+  results: Array<{
+    status: "undone" | "already_undone" | "skipped";
+    reason?: string;
+  }>;
+  turn?: ChatTurnResolution;
+};
+
 type Options = {
   /** Called after a confirm round-trip so a surface can surface memory approvals. */
   onConfirmResult?: (result: ConfirmGroupResult) => void;
@@ -107,9 +121,20 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     });
     if (alreadyPending) return;
     try {
-      await undoAction({ actionId });
-      toast.success("Undone", "That entry was reversed");
-      onSettled?.();
+      const result = await undoAction({ actionId }) as UndoActionResult;
+      if (result.status === "undone" || result.status === "already_undone") {
+        toast.success(
+          result.status === "undone" ? "Undone" : "Already undone",
+          result.status === "undone" ? "That entry was reversed" : "That entry was already reversed",
+        );
+        onSettled?.();
+      } else {
+        toast.error(
+          "Couldn't undo",
+          result.reason ?? "That entry was not reversed",
+        );
+      }
+      return result.turn;
     } catch (error) {
       toast.error("Couldn't undo", error instanceof Error ? error.message : "Try again");
     } finally {
@@ -126,9 +151,31 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
     });
     if (alreadyPending) return;
     try {
-      await undoGroup({ groupId });
-      toast.success("Undone", "Saved items in this group were reversed");
-      onSettled?.();
+      const result = await undoGroup({ groupId }) as UndoGroupResult;
+      const undone = result.results.filter((item) => item.status === "undone");
+      const alreadyUndone = result.results.filter((item) => item.status === "already_undone");
+      const skipped = result.results.filter((item) => item.status === "skipped");
+      if (undone.length > 0) {
+        const alreadyDetail = alreadyUndone.length > 0
+          ? `; ${alreadyUndone.length} already undone`
+          : "";
+        toast.success("Undone", `${undone.length} saved item${undone.length === 1 ? " was" : "s were"} reversed${alreadyDetail}`);
+        onSettled?.();
+      } else if (alreadyUndone.length > 0) {
+        toast.success(
+          "Already undone",
+          `${alreadyUndone.length} saved item${alreadyUndone.length === 1 ? " was" : "s were"} already reversed`,
+        );
+        onSettled?.();
+      }
+      if (skipped.length > 0 || undone.length + alreadyUndone.length === 0) {
+        toast.error(
+          "Couldn't undo",
+          skipped.map((item) => item.reason).filter(Boolean).join("; ")
+            || "No saved items were reversed",
+        );
+      }
+      return result.turn;
     } catch (error) {
       toast.error("Couldn't undo", error instanceof Error ? error.message : "Try again");
     } finally {
@@ -158,8 +205,8 @@ export function useChatCardActions(options: Options = {}): { handlers: ChatCardH
   const handlers = useMemo<ChatCardHandlers>(() => ({
     onConfirm: (groupId, decisions) => void onConfirm(groupId, decisions),
     onClarify: (groupId, date) => void onClarify(groupId, date),
-    onUndoItem: (groupId, actionId) => void onUndoItem(groupId, actionId),
-    onUndoAll: (groupId) => void onUndoAll(groupId),
+    onUndoItem: (groupId, actionId) => onUndoItem(groupId, actionId),
+    onUndoAll: (groupId) => onUndoAll(groupId),
     onLogAnyway: (groupId, item) => onLogAnyway(groupId, item),
   }), [onClarify, onConfirm, onLogAnyway, onUndoAll, onUndoItem]);
 

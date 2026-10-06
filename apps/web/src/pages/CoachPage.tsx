@@ -80,6 +80,10 @@ const GREETING: Record<CoachingStyle, string> = {
 const MAX_IMAGE_EDGE = 1600;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function dataUrlBytes(dataUrl: string): number {
   const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
   return Math.ceil(base64.length * 3 / 4);
@@ -439,22 +443,38 @@ export function CoachPage() {
       if (loggedItem) {
         if (loggedItem.type === "meal") {
           const d = loggedItem.data;
-          toast.success(`Logged: ${d.name ?? "meal"}`, `${Math.round(d.calories)} kcal · ${Math.round(d.protein)}g protein`);
+          const calories = finiteNumber(d.calories);
+          const protein = finiteNumber(d.protein);
+          const detail = [
+            calories !== undefined ? `${Math.round(calories)} kcal` : undefined,
+            protein !== undefined ? `${Math.round(protein)}g protein` : undefined,
+          ].filter(Boolean).join(" · ");
+          toast.success(`Logged: ${typeof d.name === "string" && d.name ? d.name : "meal"}`, detail || undefined);
         } else if (loggedItem.type === "workout") {
           const d = loggedItem.data;
-          toast.success(`Logged workout: ${d.name ?? "workout"}`, d.duration ? `${d.duration} · ${d.caloriesBurned ?? 0} kcal burned` : undefined);
+          const caloriesBurned = finiteNumber(d.caloriesBurned);
+          const detail = [
+            typeof d.duration === "string" && d.duration ? d.duration : undefined,
+            caloriesBurned !== undefined ? `${Math.round(caloriesBurned)} kcal burned` : undefined,
+          ].filter(Boolean).join(" · ");
+          toast.success(`Logged workout: ${typeof d.name === "string" && d.name ? d.name : "workout"}`, detail || undefined);
         } else if (loggedItem.type === "sleep") {
           const d = loggedItem.data;
-          toast.success("Logged sleep", `${d.hours}h · ${d.quality}`);
+          const hours = finiteNumber(d.hours);
+          const detail = [hours !== undefined ? `${hours}h` : undefined, typeof d.quality === "string" ? d.quality : undefined].filter(Boolean).join(" · ");
+          toast.success("Logged sleep", detail || undefined);
         } else if (loggedItem.type === "water") {
           const d = loggedItem.data;
-          toast.success("Logged water", `${d.ml}ml`);
+          const ml = finiteNumber(d.ml);
+          toast.success("Logged water", ml !== undefined ? `${Math.round(ml)}ml` : undefined);
         } else if (loggedItem.type === "mood") {
           const d = loggedItem.data;
-          toast.success("Logged mood", `rating ${d.rating}/5`);
+          const rating = finiteNumber(d.rating);
+          toast.success("Logged mood", rating !== undefined ? `rating ${rating}/5` : undefined);
         } else if (loggedItem.type === "steps") {
           const d = loggedItem.data;
-          toast.success("Logged steps", `${d.count} steps`);
+          const count = finiteNumber(d.count);
+          toast.success("Logged steps", count !== undefined ? `${Math.round(count)} steps` : undefined);
         }
       }
       if (labelForSend) setAttachedLabel(null);

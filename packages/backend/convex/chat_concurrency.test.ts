@@ -4,6 +4,7 @@ import schema from "./schema";
 import { api, internal } from "./_generated/api";
 import { callAI } from "./ai/llm";
 import { CONFIRMATION_TTL_MS } from "./actions_envelope";
+import { isChatTurnCard } from "../../shared/src/chat-turn";
 
 vi.mock("./ai/llm", async () => {
   const actual = await vi.importActual<typeof import("./ai/llm")>("./ai/llm");
@@ -289,30 +290,54 @@ describe("chat logging concurrency invariants", () => {
     expect(await t.run((ctx) => ctx.db.query("meals").collect())).toHaveLength(2);
   });
 
-  test("clarification/undo interleaving returns only the canonical undone state", async () => {
+  test("resolveClarification interleaved with undo returns one canonical undone outcome to both callers and reload", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "concurrency-user" });
     const { groupId, sessionId, actions } = await stageGroup(t, "undo-race");
-    await asUser.action(api.ai.confirmGroup, { groupId, decisions: actions.map((_, ordinal) => ({ ordinal, action: "confirm" as const })) });
+    await asUser.action(api.ai.confirmGroup, { groupId, decisions: [{ ordinal: 0, action: "confirm" }] });
     process.env.STRIDE_CHAT_RECONCILE_BARRIER = "paused";
-    const confirming = asUser.action(api.ai.confirmGroup, { groupId, decisions: [{ ordinal: 1, action: "confirm" }] });
-    await waitFor(() => t.run((ctx) => ctx.db.query("actions").collect()), (rows) => rows.some((row) => row._id === actions[1]._id && row.status === "committed"));
+    const clarifying = asUser.action(api.ai.resolveClarification, { groupId, date: "2026-07-16" });
+    await waitFor(() => t.run((ctx) => ctx.db.query("meals").collect()), (rows) => rows.length === 2);
     const undo = await asUser.mutation((api as any).actions_undo.undoAction, { actionId: actions[0]._id });
     process.env.STRIDE_CHAT_RECONCILE_BARRIER = "released";
-    const confirmed = await confirming as any;
+    const clarified = await clarifying as any;
     expect(undo.status).toBe("undone");
     const assistant = await publicAssistant(t, sessionId);
-    expect(confirmed.turn).toMatchObject({ content: assistant.content, turnCards: assistant.turnCards });
+    expect(undo.turn).toMatchObject({ content: assistant.content, turnOutcome: assistant.turnOutcome, turnCards: assistant.turnCards, actionIds: assistant.actionIds });
+    expect(clarified).toMatchObject({ content: assistant.content, turnOutcome: assistant.turnOutcome, turnCards: assistant.turnCards, actionIds: assistant.actionIds });
     const resultItems = assistant.turnCards.find((card: any) => card.kind === "result")?.data.items ?? [];
     const undoItems = assistant.turnCards.find((card: any) => card.kind === "undo")?.data.items ?? [];
     expect(resultItems).not.toEqual(expect.arrayContaining([expect.objectContaining({ actionId: String(actions[0]._id), status: "committed" })]));
     expect(undoItems).toEqual(expect.arrayContaining([expect.objectContaining({ actionId: String(actions[0]._id), state: "undone" })]));
     expect(undoItems).not.toEqual(expect.arrayContaining([expect.objectContaining({ actionId: String(actions[0]._id), state: "available" })]));
+    expect((await t.run((ctx) => ctx.db.query("actions").collect()).then((rows) => rows.filter((row) => row.groupId === groupId))).map((action) => action.status).sort()).toEqual(["committed", "undone"]);
+    const mealRows = await t.run((ctx) => ctx.db.query("meals").collect());
+    expect(mealRows).toHaveLength(2);
+    expect(mealRows.filter((row) => row.undoneAt)).toHaveLength(1);
+    const reloaded = await asUser.query(api.chat.getMessages, { sessionId });
+    expect(reloaded.filter((message) => message.role === "ai")).toHaveLength(1);
+    expect(reloaded.find((message) => message.role === "ai")).toMatchObject({ content: assistant.content, turnOutcome: assistant.turnOutcome, turnCards: assistant.turnCards });
   });
 
-  test("mixed discarded/expired and duplicate-expired groups render resolved canonical cards", async () => {
+  test("failed+discarded, mixed, and all-expired groups preserve explicit validated resolved outcomes", async () => {
     const t = convexTest(schema, modules);
     const asUser = t.withIdentity({ subject: "concurrency-user" });
+
+    const failedDiscarded = await stageGroup(t, "failed-discarded", 2);
+    await t.mutation((internal as any).ai.recordConfirmationMemberFailure, {
+      actionId: failedDiscarded.actions[0]._id,
+      error: "Provider rejected this item",
+    });
+    const failedDiscardedResult = await asUser.action(api.ai.confirmGroup, {
+      groupId: failedDiscarded.groupId,
+      decisions: [{ ordinal: 1, action: "discard" }],
+    }) as any;
+    const failedDiscardedCard = failedDiscardedResult.turn.turnCards.find((card: any) => card.kind === "result");
+    expect(failedDiscardedCard.data.reason).toBe("discarded");
+    expect(failedDiscardedCard.data.items.map((item: any) => item.status).sort()).toEqual(["discarded", "failed"]);
+    expect(failedDiscardedResult.turn.turnCards.every(isChatTurnCard)).toBe(true);
+    expect(failedDiscardedResult.turn.turnCards.some((card: any) => card.kind === "duplicate")).toBe(false);
+
     const mixed = await stageGroup(t, "mixed-resolved", 3);
     await asUser.action(api.ai.confirmGroup, { groupId: mixed.groupId, decisions: [{ ordinal: 0, action: "confirm" }, { ordinal: 1, action: "discard" }] });
     await t.run((ctx) => ctx.db.patch(mixed.groupId, { createdAt: Date.now() - CONFIRMATION_TTL_MS - 1 }));
@@ -321,15 +346,29 @@ describe("chat logging concurrency invariants", () => {
     const mixedItems = mixedAssistant.turnCards.find((card: any) => card.kind === "result")?.data.items ?? [];
     expect(mixedResult.turn.turnCards).toEqual(mixedAssistant.turnCards);
     expect(mixedItems.map((item: any) => item.status).sort()).toEqual(["committed", "discarded", "expired"]);
+    expect(mixedAssistant.turnCards.find((card: any) => card.kind === "result")?.data.reason).toBe("mixed");
+    expect(mixedAssistant.turnCards.every(isChatTurnCard)).toBe(true);
     expect(mixedAssistant.turnCards.some((card: any) => card.kind === "confirmation" && card.data.state !== "resolved")).toBe(false);
     expect(mixedAssistant.turnCards.some((card: any) => card.kind === "duplicate")).toBe(false);
+
+    const allResolvedMixed = await stageGroup(t, "all-resolved-mixed", 2);
+    await asUser.action(api.ai.confirmGroup, { groupId: allResolvedMixed.groupId, decisions: [{ ordinal: 0, action: "discard" }] });
+    await t.run((ctx) => ctx.db.patch(allResolvedMixed.groupId, { createdAt: Date.now() - CONFIRMATION_TTL_MS - 1 }));
+    const allResolvedMixedResult = await asUser.action(api.ai.confirmGroup, { groupId: allResolvedMixed.groupId, decisions: [{ ordinal: 1, action: "confirm" }] }) as any;
+    const allResolvedMixedCard = allResolvedMixedResult.turn.turnCards.find((card: any) => card.kind === "confirmation");
+    expect(allResolvedMixedCard.data.reason).toBe("mixed");
+    expect(allResolvedMixedCard.data.items.map((item: any) => item.resolution).sort()).toEqual(["discarded", "expired"]);
+    expect(isChatTurnCard(allResolvedMixedCard)).toBe(true);
 
     const expired = await stageGroup(t, "all-expired", 2, Date.now() - CONFIRMATION_TTL_MS - 1);
     const expiredResult = await asUser.action(api.ai.confirmGroup, { groupId: expired.groupId, decisions: [{ ordinal: 0, action: "confirm" }] }) as any;
     const expiredAssistant = await publicAssistant(t, expired.sessionId);
     expect(expiredResult.status).toBe("expired");
     expect(expiredAssistant.turnOutcome).toBe("no_action");
-    expect(expiredAssistant.turnCards).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "confirmation", data: expect.objectContaining({ state: "resolved" }) })]));
+    expect(expiredAssistant.turnCards).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "confirmation", data: expect.objectContaining({ state: "resolved", reason: "expired" }) })]));
+    expect(expiredAssistant.turnCards.find((card: any) => card.kind === "confirmation").data.items.map((item: any) => item.resolution)).toEqual(["expired", "expired"]);
+    expect(expiredAssistant.turnCards.every(isChatTurnCard)).toBe(true);
+    expect(expiredAssistant.turnCards.some((card: any) => card.kind === "result")).toBe(false);
     expect(expiredAssistant.turnCards).not.toEqual(expect.arrayContaining([expect.objectContaining({ kind: "duplicate" })]));
   });
 

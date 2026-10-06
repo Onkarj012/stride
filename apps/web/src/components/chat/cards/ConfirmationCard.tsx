@@ -56,8 +56,14 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
     macros: item.macros ? { ...item.macros, estimate: item.macros.estimate ? { ...item.macros.estimate } : undefined } : undefined,
   })));
 
-  const expired = data.expiresAt <= now;
+  const expired = data.state !== "resolved" && data.expiresAt <= now;
   const readOnly = resolved || expired;
+  const resolutionLabel = data.state === "resolved"
+    ? data.reason === "expired" ? "Expired" : data.reason === "discarded" ? "Discarded" : "Resolved"
+    : expired ? "Expired" : "Resolved";
+  const resolutionTitle = data.state === "resolved"
+    ? data.reason === "expired" ? "Confirmation expired" : data.reason === "discarded" ? "Discarded" : "Review resolved"
+    : "Review these actions";
   const draftFor = (ordinal: number) => drafts.find((draft) => draft.ordinal === ordinal);
   const patchDraft = (ordinal: number, patch: Partial<Draft>) =>
     setDrafts((current) => current.map((draft) => draft.ordinal === ordinal ? { ...draft, ...patch } : draft));
@@ -97,7 +103,7 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
     >
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
-          <p className={CHAT_CARD_TITLE}>{data.state === "resolved" ? "Discarded" : "Review these actions"}</p>
+          <p className={CHAT_CARD_TITLE}>{resolutionTitle}</p>
           <p className={cn(CHAT_CARD_META, "mt-1")}>
             {readOnly
               ? "This batch is closed — nothing here is waiting on you."
@@ -106,7 +112,7 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
         </div>
         {readOnly && (
           <span className="shrink-0 rounded-full bg-ink/6 px-2.5 py-1 text-[13px] font-extrabold uppercase tracking-[0.04em] text-ink/50 dark:bg-white/8 dark:text-white/50">
-            {expired ? "Expired" : "Resolved"}
+            {resolutionLabel}
           </span>
         )}
       </div>
@@ -115,6 +121,11 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
         {data.items.map((item) => {
           const draft = draftFor(item.ordinal);
           const band = confidenceBand(item.confidence);
+          const resolutionCopy = item.resolution === "expired"
+            ? "Confirmation expired"
+            : item.resolution === "discarded"
+              ? "Discarded by you"
+              : null;
           return (
             <li key={item.ordinal} className={CHAT_CARD_ROW}>
               <div className="flex items-start gap-2">
@@ -143,7 +154,10 @@ export function ConfirmationCard({ data, pending = false, resolved = false, now 
                     )}
                   </div>
                   {readOnly ? (
-                    <p className={CHAT_CARD_BODY}>{item.description ?? item.title}</p>
+                    <>
+                      <p className={CHAT_CARD_BODY}>{item.description ?? item.title}</p>
+                      {resolutionCopy && <p className={CHAT_CARD_META}>{resolutionCopy}</p>}
+                    </>
                   ) : (
                     <input
                       aria-label={`Description for ${item.title}`}

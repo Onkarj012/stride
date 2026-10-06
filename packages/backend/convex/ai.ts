@@ -269,6 +269,9 @@ function canonicalConfirmationResults(actions: any[], alreadyCommittedIds?: Set<
     actionId: action._id,
     ...(action.committedRowRef ? { rowId: action.committedRowRef.id } : {}),
     ...(action.status === "failed" ? { error: action.validation?.messages?.at(-1) } : {}),
+    ...(action.status === "discarded" || action.status === "expired"
+      ? { reason: action.status === "expired" ? "Confirmation expired" : "Discarded by you" }
+      : {}),
   }));
 }
 
@@ -544,7 +547,7 @@ async function canonicalClarificationResult(
     .map((action: any) => pendingMemoryApprovalsForAction(ctx, userId, action._id)))).flat(), canonicalActions);
   const result: ResolveClarificationResult = {
     groupId,
-    loggedItems: loggedItemsFromCards((updatedMessage?.turnCards ?? []) as ChatTurnCard[]),
+    loggedItems: await loggedItemsFromCards(ctx, userId, (updatedMessage?.turnCards ?? []) as ChatTurnCard[]),
     memoryApprovals,
     errors: errors?.length ? errors : undefined,
     content: updatedMessage?.content ?? "I couldn't save that. Please try again.",
@@ -727,7 +730,7 @@ async function executeClarificationResolution(ctx: any, userId: string, groupId:
   }
   const result = {
     groupId,
-    loggedItems: loggedItemsFromCards((updatedMessage?.turnCards ?? []) as ChatTurnCard[], resolvedActionIds),
+    loggedItems: await loggedItemsFromCards(ctx, userId, (updatedMessage?.turnCards ?? []) as ChatTurnCard[], resolvedActionIds),
     memoryApprovals,
     errors: errors.length > 0 ? errors : undefined,
     content: updatedMessage?.content ?? "I couldn't save that. Please try again.",
@@ -1081,7 +1084,7 @@ export const confirmGroup = action({
         groupId,
         status: reconciled?.group?.status ?? "expired",
         results: canonicalConfirmationResults(canonicalActions),
-        loggedItems: loggedItemsFromCards((reconciled?.message?.turnCards ?? []) as ChatTurnCard[]),
+        loggedItems: await loggedItemsFromCards(ctx, userId, (reconciled?.message?.turnCards ?? []) as ChatTurnCard[]),
         unresolvedItems: [],
         turn: turnSnapshot(reconciled?.message, groupId),
       };
@@ -1093,7 +1096,7 @@ export const confirmGroup = action({
         groupId,
         status: reconciled?.group?.status ?? "expired",
         results: canonicalConfirmationResults(canonicalActions),
-        loggedItems: loggedItemsFromCards((reconciled?.message?.turnCards ?? []) as ChatTurnCard[]),
+        loggedItems: await loggedItemsFromCards(ctx, userId, (reconciled?.message?.turnCards ?? []) as ChatTurnCard[]),
         unresolvedItems: [],
         turn: turnSnapshot(reconciled?.message, groupId),
       };
@@ -1210,7 +1213,7 @@ export const confirmGroup = action({
       groupId,
       status: canonicalGroup?.status ?? "failed",
       results: canonicalConfirmationResults(canonicalActions, alreadyCommittedIds),
-      loggedItems: loggedItemsFromCards((persistedMessage?.turnCards ?? []) as ChatTurnCard[]),
+      loggedItems: await loggedItemsFromCards(ctx, userId, (persistedMessage?.turnCards ?? []) as ChatTurnCard[]),
       unresolvedItems: canonicalActions
         .filter((action: any) => action.status === "pending" || action.status === "failed")
         .map((action: any) => ({ ordinal: confirmationOrdinal(action), actionType: action.actionType, status: action.status, error: action.validation?.messages?.at(-1) })),
@@ -1930,7 +1933,7 @@ export const chat = action({
           claimOwner: claimOwner!,
         })
       : null;
-    if (claim?.state === "terminal") return chatResponseFromPersistedTurn(claim.turn, coachType, restrictedGuidance);
+    if (claim?.state === "terminal") return await chatResponseFromPersistedTurn(ctx, userId, claim.turn, coachType, restrictedGuidance);
     if (claim?.state === "in_progress") throw new Error("Chat submission is already in progress; retry after the current request completes");
     const turnClaim: TurnClaim = clientSubmissionId
       ? { clientSubmissionId, claimOwner, claimVersion: claim?.claimVersion }
@@ -2233,7 +2236,7 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
     const persistedCards = (persistedMessage?.turnCards ?? turnResult.cards) as ChatTurnCard[];
     const persistedContent = persistedMessage?.content ?? cleanReply;
     const persistedOutcome = (persistedMessage?.turnOutcome ?? turnResult.outcome) as ChatTurnOutcome;
-    const persistedLoggedItem = loggedItemFromCards(persistedCards);
+    const persistedLoggedItem = await loggedItemFromCards(ctx, userId, persistedCards);
     const persistedClarification = clarificationPayloadFromCards(persistedCards);
     const persistedConfirmation = persistedCards.find((card) => card.kind === "confirmation")?.data;
     const memoryApprovals = canonicalMemoryApprovalsForCards(turnResult.memoryApprovals, persistedCards);
@@ -2318,7 +2321,7 @@ Respond conversationally only. Never claim that anything was logged, saved, reco
           );
           return {
             reply: finalized.content,
-            loggedItem: loggedItemFromCards(finalized.turnCards),
+            loggedItem: await loggedItemFromCards(ctx, userId, finalized.turnCards),
             memoryApprovals: [],
             failedItems: [],
             coachType: toLegacyPersona(coachType),
@@ -3983,8 +3986,53 @@ function turnOutcomeText(result: TurnPolicyResult): string {
   return "";
 }
 
-function loggedItemFromCards(cards: ChatTurnCard[]): any {
-  const loggedItems = loggedItemsFromCards(cards);
+type LoggedItemCardRef = {
+  actionId: string;
+  table: string;
+  rowId: string;
+};
+
+export const getActiveCanonicalLoggedItems = internalQuery({
+  args: {
+    userId: v.string(),
+    items: v.array(v.object({
+      actionId: v.string(),
+      table: v.string(),
+      rowId: v.string(),
+    })),
+  },
+  handler: async (ctx, { userId, items }) => {
+    const active: Array<{ action: Doc<"actions">; row: any }> = [];
+    for (const item of items) {
+      const action = await ctx.db.get(item.actionId as any) as Doc<"actions"> | null;
+      if (
+        !action
+        || action.userId !== userId
+        || action.status !== "committed"
+        || action.committedRowRef?.table !== item.table
+        || action.committedRowRef.id !== item.rowId
+      ) continue;
+      const row: any = await ctx.db.get(item.rowId as any);
+      if (!row || row.userId !== userId || row.undoneAt || row.sourceActionId !== String(action._id)) continue;
+      active.push({ action, row });
+    }
+    return active;
+  },
+});
+
+function loggedItemType(actionType: string, table: string): string {
+  if (actionType !== "recovery") return actionType;
+  return ({
+    water_logs: "water",
+    sleep_logs: "sleep",
+    mood_logs: "mood",
+    steps_logs: "steps",
+    weight_logs: "weight",
+  } as Record<string, string>)[table] ?? table.replace(/_logs$/, "");
+}
+
+async function loggedItemFromCards(ctx: ActionCtx, userId: string, cards: ChatTurnCard[]): Promise<any> {
+  const loggedItems = await loggedItemsFromCards(ctx, userId, cards);
   return loggedItems.length === 0
     ? null
     : loggedItems.length === 1
@@ -3992,37 +4040,54 @@ function loggedItemFromCards(cards: ChatTurnCard[]): any {
       : { type: "multiple", items: loggedItems };
 }
 
-function loggedItemsFromCards(cards: ChatTurnCard[], onlyActionIds?: Set<string>): any[] {
+async function loggedItemsFromCards(
+  ctx: ActionCtx,
+  userId: string,
+  cards: ChatTurnCard[],
+  onlyActionIds?: Set<string>,
+): Promise<any[]> {
   const committedItems = cards.flatMap((card) =>
     card.kind === "result"
       ? card.data.items.filter((item): item is Extract<ResultCardItem, { status: "committed" }> => item.status === "committed")
       : [],
-  );
-  const toLoggedItem = (item: Extract<ResultCardItem, { status: "committed" }>) => ({
-    type: item.actionType === "recovery" ? item.record.table.replace(/_logs$/, "") : item.actionType,
-    data: {
-      _id: item.record.id,
-      actionId: item.actionId,
-      groupId: (item as any).groupId,
-      record: item.record,
-      title: item.title,
-      description: item.description,
-      date: item.date,
-      time: item.time,
-      provenance: (item as any).provenance,
-      validation: (item as any).validation,
-    },
+  ).filter((item) => !onlyActionIds || onlyActionIds.has(String(item.actionId)));
+  if (committedItems.length === 0) return [];
+
+  const refs: LoggedItemCardRef[] = committedItems.map((item) => ({
+    actionId: String(item.actionId),
+    table: item.record.table,
+    rowId: item.record.id,
+  }));
+  const rows = await ctx.runQuery((internal as any).ai.getActiveCanonicalLoggedItems, { userId, items: refs }) as Array<{
+    action: Doc<"actions">;
+    row: Record<string, unknown>;
+  }>;
+  const activeByActionId = new Map(rows.map(({ action, row }) => [String(action._id), { action, row }]));
+  return committedItems.flatMap((item) => {
+    const active = activeByActionId.get(String(item.actionId));
+    if (!active) return [];
+    return [{
+      type: loggedItemType(active.action.actionType, item.record.table),
+      data: {
+        ...active.row,
+        actionId: item.actionId,
+        groupId: String(active.action.groupId),
+        record: item.record,
+        title: item.title,
+        description: item.description,
+        provenance: active.action.provenance,
+        confidence: active.action.confidence,
+        validation: active.action.validation,
+      },
+    }];
   });
-  return committedItems
-    .filter((item) => !onlyActionIds || onlyActionIds.has(String(item.actionId)))
-    .map(toLoggedItem);
 }
 
-function chatResponseFromPersistedTurn(turn: any, coachType: string | undefined, restricted: boolean) {
+async function chatResponseFromPersistedTurn(ctx: ActionCtx, userId: string, turn: any, coachType: string | undefined, restricted: boolean) {
   const cards = (turn.turnCards ?? []) as ChatTurnCard[];
   return {
     reply: turn.content,
-    loggedItem: loggedItemFromCards(cards),
+    loggedItem: await loggedItemFromCards(ctx, userId, cards),
     memoryApprovals: [],
     failedItems: [],
     coachType: toLegacyPersona(coachType),

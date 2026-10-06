@@ -308,6 +308,15 @@ function resultCardItemsForActions(actions: any[]): any[] {
   }, []);
 }
 
+function resolvedReason(actions: any[]): "discarded" | "expired" | "mixed" | undefined {
+  const hasDiscarded = actions.some((action) => action.status === "discarded");
+  const hasExpired = actions.some((action) => action.status === "expired");
+  if (hasDiscarded && hasExpired) return "mixed";
+  if (hasExpired) return "expired";
+  if (hasDiscarded) return "discarded";
+  return undefined;
+}
+
 function pendingCardItems(actions: any[], existingCard: any): any[] {
   return actions.reduce<any[]>((items, action) => {
     const actionType = cardActionType(action);
@@ -370,6 +379,8 @@ function reconcileCards(message: any, group: any, actions: any[]) {
     return [card];
   });
   const cards: any[] = [...preserved];
+  const resolutionReason = resolvedReason(actions);
+  const allResolved = actions.length > 0 && actions.every((action) => action.status === "discarded" || action.status === "expired");
 
   if (pending.length > 0) {
     const items = pendingCardItems(pending, existingPending);
@@ -392,8 +403,17 @@ function reconcileCards(message: any, group: any, actions: any[]) {
     }
   }
 
-  if (activeCommitted.length > 0) {
-    cards.push({ version: 1, kind: "result", data: { groupId: String(group._id), items: [...resultItems, ...preservedResultFailures] } });
+  const hasResolvedItems = resultItems.some((item: any) => item.status === "discarded" || item.status === "expired");
+  if (activeCommitted.length > 0 || (hasResolvedItems && !allResolved)) {
+    cards.push({
+      version: 1,
+      kind: "result",
+      data: {
+        groupId: String(group._id),
+        ...(resolutionReason ? { reason: resolutionReason } : {}),
+        items: [...resultItems, ...preservedResultFailures],
+      },
+    });
   } else if (failed.length > 0 || preservedResultFailures.length > 0) {
     cards.push({
       version: 1,
@@ -425,7 +445,6 @@ function reconcileCards(message: any, group: any, actions: any[]) {
     });
   }
 
-  const allResolved = actions.length > 0 && actions.every((action) => action.status === "discarded" || action.status === "expired");
   if (allResolved) {
     cards.push({
       version: 1,
@@ -434,6 +453,7 @@ function reconcileCards(message: any, group: any, actions: any[]) {
         groupId: String(group._id),
         expiresAt: group.createdAt + CONFIRMATION_TTL_MS,
         state: "resolved",
+        ...(resolutionReason ? { reason: resolutionReason } : {}),
         items: actions.filter((action) => cardActionType(action)).map((action) => ({
           ...actionCardBase(action),
           actionId: String(action._id),
@@ -442,6 +462,7 @@ function reconcileCards(message: any, group: any, actions: any[]) {
             : {}),
           confidence: action.confidence,
           validationMessages: action.validation?.messages ?? [],
+          resolution: action.status,
         })),
       },
     });

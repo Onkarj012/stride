@@ -20,6 +20,8 @@ export type ChatTurnRecordRef = {
   id: string
 }
 
+export type ChatTurnResolutionReason = 'discarded' | 'expired' | 'mixed'
+
 type CardItemBase = {
   ordinal: number
   actionType: ChatTurnActionType
@@ -62,10 +64,14 @@ export type ConfirmationCardData = {
   expiresAt: number
   /** Present when the user deliberately discarded the whole batch. */
   state?: 'resolved'
+  /** Why a resolved confirmation no longer has active controls. */
+  reason?: ChatTurnResolutionReason
   items: Array<CardItemBase & {
     actionId: string
     confidence?: number
     validationMessages: string[]
+    /** Present on resolved confirmations so each row keeps its exact outcome. */
+    resolution?: 'discarded' | 'expired'
   }>
 }
 
@@ -106,6 +112,8 @@ export type ResultCardItem =
 
 export type ResultCardData = {
   groupId: string
+  /** Aggregate reason when one or more items resolved without being saved. */
+  reason?: ChatTurnResolutionReason
   items: ResultCardItem[]
 }
 
@@ -143,6 +151,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isOptionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string'
+}
+
+function isOptionalResolutionReason(value: unknown): boolean {
+  return value === undefined || value === 'discarded' || value === 'expired' || value === 'mixed'
 }
 
 function isMacroValues(value: unknown): value is ConfirmationMacroData {
@@ -198,11 +210,13 @@ export function isChatTurnCard(value: unknown): value is ChatTurnCard {
     return typeof data.groupId === 'string'
       && typeof data.expiresAt === 'number'
       && (data.state === undefined || data.state === 'resolved')
+      && isOptionalResolutionReason(data.reason)
       && everyItem(data.items, (item) =>
         typeof item.actionId === 'string'
         && (item.confidence === undefined || typeof item.confidence === 'number')
         && Array.isArray(item.validationMessages)
-        && item.validationMessages.every((message) => typeof message === 'string'))
+        && item.validationMessages.every((message) => typeof message === 'string')
+        && (item.resolution === undefined || item.resolution === 'discarded' || item.resolution === 'expired'))
   }
   if (value.kind === 'clarification') {
     return typeof data.groupId === 'string'
@@ -215,6 +229,7 @@ export function isChatTurnCard(value: unknown): value is ChatTurnCard {
   }
   if (value.kind === 'result') {
     return typeof data.groupId === 'string'
+      && isOptionalResolutionReason(data.reason)
       && everyItem(data.items, (item) =>
         item.status === 'committed'
           ? typeof item.actionId === 'string' && isRecordRef(item.record)

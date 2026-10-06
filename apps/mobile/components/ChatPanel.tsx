@@ -14,12 +14,26 @@ import { Icon } from './Icon'
 import { useTheme, SPACE } from './theme'
 import { Button, IconBadge } from './ui'
 
-type TurnOverride = { content: string; turnCards: unknown }
+type CanonicalTurn = {
+  content: string
+  turnOutcome?: unknown
+  turnCards: unknown
+}
+
+type TurnOverride = CanonicalTurn & { baseline: string }
 
 const GREETING = "Hey — I'm Stry. Tell me what you ate, trained, or how you're feeling, and I'll keep the log canonical."
 
 function groupIdForCard(card: ChatTurnCard): string | undefined {
   return 'groupId' in card.data ? card.data.groupId : undefined
+}
+
+function messageSignature(message: PersistedChatMessage): string {
+  return JSON.stringify([message.content, message.turnOutcome, message.turnCards, message.actionGroupId])
+}
+
+function messageGroupId(message: PersistedChatMessage): string | undefined {
+  return message.actionGroupId ?? parseChatTurnCards(message.turnCards).map(groupIdForCard).find(Boolean)
 }
 
 function localDateStr() {
@@ -61,7 +75,6 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
   const [pendingGroups, setPendingGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [pendingActions, setPendingActions] = useState<ReadonlySet<string>>(() => new Set())
   const [undoneActions, setUndoneActions] = useState<ReadonlySet<string>>(() => new Set())
-  const [undoneGroups, setUndoneGroups] = useState<ReadonlySet<string>>(() => new Set())
   const [turnOverrides, setTurnOverrides] = useState<Record<string, TurnOverride>>({})
   const [activeSessionId, setActiveSessionId] = useState<any>(initialSessionId ?? null)
   const scrollRef = useRef<ScrollView>(null)
@@ -92,11 +105,17 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     pendingGroupIds: pendingGroups,
     pendingActionIds: pendingActions,
     undoneActionIds: undoneActions,
-    undoneGroupIds: undoneGroups,
   }
 
   const addPending = (setter: Dispatch<SetStateAction<ReadonlySet<string>>>, key: string) => setter(current => new Set(current).add(key))
   const removePending = (setter: Dispatch<SetStateAction<ReadonlySet<string>>>, key: string) => setter(current => { const next = new Set(current); next.delete(key); return next })
+  const applyTurnOverride = (groupId: string, turn: CanonicalTurn | undefined) => {
+    if (!turn || typeof turn.content !== 'string') return
+    assertReturnedTurnCards(turn.turnCards)
+    const currentMessage = messages.find(message => message.role === 'ai' && messageGroupId(message) === groupId)
+    if (!currentMessage) return
+    setTurnOverrides(current => ({ ...current, [groupId]: { ...turn, baseline: messageSignature(currentMessage) } }))
+  }
 
   useEffect(() => {
     if (!pendingSend) return
@@ -148,7 +167,24 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     addPending(setPendingGroups, groupId)
     void (async () => {
       try {
-        const result = await confirmGroup({ groupId, decisions }) as { results?: Array<{ status?: string }> }
+        const result = await confirmGroup({ groupId, decisions }) as {
+          status?: string
+          results?: Array<{ status?: string }>
+          unresolvedItems?: unknown[]
+          turn?: CanonicalTurn
+        }
+        applyTurnOverride(groupId, result.turn)
+        if (result.status === 'expired') {
+          setNotice('Confirmation expired — this batch can no longer be saved.')
+        } else if (result.unresolvedItems?.length) {
+          setNotice('Some items need attention — saved items remain available to undo.')
+        } else if (result.status === 'discarded') {
+          setNotice('Discarded — no items were saved.')
+        } else if (result.turn?.turnOutcome === 'no_action' || result.results?.length === 0) {
+          setNotice('Nothing was saved — no changes were made.')
+        } else if (result.status === 'committed') {
+          setNotice('Saved — confirmed items were logged.')
+        }
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'That action failed — please try again.')
       } finally {
@@ -176,8 +212,16 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     addPending(setPendingActions, actionId)
     void (async () => {
       try {
-        await undoAction({ actionId: actionId as never })
-        setUndoneActions(current => new Set(current).add(actionId))
+        const result = await undoAction({ actionId: actionId as never }) as {
+          status: 'undone' | 'already_undone' | 'skipped'
+          reason?: string
+          turn?: CanonicalTurn
+        }
+        applyTurnOverride(groupId, result.turn)
+        if (result.status === 'undone' || result.status === 'already_undone') {
+          setUndoneActions(current => new Set(current).add(actionId))
+          setNotice(null)
+        } else setNotice(result.reason ?? 'That entry was not reversed.')
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'That action failed — please try again.')
       } finally {
@@ -192,8 +236,32 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     addPending(setPendingActions, key)
     void (async () => {
       try {
-        await undoGroup({ groupId: groupId as never })
-        setUndoneGroups(current => new Set(current).add(groupId))
+        const result = await undoGroup({ groupId: groupId as never }) as {
+          results: Array<{ actionId: string; status: 'undone' | 'already_undone' | 'skipped'; reason?: string }>
+          turn?: CanonicalTurn
+        }
+        applyTurnOverride(groupId, result.turn)
+        const undone = result.results.filter(item => item.status === 'undone')
+        const alreadyUndone = result.results.filter(item => item.status === 'already_undone')
+        const successful = [...undone, ...alreadyUndone]
+        if (successful.length > 0) {
+          setUndoneActions(current => {
+            const next = new Set(current)
+            successful.forEach(item => next.add(item.actionId))
+            return next
+          })
+        }
+        const skipped = result.results.filter(item => item.status === 'skipped')
+        if (skipped.length > 0) {
+          const acknowledgements = [
+            undone.length > 0 ? `${undone.length} item${undone.length === 1 ? '' : 's'} reversed.` : '',
+            alreadyUndone.length > 0 ? `${alreadyUndone.length} already undone.` : '',
+          ].filter(Boolean).join(' ')
+          const skippedDetail = skipped.map(item => item.reason).filter(Boolean).join('; ') || `${skipped.length} item${skipped.length === 1 ? ' was' : 's were'} not reversed.`
+          setNotice([acknowledgements, skippedDetail].filter(Boolean).join(' '))
+        } else if (successful.length === 0) {
+          setNotice('No saved items were reversed.')
+        } else setNotice(null)
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'That action failed — please try again.')
       } finally {
@@ -207,10 +275,9 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     addPending(setPendingActions, item.actionId)
     void (async () => {
       try {
-        const result = await logAnywayForAction({ actionId: item.actionId as never }) as { turn?: { content?: unknown; turnOutcome?: unknown; turnCards?: unknown } }
+        const result = await logAnywayForAction({ actionId: item.actionId as never }) as { turn?: CanonicalTurn }
         if (!result.turn || result.turn.turnOutcome !== 'committed' || typeof result.turn.content !== 'string') throw new Error('The log completed without a resolved result.')
-        assertReturnedTurnCards(result.turn.turnCards)
-        setTurnOverrides(current => ({ ...current, [groupId]: { content: result.turn!.content as string, turnCards: result.turn!.turnCards } }))
+        applyTurnOverride(groupId, result.turn)
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'That log could not be completed. Nothing was marked as committed.')
       } finally {
@@ -227,9 +294,9 @@ export function ChatPanel({ initialSessionId }: { initialSessionId?: string }) {
     {showGreeting && <View style={{ maxWidth: '96%' }}><AgentBadge type="overall" /><Text style={{ fontFamily: 'Manrope_500Medium', fontSize: 14, color: t.text, lineHeight: 21, marginTop: SPACE.md }}>{GREETING}</Text></View>}
     {messages.map((message, index) => {
       if (message.role === 'user') return <UserBubble key={`${message.clientSubmissionId ?? 'user'}-${index}`} text={message.content} />
-      const persistedCards = parseChatTurnCards(message.turnCards)
-      const groupId = message.actionGroupId ?? persistedCards.map(groupIdForCard).find(Boolean)
-      const override = groupId ? turnOverrides[groupId] : undefined
+      const groupId = messageGroupId(message)
+      const storedOverride = groupId ? turnOverrides[groupId] : undefined
+      const override = storedOverride?.baseline === messageSignature(message) ? storedOverride : undefined
       const cards = parseChatTurnCards(override?.turnCards ?? message.turnCards)
       return <AssistantMessage key={`${message.clientSubmissionId ?? 'assistant'}-${index}`} message={{ ...message, content: override?.content ?? message.content }} cards={cards} state={cardState} onConfirm={handleConfirm} onClarify={handleClarify} onUndoItem={handleUndoItem} onUndoAll={handleUndoAll} onLogAnyway={handleLogAnyway} />
     })}
