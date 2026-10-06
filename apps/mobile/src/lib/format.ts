@@ -36,9 +36,26 @@ export function greeting(minutes: number, name: string): string {
   return `Evening, ${name}.`
 }
 
-// Quantity suffix for an item line: "Roti ×2", "Curd ×½", nothing for one.
-export function quantitySuffix(q: number): string {
-  if (q === 1) return ''
-  if (q === 0.5) return ' ×½'
-  return ` ×${q}`
+// Weekday index (0 is Sunday) of a YYYY-MM-DD date; 1970-01-01 was a Thursday.
+export function weekdayOf(localDate: string): number {
+  const [y = 1970, m = 1, d = 1] = localDate.split('-').map(Number)
+  const day = Date.UTC(y, m - 1, d) / 86_400_000
+  return (((day + 4) % 7) + 7) % 7
+}
+
+// "Tue, 29 Sep" for a YYYY-MM-DD date.
+export function formatDayTitle(localDate: string): string {
+  const [, m = 1, d = 1] = localDate.split('-').map(Number)
+  return `${WEEKDAYS[weekdayOf(localDate)]?.slice(0, 3)}, ${d} ${MONTHS[m - 1]}`
+}
+
+// 24h "HH:mm" of an instant in the device's clock, for formatClock.
+export function clockOf(ms: number): string {
+  const at = new Date(ms)
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+}
+
+// Grams for display: whole grams, or one decimal under 10 g.
+export function formatGrams(g: number): string {
+  return g < 10 ? `${Math.round(g * 10) / 10} g` : `${Math.round(g)} g`
 }
