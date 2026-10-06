@@ -45,7 +45,7 @@ export const clearAllData = mutation({
     }
 
     const byUser = [
-      "chat_messages", "chat_sessions", "user_behavior", "nudges",
+      "chat_messages", "chat_sessions", "user_behavior",
       "recipes", "food_memory", "workout_memory", "user_ingredients",
       "user_profiles", "user_settings", "user_metabolic_profiles", "calorie_feedback",
       "check_in_template_settings",
@@ -57,6 +57,12 @@ export const clearAllData = mutation({
       await Promise.all(rows.map((r: any) => ctx.db.delete(r._id)));
     }
 
+    // nudges only has by_user_status, whose userId prefix covers every status.
+    const nudges = await ctx.db.query("nudges")
+      .withIndex("by_user_status", (q) => q.eq("userId", userId))
+      .collect();
+    await Promise.all(nudges.map((r) => ctx.db.delete(r._id)));
+
     // weekly_summaries uses by_user_week index
     const weeklies = await ctx.db.query("weekly_summaries")
       .withIndex("by_user_week", (q) => q.eq("userId", userId))
@@ -66,6 +72,14 @@ export const clearAllData = mutation({
     // user_gamification
     const gam = await ctx.db.query("user_gamification").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (gam) await ctx.db.delete(gam._id);
+
+    // Restart ledger tables (plan 007).
+    const [entries, dayTotals, weights] = await Promise.all([
+      ctx.db.query("entries").withIndex("by_userId_and_localDate_and_status", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).collect(),
+    ]);
+    await Promise.all([...entries, ...dayTotals, ...weights].map((r) => ctx.db.delete(r._id)));
   },
 });
 
@@ -119,6 +133,12 @@ export const exportAllData = query({
       ctx.db.query("check_in_template_settings").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
     ]);
 
+    const [entries, day_totals, weights] = await Promise.all([
+      ctx.db.query("entries").withIndex("by_userId_and_localDate_and_status", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).collect(),
+      ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).collect(),
+    ]);
+
     return {
       exportedAt: Date.now(),
       meals, workouts, daily_goals, insights,
@@ -129,6 +149,7 @@ export const exportAllData = query({
       user_profiles, user_behavior, nudges,
       user_settings, user_metabolic_profiles, calorie_feedback,
       gamification: user_gamification ?? null,
+      entries, day_totals, weights,
     };
   },
 });

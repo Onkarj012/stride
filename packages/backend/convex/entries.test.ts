@@ -335,3 +335,30 @@ describe("day totals", () => {
     });
   });
 });
+
+describe("account data", () => {
+  test("exportAllData includes and clearAllData removes only the caller's ledger rows", async () => {
+    const { t, user, rice } = await setup();
+    const other = t.withIdentity({ subject: "user_b" });
+    await other.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
+    await user.mutation(api.entries.addEntries, { submissionId: "s1", items: [{ foodId: rice, grams: 100, source: "db", loggedAt: IST_LUNCH }] });
+    await user.mutation(api.weights.logWeight, { kg: 72, localDate: "2026-10-05" });
+    await other.mutation(api.entries.addEntries, { submissionId: "s1", items: [{ foodId: rice, grams: 50, source: "db", loggedAt: IST_LUNCH }] });
+    await other.mutation(api.weights.logWeight, { kg: 60, localDate: "2026-10-05" });
+
+    const exported = await user.query(api.users.exportAllData, {});
+    expect(exported.entries.map((e) => e.grams)).toEqual([100]);
+    expect(exported.day_totals.map((d) => d.localDate)).toEqual(["2026-10-05"]);
+    expect(exported.weights.map((w) => w.kg)).toEqual([72]);
+
+    await user.mutation(api.users.clearAllData, {});
+    const left = await t.run(async (ctx) => ({
+      entries: await ctx.db.query("entries").take(100),
+      dayTotals: await ctx.db.query("day_totals").take(100),
+      weights: await ctx.db.query("weights").take(100),
+    }));
+    expect(left.entries.map((e) => e.userId)).toEqual(["user_b"]);
+    expect(left.dayTotals.map((d) => d.userId)).toEqual(["user_b"]);
+    expect(left.weights.map((w) => w.userId)).toEqual(["user_b"]);
+  });
+});
