@@ -89,12 +89,12 @@ export async function uploadPhoto(uploadUrl: string, uri: string, token: string)
   return body.storageId as StorageId
 }
 
-// Sum of the kcal the server computed for each line; null when any line is still unknown.
+// Total kcal of the lines, summed unrounded and rounded once; null when any line is still unknown.
 export function linesKcal(lines: LogLine[]): number | null {
   let sum = 0
   for (const line of lines) {
     if (line.kcal === null) return null
     sum += line.kcal
   }
-  return sum
+  return Math.round(sum)
 }
