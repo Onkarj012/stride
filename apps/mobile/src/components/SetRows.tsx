@@ -451,7 +451,7 @@ function NumStep({
           }}
           onChangeText={type}
           onBlur={leave}
-          onSubmitEditing={leave}
+          onSubmitEditing={commit}
           keyboardType={decimals ? 'decimal-pad' : 'number-pad'}
           selectTextOnFocus
           maxLength={6}
