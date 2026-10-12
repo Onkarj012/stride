@@ -266,13 +266,13 @@ export const sessionDetail = query({
 
 /** Returns all-time exercise bests and the requested weeks of muscle volume. */
 export const stats = query({
-  args: { weeks: v.optional(v.number()), exerciseId: v.optional(v.id("exercises")) },
+  args: { weeks: v.optional(v.number()), exerciseId: v.optional(v.id("exercises")), localDate: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const weeks = args.weeks ?? 8;
     if (!Number.isInteger(weeks) || weeks < 1 || weeks > 12) throw new Error("weeks must be an integer within 1-12");
     if (args.exerciseId !== undefined) await requireExercise(ctx, args.exerciseId);
-    const today = await localDateOrToday(ctx, userId, undefined);
+    const today = await localDateOrToday(ctx, userId, args.localDate);
     const currentWeek = weekStart(today);
     const past = await history(ctx, userId);
     const exerciseMap = new Map<Id<"exercises">, Doc<"exercises">>();

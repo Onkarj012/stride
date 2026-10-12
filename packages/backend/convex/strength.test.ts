@@ -212,6 +212,15 @@ test("stats keeps lifetime e1RM history independent of requested weekly volume",
   expect((await user.query(api.strength.stats, { weeks: 1 })).weeklyVolume[0]?.muscles).toEqual([]);
 });
 
+test("stats follows the requested local day for the week it reports", async () => {
+  const { user, sessionId, exerciseId } = await withSet();
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });
+  const later = await user.mutation(api.strength.startSession, { submissionId: "later", startedAt: Date.UTC(2026, 9, 19, 6) });
+  await user.mutation(api.strength.addSet, { submissionId: "later-add", sessionId: later, exerciseId, weightKg: 50, reps: 8 });
+  const earlier = await user.query(api.strength.stats, { weeks: 1, localDate: "2026-10-06" });
+  expect(earlier.weeklyVolume).toEqual([{ weekStart: "2026-10-05", muscles: [{ muscle: "chest", sets: 1, tonnageKg: 480 }, { muscle: "triceps", sets: 0.5, tonnageKg: 0 }] }]);
+});
+
 test("stats returns empty weeks and rejects invalid bounds or missing exercises", async () => {
   const { t, user, exerciseId } = await setup();
   expect((await user.query(api.strength.stats, { weeks: 12 })).weeklyVolume).toHaveLength(12);

@@ -19,6 +19,7 @@ import {
   type SetId,
   type SetView,
 } from '@/lib/strength'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Icon } from './Icon'
 import { Polo } from './Polo'
@@ -51,7 +52,8 @@ export function ExerciseBlock({
   actions: WorkoutActions
 }) {
   const s = useStyles()
-  const stats = useQuery(api.strength.stats, { weeks: 1, exerciseId: exercise._id })
+  const today = useLocalToday()
+  const stats = useQuery(api.strength.stats, { weeks: 1, exerciseId: exercise._id, localDate: today })
   const previous: Hint[] = stats?.exercises[0]?.previousSets ?? []
   const muscle = exercise.primaryMuscles[0]
   const last = sets.at(-1)

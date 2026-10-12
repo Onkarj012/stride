@@ -26,8 +26,8 @@ type Lift = StrengthStats['exercises'][number]
 // Progress block (mock #/progress strength card): e1RM trend per top lift, this week's hard sets per muscle, and the way into a workout.
 export function StrengthSection() {
   const s = useStyles()
-  const stats = useQuery(api.strength.stats, { weeks: 1 })
   const today = useLocalToday()
+  const stats = useQuery(api.strength.stats, { weeks: 1, localDate: today })
   const sessions = useQuery(api.strength.sessionsForDay, { localDate: today })
   const open = sessions?.some((session) => session.endedAt === undefined) ?? false
   const start = <Button label={open ? 'Resume workout' : 'Start workout'} icon="play" size="block" onPress={() => router.push('/workout')} style={s.start} />
