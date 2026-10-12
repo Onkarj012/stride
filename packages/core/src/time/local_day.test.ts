@@ -3,12 +3,16 @@ import { describe, expect, it } from "vitest";
 import {
   addDays,
   dayNumber,
+  dateOf,
+  daysIn,
   daysBetween,
   inferSlot,
   isValidTimeZone,
   localDate,
   localDateTime,
   slotAt,
+  shiftMonth,
+  weekdayOf,
   weekStart,
 } from "./local_day.ts";
 
@@ -68,6 +72,25 @@ describe("inferSlot (D16)", () => {
 });
 
 describe("date math", () => {
+  it("builds calendar months across year and leap-year boundaries", () => {
+    expect(dateOf({ year: 2026, month: 1 }, 5)).toBe("2026-01-05");
+    expect(daysIn({ year: 2026, month: 2 })).toBe(28);
+    expect(daysIn({ year: 2028, month: 2 })).toBe(29);
+    expect(daysIn({ year: 2026, month: 9 })).toBe(30);
+    expect(daysIn({ year: 2026, month: 12 })).toBe(31);
+    expect(shiftMonth({ year: 2026, month: 1 }, -1)).toEqual({ year: 2025, month: 12 });
+    expect(shiftMonth({ year: 2026, month: 12 }, 1)).toEqual({ year: 2027, month: 1 });
+    expect(() => daysIn({ year: 2026, month: 13 })).toThrow(RangeError);
+  });
+
+  it("finds weekdays on both sides of the epoch and rejects invalid dates", () => {
+    expect(weekdayOf("1970-01-01")).toBe(4);
+    expect(weekdayOf("1969-12-28")).toBe(0);
+    expect(weekdayOf("2026-10-12")).toBe(1);
+    expect(() => weekdayOf("2026-02-30")).toThrow(RangeError);
+    expect(() => weekdayOf("2026-2-01")).toThrow(RangeError);
+  });
+
   it("validates dates and zones", () => {
     expect(dayNumber("2026-02-30")).toBeNull();
     expect(dayNumber("2028-02-29")).not.toBeNull();

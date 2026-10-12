@@ -3,6 +3,15 @@
 
 export type ColorScheme = 'light' | 'dark'
 
+// Fixed contrast over camera images in either system theme.
+export const cameraColors = {
+  bg: '#2a2622',
+  ink: '#F4F1E9',
+  ink2: 'rgba(244,241,233,0.7)',
+  frame: 'rgba(255,255,255,0.4)',
+  flash: '#fff',
+} as const
+
 export type Palette = {
   bg: string
   card: string

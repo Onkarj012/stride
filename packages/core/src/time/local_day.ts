@@ -108,9 +108,36 @@ export function daysBetween(from: string, to: string): number {
   return requireDay(to) - requireDay(from);
 }
 
+/** Calendar month with a one-based month number. */
+export type Month = { year: number; month: number };
+
+/** YYYY-MM-DD for a day of a calendar month. */
+export function dateOf({ year, month }: Month, day: number): string {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** The calendar month before or after this one. */
+export function shiftMonth({ year, month }: Month, by: -1 | 1): Month {
+  requireDay(dateOf({ year, month }, 1));
+  const index = year * 12 + month - 1 + by;
+  return { year: Math.floor(index / 12), month: ((index % 12) + 12) % 12 + 1 };
+}
+
+/** Number of days in a valid calendar month. */
+export function daysIn(month: Month): number {
+  requireDay(dateOf(month, 1));
+  return new Date(Date.UTC(month.year, month.month, 0)).getUTCDate();
+}
+
+/** Weekday of a local calendar date, where Sunday is zero. */
+export function weekdayOf(date: string): number {
+  const day = requireDay(date);
+  return ((day + 4) % 7 + 7) % 7;
+}
+
 /** The Monday on or before `date`. */
 export function weekStart(date: string): string {
   const day = requireDay(date);
-  const weekday = new Date(day * MS_PER_DAY).getUTCDay();
+  const weekday = weekdayOf(date);
   return fromDayNumber(day - ((weekday - WEEK_START_DAY + 7) % 7));
 }
