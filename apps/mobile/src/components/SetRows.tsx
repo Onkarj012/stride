@@ -95,7 +95,7 @@ export function ExerciseBlock({
   )
 }
 
-// A set already saved: dark row; steppers save an edit after a pause; the filled check removes it.
+// A set already saved: dark row; steppers save an edit after a pause; holding the filled check removes it.
 function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; number: number; hint?: Hint; exercise: Exercise; actions: WorkoutActions }) {
   const t = useTheme()
   const s = useStyles()
@@ -106,21 +106,37 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latest = useRef(set)
   latest.current = set
+  const saving = useRef(false)
+  // Revision id returned by our last save, ahead of the query; edits chain onto it instead of the stale head.
+  const ahead = useRef<SetId | null>(null)
 
-  // Saves the last stepped values as one edit revision, with an undo.
+  useEffect(() => {
+    ahead.current = null
+  }, [set._id])
+
+  // Saves the last stepped values as one edit revision, with an undo. One save at a time; later changes wait for it.
   function flush() {
     if (timer.current) clearTimeout(timer.current)
+    if (saving.current) return
     const next = pending.current
     if (next === null) return
     pending.current = null
     const head = latest.current
-    if (next.weightKg === head.weightKg && next.reps === head.reps) return setShown(null)
-    editSet({ submissionId: newSubmissionId(), setId: head._id, weightKg: next.weightKg, reps: next.reps })
+    if (ahead.current === null && next.weightKg === head.weightKg && next.reps === head.reps) return setShown(null)
+    saving.current = true
+    editSet({ submissionId: newSubmissionId(), setId: ahead.current ?? head._id, weightKg: next.weightKg, reps: next.reps })
       .then(
-        (revision) => actions.toast({ title: `Set ${number} changed`, sub: `${formatKg(next.weightKg)} kg × ${next.reps}`, undo: actions.undoFor(revision) }),
+        (revision) => {
+          ahead.current = revision
+          actions.toast({ title: `Set ${number} changed`, sub: `${formatKg(next.weightKg)} kg × ${next.reps}`, undo: actions.undoFor(revision) })
+        },
         (err: unknown) => actions.toast({ title: "Couldn't save that set.", sub: plainError(err) }),
       )
-      .finally(() => setShown((v) => (v === next ? null : v)))
+      .finally(() => {
+        saving.current = false
+        if (pending.current !== null) flush()
+        else setShown((v) => (v === next ? null : v))
+      })
   }
 
   useEffect(() => () => flush(), [])
@@ -138,7 +154,7 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
     if (timer.current) clearTimeout(timer.current)
     pending.current = null
     try {
-      const revision = await deleteSet({ submissionId: newSubmissionId(), setId: latest.current._id })
+      const revision = await deleteSet({ submissionId: newSubmissionId(), setId: ahead.current ?? latest.current._id })
       actions.toast({ title: `Removed set ${number}`, sub: 'Every version is kept.', undo: actions.undoFor(revision) })
     } catch (err) {
       actions.toast({ title: "Couldn't remove that set.", sub: plainError(err) })
@@ -175,7 +191,15 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
         label={`set ${number} reps`}
         onChange={(reps) => change({ ...value, reps })}
       />
-      <Tap style={[s.ck, s.ckDone]} scale={0.85} onPress={() => void remove()} accessibilityRole="button" accessibilityLabel={`Remove set ${number}`}>
+      <Tap
+        style={[s.ck, s.ckDone]}
+        scale={0.85}
+        onPress={() => actions.toast({ title: `Set ${number} is logged`, sub: 'Hold the check to remove it.' })}
+        onLongPress={() => void remove()}
+        accessibilityRole="button"
+        accessibilityLabel={`Set ${number} logged`}
+        accessibilityHint="Hold to remove this set"
+      >
         <Animated.View entering={ZoomIn.springify()}>
           <Icon name="check" size={20} color={t.c.onPolo} />
         </Animated.View>
@@ -322,10 +346,17 @@ function NumStep({
     return Math.min(max, Math.max(min, rounded))
   }
 
-  // Applies typed text when the field loses focus; anything unreadable leaves the old value.
+  // Passes each readable keystroke on at once, so tapping the check without closing the keyboard saves what was typed.
+  function type(next: string) {
+    setText(next)
+    const n = Number(next.replace(',', '.'))
+    if (next.trim() !== '' && Number.isFinite(n) && clamp(n) !== value) onChange(clamp(n))
+  }
+
+  // Tidies the field when it loses focus; anything unreadable leaves the last good value.
   function commit() {
     const n = Number((text ?? '').replace(',', '.'))
-    if (text !== null && text.trim() !== '' && Number.isFinite(n)) onChange(clamp(n))
+    if (text !== null && text.trim() !== '' && Number.isFinite(n) && clamp(n) !== value) onChange(clamp(n))
     setText(null)
   }
 
@@ -339,7 +370,7 @@ function NumStep({
           style={[s.stepValue, { color: ink }]}
           value={text ?? shown}
           onFocus={() => setText(shown)}
-          onChangeText={setText}
+          onChangeText={type}
           onBlur={commit}
           onSubmitEditing={commit}
           keyboardType={decimals ? 'decimal-pad' : 'number-pad'}

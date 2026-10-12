@@ -12,6 +12,7 @@ import { Polo } from '@/components/Polo'
 import { ExerciseBlock, type WorkoutActions } from '@/components/SetRows'
 import { Sheet } from '@/components/Sheet'
 import { Tap } from '@/components/Tap'
+import { TimeZoneGate } from '@/components/TimeZoneGate'
 import { Toast, type ToastMessage } from '@/components/Toast'
 import { formatNumber } from '@/lib/format'
 import { newSubmissionId, plainError } from '@/lib/log'
@@ -26,6 +27,15 @@ function leave() {
 
 // Workout route (mock #/workout and #/workout-done): resumes today's open session, or offers to start one.
 export default function WorkoutScreen() {
+  return (
+    <TimeZoneGate>
+      <Workout />
+    </TimeZoneGate>
+  )
+}
+
+// The workout itself, once the user's time zone is stored for today's date.
+function Workout() {
   const s = useStyles()
   const sessions = useQuery(api.strength.sessionsForDay, {})
   const [sessionId, setSessionId] = useState<SessionId | null>(null)

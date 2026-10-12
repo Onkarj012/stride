@@ -42,7 +42,8 @@ export function StrengthSection() {
   const muscles = [...(stats.weeklyVolume.at(-1)?.muscles ?? [])].sort((a, b) => b.sets - a.sets).slice(0, 6)
   const scale = Math.max(SCALE_MIN, ...muscles.map((m) => m.sets))
 
-  if (lifts.length === 0)
+  // Only a user with no sets at all gets the empty card; bodyweight or high-rep sets still count toward volume.
+  if (stats.exercises.length === 0)
     return (
       <View>
         <Section title="Strength" />
@@ -59,13 +60,17 @@ export function StrengthSection() {
     <View>
       <Section title="Strength" />
       <View style={s.card}>
-        <Text style={s.eyebrow}>Estimated 1-rep max</Text>
-        <View style={s.lifts}>
-          {lifts.map((lift, i) => (
-            <LiftRow key={lift.exerciseId} lift={lift} last={i === lifts.length - 1} />
-          ))}
-        </View>
-        <Text style={[s.eyebrow, s.volTitle]}>Hard sets this week</Text>
+        {lifts.length > 0 ? (
+          <>
+            <Text style={s.eyebrow}>Estimated 1-rep max</Text>
+            <View style={s.lifts}>
+              {lifts.map((lift, i) => (
+                <LiftRow key={lift.exerciseId} lift={lift} last={i === lifts.length - 1} />
+              ))}
+            </View>
+          </>
+        ) : null}
+        <Text style={[s.eyebrow, lifts.length > 0 && s.volTitle]}>Hard sets this week</Text>
         {muscles.length === 0 ? (
           <Text style={s.faint}>No sets yet this week.</Text>
         ) : (
