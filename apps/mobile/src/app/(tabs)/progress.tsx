@@ -221,7 +221,6 @@ function BurnCard({ summary }: { summary: Summary }) {
 
   const needsProfile = gate.reasons.includes('missing_baseline')
   const dataReady = !gate.reasons.some((r) => r !== 'missing_baseline')
-  const loggedPct = Math.round(gate.loggedFraction * 100)
   const minPct = Math.round(gate.minLoggedFraction * 100)
   return (
     <View style={s.card}>
@@ -251,7 +250,7 @@ function BurnCard({ summary }: { summary: Summary }) {
         label="Days logged"
         value={gate.windowDays === 0 ? `needs ${minPct}%` : `${gate.loggedDays} of ${gate.windowDays} · needs ${minPct}%`}
         fill={gate.windowDays === 0 ? 0 : gate.loggedFraction / gate.minLoggedFraction}
-        done={gate.windowDays > 0 && loggedPct >= minPct}
+        done={gate.windowDays > 0 && gate.loggedFraction >= gate.minLoggedFraction}
       />
       {needsProfile ? (
         <Text style={s.note}>Also needs your height, age, sex and activity level, plus one weigh-in.</Text>
