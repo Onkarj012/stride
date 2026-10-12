@@ -2,12 +2,16 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 import { useMutation } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { newSubmissionId, plainError, type DraftId, type EntryId, type MealSlot } from '@/lib/log'
+import { BurnSheet } from './BurnSheet'
 import { Compose, type ComposeMode } from './Compose'
 import { MealSheet } from './MealSheet'
 import { Sheet } from './Sheet'
 import { Toast, type ToastMessage } from './Toast'
 
-type SheetContent = { kind: 'compose'; mode: ComposeMode; defaultSlot?: MealSlot; draftId?: DraftId } | { kind: 'meal'; localDate: string; slot: MealSlot }
+type SheetContent =
+  | { kind: 'compose'; mode: ComposeMode; defaultSlot?: MealSlot; draftId?: DraftId }
+  | { kind: 'meal'; localDate: string; slot: MealSlot }
+  | { kind: 'burn'; milestone: boolean }
 
 // One sheet opening. Its session number changes on every show, so each opening mounts fresh.
 type Opening = SheetContent & { session: number }
@@ -16,6 +20,8 @@ type LogApi = {
   compose: (mode?: ComposeMode, defaultSlot?: MealSlot) => void
   openDraft: (draftId: DraftId) => void
   openMeal: (localDate: string, slot: MealSlot) => void
+  // The daily-burn explainer, or the one-time milestone version of it.
+  openBurn: (milestone: boolean) => void
   toast: (message: Omit<ToastMessage, 'id'>) => void
   // Builds an undo that reverts the latest revision of each entry, with its own toast on success or failure.
   undoFor: (entryIds: EntryId[]) => () => void
@@ -24,7 +30,7 @@ type LogApi = {
 
 const LogContext = createContext<LogApi | null>(null)
 
-// The logging actions every screen shares: the compose sheet, the meal sheet and the undo toast.
+// The actions every screen shares: the compose, meal and burn sheets and the undo toast.
 export function useLog(): LogApi {
   const value = useContext(LogContext)
   if (!value) throw new Error('useLog must be used inside LogProvider')
@@ -98,6 +104,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
       compose: (mode = 'text', defaultSlot) => show({ kind: 'compose', mode, defaultSlot }),
       openDraft: (draftId) => show({ kind: 'compose', mode: 'text', draftId }),
       openMeal: (localDate, slot) => show({ kind: 'meal', localDate, slot }),
+      openBurn: (milestone) => show({ kind: 'burn', milestone }),
       toast,
       undoFor,
       sheetOpen: open,
@@ -115,6 +122,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
         {content?.kind === 'meal' ? (
           <MealSheet key={content.session} localDate={content.localDate} slot={content.slot} onClose={closeOpening(content.session)} />
         ) : null}
+        {content?.kind === 'burn' ? <BurnSheet milestone={content.milestone} onClose={close} /> : null}
       </Sheet>
       <Toast message={message} onDone={toastDone} />
     </LogContext.Provider>
