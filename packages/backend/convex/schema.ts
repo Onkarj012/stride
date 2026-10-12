@@ -768,12 +768,16 @@ export default defineSchema({
     weightKg: v.number(),
     rpe: v.optional(v.number()),
     revision: v.number(),
+    op: v.optional(revisionOpValidator),
     supersedes: v.optional(v.id("sets")),
     status: revisionStatusValidator,
     submissionId: v.string(),
     deletedAt: v.optional(v.number()),
   })
     .index("by_sessionId_and_status", ["sessionId", "status"])
+    .index("by_sessionId_and_exerciseId_and_setIndex", ["sessionId", "exerciseId", "setIndex"])
+    .index("by_userId_and_submissionId", ["userId", "submissionId"])
+    .index("by_userId_and_status", ["userId", "status"])
     .index("by_userId_and_exerciseId_and_status", ["userId", "exerciseId", "status"]),
 
   exercises: defineTable({
@@ -787,6 +791,7 @@ export default defineSchema({
     secondaryMuscles: v.array(v.string()),
   })
     .index("by_sourceId", ["sourceId"])
+    .index("by_category_and_name", ["category", "name"])
     .searchIndex("search_name", { searchField: "name", filterFields: ["category"] }),
 
   // One row per user while clearAllData's scheduled ledger deletion runs. Ledger writes refuse meanwhile.
