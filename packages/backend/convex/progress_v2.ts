@@ -5,8 +5,8 @@ import {
 } from "@stride/core";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { requireUserId, resolveLocalDay } from "./time_zone";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
 import { assertLedgerWritable } from "./users";
 
 /** Fixed daily goal adjustments in kcal; the result is clamped to the formula maintenance baseline. */
@@ -86,7 +86,7 @@ export async function initializeCalorieTarget(ctx: MutationCtx, userId: string):
 
 /** Signed-in weight trends, D11 gate progress, expenditure and the current weekly calorie target. */
 export const summary = query({
-  args: { rangeDays: v.number() },
+  args: { rangeDays: v.number(), localDate: v.optional(v.string()) },
   returns: v.object({
     localDate: v.string(),
     weights: v.array(v.object({ localDate: v.string(), kg: v.number(), trendKg: v.number() })),
@@ -101,12 +101,12 @@ export const summary = query({
     }),
     target: v.union(v.null(), v.object({ kcal: v.number(), source: v.union(v.literal("formula"), v.literal("adaptive")), appliedLocalDate: v.string() })),
   }),
-  handler: async (ctx, { rangeDays }) => {
+  handler: async (ctx, { rangeDays, localDate: requestedDate }) => {
     const userId = await requireUserId(ctx);
     if (!Number.isInteger(rangeDays) || rangeDays < 1 || rangeDays > MAX_PROGRESS_RANGE_DAYS) {
       throw new Error(`rangeDays must be an integer from 1 to ${MAX_PROGRESS_RANGE_DAYS}`);
     }
-    const { localDate } = await resolveLocalDay(ctx, userId, Date.now());
+    const localDate = await localDateOrToday(ctx, userId, requestedDate);
     const from = addDays(localDate, 1 - MAX_PROGRESS_RANGE_DAYS);
     const [input, rows, latestSnapshot] = await Promise.all([
       tdeeInput(ctx, userId, localDate),
@@ -131,5 +131,41 @@ export const summary = query({
       gate: { status: result.status, reasons, windowDays: result.windowDays, weighIns: result.weighIns, loggedFraction: result.loggedFraction, loggedDays: Math.round(result.loggedFraction * result.windowDays), minDays: TDEE_MIN_WINDOW_DAYS, minWeighIns: TDEE_MIN_WEIGH_INS, minLoggedFraction: TDEE_MIN_LOGGED_FRACTION },
       target: calorieTarget(input.settings, input.baseline, latestSnapshot, localDate),
     };
+  },
+});
+
+/** Saves the profile inputs for the formula, then clears and re-freezes the weekly target. */
+export const saveProfile = mutation({
+  args: {
+    goal: v.union(v.literal("lose"), v.literal("maintain"), v.literal("gain")),
+    sex: v.union(v.literal("male"), v.literal("female")),
+    heightCm: v.number(),
+    dob: v.string(),
+    activity: v.union(
+      v.literal("sedentary"),
+      v.literal("light"),
+      v.literal("moderate"),
+      v.literal("active"),
+      v.literal("very_active"),
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    if (!Number.isFinite(args.heightCm) || args.heightCm < 100 || args.heightCm > 250) {
+      throw new Error(`heightCm must be within 100-250, got ${args.heightCm}`);
+    }
+    const localDate = await localDateOrToday(ctx, userId, undefined);
+    const age = ageOnDate(args.dob, localDate);
+    if (age === null || age < 13 || age > 120) {
+      throw new Error(`dob must be a valid date giving an age of 13-120, got ${args.dob}`);
+    }
+    await assertLedgerWritable(ctx, userId);
+    const profile = { goal: args.goal, sex: args.sex, heightCm: args.heightCm, dob: args.dob, activity: args.activity };
+    const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
+    if (settings === null) await ctx.db.insert("user_settings", { userId, ...profile });
+    else await ctx.db.patch("user_settings", settings._id, { ...profile, calorieTarget: undefined });
+    await initializeCalorieTarget(ctx, userId);
+    return null;
   },
 });

@@ -10,6 +10,7 @@ import { TDEE_USER_BATCH_SIZE } from "./tdee_recompute";
 const modules = import.meta.glob("./**/*.*s");
 const TODAY = "2026-10-15";
 const BASELINE = (mifflinStJeor({ weightKg: 70, heightCm: 175, ageYears: 26, sex: "male" }) ?? 0) * ACTIVITY_FACTORS.moderate;
+const PROFILE = { goal: "maintain", sex: "male", heightCm: 175, dob: "2000-01-01", activity: "moderate" } as const;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -301,4 +302,30 @@ test("one old weigh-in warms the trend without stretching the gate window to 28 
   expect(result.snapshot).toMatchObject({ windowDays: 15 });
   // The 72 kg weigh-in seeds the EMA, so the trend sits above the flat 70 kg of the window.
   expect(result.snapshot?.trendKg).toBeGreaterThan(70);
+});
+
+test("saveProfile requires authentication and validates height and birth date", async () => {
+  const { t, user } = await setup();
+  await expect(t.mutation(api.progress_v2.saveProfile, PROFILE)).rejects.toThrow(/Unauthenticated/);
+  for (const heightCm of [99, 251, Infinity]) {
+    await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, heightCm })).rejects.toThrow(/heightCm/);
+  }
+  for (const dob of ["2026-13-01", "2026-10-15", "1900-01-01"]) {
+    await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, dob })).rejects.toThrow(/dob/);
+  }
+});
+
+test("saving a profile then logging a weight gives a formula target", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.saveProfile, PROFILE);
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target).toEqual({ kcal: Math.round(BASELINE), source: "formula", appliedLocalDate: TODAY });
+});
+
+test("changing the goal re-freezes the calorie target at once", async () => {
+  const { user } = await setup();
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBe(Math.round(BASELINE));
+  await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose" });
+  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBe(Math.round(BASELINE + GOAL_KCAL_OFFSETS.lose));
 });
