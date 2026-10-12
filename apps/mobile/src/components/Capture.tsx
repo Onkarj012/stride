@@ -143,6 +143,28 @@ export function VoiceCapture({ onDone, onCancel }: { onDone: (uri: string) => vo
 function CameraGate({ children, onLibrary, onCancel, problem }: { children: ReactNode; onLibrary?: () => void; onCancel: () => void; problem?: string | null }) {
   const s = useStyles()
   const [permission, request] = useCameraPermissions()
+  const [accessProblem, setAccessProblem] = useState<string | null>(null)
+
+  // Requests camera access and explains a failed permission call.
+  async function allowCamera() {
+    setAccessProblem(null)
+    try {
+      await request()
+    } catch {
+      setAccessProblem("Couldn't request camera access. Try again, or type instead.")
+    }
+  }
+
+  // Opens system settings and explains when the operating system cannot open them.
+  async function openSettings() {
+    setAccessProblem(null)
+    try {
+      await Linking.openSettings()
+    } catch {
+      setAccessProblem("Couldn't open Settings. Open them on your device, or type instead.")
+    }
+  }
+
   if (permission === null) return <View style={s.cam} />
   if (permission.granted) return <>{children}</>
   return (
@@ -150,11 +172,12 @@ function CameraGate({ children, onLibrary, onCancel, problem }: { children: Reac
       <Text style={s.askTitle}>Camera is off.</Text>
       <Text style={s.askBody}>Stride uses it to see your plate or scan a barcode. Nothing is saved to your gallery.</Text>
       {problem ? <Text style={s.askBody}>{problem}</Text> : null}
+      {accessProblem ? <Text style={s.askBody}>{accessProblem}</Text> : null}
       <View style={s.row}>
         {permission.canAskAgain ? (
-          <Button label="Allow camera" variant="coral" onPress={() => void request()} />
+          <Button label="Allow camera" variant="coral" onPress={() => void allowCamera()} />
         ) : (
-          <Button label="Open settings" variant="coral" onPress={() => void Linking.openSettings()} />
+          <Button label="Open settings" variant="coral" onPress={() => void openSettings()} />
         )}
         {onLibrary ? <Button label="Pick a photo" variant="ghost" onPress={onLibrary} /> : null}
       </View>

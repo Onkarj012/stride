@@ -55,6 +55,19 @@ export function localDate(instantMs: number, timeZone: string): string {
   return localDateTime(instantMs, timeZone).date;
 }
 
+/** First instant of the next local day, including days shortened or extended by DST. */
+export function nextLocalMidnight(instantMs: number, timeZone: string): number {
+  const date = localDate(instantMs, timeZone);
+  let before = instantMs;
+  let after = instantMs + 26 * 60 * 60 * 1000;
+  while (after - before > 1) {
+    const middle = Math.floor((before + after) / 2);
+    if (localDate(middle, timeZone) === date) before = middle;
+    else after = middle;
+  }
+  return after;
+}
+
 /** Slot for a local wall-clock time: before 11:00 breakfast, before 16:00 lunch, before 19:00 snack, else dinner. */
 export function inferSlot(hour: number, minute = 0): MealSlot {
   const minutes = hour * 60 + minute;

@@ -10,6 +10,7 @@ import {
   isValidTimeZone,
   localDate,
   localDateTime,
+  nextLocalMidnight,
   slotAt,
   shiftMonth,
   weekdayOf,
@@ -21,6 +22,11 @@ const NY = "America/New_York";
 const at = (iso: string) => Date.parse(iso);
 
 describe("IST midnight boundary", () => {
+  it("finds the next midnight to the millisecond, including month rollover", () => {
+    expect(nextLocalMidnight(at("2026-10-31T18:29:59.999Z"), IST)).toBe(at("2026-10-31T18:30:00Z"));
+    expect(nextLocalMidnight(at("2026-10-31T18:30:00Z"), IST)).toBe(at("2026-11-01T18:30:00Z"));
+  });
+
   it("rolls the date at 18:30 UTC", () => {
     expect(localDate(at("2026-10-05T18:29:59.999Z"), IST)).toBe("2026-10-05");
     expect(localDate(at("2026-10-05T18:30:00.000Z"), IST)).toBe("2026-10-06");
@@ -42,6 +48,24 @@ describe("IST midnight boundary", () => {
 });
 
 describe("DST boundaries in America/New_York", () => {
+  it("finds the next midnight after a 23-hour spring-forward day", () => {
+    const start = at("2026-03-08T05:00:00Z");
+    const next = nextLocalMidnight(start, NY);
+    expect(next).toBe(at("2026-03-09T04:00:00Z"));
+    expect(next - start).toBe(23 * 3_600_000);
+    expect(localDate(next - 1, NY)).toBe("2026-03-08");
+    expect(localDate(next, NY)).toBe("2026-03-09");
+  });
+
+  it("finds the next midnight after a 25-hour fall-back day", () => {
+    const start = at("2026-11-01T04:00:00Z");
+    const next = nextLocalMidnight(start, NY);
+    expect(next).toBe(at("2026-11-02T05:00:00Z"));
+    expect(next - start).toBe(25 * 3_600_000);
+    expect(localDate(next - 1, NY)).toBe("2026-11-01");
+    expect(localDate(next, NY)).toBe("2026-11-02");
+  });
+
   it("handles spring forward on 2026-03-08 (02:00 EST jumps to 03:00 EDT)", () => {
     expect(localDateTime(at("2026-03-08T06:59:00Z"), NY)).toEqual({ date: "2026-03-08", hour: 1, minute: 59 });
     expect(localDateTime(at("2026-03-08T07:00:00Z"), NY)).toEqual({ date: "2026-03-08", hour: 3, minute: 0 });
