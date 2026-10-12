@@ -31,6 +31,7 @@ export default function SignInScreen() {
   const [step, setStep] = useState<'password' | 'code'>('password')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [hop, setHop] = useState(1)
@@ -101,18 +102,29 @@ export default function SignInScreen() {
                 textContentType="emailAddress"
                 returnKeyType="next"
               />
-              <TextInput
-                style={s.input}
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Password"
-                placeholderTextColor={t.c.ink3}
-                secureTextEntry
-                autoComplete="current-password"
-                textContentType="password"
-                returnKeyType="go"
-                onSubmitEditing={() => canSubmit && void submitPassword()}
-              />
+              <View style={s.passwordWrap}>
+                <TextInput
+                  style={[s.input, s.passwordInput]}
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Password"
+                  placeholderTextColor={t.c.ink3}
+                  secureTextEntry={!showPassword}
+                  autoComplete="current-password"
+                  textContentType="password"
+                  returnKeyType="go"
+                  onSubmitEditing={() => canSubmit && void submitPassword()}
+                />
+                <Text
+                  style={s.reveal}
+                  onPress={() => setShowPassword((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                  suppressHighlighting
+                >
+                  {showPassword ? 'Hide' : 'Show'}
+                </Text>
+              </View>
             </>
           ) : (
             <TextInput
@@ -151,6 +163,7 @@ export default function SignInScreen() {
                 setStep('password')
                 setCode('')
                 setError(null)
+                setShowPassword(false)
                 void signIn.reset()
               }}
             >
@@ -178,6 +191,9 @@ const useStyles = themedStyles((t) => ({
     boxShadow: t.shadow.card,
     color: t.c.ink,
   },
+  passwordWrap: { justifyContent: 'center' },
+  passwordInput: { paddingRight: 64 },
+  reveal: { ...font('link'), color: t.c.ink2, position: 'absolute', right: 0, paddingHorizontal: 16, paddingVertical: 14 },
   codeInput: { ...font('section'), letterSpacing: 6, textAlign: 'center' },
   error: { ...font('caption'), color: t.c.poloInk, marginTop: 2 },
   button: {
