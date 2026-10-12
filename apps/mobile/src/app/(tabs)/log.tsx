@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 import Svg, { Circle } from 'react-native-svg'
 import { useQuery } from 'convex/react'
@@ -12,6 +12,7 @@ import { Screen, ScreenTitle } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
 import { MONTHS_LONG, formatDayTitle, formatNumber, weekdayOf } from '@/lib/format'
 import { DEFAULT_TARGETS } from '@/lib/log'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
@@ -37,14 +38,7 @@ function shiftMonth({ year, month }: Month, by: -1 | 1): Month {
 
 // Log tab (mock #/week): a month of day rings, then the chosen day's meals and totals.
 export default function LogScreen() {
-  const today = useQuery(api.day_totals.dayTotals, {})?.localDate
-  if (!today)
-    return (
-      <Screen>
-        <ScreenTitle eyebrow="Log" title={MONTHS_LONG[new Date().getMonth()] ?? 'This month'} />
-        <Thinking label="Opening your history…" />
-      </Screen>
-    )
+  const today = useLocalToday()
   return <History today={today} />
 }
 
@@ -56,6 +50,20 @@ function History({ today }: { today: string }) {
   const current: Month = { year: y ?? 1970, month: m ?? 1 }
   const [month, setMonth] = useState<Month>(current)
   const [selected, setSelected] = useState(today)
+  const selectedDate = useRef(selected)
+  selectedDate.current = selected
+  const previousToday = useRef(today)
+  useEffect(() => {
+    const previous = previousToday.current
+    previousToday.current = today
+    if (previous === today) return
+    if (selectedDate.current !== previous) return
+    setSelected((date) => date === previous ? today : date)
+    const [year, monthNumber] = today.split('-').map(Number)
+    if (year !== undefined && monthNumber !== undefined) {
+      setMonth((shown) => dateOf(shown, 1) === `${previous.slice(0, 7)}-01` ? { year, month: monthNumber } : shown)
+    }
+  }, [today])
   const total = daysIn(month)
   const from = dateOf(month, 1)
   const to = dateOf(month, total)

@@ -77,10 +77,10 @@ export async function readAudioBase64(uri: string): Promise<string> {
 }
 
 // Uploads a photo to a Convex upload URL and returns its storage id.
-export async function uploadPhoto(uploadUrl: string, uri: string): Promise<StorageId> {
+export async function uploadPhoto(uploadUrl: string, uri: string, token: string): Promise<StorageId> {
   const file = new File(uri)
   if ((file.size ?? 0) > MAX_PHOTO_BYTES) throw new PlainError('That photo is too large. Try again from a little further away.')
-  const res = await file.upload(uploadUrl, { httpMethod: 'POST', headers: { 'Content-Type': 'image/jpeg' } })
+  const res = await file.upload(uploadUrl, { httpMethod: 'POST', headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` } })
   if (res.status < 200 || res.status >= 300) throw new PlainError(`Photo upload failed (${res.status}). Try again.`)
   const body: unknown = JSON.parse(res.body)
   if (typeof body !== 'object' || body === null || !('storageId' in body) || typeof body.storageId !== 'string')

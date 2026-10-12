@@ -16,8 +16,6 @@ export function groupMeals(entries: EntryView[]): Meal[] {
     const meal = bySlot.get(e.slot)
     if (meal) {
       meal.entries.push(e)
-      meal.kcal += e.nutrients.kcal
-      meal.protein += e.nutrients.protein
       meal.firstAt = Math.min(meal.firstAt, e.loggedAt)
       meal.estimated ||= e.flags.includes('estimated')
     } else
@@ -25,8 +23,8 @@ export function groupMeals(entries: EntryView[]): Meal[] {
         slot: e.slot,
         firstAt: e.loggedAt,
         entries: [e],
-        kcal: e.nutrients.kcal,
-        protein: e.nutrients.protein,
+        kcal: e.mealNutrients.kcal,
+        protein: e.mealNutrients.protein,
         estimated: e.flags.includes('estimated'),
       })
   }

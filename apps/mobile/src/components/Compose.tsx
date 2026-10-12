@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeInDown } from 'react-native-reanimated'
 import { useAction, useMutation } from 'convex/react'
+import { useAuth } from '@clerk/expo'
 import type { FunctionArgs } from 'convex/server'
 import { inferSlot } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
@@ -12,6 +13,7 @@ import {
   linesKcal,
   newSubmissionId,
   plainError,
+  PlainError,
   readAudioBase64,
   uploadPhoto,
   type BarcodeFood,
@@ -19,6 +21,7 @@ import {
   type EntryId,
   type LogLine,
   type LogResult,
+  type MealSlot,
 } from '@/lib/log'
 import { font, themedStyles, useTheme } from '@/theme'
 import { BarcodeScanner, PhotoCapture, ScanningPhoto, VoiceCapture } from './Capture'
@@ -60,20 +63,20 @@ function namesOf(lines: LogLine[]): string {
 }
 
 // The compose sheet (mock #/compose): type, talk, snap or scan; then auto-log with undo, or a draft that asks.
-export function Compose({ initialMode, onClose }: { initialMode: ComposeMode; onClose: () => void }) {
+export function Compose({ initialMode, defaultSlot, initialDraftId, onClose }: { initialMode: ComposeMode; defaultSlot?: MealSlot; initialDraftId?: DraftId; onClose: () => void }) {
   const t = useTheme()
   const s = useStyles()
   const { toast, undoFor } = useLog()
+  const { getToken } = useAuth()
   const logInput = useAction(api.pipeline.log.logInput)
   const lookupBarcode = useAction(api.pipeline.barcode.lookupBarcode)
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl)
-  const registerUpload = useMutation(api.uploads.registerUpload)
-  const [phase, setPhase] = useState<Phase>(() => (initialMode === 'text' ? { kind: 'input' } : { kind: initialMode }))
+  const [phase, setPhase] = useState<Phase>(() => initialDraftId ? { kind: 'draft', draftId: initialDraftId } : (initialMode === 'text' ? { kind: 'input' } : { kind: initialMode }))
   const [text, setText] = useState('')
   const [hops, setHops] = useState(1)
   const alive = useRef(true)
   const now = new Date()
-  const slot = SLOT_NAMES[inferSlot(now.getHours(), now.getMinutes())]
+  const slot = SLOT_NAMES[defaultSlot ?? inferSlot(now.getHours(), now.getMinutes())]
   const clock = formatClock(`${now.getHours()}:${now.getMinutes()}`, true)
 
   useEffect(() => {
@@ -113,7 +116,7 @@ export function Compose({ initialMode, onClose }: { initialMode: ComposeMode; on
   async function run(input: LogInput, label: string, submissionId = newSubmissionId(), photoUri?: string) {
     go({ kind: 'working', label, photoUri })
     try {
-      handle(await logInput({ submissionId, input }))
+      handle(await logInput({ submissionId, input, ...(defaultSlot ? { defaultSlot } : {}) }))
     } catch (err) {
       go({ kind: 'error', message: plainError(err), retry: () => void run(input, label, submissionId, photoUri) })
     }
@@ -151,8 +154,9 @@ export function Compose({ initialMode, onClose }: { initialMode: ComposeMode; on
     const attempt = async () => {
       go({ kind: 'working', label: 'Looking at your plate…', photoUri: uri })
       try {
-        const storageId = await uploadPhoto(await generateUploadUrl({}), uri)
-        await registerUpload({ storageId })
+        const token = await getToken({ template: 'convex' })
+        if (!token) throw new PlainError('You are signed out. Sign in again.')
+        const storageId = await uploadPhoto(await generateUploadUrl({}), uri, token)
         await run({ kind: 'photo', storageId }, 'Looking at your plate…', submissionId, uri)
       } catch (err) {
         go({ kind: 'error', message: plainError(err), retry: () => void attempt() })
@@ -285,6 +289,7 @@ export function Compose({ initialMode, onClose }: { initialMode: ComposeMode; on
       {phase.kind === 'product' ? (
         <BarcodeProduct
           food={phase.food}
+          defaultSlot={defaultSlot}
           onLogged={(entryIds, kcal) => {
             toast({
               title: `Logged · ${formatNumber(kcal)} kcal`,
@@ -344,10 +349,12 @@ export function LineList({ title, lines }: { title: string; lines: LogLine[] }) 
 // A scanned product: pick the grams, then log it with addEntries. Nutrients come back from the server.
 function BarcodeProduct({
   food,
+  defaultSlot,
   onLogged,
   onRescan,
 }: {
   food: BarcodeFood
+  defaultSlot?: MealSlot
   onLogged: (entryIds: EntryId[], kcal: number) => void
   onRescan: () => void
 }) {
@@ -366,7 +373,7 @@ function BarcodeProduct({
     setBusy(true)
     setProblem(null)
     try {
-      const ids = await addEntries({ submissionId: submissionId.current, items: [{ foodId: food.foodId, grams, source: 'barcode' }] })
+      const ids = await addEntries({ submissionId: submissionId.current, items: [{ foodId: food.foodId, grams, source: 'barcode', ...(defaultSlot ? { slot: defaultSlot } : {}) }] })
       onLogged(ids, kcal)
     } catch (err) {
       setProblem(plainError(err))

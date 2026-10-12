@@ -6,6 +6,7 @@ import { api } from 'stride-backend/convex/_generated/api'
 import { motion, radii } from '@stride/ui-tokens'
 import { formatDayTitle, formatGrams, formatNumber } from '@/lib/format'
 import { plainError, type DraftId, type DraftItem, type FoodId, type LogResult } from '@/lib/log'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button, RoundButton, Stepper, Tag, Thinking } from './Controls'
 import { Tap } from './Tap'
@@ -50,7 +51,7 @@ export function DraftCard({
 }) {
   const s = useStyles()
   const draft = useQuery(api.pipeline.drafts.getDraft, { draftId })
-  const today = useQuery(api.day_totals.dayTotals, {})?.localDate
+  const today = useLocalToday()
   const confirmDraft = useMutation(api.pipeline.drafts.confirmDraft)
   const discardDraft = useMutation(api.pipeline.drafts.discardDraft)
   const [fixes, setFixes] = useState<Record<number, Fix>>({})
@@ -80,14 +81,22 @@ export function DraftCard({
     setBusy('confirm')
     setProblem(null)
     const corrections = Object.entries(fixes)
-      .map(([index, fix]) => ({
-        index: Number(index),
-        ...(fix.remove ? { remove: true } : {}),
-        ...(fix.foodId ? { foodId: fix.foodId } : {}),
-        ...(fix.grams !== undefined ? { grams: fix.grams } : {}),
-        ...(fix.quantity !== undefined && fix.grams === undefined ? { quantity: fix.quantity } : {}),
-        ...(fix.localDate ? { localDate: fix.localDate } : {}),
-      }))
+      .map(([index, fix]) => {
+        const item = draft.items[Number(index)]
+        // Quantity previews already include any portion fraction; save those same grams.
+        const scaledGrams = fix.quantity !== undefined && item?.grams !== null && item?.grams !== undefined &&
+          item.quantity !== null && item.quantity > 0 && (fix.foodId === undefined || fix.foodId === item.food?._id)
+          ? item.grams * fix.quantity / item.quantity : undefined
+        const grams = fix.grams ?? scaledGrams
+        return {
+          index: Number(index),
+          ...(fix.remove ? { remove: true } : {}),
+          ...(fix.foodId ? { foodId: fix.foodId } : {}),
+          ...(grams !== undefined ? { grams } : {}),
+          ...(fix.quantity !== undefined && grams === undefined ? { quantity: fix.quantity } : {}),
+          ...(fix.localDate ? { localDate: fix.localDate } : {}),
+        }
+      })
       // An undone change leaves only the index; sending it would mark the item as user-corrected.
       .filter((c) => Object.keys(c).length > 1)
     try {

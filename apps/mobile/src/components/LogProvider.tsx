@@ -1,16 +1,17 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
-import { newSubmissionId, plainError, type EntryId, type MealSlot } from '@/lib/log'
+import { newSubmissionId, plainError, type DraftId, type EntryId, type MealSlot } from '@/lib/log'
 import { Compose, type ComposeMode } from './Compose'
 import { MealSheet } from './MealSheet'
 import { Sheet } from './Sheet'
 import { Toast, type ToastMessage } from './Toast'
 
-type SheetContent = { kind: 'compose'; mode: ComposeMode } | { kind: 'meal'; localDate: string; slot: MealSlot }
+type SheetContent = { kind: 'compose'; mode: ComposeMode; defaultSlot?: MealSlot; draftId?: DraftId } | { kind: 'meal'; localDate: string; slot: MealSlot }
 
 type LogApi = {
-  compose: (mode?: ComposeMode) => void
+  compose: (mode?: ComposeMode, defaultSlot?: MealSlot) => void
+  openDraft: (draftId: DraftId) => void
   openMeal: (localDate: string, slot: MealSlot) => void
   toast: (message: Omit<ToastMessage, 'id'>) => void
   // Builds an undo that reverts the latest revision of each entry, with its own toast on success or failure.
@@ -81,7 +82,8 @@ export function LogProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<LogApi>(
     () => ({
-      compose: (mode = 'text') => show({ kind: 'compose', mode }),
+      compose: (mode = 'text', defaultSlot) => show({ kind: 'compose', mode, defaultSlot }),
+      openDraft: (draftId) => show({ kind: 'compose', mode: 'text', draftId }),
       openMeal: (localDate, slot) => show({ kind: 'meal', localDate, slot }),
       toast,
       undoFor,
@@ -94,7 +96,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
     <LogContext.Provider value={value}>
       {children}
       <Sheet open={open} onClose={close} onClosed={closed}>
-        {content?.kind === 'compose' ? <Compose initialMode={content.mode} onClose={close} /> : null}
+        {content?.kind === 'compose' ? <Compose initialMode={content.mode} defaultSlot={content.defaultSlot} initialDraftId={content.draftId} onClose={close} /> : null}
         {content?.kind === 'meal' ? (
           <MealSheet localDate={content.localDate} slot={content.slot} onClose={close} />
         ) : null}

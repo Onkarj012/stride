@@ -15,6 +15,7 @@ import { Screen, Section } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
 import { formatDateline, formatNumber, greeting } from '@/lib/format'
 import { DEFAULT_TARGETS, plainError, type MealSlot } from '@/lib/log'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
 const AROUND: Record<MealSlot, string> = { breakfast: '8:30', lunch: '1:30', snack: '5:00', dinner: '8:30' }
@@ -45,11 +46,12 @@ export default function TodayScreen() {
   const s = useStyles()
   const { user } = useUser()
   const { signOut } = useAuth()
-  const { compose, openMeal } = useLog()
+  const { compose, openMeal, openDraft } = useLog()
   const minutes = useClockMinutes()
-  const totals = useQuery(api.day_totals.dayTotals, {})
-  const entries = useQuery(api.entries.entriesForDay, {})
-  const today = totals?.localDate
+  const today = useLocalToday()
+  const totals = useQuery(api.day_totals.dayTotals, { localDate: today })
+  const entries = useQuery(api.entries.entriesForDay, { localDate: today })
+  const pendingDrafts = useQuery(api.pipeline.drafts.listPendingDrafts, {})
 
   const name = user?.firstName || user?.username || 'there'
   const now = new Date()
@@ -133,7 +135,16 @@ export default function TodayScreen() {
         ) : null}
       </View>
 
-      {!night && today ? <WeighCard today={today} /> : null}
+      {!night && today ? <WeighCard key={today} today={today} /> : null}
+
+      {pendingDrafts?.map((draft) => (
+        <Tap key={draft._id} style={[s.card, s.weighCard, s.weighSaved]} onPress={() => openDraft(draft._id)} accessibilityRole="button">
+          <View style={s.grow}>
+            <Text style={s.weighNote}>You have an unfinished log</Text>
+            <Text style={s.faintSmall}>{draft.itemCount} item{draft.itemCount === 1 ? '' : 's'} · tap to resume</Text>
+          </View>
+        </Tap>
+      ))}
 
       <Section title="Meals" link="History" onLink={() => router.navigate('/log')} />
       <View style={s.mealsCard}>
@@ -149,7 +160,7 @@ export default function TodayScreen() {
             {meals.map((m, i) => (
               <MealRow key={m.slot} meal={m} first={i === 0} onPress={() => today && openMeal(today, m.slot)} />
             ))}
-            {showNext ? <NextMealRow slot={slotNow} around={AROUND[slotNow]} first={false} onPress={() => compose('text')} /> : null}
+            {showNext ? <NextMealRow slot={slotNow} around={AROUND[slotNow]} first={false} onPress={() => compose('text', slotNow)} /> : null}
           </>
         )}
       </View>
@@ -178,7 +189,7 @@ function WeighCard({ today }: { today: string }) {
   async function save() {
     setBusy(true)
     try {
-      await logWeight({ kg })
+      await logWeight({ kg, localDate: today })
       setEditing(false)
       setDraft(null)
       toast({ title: `Weight saved · ${kg.toFixed(1)} kg`, sub: "Trend barely moves on one day. That's the point." })
