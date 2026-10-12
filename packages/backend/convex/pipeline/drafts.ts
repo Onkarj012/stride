@@ -1,4 +1,4 @@
-import { daysBetween, isLocalDate, roundNutrients, scaleNutrients } from "@stride/core";
+import { daysBetween, isLocalDate, scaleNutrients } from "@stride/core";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
@@ -96,7 +96,7 @@ async function rememberLink(ctx: MutationCtx, userId: string, text: string, food
   else await ctx.db.insert("food_links", { userId, key, foodId, status: "active", uses: 1, updatedAt: now });
 }
 
-/** One draft for its card, with preview nutrients computed from `foods` × grams and rounded once. */
+/** One draft for its card, with preview nutrients computed from `foods` × grams. Values are unrounded; the app rounds for display. */
 export const getDraft = query({
   args: { draftId: v.id("drafts") },
   returns: v.union(draftViewValidator, v.null()),
@@ -121,7 +121,7 @@ export const getDraft = query({
         requestedDate: item.requestedDate ?? null,
         food: food === null ? null : { _id: food._id, name: food.name },
         grams: item.grams ?? null,
-        preview: food !== null && item.grams !== undefined ? roundNutrients(scaleNutrients(food.per100g, item.grams)) : null,
+        preview: food !== null && item.grams !== undefined ? scaleNutrients(food.per100g, item.grams) : null,
         unresolved: item.unresolved ?? null,
         reasons: item.reasons ?? [],
         estimated: item.fromPhoto === true,

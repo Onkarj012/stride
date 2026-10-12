@@ -7,7 +7,6 @@ import {
   isLocalDate,
   rankCandidates,
   resolvePortion,
-  roundTo,
   scaleNutrients,
   selectMatch,
   type GateItem,
@@ -84,7 +83,7 @@ export interface ResolvedItem {
   flags: string[];
 }
 
-/** One line of a log result card. Numbers come from `foods` × grams, rounded for display only. */
+/** One line of a log result card. Numbers come from `foods` × grams and are unrounded; the app rounds for display only. */
 export const logLineValidator = v.object({
   text: v.string(),
   foodName: v.union(v.string(), v.null()),
@@ -305,7 +304,7 @@ async function entryLines(ctx: Ctx, ids: readonly Id<"entries">[]): Promise<LogL
       text: row.foodName,
       foodName: row.foodName,
       grams: row.grams,
-      kcal: roundTo(row.nutrients.kcal, 0),
+      kcal: row.nutrients.kcal,
       reasons: [],
       estimated: row.flags.includes("estimated"),
     });
@@ -322,7 +321,7 @@ export async function draftLines(ctx: Ctx, draft: Doc<"drafts">): Promise<LogLin
       text: item.text,
       foodName: food?.name ?? null,
       grams: item.grams ?? null,
-      kcal: food !== null && item.grams !== undefined ? roundTo(scaleNutrients(food.per100g, item.grams).kcal, 0) : null,
+      kcal: food !== null && item.grams !== undefined ? scaleNutrients(food.per100g, item.grams).kcal : null,
       reasons: item.reasons ?? [],
       estimated: item.fromPhoto === true,
     });

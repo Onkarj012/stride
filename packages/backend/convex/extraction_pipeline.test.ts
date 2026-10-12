@@ -168,9 +168,9 @@ describe("gate: auto-commit vs draft", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ foodId: foods.chapati, grams: 80, source: "db", createdBy: "ai", status: "live" });
     expect(result.undoUntil).toBe((rows[0]?._creationTime ?? 0) + UNDO_WINDOW_MS);
-    expect(result.lines).toEqual([
-      { text: "Chapati", foodName: "Chapati", grams: 80, kcal: 238, reasons: [], estimated: false },
-    ]);
+    expect(result.lines).toHaveLength(1);
+    expect(result.lines[0]).toMatchObject({ text: "Chapati", foodName: "Chapati", grams: 80, reasons: [], estimated: false });
+    expect(result.lines[0]?.kcal).toBeCloseTo(237.6, 6);
     await expectComputedFromFoods(t);
     expect(JSON.stringify(rows)).not.toContain("9999");
   });
@@ -192,6 +192,24 @@ describe("gate: auto-commit vs draft", () => {
       preview: null,
     });
     expect(draft?.items[0]?.reasons).toContain("unresolved_portion");
+  });
+});
+
+describe("line kcal stays unrounded until the app displays it", () => {
+  test("lines of 100.4 and 200.4 kcal come back unrounded, and their sum rounds to 301", async () => {
+    const { t, user } = await setup();
+    const food = (name: string, kcal: number) => ({ name, aliases: [], searchText: name, per100g: { kcal, protein: 0, carbs: 0, fat: 0, fiber: null, sugar: null, sodiumMg: null }, source: "fdc" as const, sourceId: name, verified: true });
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", food("Alpha Snack", 100.4));
+      await ctx.db.insert("foods", food("Beta Snack", 200.4));
+    });
+    llm = () => extraction([{ food: "Alpha Snack", quantity: 100, unit: "g" }, { food: "Beta Snack", quantity: 100, unit: "g" }]);
+    const result = await logText(user, "100 g alpha snack and 100 g beta snack", "unrounded-lines");
+    // Either result kind carries lines built the same way; this food pair lands in a draft on the clamp check.
+    const kcal = result.lines.map((line) => line.kcal ?? NaN).sort((a, b) => a - b);
+    expect(kcal[0]).toBeCloseTo(100.4, 6);
+    expect(kcal[1]).toBeCloseTo(200.4, 6);
+    expect(Math.round((kcal[0] ?? 0) + (kcal[1] ?? 0))).toBe(301);
   });
 });
 
