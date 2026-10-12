@@ -52,6 +52,8 @@ export function LogProvider({ children }: { children: ReactNode }) {
         setOpen(false)
         return
       }
+      // Drop any opening queued behind a close that is still running, so it cannot pop up later.
+      next.current = null
       setContent(opening)
       setOpen(true)
     },

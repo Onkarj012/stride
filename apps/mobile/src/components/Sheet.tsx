@@ -80,7 +80,9 @@ export function Sheet({ open, onClose, onClosed, children }: SheetProps) {
     [drag, onClose],
   )
 
+  // Shrinks the sheet while the keyboard is up so its header stays on screen.
   const sheetStyle = useAnimatedStyle(() => ({
+    maxHeight: Math.max(height * 0.4, height * 0.88 - keyboard.height.value),
     transform: [{ translateY: y.value + drag.value - keyboard.height.value }],
   }))
   const scrimStyle = useAnimatedStyle(() => ({ opacity: scrim.value }))
@@ -92,7 +94,7 @@ export function Sheet({ open, onClose, onClosed, children }: SheetProps) {
       <Animated.View style={[s.scrim, scrimStyle]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
       </Animated.View>
-      <Animated.View style={[s.sheet, { maxHeight: height * 0.88 }, sheetStyle]}>
+      <Animated.View style={[s.sheet, sheetStyle]}>
         <View {...pan.panHandlers} style={s.grabZone}>
           <View style={s.grab} />
         </View>
