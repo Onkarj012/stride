@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { addDays } from "../time/local_day.ts";
 import { adaptiveTdee, KCAL_PER_KG, TDEE_CLAMP, type TdeeDay } from "./adaptive_tdee.ts";
 import { katchMcArdle, mifflinStJeor } from "./bmr.ts";
+import { formulaBaseline, goalTargetKcal, scaleMacroTargets } from "./targets.ts";
 import {
   budgetAdjustmentKcal,
   densityFromSets,
@@ -32,6 +33,43 @@ describe("BMR", () => {
     expect(mifflinStJeor({ ...full, weightKg: Number.NaN })).toBeNull();
     expect(katchMcArdle({ weightKg: 80, bodyFatPct: null })).toBeNull();
     expect(katchMcArdle({ weightKg: 80, bodyFatPct: 75 })).toBeNull();
+  });
+});
+
+describe("daily targets", () => {
+  it("uses measured weight and the age on the local date without rounding maintenance", () => {
+    const profile = { heightCm: 175, dob: "2000-10-15", sex: "male", activity: "moderate" } as const;
+    expect(formulaBaseline(profile, 70, "2026-10-14")).toBeCloseTo(1673.75 * 1.55, 9);
+    expect(formulaBaseline(profile, 70, "2026-10-15")).toBeCloseTo(1668.75 * 1.55, 9);
+    expect(formulaBaseline(profile, null, "2026-10-15")).toBeNull();
+    expect(formulaBaseline({ heightCm: profile.heightCm, dob: profile.dob, sex: profile.sex }, 70, "2026-10-15")).toBeNull();
+  });
+
+  it("applies each goal offset before clamping and rounds only the final target", () => {
+    expect(goalTargetKcal(2400, 2400, "lose")).toBe(1900);
+    expect(goalTargetKcal(2400, 2300.6, "maintain")).toBe(2301);
+    expect(goalTargetKcal(2400, 2400, "gain")).toBe(2700);
+    expect(goalTargetKcal(2000, 1500, "lose")).toBe(1500);
+    expect(goalTargetKcal(2000, 2600, "gain")).toBe(2600);
+  });
+
+  it("property: every goal target stays inside the rounded baseline clamp", () => {
+    fc.assert(fc.property(
+      fc.integer({ min: 1200, max: 4000 }),
+      fc.integer({ min: 500, max: 6000 }),
+      fc.constantFrom("lose", "maintain", "gain"),
+      (baseline, maintenance, goal) => {
+        const target = goalTargetKcal(baseline, maintenance, goal);
+        expect(target).toBeGreaterThanOrEqual(Math.round(baseline * TDEE_CLAMP.min));
+        expect(target).toBeLessThanOrEqual(Math.round(baseline * TDEE_CLAMP.max));
+      },
+    ));
+  });
+
+  it("scales the reference macro split and retains it when there is no target", () => {
+    const reference = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 };
+    expect(scaleMacroTargets(null, reference)).toEqual(reference);
+    expect(scaleMacroTargets(2200, reference)).toEqual({ kcal: 2200, proteinG: 128, carbsG: 250, fatG: 70 });
   });
 });
 

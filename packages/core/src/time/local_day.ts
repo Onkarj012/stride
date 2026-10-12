@@ -86,6 +86,13 @@ export function isLocalDate(date: string): boolean {
   return dayNumber(date) !== null;
 }
 
+/** Age on a local calendar date, or null for missing, invalid or implausible birth dates. */
+export function ageOnDate(dob: string | undefined, date: string): number | null {
+  if (dob === undefined || !isLocalDate(dob) || !isLocalDate(date) || dob >= date) return null;
+  const age = Number(date.slice(0, 4)) - Number(dob.slice(0, 4)) - (date.slice(5) < dob.slice(5) ? 1 : 0);
+  return age > 0 && age < 130 ? age : null;
+}
+
 /** Day number of a date that must be valid; throws RangeError otherwise. */
 function requireDay(date: string): number {
   const n = dayNumber(date);

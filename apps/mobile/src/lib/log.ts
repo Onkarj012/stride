@@ -1,4 +1,5 @@
 import { ConvexError } from 'convex/values'
+import { scaleMacroTargets } from '@stride/core'
 import type { FunctionReturnType } from 'convex/server'
 import { getCalendars } from 'expo-localization'
 import { File } from 'expo-file-system'
@@ -28,14 +29,7 @@ export const SUMMARY_DAYS = 14
 
 // Daily targets from the backend kcal target, with the default macro split scaled to it; defaults when there is none.
 export function targetsFor(kcal: number | null): typeof DEFAULT_TARGETS {
-  if (kcal === null) return DEFAULT_TARGETS
-  const ratio = kcal / DEFAULT_TARGETS.kcal
-  return {
-    kcal,
-    proteinG: Math.round(DEFAULT_TARGETS.proteinG * ratio),
-    carbsG: Math.round(DEFAULT_TARGETS.carbsG * ratio),
-    fatG: Math.round(DEFAULT_TARGETS.fatG * ratio),
-  }
+  return scaleMacroTargets(kcal, DEFAULT_TARGETS)
 }
 
 /** Largest photo the backend accepts, mirrored here so the app can refuse it before uploading. */

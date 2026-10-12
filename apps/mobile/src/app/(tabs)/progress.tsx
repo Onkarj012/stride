@@ -36,21 +36,22 @@ export default function ProgressScreen() {
   const today = useLocalToday()
   const fresh = useQuery(api.progress_v2.summary, { rangeDays: range, localDate: today })
   // Keep showing the last range while a new one loads, so switching doesn't blank the screen.
-  const kept = useRef<Summary | undefined>(undefined)
-  if (fresh !== undefined) kept.current = fresh
-  const summary = fresh ?? kept.current
+  const kept = useRef<{ summary: Summary; range: number } | undefined>(undefined)
+  if (fresh !== undefined) kept.current = { summary: fresh, range }
+  const loaded = kept.current
+  const summary = loaded?.summary
   useBurnMilestone(summary?.snapshot != null)
 
   return (
     <Screen>
       <ScreenTitle eyebrow="Progress" title="Your trend" aside={<RangeSwitch value={range} onChange={setRange} />} />
-      {summary === undefined ? (
+      {loaded === undefined ? (
         <Thinking label="Reading your weigh-ins…" />
       ) : (
         <>
-          <WeightCard summary={summary} range={range} />
-          <BurnCard summary={summary} />
-          <WeekCard summary={summary} />
+          <WeightCard key={loaded.range} summary={loaded.summary} range={loaded.range} />
+          <BurnCard summary={loaded.summary} />
+          <WeekCard summary={loaded.summary} />
         </>
       )}
 

@@ -1,6 +1,6 @@
 import {
-  adaptiveTdee, addDays, daysBetween, isLocalDate, leastSquaresSlope, mifflinStJeor,
-  TDEE_CLAMP, TDEE_MAX_WINDOW_DAYS, TDEE_MIN_LOGGED_FRACTION, TDEE_MIN_WEIGH_INS,
+  adaptiveTdee, addDays, ageOnDate, daysBetween, formulaBaseline, goalTargetKcal, leastSquaresSlope,
+  TDEE_MAX_WINDOW_DAYS, TDEE_MIN_LOGGED_FRACTION, TDEE_MIN_WEIGH_INS,
   TDEE_MIN_WINDOW_DAYS, weightTrend, type TdeeDay,
 } from "@stride/core";
 import { v } from "convex/values";
@@ -9,27 +9,8 @@ import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/s
 import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
 import { assertLedgerWritable } from "./users";
 
-/** Fixed daily goal adjustments in kcal; the result is clamped to the formula maintenance baseline. */
-export const GOAL_KCAL_OFFSETS = { lose: -500, maintain: 0, gain: 300 } as const;
-/** Standard Mifflin maintenance multipliers for the profile's activity categories. */
-export const ACTIVITY_FACTORS = { sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725, very_active: 1.9 } as const;
 export const MAX_PROGRESS_RANGE_DAYS = 180;
 export const TARGET_UPDATE_DAYS = 7;
-
-/** Validated age on a local calendar date, with birthday handled without time-zone conversion. */
-function ageOnDate(dob: string | undefined, localDate: string): number | null {
-  if (dob === undefined || !isLocalDate(dob) || dob >= localDate) return null;
-  const age = Number(localDate.slice(0, 4)) - Number(dob.slice(0, 4)) - (localDate.slice(5) < dob.slice(5) ? 1 : 0);
-  return age > 0 && age < 130 ? age : null;
-}
-
-/** Formula maintenance using complete profile inputs and a measured body weight, with no defaults. */
-export function formulaBaseline(settings: Doc<"user_settings"> | null, weightKg: number | null, localDate: string): number | null {
-  if (settings === null || settings.activity === undefined) return null;
-  const bmr = mifflinStJeor({ weightKg, heightCm: settings.heightCm, ageYears: ageOnDate(settings.dob, localDate), sex: settings.sex });
-  if (bmr === null || !Number.isFinite(bmr) || bmr <= 0) return null;
-  return bmr * ACTIVITY_FACTORS[settings.activity];
-}
 
 /** Builds the D11 input from the last 28 complete local days; older weigh-ins over the chart's range only warm up the EMA so it matches the chart. */
 export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, localDate: string) {
@@ -66,7 +47,7 @@ export function calorieTarget(
   if (settings?.goal === undefined || baseline === null) return null;
   if (settings.calorieTarget !== undefined) return settings.calorieTarget;
   const maintenance = snapshot?.estimateKcal ?? baseline;
-  const kcal = Math.round(Math.max(baseline * TDEE_CLAMP.min, Math.min(baseline * TDEE_CLAMP.max, maintenance + GOAL_KCAL_OFFSETS[settings.goal])));
+  const kcal = goalTargetKcal(baseline, maintenance, settings.goal);
   return { kcal, source: snapshot === null ? "formula" : "adaptive", appliedLocalDate: localDate };
 }
 
