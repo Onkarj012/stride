@@ -110,7 +110,12 @@ export function useBurnMilestone(ready: boolean) {
     const key = `burn_ready_seen_${userId}`
     SecureStore.getItemAsync(key)
       .then(async (seen) => {
-        if (seen || sheetOpenRef.current) return
+        if (seen) return
+        if (sheetOpenRef.current) {
+          // Another sheet is open. Reset so the effect retries when it closes.
+          checked.current = false
+          return
+        }
         openBurn(true)
         await SecureStore.setItemAsync(key, '1')
       })
