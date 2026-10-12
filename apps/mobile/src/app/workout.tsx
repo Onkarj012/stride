@@ -17,7 +17,6 @@ import { Toast, type ToastMessage } from '@/components/Toast'
 import { formatNumber } from '@/lib/format'
 import { newSubmissionId, plainError } from '@/lib/log'
 import { formatKg, formatSets, formatTonnage, type Exercise, type ExerciseId, type SessionDetail, type SessionId, type SetId } from '@/lib/strength'
-import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles } from '@/theme'
 
 // Leaves the workout screen, falling back to Progress when it was opened directly.
@@ -26,7 +25,7 @@ function leave() {
   else router.replace('/progress')
 }
 
-// Workout route (mock #/workout and #/workout-done): resumes today's open session, or offers to start one.
+// Workout route (mock #/workout and #/workout-done): resumes the open session from any day, or offers to start one.
 export default function WorkoutScreen() {
   return (
     <TimeZoneGate>
@@ -38,13 +37,11 @@ export default function WorkoutScreen() {
 // The workout itself, once the user's time zone is stored for today's date.
 function Workout() {
   const s = useStyles()
-  const today = useLocalToday()
-  const sessions = useQuery(api.strength.sessionsForDay, { localDate: today })
+  const open = useQuery(api.strength.activeSession, {})
   const [sessionId, setSessionId] = useState<SessionId | null>(null)
   const [message, setMessage] = useState<ToastMessage | null>(null)
   const toastId = useRef(0)
   const undoRevision = useMutation(api.strength.undoRevision)
-  const open = sessions?.filter((session) => session.endedAt === undefined).at(-1)
   // Hold on to the resumed session so finishing it shows the summary instead of a fresh start.
   if (sessionId === null && open) setSessionId(open._id)
   const active = sessionId ?? open?._id ?? null
@@ -66,7 +63,7 @@ function Workout() {
 
   return (
     <View style={s.root}>
-      {sessions === undefined ? (
+      {open === undefined ? (
         <Page>
           <Thinking label="Opening your workout…" />
         </Page>
@@ -133,38 +130,40 @@ function Start({ onStarted, toast }: { onStarted: (id: SessionId) => void; toast
   )
 }
 
-// A started session: live logging while open, the summary once finished.
+// A started session: live logging while open, the summary once finished. "Edit sets" reopens a finished one.
 function Session({ sessionId, actions }: { sessionId: SessionId; actions: WorkoutActions }) {
   const detail = useQuery(api.strength.sessionDetail, { sessionId })
+  const [editing, setEditing] = useState(false)
   if (detail === undefined)
     return (
       <Page>
         <Thinking label="Opening your workout…" />
       </Page>
     )
-  if (detail.session.endedAt !== undefined) return <Summary detail={detail} />
-  return <Live detail={detail} actions={actions} />
+  if (detail.session.endedAt !== undefined && !editing) return <Summary detail={detail} onEdit={() => setEditing(true)} />
+  return <Live detail={detail} actions={actions} onFinish={() => setEditing(false)} />
 }
 
-// Elapsed time since a start instant as m:ss or h:mm:ss, ticking every second.
-function useElapsed(since: number): string {
+// Elapsed time from a start instant to an end instant (default now) as m:ss or h:mm:ss, ticking every second.
+function useElapsed(since: number, until?: number): string {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [])
-  const total = Math.max(0, Math.floor((now - since) / 1000))
+  const total = Math.max(0, Math.floor(((until ?? now) - since) / 1000))
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
   const sec = String(total % 60).padStart(2, '0')
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
 }
 
-// Live session: timer and Finish, progress bar, the current exercise's sets, and the session list.
-function Live({ detail, actions }: { detail: SessionDetail; actions: WorkoutActions }) {
+// Live session: timer and Finish (or Done when editing a finished one), progress bar, the current exercise's sets, and the session list.
+function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: WorkoutActions; onFinish: () => void }) {
   const s = useStyles()
   const endSession = useMutation(api.strength.endSession)
-  const elapsed = useElapsed(detail.session.startedAt)
+  const ended = detail.session.endedAt !== undefined
+  const elapsed = useElapsed(detail.session.startedAt, detail.session.endedAt)
   const [picked, setPicked] = useState<Exercise[]>([])
   const [currentId, setCurrentId] = useState<ExerciseId | null>(null)
   const [picking, setPicking] = useState(detail.exercises.length === 0)
@@ -178,11 +177,12 @@ function Live({ detail, actions }: { detail: SessionDetail; actions: WorkoutActi
   const current = list.find((e) => e.exercise._id === currentId) ?? list.at(-1)
   const currentIndex = current ? list.indexOf(current) : -1
 
-  // Ends the session; the summary replaces this view when the server confirms.
+  // Ends the session (a no-op when already finished), then leaves edit mode so the summary returns.
   async function finish() {
     setFinishing(true)
     try {
       await endSession({ sessionId: detail.session._id })
+      onFinish()
     } catch (err) {
       actions.toast({ title: "Couldn't finish the workout.", sub: plainError(err) })
       setFinishing(false)
@@ -210,7 +210,7 @@ function Live({ detail, actions }: { detail: SessionDetail; actions: WorkoutActi
         <Text style={s.timer} accessibilityLabel={`Elapsed ${elapsed}`}>
           {elapsed}
         </Text>
-        <Button label="Finish" size="sm" busy={finishing} disabled={detail.summary.setCount === 0} onPress={() => void finish()} />
+        <Button label={ended ? 'Done' : 'Finish'} size="sm" busy={finishing} disabled={!ended && detail.summary.setCount === 0} onPress={() => void finish()} />
       </View>
 
       {list.length > 0 ? (
@@ -268,7 +268,7 @@ function Live({ detail, actions }: { detail: SessionDetail; actions: WorkoutActi
 }
 
 // Finished session (mock #/workout-done): minutes, sets, kg moved, and what moved per exercise.
-function Summary({ detail }: { detail: SessionDetail }) {
+function Summary({ detail, onEdit }: { detail: SessionDetail; onEdit: () => void }) {
   const s = useStyles()
   const { session, summary } = detail
   const minutes = Math.max(1, Math.round(((session.endedAt ?? session.startedAt) - session.startedAt) / 60_000))
@@ -277,6 +277,7 @@ function Summary({ detail }: { detail: SessionDetail }) {
     <Page>
       <View style={s.head}>
         <View style={s.grow} />
+        <Button label="Edit sets" size="sm" variant="ghost" onPress={onEdit} />
         <RoundButton icon="x" label="Close" onPress={leave} />
       </View>
       <View style={s.center}>

@@ -28,8 +28,7 @@ export function StrengthSection() {
   const s = useStyles()
   const today = useLocalToday()
   const stats = useQuery(api.strength.stats, { weeks: 1, localDate: today })
-  const sessions = useQuery(api.strength.sessionsForDay, { localDate: today })
-  const open = sessions?.some((session) => session.endedAt === undefined) ?? false
+  const open = useQuery(api.strength.activeSession, {})
   const start = <Button label={open ? 'Resume workout' : 'Start workout'} icon="play" size="block" onPress={() => router.push('/workout')} style={s.start} />
 
   if (stats === undefined)
