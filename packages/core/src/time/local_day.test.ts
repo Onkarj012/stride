@@ -2,6 +2,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   addDays,
+  ageOnDate,
   dayNumber,
   dateOf,
   daysIn,
@@ -96,6 +97,17 @@ describe("inferSlot (D16)", () => {
 });
 
 describe("date math", () => {
+  it("counts age at the birthday and rejects invalid or implausible dates", () => {
+    expect(ageOnDate("2000-10-15", "2026-10-14")).toBe(25);
+    expect(ageOnDate("2000-10-15", "2026-10-15")).toBe(26);
+    expect(ageOnDate("2000-02-29", "2026-02-28")).toBe(25);
+    expect(ageOnDate("2000-02-29", "2026-03-01")).toBe(26);
+    for (const dob of [undefined, "2001-02-29", "2027-01-01", "1896-01-01"]) {
+      expect(ageOnDate(dob, "2026-10-15")).toBeNull();
+    }
+    expect(ageOnDate("2000-01-01", "invalid")).toBeNull();
+  });
+
   it("builds calendar months across year and leap-year boundaries", () => {
     expect(dateOf({ year: 2026, month: 1 }, 5)).toBe("2026-01-05");
     expect(daysIn({ year: 2026, month: 2 })).toBe(28);

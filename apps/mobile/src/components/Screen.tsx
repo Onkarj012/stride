@@ -22,6 +22,7 @@ export function Screen({ children }: { children: ReactNode }) {
           paddingHorizontal: layout.screenX,
         }}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {children}
       </ScrollView>

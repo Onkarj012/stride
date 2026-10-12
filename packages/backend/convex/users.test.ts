@@ -20,6 +20,7 @@ afterEach(() => {
 async function seedUser(t: TestConvex<typeof schema>, userId: string, sharedFood: Id<"foods">, extra = 0): Promise<Seeded> {
   const fileId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
   return await t.run(async (ctx) => {
+    await ctx.db.insert("user_settings", { userId, timeZone: "Asia/Kolkata", calorieTarget: { kcal: 2200, source: "adaptive", appliedLocalDate: "2026-10-05" } });
     const ownFood = await ctx.db.insert("foods", {
       name: "Homemade paneer",
       aliases: [],
@@ -138,6 +139,7 @@ describe("clearAllData", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     expect(await user.query(api.users.ledgerClearPending, {})).toBe(false);
+    expect((await t.run((ctx) => ctx.db.query("user_settings").take(10))).map((row) => row.userId)).toEqual(["user_b"]);
     expect(await remaining(t)).toEqual({
       uploads: ["user_b"],
       chats: ["user_b"],
@@ -239,6 +241,7 @@ describe("exportAllData", () => {
     expect(data.workout_sessions.map((s) => s.userId)).toEqual(["user_a"]);
     expect(data.sets.map((s) => s.reps)).toEqual([5]);
     expect(data.tdee_snapshots.map((s) => s.estimateKcal)).toEqual([2400]);
+    expect(data.user_settings.map((settings) => settings.calorieTarget)).toEqual([{ kcal: 2200, source: "adaptive", appliedLocalDate: "2026-10-05" }]);
     expect(Object.values(data.truncated).every((flag) => !flag)).toBe(true);
   });
 

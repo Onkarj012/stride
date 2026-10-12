@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { localDateOrToday, requireUserId } from "./time_zone";
 import { assertLedgerWritable } from "./users";
+import { initializeCalorieTarget } from "./progress_v2";
 
 /** Plausible adult body weight bounds in kg. Outside them the input is a typo or wrong unit. */
 export const WEIGHT_KG_RANGE = { min: 20, max: 400 } as const;
@@ -27,9 +28,12 @@ export const logWeight = mutation({
     const loggedAt = Date.now();
     if (existing !== null) {
       await ctx.db.patch("weights", existing._id, { kg: args.kg, loggedAt });
+      await initializeCalorieTarget(ctx, userId);
       return existing._id;
     }
-    return await ctx.db.insert("weights", { userId, localDate, kg: args.kg, loggedAt });
+    const weightId = await ctx.db.insert("weights", { userId, localDate, kg: args.kg, loggedAt });
+    await initializeCalorieTarget(ctx, userId);
+    return weightId;
   },
 });
 
@@ -49,5 +53,19 @@ export const weightsInRange = query({
       .withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", from).lte("localDate", to))
       .take(MAX_WEIGHT_RANGE_DAYS);
     return rows.map((row) => ({ localDate: row.localDate, kg: row.kg }));
+  },
+});
+
+/** The weigh-in on the given (or current) local day and the latest weight up to it. */
+export const todayWeight = query({
+  args: { localDate: v.optional(v.string()) },
+  returns: v.object({ localDate: v.string(), kg: v.union(v.number(), v.null()), latestKg: v.union(v.number(), v.null()) }),
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    const localDate = await localDateOrToday(ctx, userId, args.localDate);
+    const latest = await ctx.db.query("weights")
+      .withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate))
+      .order("desc").first();
+    return { localDate, kg: latest?.localDate === localDate ? latest.kg : null, latestKg: latest?.kg ?? null };
   },
 });

@@ -23,6 +23,8 @@ export interface AdaptiveTdeeInput {
   days: readonly TdeeDay[];
   /** Formula maintenance from Mifflin-St Jeor (BMR × activity). The clamp is relative to this. */
   baselineTdeeKcal: number | null;
+  /** Older weigh-ins before the first day. They only seed the EMA trend; they never widen the window or count toward the gate. */
+  warmupWeights?: readonly { date: string; weightKg: number }[];
 }
 
 /** Why the estimate is not ready yet. */
@@ -103,7 +105,10 @@ export function adaptiveTdee(input: AdaptiveTdeeInput): AdaptiveTdeeResult {
     };
   }
 
-  const trend = weightTrend(days);
+  const warmup = (input.warmupWeights ?? [])
+    .filter((w) => isLocalDate(w.date) && w.date < first.date)
+    .map((w) => ({ date: w.date, weightKg: w.weightKg, intakeKcal: null }));
+  const trend = weightTrend([...warmup, ...days]);
   const span = daysBetween(first.date, last.date) + 1;
   const windowDays = Math.min(span, TDEE_MAX_WINDOW_DAYS);
   const inWindow = days.filter((d) => daysBetween(d.date, last.date) < windowDays);

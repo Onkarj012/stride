@@ -71,3 +71,33 @@ test("logWeight rejects implausible weights and bad dates", async () => {
   await expect(user.mutation(api.weights.logWeight, { kg: 7, localDate: "2026-10-05" })).rejects.toThrow(/kg/);
   await expect(user.mutation(api.weights.logWeight, { kg: 70, localDate: "2026-13-01" })).rejects.toThrow(/YYYY-MM-DD/);
 });
+
+test("todayWeight requires authentication and a stored time zone", async () => {
+  const t = convexTest(schema, modules);
+  await expect(t.query(api.weights.todayWeight, {})).rejects.toThrow(/Unauthenticated/);
+  await expect(t.withIdentity({ subject: "unset" }).query(api.weights.todayWeight, {})).rejects.toThrow(/Time zone/);
+});
+
+test("todayWeight reports the user's local day and prior seed weight, then the replaced weigh-in", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(Date.UTC(2026, 9, 5, 19));
+  const { t, user } = await setup();
+  expect(await user.query(api.weights.todayWeight, {})).toEqual({ localDate: "2026-10-06", kg: null, latestKg: null });
+  await user.mutation(api.weights.logWeight, { kg: 71, localDate: "2026-10-05" });
+  await user.mutation(api.weights.logWeight, { kg: 100, localDate: "2026-10-07" });
+  const other = t.withIdentity({ subject: "other" });
+  await other.mutation(api.weights.logWeight, { kg: 90, localDate: "2026-10-06" });
+  expect(await user.query(api.weights.todayWeight, {})).toEqual({ localDate: "2026-10-06", kg: null, latestKg: 71 });
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  await user.mutation(api.weights.logWeight, { kg: 69.5 });
+  expect(await user.query(api.weights.todayWeight, {})).toEqual({ localDate: "2026-10-06", kg: 69.5, latestKg: 69.5 });
+});
+
+test("todayWeight follows DST calendar dates through the shared resolver", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(Date.UTC(2026, 10, 1, 6, 30));
+  const { user } = await setup();
+  await user.mutation(api.time_zone.setTimeZone, { timeZone: "America/New_York" });
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  expect(await user.query(api.weights.todayWeight, {})).toEqual({ localDate: "2026-11-01", kg: 70, latestKg: 70 });
+});

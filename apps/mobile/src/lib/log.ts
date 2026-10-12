@@ -1,4 +1,5 @@
 import { ConvexError } from 'convex/values'
+import { scaleMacroTargets } from '@stride/core'
 import type { FunctionReturnType } from 'convex/server'
 import { getCalendars } from 'expo-localization'
 import { File } from 'expo-file-system'
@@ -20,8 +21,16 @@ export type DraftId = Id<'drafts'>
 export const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'snack', 'dinner']
 export const SLOT_NAMES: Record<MealSlot, string> = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' }
 
-// Daily targets until slice 7 learns them from the user's burn.
+// Fallback daily targets while the backend has no target for the user yet.
 export const DEFAULT_TARGETS = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 }
+
+// Range for progress_v2.summary on Today, Log and Progress, so Convex shares one subscription.
+export const SUMMARY_DAYS = 14
+
+// Daily targets from the backend kcal target, with the default macro split scaled to it; defaults when there is none.
+export function targetsFor(kcal: number | null): typeof DEFAULT_TARGETS {
+  return scaleMacroTargets(kcal, DEFAULT_TARGETS)
+}
 
 /** Largest photo the backend accepts, mirrored here so the app can refuse it before uploading. */
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024

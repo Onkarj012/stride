@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { addDays } from "../time/local_day.ts";
 import { adaptiveTdee, KCAL_PER_KG, TDEE_CLAMP, type TdeeDay } from "./adaptive_tdee.ts";
 import { katchMcArdle, mifflinStJeor } from "./bmr.ts";
+import { formulaBaseline, goalTargetKcal, scaleMacroTargets } from "./targets.ts";
 import {
   budgetAdjustmentKcal,
   densityFromSets,
@@ -35,6 +36,43 @@ describe("BMR", () => {
   });
 });
 
+describe("daily targets", () => {
+  it("uses measured weight and the age on the local date without rounding maintenance", () => {
+    const profile = { heightCm: 175, dob: "2000-10-15", sex: "male", activity: "moderate" } as const;
+    expect(formulaBaseline(profile, 70, "2026-10-14")).toBeCloseTo(1673.75 * 1.55, 9);
+    expect(formulaBaseline(profile, 70, "2026-10-15")).toBeCloseTo(1668.75 * 1.55, 9);
+    expect(formulaBaseline(profile, null, "2026-10-15")).toBeNull();
+    expect(formulaBaseline({ heightCm: profile.heightCm, dob: profile.dob, sex: profile.sex }, 70, "2026-10-15")).toBeNull();
+  });
+
+  it("applies each goal offset before clamping and rounds only the final target", () => {
+    expect(goalTargetKcal(2400, 2400, "lose")).toBe(1900);
+    expect(goalTargetKcal(2400, 2300.6, "maintain")).toBe(2301);
+    expect(goalTargetKcal(2400, 2400, "gain")).toBe(2700);
+    expect(goalTargetKcal(2000, 1500, "lose")).toBe(1500);
+    expect(goalTargetKcal(2000, 2600, "gain")).toBe(2600);
+  });
+
+  it("property: every goal target stays inside the rounded baseline clamp", () => {
+    fc.assert(fc.property(
+      fc.integer({ min: 1200, max: 4000 }),
+      fc.integer({ min: 500, max: 6000 }),
+      fc.constantFrom("lose", "maintain", "gain"),
+      (baseline, maintenance, goal) => {
+        const target = goalTargetKcal(baseline, maintenance, goal);
+        expect(target).toBeGreaterThanOrEqual(Math.round(baseline * TDEE_CLAMP.min));
+        expect(target).toBeLessThanOrEqual(Math.round(baseline * TDEE_CLAMP.max));
+      },
+    ));
+  });
+
+  it("scales the reference macro split and retains it when there is no target", () => {
+    const reference = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 };
+    expect(scaleMacroTargets(null, reference)).toEqual(reference);
+    expect(scaleMacroTargets(2200, reference)).toEqual({ kcal: 2200, proteinG: 128, carbsG: 250, fatG: 70 });
+  });
+});
+
 /** Builds `n` consecutive days from 2026-01-01 with the given intake and weight functions. */
 function series(n: number, intake: (i: number) => number | null, weight: (i: number) => number | null): TdeeDay[] {
   return Array.from({ length: n }, (_, i) => ({ date: addDays("2026-01-01", i), intakeKcal: intake(i), weightKg: weight(i) }));
@@ -53,6 +91,18 @@ describe("adaptiveTdee (D11)", () => {
     expect(result.slopeKgPerDay).toBeCloseTo(-0.5 / 7, 3);
     expect(result.tdeeKcal).toBeGreaterThan(2540);
     expect(result.tdeeKcal).toBeLessThan(2560);
+  });
+
+  it("uses warm-up weigh-ins only to seed the trend, never to widen the window or the gate", () => {
+    const days = series(15, () => 2000, () => 70);
+    const warmupWeights = [{ date: "2025-11-01", weightKg: 80 }, { date: "2026-01-01", weightKg: 99 }];
+    const plain = adaptiveTdee({ days, baselineTdeeKcal: 2200 });
+    const warmed = adaptiveTdee({ days, baselineTdeeKcal: 2200, warmupWeights });
+    if (plain.status !== "ok" || warmed.status !== "ok") throw new Error("expected ok");
+    expect(warmed).toMatchObject({ windowStart: "2026-01-01", windowDays: 15, weighIns: 15, loggedFraction: 1 });
+    // The 2026-01-01 warm-up row is not before the first day, so only the 80 kg weigh-in seeds the EMA.
+    expect(warmed.trendKg).toBeGreaterThan(plain.trendKg);
+    expect(warmed.trendKg).toBeLessThan(80);
   });
 
   it("gates on 14 days, 10 weigh-ins and 70% logged", () => {
