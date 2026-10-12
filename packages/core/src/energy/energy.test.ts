@@ -55,6 +55,18 @@ describe("adaptiveTdee (D11)", () => {
     expect(result.tdeeKcal).toBeLessThan(2560);
   });
 
+  it("uses warm-up weigh-ins only to seed the trend, never to widen the window or the gate", () => {
+    const days = series(15, () => 2000, () => 70);
+    const warmupWeights = [{ date: "2025-11-01", weightKg: 80 }, { date: "2026-01-01", weightKg: 99 }];
+    const plain = adaptiveTdee({ days, baselineTdeeKcal: 2200 });
+    const warmed = adaptiveTdee({ days, baselineTdeeKcal: 2200, warmupWeights });
+    if (plain.status !== "ok" || warmed.status !== "ok") throw new Error("expected ok");
+    expect(warmed).toMatchObject({ windowStart: "2026-01-01", windowDays: 15, weighIns: 15, loggedFraction: 1 });
+    // The 2026-01-01 warm-up row is not before the first day, so only the 80 kg weigh-in seeds the EMA.
+    expect(warmed.trendKg).toBeGreaterThan(plain.trendKg);
+    expect(warmed.trendKg).toBeLessThan(80);
+  });
+
   it("gates on 14 days, 10 weigh-ins and 70% logged", () => {
     expect(adaptiveTdee({ days: series(13, () => 2000, () => 70), baselineTdeeKcal: 2200 })).toMatchObject({
       status: "insufficient", reasons: ["too_few_days"],

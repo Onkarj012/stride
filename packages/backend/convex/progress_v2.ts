@@ -31,7 +31,7 @@ export function formulaBaseline(settings: Doc<"user_settings"> | null, weightKg:
   return bmr * ACTIVITY_FACTORS[settings.activity];
 }
 
-/** Builds the D11 input from complete local days. Weights reach back over the chart's range so the EMA is warmed up and matches the chart; intake stays in the 28-day window. */
+/** Builds the D11 input from the last 28 complete local days; older weigh-ins over the chart's range only warm up the EMA so it matches the chart. */
 export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, localDate: string) {
   const end = addDays(localDate, -1);
   const from = addDays(end, 1 - TDEE_MAX_WINDOW_DAYS);
@@ -42,7 +42,8 @@ export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, loc
     ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", from).lte("localDate", end)).take(TDEE_MAX_WINDOW_DAYS),
     ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first(),
   ]);
-  const weightByDate = new Map(weights.map((row) => [row.localDate, row.kg]));
+  const weightByDate = new Map(weights.filter((row) => row.localDate >= from).map((row) => [row.localDate, row.kg]));
+  const warmupWeights = weights.filter((row) => row.localDate < from).map((row) => ({ date: row.localDate, weightKg: row.kg }));
   const intakeByDate = new Map(totals.filter((row) => row.entryCount > 0).map((row) => [row.localDate, row.kcal]));
   const first = [...weightByDate.keys(), ...intakeByDate.keys()].sort()[0];
   const days: TdeeDay[] = [];
@@ -52,7 +53,7 @@ export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, loc
     }
   }
   const baseline = formulaBaseline(settings, latestWeight?.kg ?? null, localDate);
-  return { settings, baseline, result: adaptiveTdee({ days, baselineTdeeKcal: baseline }) };
+  return { settings, baseline, result: adaptiveTdee({ days, baselineTdeeKcal: baseline, warmupWeights }) };
 }
 
 /** The goal-adjusted target, or null until the profile and measured weight supply a formula baseline. */

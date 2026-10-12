@@ -290,3 +290,15 @@ test("snapshot warms the EMA on older weigh-ins, matching core on the full serie
   expect(result.snapshot?.trendKg).toBeCloseTo(full.trendKg, 9);
   expect(result.weights.at(-1)?.trendKg).toBeCloseTo(result.snapshot?.trendKg ?? 0, 9);
 });
+
+test("one old weigh-in warms the trend without stretching the gate window to 28 days", async () => {
+  const { t, user } = await setup();
+  await t.run((ctx) => ctx.db.insert("weights", { userId: "user_a", localDate: addDays(TODAY, -60), kg: 72, loggedAt: 1 }));
+  await seedDays(t, { days: 15 });
+  await t.mutation(internal.tdee_recompute.recomputeUser, { userId: "user_a" });
+  const result = await user.query(api.progress_v2.summary, { rangeDays: 90 });
+  expect(result.gate).toMatchObject({ status: "ok", windowDays: 15, weighIns: 15, loggedFraction: 1 });
+  expect(result.snapshot).toMatchObject({ windowDays: 15 });
+  // The 72 kg weigh-in seeds the EMA, so the trend sits above the flat 70 kg of the window.
+  expect(result.snapshot?.trendKg).toBeGreaterThan(70);
+});
