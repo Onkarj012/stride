@@ -122,7 +122,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
         {content?.kind === 'meal' ? (
           <MealSheet key={content.session} localDate={content.localDate} slot={content.slot} onClose={closeOpening(content.session)} />
         ) : null}
-        {content?.kind === 'burn' ? <BurnSheet milestone={content.milestone} onClose={close} /> : null}
+        {content?.kind === 'burn' ? <BurnSheet key={content.session} milestone={content.milestone} onClose={closeOpening(content.session)} /> : null}
       </Sheet>
       <Toast message={message} onDone={toastDone} />
     </LogContext.Provider>
