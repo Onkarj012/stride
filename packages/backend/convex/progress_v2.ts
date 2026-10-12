@@ -31,13 +31,14 @@ export function formulaBaseline(settings: Doc<"user_settings"> | null, weightKg:
   return bmr * ACTIVITY_FACTORS[settings.activity];
 }
 
-/** Builds the D11 input from complete local days, starting at the first measured or logged day. */
+/** Builds the D11 input from complete local days. Weights reach back over the chart's range so the EMA is warmed up and matches the chart; intake stays in the 28-day window. */
 export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, localDate: string) {
   const end = addDays(localDate, -1);
   const from = addDays(end, 1 - TDEE_MAX_WINDOW_DAYS);
+  const warmFrom = addDays(localDate, 1 - MAX_PROGRESS_RANGE_DAYS);
   const [settings, weights, totals, latestWeight] = await Promise.all([
     ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
-    ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", from).lte("localDate", end)).take(TDEE_MAX_WINDOW_DAYS),
+    ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", warmFrom).lte("localDate", end)).take(MAX_PROGRESS_RANGE_DAYS),
     ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", from).lte("localDate", end)).take(TDEE_MAX_WINDOW_DAYS),
     ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first(),
   ]);

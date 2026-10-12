@@ -1,4 +1,4 @@
-import { addDays, mifflinStJeor, weightTrend } from "@stride/core";
+import { adaptiveTdee, addDays, mifflinStJeor, weightTrend } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
@@ -263,4 +263,30 @@ test("chart trend comes from the shared core EMA", async () => {
   });
   const result = await user.query(api.progress_v2.summary, { rangeDays: 14 });
   expect(result.weights.map((row) => row.trendKg)).toEqual([...weightTrend(points).values()]);
+});
+
+test("snapshot warms the EMA on older weigh-ins, matching core on the full series and the chart trend", async () => {
+  const { t, user } = await setup();
+  // 120 days of steady 0.5 kg/week loss at 2000 kcal: the true burn is 2000 + 7700 / 14 = 2550.
+  const days = Array.from({ length: 120 }, (_, i) => ({ date: addDays(TODAY, i - 120), weightKg: 90 - i / 14, intakeKcal: 2000 }));
+  await t.run(async (ctx) => {
+    for (const day of days) {
+      await ctx.db.insert("weights", { userId: "user_a", localDate: day.date, kg: day.weightKg, loggedAt: 1 });
+      await ctx.db.insert("day_totals", {
+        userId: "user_a", localDate: day.date, entryCount: 1, kcal: day.intakeKcal, protein: 100, carbs: 200, fat: 60,
+        fiber: 0, sugar: 0, sodiumMg: 0, fiberUnknown: 0, sugarUnknown: 0, sodiumMgUnknown: 0,
+      });
+    }
+  });
+  await t.mutation(internal.tdee_recompute.recomputeUser, { userId: "user_a" });
+  const latestKg = days[days.length - 1]?.weightKg ?? 0;
+  const baseline = (mifflinStJeor({ weightKg: latestKg, heightCm: 175, ageYears: 26, sex: "male" }) ?? 0) * ACTIVITY_FACTORS.moderate;
+  const full = adaptiveTdee({ days, baselineTdeeKcal: baseline });
+  if (full.status !== "ok") throw new Error("Expected a ready core result");
+  expect(Math.abs(full.tdeeKcal - 2550)).toBeLessThanOrEqual(5);
+
+  const result = await user.query(api.progress_v2.summary, { rangeDays: 180 });
+  expect(result.snapshot).toMatchObject({ estimate: full.tdeeKcal, windowDays: 28 });
+  expect(result.snapshot?.trendKg).toBeCloseTo(full.trendKg, 9);
+  expect(result.weights.at(-1)?.trendKg).toBeCloseTo(result.snapshot?.trendKg ?? 0, 9);
 });
