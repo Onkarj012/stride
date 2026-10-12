@@ -1,7 +1,7 @@
 import { roundNutrients, type Nutrients } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { MAX_CHAT_ITERATIONS } from "./chats";
 import { isRecord, OPENROUTER_CHAT_URL } from "./pipeline/openrouter";
@@ -241,6 +241,20 @@ describe("multi-chat (D12)", () => {
     await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "delete it" });
     const [first] = await t.run((ctx) => ctx.db.query("ai_usage_reservations").take(10));
     expect(first?.settledOutputTokens).toBeGreaterThanOrEqual(300);
+  });
+});
+
+describe("chat photo ownership", () => {
+  test("a photo the caller did not upload is refused before the turn is claimed or a model runs", async () => {
+    const { t, user, chatId } = await setup();
+    const other = t.withIdentity({ subject: "user_b" });
+    const theirs = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    await other.mutation(internal.uploads.registerStoredUpload, { storageId: theirs });
+    await expect(
+      user.action(api.chats.sendMessage, { chatId, submissionId: "img", text: "what is this", imageStorageId: theirs }),
+    ).rejects.toThrow(/Photo not found/);
+    expect(bodies).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("messages").take(10))).toHaveLength(0);
   });
 });
 

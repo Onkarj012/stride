@@ -3,12 +3,17 @@ import { describe, expect, it } from "vitest";
 import {
   addDays,
   dayNumber,
+  dateOf,
+  daysIn,
   daysBetween,
   inferSlot,
   isValidTimeZone,
   localDate,
   localDateTime,
+  nextLocalMidnight,
   slotAt,
+  shiftMonth,
+  weekdayOf,
   weekStart,
 } from "./local_day.ts";
 
@@ -17,6 +22,11 @@ const NY = "America/New_York";
 const at = (iso: string) => Date.parse(iso);
 
 describe("IST midnight boundary", () => {
+  it("finds the next midnight to the millisecond, including month rollover", () => {
+    expect(nextLocalMidnight(at("2026-10-31T18:29:59.999Z"), IST)).toBe(at("2026-10-31T18:30:00Z"));
+    expect(nextLocalMidnight(at("2026-10-31T18:30:00Z"), IST)).toBe(at("2026-11-01T18:30:00Z"));
+  });
+
   it("rolls the date at 18:30 UTC", () => {
     expect(localDate(at("2026-10-05T18:29:59.999Z"), IST)).toBe("2026-10-05");
     expect(localDate(at("2026-10-05T18:30:00.000Z"), IST)).toBe("2026-10-06");
@@ -38,6 +48,24 @@ describe("IST midnight boundary", () => {
 });
 
 describe("DST boundaries in America/New_York", () => {
+  it("finds the next midnight after a 23-hour spring-forward day", () => {
+    const start = at("2026-03-08T05:00:00Z");
+    const next = nextLocalMidnight(start, NY);
+    expect(next).toBe(at("2026-03-09T04:00:00Z"));
+    expect(next - start).toBe(23 * 3_600_000);
+    expect(localDate(next - 1, NY)).toBe("2026-03-08");
+    expect(localDate(next, NY)).toBe("2026-03-09");
+  });
+
+  it("finds the next midnight after a 25-hour fall-back day", () => {
+    const start = at("2026-11-01T04:00:00Z");
+    const next = nextLocalMidnight(start, NY);
+    expect(next).toBe(at("2026-11-02T05:00:00Z"));
+    expect(next - start).toBe(25 * 3_600_000);
+    expect(localDate(next - 1, NY)).toBe("2026-11-01");
+    expect(localDate(next, NY)).toBe("2026-11-02");
+  });
+
   it("handles spring forward on 2026-03-08 (02:00 EST jumps to 03:00 EDT)", () => {
     expect(localDateTime(at("2026-03-08T06:59:00Z"), NY)).toEqual({ date: "2026-03-08", hour: 1, minute: 59 });
     expect(localDateTime(at("2026-03-08T07:00:00Z"), NY)).toEqual({ date: "2026-03-08", hour: 3, minute: 0 });
@@ -68,6 +96,25 @@ describe("inferSlot (D16)", () => {
 });
 
 describe("date math", () => {
+  it("builds calendar months across year and leap-year boundaries", () => {
+    expect(dateOf({ year: 2026, month: 1 }, 5)).toBe("2026-01-05");
+    expect(daysIn({ year: 2026, month: 2 })).toBe(28);
+    expect(daysIn({ year: 2028, month: 2 })).toBe(29);
+    expect(daysIn({ year: 2026, month: 9 })).toBe(30);
+    expect(daysIn({ year: 2026, month: 12 })).toBe(31);
+    expect(shiftMonth({ year: 2026, month: 1 }, -1)).toEqual({ year: 2025, month: 12 });
+    expect(shiftMonth({ year: 2026, month: 12 }, 1)).toEqual({ year: 2027, month: 1 });
+    expect(() => daysIn({ year: 2026, month: 13 })).toThrow(RangeError);
+  });
+
+  it("finds weekdays on both sides of the epoch and rejects invalid dates", () => {
+    expect(weekdayOf("1970-01-01")).toBe(4);
+    expect(weekdayOf("1969-12-28")).toBe(0);
+    expect(weekdayOf("2026-10-12")).toBe(1);
+    expect(() => weekdayOf("2026-02-30")).toThrow(RangeError);
+    expect(() => weekdayOf("2026-2-01")).toThrow(RangeError);
+  });
+
   it("validates dates and zones", () => {
     expect(dayNumber("2026-02-30")).toBeNull();
     expect(dayNumber("2028-02-29")).not.toBeNull();

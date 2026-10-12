@@ -1,4 +1,4 @@
-import { roundNutrients, type Nutrients } from "@stride/core";
+import { daysBetween, isLocalDate, roundNutrients, type Nutrients } from "@stride/core";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { query, type MutationCtx } from "./_generated/server";
@@ -10,6 +10,9 @@ type OptionalKey = "fiber" | "sugar" | "sodiumMg";
 
 /** Most live entries one user may have on one day. Keeps `entriesForDay` a bounded read. */
 export const MAX_DAY_ENTRIES = 200;
+
+/** Longest span `dayTotalsInRange` returns, in days inclusive. One row per day keeps the read bounded. */
+export const MAX_TOTALS_RANGE_DAYS = 62;
 
 /** Optional nutrients and the counter of live entries that lack each one. */
 const UNKNOWN_COUNTER = { fiber: "fiberUnknown", sugar: "sugarUnknown", sodiumMg: "sodiumMgUnknown" } as const;
@@ -101,5 +104,26 @@ export const dayTotals = query({
       .unique();
     const totals = row ?? emptyTotals(userId, localDate);
     return { localDate, entryCount: totals.entryCount, nutrients: roundNutrients(totalsToNutrients(totals)) };
+  },
+});
+
+/** The caller's logged days from `from` to `to` inclusive, oldest first, each rounded once. Days with no live entries are left out. */
+export const dayTotalsInRange = query({
+  args: { from: v.string(), to: v.string() },
+  returns: v.array(v.object({ localDate: v.string(), entryCount: v.number(), nutrients: nutrientsValidator })),
+  handler: async (ctx, { from, to }) => {
+    const userId = await requireUserId(ctx);
+    if (!isLocalDate(from) || !isLocalDate(to)) throw new Error("from and to must be YYYY-MM-DD dates");
+    const span = daysBetween(from, to) + 1;
+    if (span < 1 || span > MAX_TOTALS_RANGE_DAYS) {
+      throw new Error(`Range must cover 1-${MAX_TOTALS_RANGE_DAYS} days, got ${span}`);
+    }
+    const rows = await ctx.db
+      .query("day_totals")
+      .withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", from).lte("localDate", to))
+      .take(MAX_TOTALS_RANGE_DAYS);
+    return rows
+      .filter((row) => row.entryCount > 0)
+      .map((row) => ({ localDate: row.localDate, entryCount: row.entryCount, nutrients: roundNutrients(totalsToNutrients(row)) }));
   },
 });

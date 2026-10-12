@@ -25,6 +25,7 @@ import { callOpenRouter, PIPELINE_MODEL, type ChatMessage, type JsonValue, type 
 import { resolveFoodPortion, userFoodsOf, userMeasuresOf, type LogResult } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
 import { requireUserId, resolveLocalDay } from "./time_zone";
+import { requireOwnUpload } from "./uploads";
 import { assertLedgerWritable } from "./users";
 
 /** Title a chat gets until its first message names it. */
@@ -687,6 +688,7 @@ export const sendMessage = action({
     const prior: TurnResult | null = await ctx.runQuery(internal.chats.findTurn, { userId, submissionId: args.submissionId });
     if (prior !== null) return prior;
 
+    if (args.imageStorageId !== undefined) await requireOwnUpload(ctx, userId, args.imageStorageId);
     const typed = (args.text ?? "").trim();
     if (args.audio === undefined) checkMessage(typed, args.imageStorageId);
     // Claim before transcribing, so a concurrent duplicate is refused before it pays for a Groq call.

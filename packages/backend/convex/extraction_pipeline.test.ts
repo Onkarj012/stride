@@ -1,7 +1,7 @@
 import { roundNutrients, scaleNutrients, type Nutrients } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { MAX_TOOL_ITERATIONS } from "./pipeline/tools";
@@ -168,9 +168,9 @@ describe("gate: auto-commit vs draft", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ foodId: foods.chapati, grams: 80, source: "db", createdBy: "ai", status: "live" });
     expect(result.undoUntil).toBe((rows[0]?._creationTime ?? 0) + UNDO_WINDOW_MS);
-    expect(result.lines).toEqual([
-      { text: "Chapati", foodName: "Chapati", grams: 80, kcal: 238, reasons: [], estimated: false },
-    ]);
+    expect(result.lines).toHaveLength(1);
+    expect(result.lines[0]).toMatchObject({ text: "Chapati", foodName: "Chapati", grams: 80, reasons: [], estimated: false });
+    expect(result.lines[0]?.kcal).toBeCloseTo(237.6, 6);
     await expectComputedFromFoods(t);
     expect(JSON.stringify(rows)).not.toContain("9999");
   });
@@ -192,6 +192,48 @@ describe("gate: auto-commit vs draft", () => {
       preview: null,
     });
     expect(draft?.items[0]?.reasons).toContain("unresolved_portion");
+  });
+});
+
+describe("line kcal stays unrounded until the app displays it", () => {
+  test("lines of 100.4 and 200.4 kcal come back unrounded, and their sum rounds to 301", async () => {
+    const { t, user } = await setup();
+    const food = (name: string, kcal: number) => ({ name, aliases: [], searchText: name, per100g: { kcal, protein: 0, carbs: 0, fat: 0, fiber: null, sugar: null, sodiumMg: null }, source: "fdc" as const, sourceId: name, verified: true });
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", food("Alpha Snack", 100.4));
+      await ctx.db.insert("foods", food("Beta Snack", 200.4));
+    });
+    llm = () => extraction([{ food: "Alpha Snack", quantity: 100, unit: "g" }, { food: "Beta Snack", quantity: 100, unit: "g" }]);
+    const result = await logText(user, "100 g alpha snack and 100 g beta snack", "unrounded-lines");
+    // Either result kind carries lines built the same way; this food pair lands in a draft on the clamp check.
+    const kcal = result.lines.map((line) => line.kcal ?? NaN).sort((a, b) => a - b);
+    expect(kcal[0]).toBeCloseTo(100.4, 6);
+    expect(kcal[1]).toBeCloseTo(200.4, 6);
+    expect(Math.round((kcal[0] ?? 0) + (kcal[1] ?? 0))).toBe(301);
+  });
+});
+
+describe("selected meal slot", () => {
+  test("a composer default fills omitted slots, while an explicit extracted slot overrides it", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "roti", quantity: 2 }, { food: "rice", quantity: 100, unit: "g", slot: "dinner" }]);
+    const result = await user.action(api.pipeline.log.logInput, {
+      submissionId: "breakfast-sheet",
+      defaultSlot: "breakfast",
+      input: { kind: "text", text: "2 rotis, and for dinner 100 g rice" },
+    });
+    expect(result.kind).toBe("committed");
+    expect((await entryRows(t)).map((row) => row.slot)).toEqual(["breakfast", "dinner"]);
+    expect(JSON.stringify(openRouterBodies[0]?.messages)).toContain("current meal slot is breakfast");
+  });
+
+  test("a draft keeps the selected default until confirmation", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 0.25, confidence: 0.5 }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "draft-slot", defaultSlot: "breakfast", input: { kind: "text", text: "quarter of 1 kg biryani" } });
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId });
+    expect((await entryRows(t))[0]?.slot).toBe("breakfast");
   });
 });
 
@@ -331,6 +373,22 @@ describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", (
     expect(oil?.grams).toBeCloseTo(15 * 0.913, 9);
     expect(oil?.flags).toContain("cooking_oil");
     await expectComputedFromFoods(t);
+  });
+
+  test("a scaled draft quantity preview can confirm its explicit grams without dropping the fraction", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 0.25, confidence: 0.5 }]);
+    const result = await logText(user, "a quarter of 1 kg biryani");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    const item = draft?.items[0];
+    if (item?.grams === null || item?.grams === undefined || !item.quantity) throw new Error("missing scaled portion");
+    expect(item.grams).toBe(250);
+    const previewGrams = item.grams * 1.5 / item.quantity;
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, grams: previewGrams }] });
+    const [row] = await entryRows(t);
+    expect(row?.grams).toBe(375);
+    expect(row?.nutrients).toEqual(scaleNutrients(BIRYANI, previewGrams));
   });
 
   test("a fraction above the whole recipe is refused and asks", async () => {
@@ -586,6 +644,7 @@ describe("photo and voice input", () => {
   test("photo items use the photo model and are flagged estimated", async () => {
     const { t, user, foods } = await setup();
     const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    await user.mutation(internal.uploads.registerStoredUpload, { storageId });
     llm = () => extraction([{ food: "roti", quantity: 2, fromPhoto: true }]);
     const result = await user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } });
     expect(result.kind).toBe("committed");
@@ -601,9 +660,24 @@ describe("photo and voice input", () => {
     const storageId = await t.run((ctx) =>
       ctx.storage.store(new Blob([new Uint8Array(AI_INPUT_LIMITS.imageBytes + 1)], { type: "image/jpeg" })),
     );
+    await user.mutation(internal.uploads.registerStoredUpload, { storageId });
     await expect(
       user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } }),
     ).rejects.toThrow(/too large/);
+    expect(openRouterBodies).toHaveLength(0);
+  });
+
+  test("a photo the caller did not upload is refused before any model call", async () => {
+    const { t, user } = await setup();
+    const other = t.withIdentity({ subject: "user_b" });
+    const theirs = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    await other.mutation(internal.uploads.registerStoredUpload, { storageId: theirs });
+    const unregistered = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    for (const storageId of [theirs, unregistered]) {
+      await expect(
+        user.action(api.pipeline.log.logInput, { submissionId: `p-${storageId}`, input: { kind: "photo", storageId } }),
+      ).rejects.toThrow(/Photo not found/);
+    }
     expect(openRouterBodies).toHaveLength(0);
   });
 

@@ -1,3 +1,6 @@
+import { weekdayOf } from '@stride/core'
+export { weekdayOf } from '@stride/core'
+
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 export const MONTHS_LONG = [
@@ -36,9 +39,19 @@ export function greeting(minutes: number, name: string): string {
   return `Evening, ${name}.`
 }
 
-// Quantity suffix for an item line: "Roti ×2", "Curd ×½", nothing for one.
-export function quantitySuffix(q: number): string {
-  if (q === 1) return ''
-  if (q === 0.5) return ' ×½'
-  return ` ×${q}`
+// "Tue, 29 Sep" for a YYYY-MM-DD date.
+export function formatDayTitle(localDate: string): string {
+  const [, m = 1, d = 1] = localDate.split('-').map(Number)
+  return `${WEEKDAYS[weekdayOf(localDate)]?.slice(0, 3)}, ${d} ${MONTHS[m - 1]}`
+}
+
+// 24h "HH:mm" of an instant in the device's clock, for formatClock.
+export function clockOf(ms: number): string {
+  const at = new Date(ms)
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+}
+
+// Grams for display: whole grams, or one decimal under 10 g.
+export function formatGrams(g: number): string {
+  return g < 10 ? `${Math.round(g * 10) / 10} g` : `${Math.round(g)} g`
 }

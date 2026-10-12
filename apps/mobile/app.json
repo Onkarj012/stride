@@ -30,7 +30,27 @@
             "backgroundColor": "#12110F"
           }
         }
-      ]
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Stride listens when you tap the mic, so you can log food by voice."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Stride uses the camera to see your plate or scan a barcode."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Stride reads a photo you pick to log the food in it."
+        }
+      ],
+      "expo-localization",
+      "expo-asset"
     ],
     "extra": {
       "eas": {

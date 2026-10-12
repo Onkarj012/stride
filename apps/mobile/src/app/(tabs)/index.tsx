@@ -1,63 +1,62 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native'
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
+import { useEffect, useState } from 'react'
+import { Alert, Text, View } from 'react-native'
 import { router } from 'expo-router'
 import { useAuth, useUser } from '@clerk/expo'
-import { layout, motion, radii } from '@stride/ui-tokens'
-import { Odometer, DayBar, Macro } from '@/components/Budget'
-import { Icon } from '@/components/Icon'
+import { useMutation, useQuery } from 'convex/react'
+import { addDays, inferSlot } from '@stride/core'
+import { api } from 'stride-backend/convex/_generated/api'
+import { layout, radii } from '@stride/ui-tokens'
+import { DayBar, Macro, Odometer } from '@/components/Budget'
+import { Button, RoundButton } from '@/components/Controls'
+import { useLog } from '@/components/LogProvider'
+import { MealRow, NextMealRow, groupMeals } from '@/components/Meals'
 import { Polo } from '@/components/Polo'
 import { Screen, Section } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
-import { dayFixtures, fixtureForNow, type DayVariant, type Entry, type Usual, type Workout } from '@/fixtures'
-import { formatClock, formatDateline, formatNumber, greeting, quantitySuffix } from '@/lib/format'
+import { formatDateline, formatNumber, greeting } from '@/lib/format'
+import { DEFAULT_TARGETS, plainError, type MealSlot } from '@/lib/log'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
-const VARIANTS: DayVariant[] = ['midday', 'empty', 'night']
-const SLOT_NAMES = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' } as const
+const AROUND: Record<MealSlot, string> = { breakfast: '8:30', lunch: '1:30', snack: '5:00', dinner: '8:30' }
 
-type Meal = { key: string; slot: Entry['slot']; time: string; entries: Entry[]; kcal: number }
+// Late night (22:00 to 5:00) gets the sleepy Today: no weigh-in, a closing note instead of the next meal.
+function isNight(now: Date): boolean {
+  const h = now.getHours()
+  return h >= 22 || h < 5
+}
 
-// Groups ledger entries into meal rows: same slot logged at the same time.
-function toMeals(entries: Entry[]): Meal[] {
-  const meals: Meal[] = []
-  for (const e of entries) {
-    const key = `${e.slot}-${e.loggedAt}`
-    const meal = meals.find((m) => m.key === key)
-    if (meal) {
-      meal.entries.push(e)
-      meal.kcal += e.kcal
-    } else meals.push({ key, slot: e.slot, time: e.loggedAt, entries: [e], kcal: e.kcal })
+// Minutes since local midnight, refreshed every minute so the greeting and next meal follow the clock.
+function useClockMinutes(): number {
+  const read = () => {
+    const now = new Date()
+    return now.getHours() * 60 + now.getMinutes()
   }
-  return meals
+  const [minutes, setMinutes] = useState(read)
+  useEffect(() => {
+    const timer = setInterval(() => setMinutes(read()), 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  return minutes
 }
 
-// Day totals from unrounded entry values; callers round once at display.
-function sumDay(entries: Entry[]) {
-  return entries.reduce(
-    (acc, e) => ({
-      kcal: acc.kcal + e.kcal,
-      proteinG: acc.proteinG + e.proteinG,
-      carbsG: acc.carbsG + e.carbsG,
-      fatG: acc.fatG + e.fatG,
-    }),
-    { kcal: 0, proteinG: 0, carbsG: 0, fatG: 0 },
-  )
-}
-
-// Today: kcal left, macros, usuals, meals and training, on fixture data until slice 6.
+// Today: kcal left, macros, weigh-in and meals from the ledger. Tap a meal to edit it.
 export default function TodayScreen() {
   const t = useTheme()
   const s = useStyles()
   const { user } = useUser()
   const { signOut } = useAuth()
-  const [variant, setVariant] = useState<DayVariant>(() => fixtureForNow(new Date()))
-  const day = dayFixtures[variant]
+  const { compose, openMeal, openDraft } = useLog()
+  const minutes = useClockMinutes()
+  const today = useLocalToday()
+  const totals = useQuery(api.day_totals.dayTotals, { localDate: today })
+  const entries = useQuery(api.entries.entriesForDay, { localDate: today })
+  const pendingDrafts = useQuery(api.pipeline.drafts.listPendingDrafts, {})
 
   const name = user?.firstName || user?.username || 'there'
-  const total = useMemo(() => sumDay(day.entries), [day])
-  const meals = useMemo(() => toMeals(day.entries), [day])
-  const left = Math.round(day.targets.kcal - total.kcal)
+  const now = new Date()
+  const night = isNight(now)
+  const targets = DEFAULT_TARGETS
 
   // Account sheet for now: shows who is signed in and offers sign out.
   function openAccount() {
@@ -67,168 +66,150 @@ export default function TodayScreen() {
     ])
   }
 
+  const header = (
+    <View style={s.head}>
+      <View style={s.headText}>
+        <Text style={s.eyebrow}>{formatDateline(now)}</Text>
+        <Text style={s.greet}>{greeting(minutes, name)}</Text>
+      </View>
+      <Tap style={s.avatar} scale={0.9} onPress={openAccount} accessibilityRole="button" accessibilityLabel="You">
+        <Text style={s.avatarText}>{name.charAt(0).toUpperCase()}</Text>
+      </Tap>
+    </View>
+  )
+
+  if (totals === undefined || entries === undefined)
+    return (
+      <Screen>
+        {header}
+        <View style={s.loading}>
+          <Polo size={56} />
+          <Text style={s.loadingText}>Getting today ready…</Text>
+        </View>
+      </Screen>
+    )
+
+  const eaten = totals.nutrients
+  const left = Math.round(targets.kcal - eaten.kcal)
+  const meals = groupMeals(entries)
+  const slotNow = inferSlot(Math.floor(minutes / 60), minutes % 60)
+  const showNext = !night && meals.length > 0 && !meals.some((m) => m.slot === slotNow)
+
   return (
     <Screen>
-      <View style={s.head}>
-        <View style={s.headText}>
-          <Text style={s.eyebrow}>{formatDateline(new Date())}</Text>
-          <Text style={s.greet}>{greeting(day.clockMinutes, name)}</Text>
-        </View>
-        <Tap
-          style={s.avatar}
-          scale={0.9}
-          onPress={openAccount}
-          onLongPress={() => setVariant((v) => VARIANTS[(VARIANTS.indexOf(v) + 1) % VARIANTS.length] ?? 'midday')}
-          accessibilityRole="button"
-          accessibilityLabel="You"
-        >
-          <Text style={s.avatarText}>{name.charAt(0).toUpperCase()}</Text>
-        </Tap>
-      </View>
+      {header}
 
-      <View style={s.hero} key={variant}>
+      <View style={s.hero}>
         <View style={s.heroLabel}>
           <Text style={s.eyebrow}>Left today</Text>
-          <Text style={s.faintSmall}>{formatNumber(total.kcal)} eaten</Text>
+          <Text style={s.faintSmall}>{formatNumber(eaten.kcal)} eaten</Text>
         </View>
         <View style={s.bignum}>
           <Odometer value={Math.abs(left)} />
           <Text style={s.of}>
-            {left >= 0 ? `of ${formatNumber(day.targets.kcal)}\nkcal` : `over\n${formatNumber(day.targets.kcal)} kcal`}
+            {left >= 0 ? `of ${formatNumber(targets.kcal)}\nkcal` : `over\n${formatNumber(targets.kcal)} kcal`}
           </Text>
         </View>
-        <DayBar meals={meals.map((m) => ({ key: m.key, kcal: m.kcal }))} target={day.targets.kcal} />
+        <DayBar meals={meals.map((m) => ({ key: m.slot, kcal: m.kcal }))} target={targets.kcal} />
         <View style={s.macros}>
-          <Macro name="Protein" eaten={total.proteinG} target={day.targets.proteinG} color={t.c.protein} />
-          <Macro name="Carbs" eaten={total.carbsG} target={day.targets.carbsG} color={t.c.carbs} />
-          <Macro name="Fat" eaten={total.fatG} target={day.targets.fatG} color={t.c.fat} />
+          <Macro name="Protein" eaten={eaten.protein} target={targets.proteinG} color={t.c.protein} />
+          <Macro name="Carbs" eaten={eaten.carbs} target={targets.carbsG} color={t.c.carbs} />
+          <Macro name="Fat" eaten={eaten.fat} target={targets.fatG} color={t.c.fat} />
         </View>
-        {day.nightNote ? (
+        {night ? (
           <View style={s.nightNote}>
             <Text style={s.nightText}>
-              <Text style={s.nightStrong}>{formatNumber(Math.max(0, left))} left</Text> {day.nightNote}
+              {left >= 0 ? (
+                <>
+                  <Text style={s.nightStrong}>{formatNumber(left)} left</Text> and the kitchen's closing. If you're
+                  hungry, something light fits. If not, that's a good day. Sleep well.
+                </>
+              ) : (
+                <>
+                  <Text style={s.nightStrong}>{formatNumber(-left)} over</Text> today. That's fine, one day doesn't move the
+                  trend. Sleep well.
+                </>
+              )}
             </Text>
           </View>
         ) : null}
       </View>
 
-      {day.weighIn ? <WeighCard key={variant} draftKg={day.weighIn.draftKg} trendNote={day.weighIn.trendNote} /> : null}
+      {!night && today ? <WeighCard key={today} today={today} /> : null}
 
-      <Section title={day.usuals.title} link="One tap logs" />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chips} contentContainerStyle={s.chipsInner}>
-        {day.usuals.items.map((u) => (
-          <UsualCard key={`${variant}-${u.label}`} usual={u} />
-        ))}
-      </ScrollView>
+      {pendingDrafts?.map((draft) => (
+        <Tap key={draft._id} style={[s.card, s.weighCard, s.weighSaved]} onPress={() => openDraft(draft._id)} accessibilityRole="button">
+          <View style={s.grow}>
+            <Text style={s.weighNote}>You have an unfinished log</Text>
+            <Text style={s.faintSmall}>{draft.itemCount} item{draft.itemCount === 1 ? '' : 's'} · tap to resume</Text>
+          </View>
+        </Tap>
+      ))}
 
       <Section title="Meals" link="History" onLink={() => router.navigate('/log')} />
       <View style={s.mealsCard}>
         {meals.length === 0 ? (
           <View style={s.empty}>
-            <Polo size={64} hop={1} />
+            <Polo size={64} hop={1} mood={night ? 'sleep' : 'idle'} />
             <Text style={s.emptyTitle}>Clean slate.</Text>
-            <Text style={s.emptyBody}>Nothing logged yet. Tap a usual above, or tell me what you had.</Text>
+            <Text style={s.emptyBody}>Nothing logged yet. Tell me what you had, in any words.</Text>
+            <Button label="Log something" size="sm" onPress={() => compose('text')} style={s.emptyButton} />
           </View>
         ) : (
           <>
             {meals.map((m, i) => (
-              <MealRow key={m.key} meal={m} first={i === 0} />
+              <MealRow key={m.slot} meal={m} first={i === 0} onPress={() => today && openMeal(today, m.slot)} />
             ))}
-            {day.next ? <NextMealRow slot={SLOT_NAMES[day.next.slot]} around={formatClock(day.next.around)} /> : null}
+            {showNext ? <NextMealRow slot={slotNow} around={AROUND[slotNow]} first={false} onPress={() => compose('text', slotNow)} /> : null}
           </>
         )}
       </View>
-
-      <Section title="Training" link="Strength" onLink={() => router.navigate('/progress')} />
-      <TrainingCard workout={day.workout} />
     </Screen>
   )
 }
 
-// One logged meal: time, slot, item line, kcal.
-function MealRow({ meal, first }: { meal: Meal; first: boolean }) {
-  const s = useStyles()
-  const items = meal.entries.map((e) => `${e.food}${quantitySuffix(e.quantity)}`).join(' · ')
-  return (
-    <Pressable style={({ pressed }) => [s.meal, !first && s.mealDivider, pressed && s.mealPressed]}>
-      <Text style={s.mealTime}>{formatClock(meal.time)}</Text>
-      <View style={s.mealMain}>
-        <Text style={s.mealName}>{SLOT_NAMES[meal.slot]}</Text>
-        <Text style={s.mealItems}>{items}</Text>
-      </View>
-      <Text style={s.mealKcal}>{formatNumber(meal.kcal)}</Text>
-    </Pressable>
-  )
-}
-
-// Ghost row inviting the next meal of the day.
-function NextMealRow({ slot, around }: { slot: string; around: string }) {
+// Morning weigh-in. Saves with logWeight; one weigh-in per day, a second one replaces it.
+function WeighCard({ today }: { today: string }) {
   const t = useTheme()
   const s = useStyles()
-  return (
-    <Pressable
-      style={({ pressed }) => [s.meal, s.mealDivider, pressed && s.mealPressed]}
-      accessibilityRole="button"
-      accessibilityLabel={`Log ${slot}`}
-    >
-      <Text style={s.mealTime}>~{around}</Text>
-      <View style={s.mealMain}>
-        <Text style={[s.mealName, { color: t.c.ink3 }]}>{slot}</Text>
-        <Text style={[s.mealItems, { color: t.c.ink3 }]}>Tap to log</Text>
-      </View>
-      <View style={s.ghostPlus}>
-        <Icon name="plus" size={16} color={t.c.ink2} />
-      </View>
-    </Pressable>
-  )
-}
+  const { toast } = useLog()
+  const recent = useQuery(api.weights.weightsInRange, { from: addDays(today, -30), to: today })
+  const logWeight = useMutation(api.weights.logWeight)
+  const [draft, setDraft] = useState<number | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-// A one-tap usual. Flashes "done" for a moment; logging arrives in slice 6.
-function UsualCard({ usual }: { usual: Usual }) {
-  const t = useTheme()
-  const s = useStyles()
-  const [done, setDone] = useState(false)
-  useEffect(() => {
-    if (!done) return
-    const timer = setTimeout(() => setDone(false), 1600)
-    return () => clearTimeout(timer)
-  }, [done])
+  if (recent === undefined) return null
+  const todays = recent.find((w) => w.localDate === today)
+  const last = recent.at(-1)
+  const kg = draft ?? todays?.kg ?? last?.kg ?? 70
+  const step = (d: number) => setDraft(Math.round((kg + d) * 10) / 10)
 
-  return (
-    <Tap style={[s.usual, done && s.usualDone]} scale={0.94} onPress={() => setDone(true)} accessibilityRole="button">
-      <Text style={[s.usualLabel, done && { color: t.c.bg }]} numberOfLines={2}>
-        {usual.label}
-      </Text>
-      <View style={s.usualFoot}>
-        <Text style={[s.usualKcal, done && { color: t.c.bg, opacity: 0.7 }]}>{formatNumber(usual.kcal)} kcal</Text>
-        <View style={s.usualPlus}>
-          <Icon name={done ? 'check' : 'plus'} size={15} color={t.c.ink} />
-        </View>
-      </View>
-    </Tap>
-  )
-}
+  // Stores the weight for today and folds the card.
+  async function save() {
+    setBusy(true)
+    try {
+      await logWeight({ kg, localDate: today })
+      setEditing(false)
+      setDraft(null)
+      toast({ title: `Weight saved · ${kg.toFixed(1)} kg`, sub: "Trend barely moves on one day. That's the point." })
+    } catch (err) {
+      toast({ title: "Couldn't save your weight.", sub: plainError(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
 
-// Morning weigh-in stepper. Local only until slice 7 stores weights.
-function WeighCard({ draftKg, trendNote }: { draftKg: number; trendNote: string }) {
-  const t = useTheme()
-  const s = useStyles()
-  const [kg, setKg] = useState(draftKg)
-  const [saved, setSaved] = useState(false)
-  const step = (d: number) => setKg((v) => Math.round((v + d) * 10) / 10)
-
-  if (saved)
+  if (todays && !editing)
     return (
       <View style={[s.card, s.weighCard, s.weighSaved]}>
         <View style={s.grow}>
           <Text style={s.eyebrow}>Weighed in</Text>
           <Text style={s.weighNote}>
-            <Text style={s.weighValueInline}>{kg.toFixed(1)} kg</Text>  {trendNote}
+            <Text style={s.weighValueInline}>{todays.kg.toFixed(1)} kg</Text>  feeds your burn estimate
           </Text>
         </View>
-        <Tap style={[s.btnSm, s.btnGhost]} onPress={() => setSaved(false)} accessibilityRole="button">
-          <Text style={[s.btnText, { color: t.c.ink }]}>Edit</Text>
-        </Tap>
+        <Button label="Edit" size="sm" variant="ghost" onPress={() => setEditing(true)} />
       </View>
     )
 
@@ -237,61 +218,16 @@ function WeighCard({ draftKg, trendNote }: { draftKg: number; trendNote: string 
       <Text style={s.eyebrow}>Morning weight</Text>
       <Text style={[s.faintSmall, s.weighHint]}>Optional. Feeds your burn estimate.</Text>
       <View style={s.weighRow}>
-        <Tap style={s.iconBtn} scale={0.88} onPress={() => step(-0.1)} accessibilityLabel="Less">
-          <Icon name="minus" color={t.c.ink} />
-        </Tap>
+        <RoundButton icon="minus" label="Less" onPress={() => step(-0.1)} />
         <Text style={s.weighValue}>
           {kg.toFixed(1)}
-          <Text style={s.weighUnit}> kg</Text>
+          <Text style={[s.weighUnit, { color: t.c.ink3 }]}> kg</Text>
         </Text>
-        <Tap style={s.iconBtn} scale={0.88} onPress={() => step(0.1)} accessibilityLabel="More">
-          <Icon name="plus" color={t.c.ink} />
-        </Tap>
+        <RoundButton icon="plus" label="More" onPress={() => step(0.1)} />
         <View style={s.grow} />
-        <Tap style={s.btnSm} onPress={() => setSaved(true)} accessibilityRole="button">
-          <Text style={[s.btnText, { color: t.c.bg }]}>Save</Text>
-        </Tap>
+        <Button label="Save" size="sm" busy={busy} onPress={() => void save()} />
       </View>
     </View>
-  )
-}
-
-// Today's planned or finished session.
-function TrainingCard({ workout }: { workout: Workout }) {
-  const t = useTheme()
-  const s = useStyles()
-  const done = workout.status === 'done'
-  const go = useSharedValue(1)
-  const goStyle = useAnimatedStyle(() => ({ transform: [{ scale: go.value }] }))
-  return (
-    <Pressable
-      style={s.card}
-      onPressIn={() => (go.value = withSpring(0.9, motion.spring.bouncy))}
-      onPressOut={() => (go.value = withSpring(1, motion.spring.bouncy))}
-      accessibilityRole="button"
-    >
-      <View style={s.wTop}>
-        <View style={s.grow}>
-          <Text style={s.eyebrow}>
-            {done ? `Done · ${formatClock(workout.doneAt, true)}` : `Planned · ~${workout.minutes} min`}
-          </Text>
-          <Text style={s.wName}>{workout.name}</Text>
-          {done ? <Text style={s.wSummary}>{workout.summary}</Text> : null}
-        </View>
-        <Animated.View style={[s.go, done && { backgroundColor: t.c.card2 }, goStyle]}>
-          <Icon name={done ? 'check' : 'play'} size={done ? 22 : 20} color={done ? t.c.ink : t.c.onPolo} />
-        </Animated.View>
-      </View>
-      {workout.status === 'planned' ? (
-        <View style={s.exercises}>
-          {workout.exercises.map((e) => (
-            <Text key={e} style={s.exercise}>
-              {e}
-            </Text>
-          ))}
-        </View>
-      ) : null}
-    </Pressable>
   )
 }
 
@@ -312,6 +248,8 @@ const useStyles = themedStyles((t) => ({
     justifyContent: 'center',
   },
   avatarText: { ...font('avatar'), color: t.c.ink },
+  loading: { alignItems: 'center', marginTop: 80, gap: 12 },
+  loadingText: { ...font('callout'), color: t.c.ink3 },
   hero: { marginTop: 26 },
   heroLabel: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
   bignum: { flexDirection: 'row', alignItems: 'flex-end', marginTop: 8 },
@@ -333,48 +271,9 @@ const useStyles = themedStyles((t) => ({
   weighHint: { marginTop: 4 },
   weighRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 },
   weighValue: { ...font('stepper'), color: t.c.ink, minWidth: 92, textAlign: 'center' },
-  weighUnit: { ...font('unit'), color: t.c.ink3 },
+  weighUnit: { ...font('unit') },
   weighNote: { ...font('callout'), color: t.c.ink2, marginTop: 6 },
   weighValueInline: { ...font('cardTitle'), color: t.c.ink },
-  iconBtn: {
-    width: layout.iconButton,
-    height: layout.iconButton,
-    borderRadius: radii.pill,
-    backgroundColor: t.c.card2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnSm: {
-    height: 34,
-    paddingHorizontal: 13,
-    borderRadius: radii.pill,
-    backgroundColor: t.c.ink,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnGhost: { backgroundColor: t.c.card2 },
-  btnText: { ...font('buttonSmall') },
-  chips: { marginHorizontal: -layout.screenX },
-  chipsInner: { gap: 8, paddingHorizontal: layout.screenX, paddingTop: 2, paddingBottom: 6 },
-  usual: {
-    width: 150,
-    padding: 14,
-    borderRadius: radii.md,
-    backgroundColor: t.c.card,
-    boxShadow: t.shadow.card,
-  },
-  usualDone: { backgroundColor: t.c.ink },
-  usualLabel: { ...font('calloutStrong'), color: t.c.ink, minHeight: 36 },
-  usualFoot: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
-  usualKcal: { ...font('caption'), color: t.c.ink3 },
-  usualPlus: {
-    width: 26,
-    height: 26,
-    borderRadius: radii.pill,
-    backgroundColor: t.c.card2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   mealsCard: {
     backgroundColor: t.c.card,
     borderRadius: radii.card,
@@ -382,44 +281,8 @@ const useStyles = themedStyles((t) => ({
     paddingVertical: 4,
     paddingHorizontal: 14,
   },
-  meal: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 14, paddingHorizontal: 4 },
-  mealDivider: { borderTopWidth: 1, borderTopColor: t.c.line },
-  mealPressed: { backgroundColor: t.c.card2, borderRadius: radii.sm },
-  mealTime: { ...font('caption'), color: t.c.ink3, width: 48, paddingTop: 2, fontVariant: ['tabular-nums'] },
-  mealMain: { flex: 1 },
-  mealName: { ...font('bodyStrong'), color: t.c.ink },
-  mealItems: { ...font('secondary'), color: t.c.ink2, marginTop: 3 },
-  mealKcal: { ...font('value'), color: t.c.ink, paddingTop: 1 },
-  ghostPlus: {
-    width: 28,
-    height: 28,
-    borderRadius: radii.pill,
-    backgroundColor: t.c.card2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   empty: { alignItems: 'center', paddingTop: 26, paddingBottom: 22, paddingHorizontal: 10 },
   emptyTitle: { ...font('emptyTitle'), color: t.c.ink, marginTop: 12 },
   emptyBody: { ...font('callout'), color: t.c.ink2, marginTop: 6, textAlign: 'center' },
-  wTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  wName: { ...font('cardTitle'), color: t.c.ink, marginTop: 4 },
-  wSummary: { ...font('secondary'), color: t.c.ink2, marginTop: 6 },
-  go: {
-    width: 52,
-    height: 52,
-    borderRadius: radii.pill,
-    backgroundColor: t.c.polo,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  exercises: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 14 },
-  exercise: {
-    ...font('caption'),
-    color: t.c.ink2,
-    backgroundColor: t.c.card2,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: radii.pill,
-    overflow: 'hidden',
-  },
+  emptyButton: { marginTop: 14 },
 }))
