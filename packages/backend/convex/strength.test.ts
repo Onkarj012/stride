@@ -138,6 +138,7 @@ test("all public strength functions reject signed-out callers", async () => {
     t.mutation(api.strength.deleteSet, { submissionId: "x", setId }),
     t.mutation(api.strength.undoRevision, { submissionId: "x", setId }),
     t.query(api.strength.sessionsForDay, {}),
+    t.query(api.strength.activeSession, {}),
     t.query(api.strength.sessionDetail, { sessionId }),
     t.query(api.strength.stats, {}),
   ];
@@ -271,6 +272,18 @@ test("undo cannot restore a deleted set above the session cap", async () => {
     for (let index = 0; index < 200; index++) await ctx.db.insert("sets", { userId: "user_a", sessionId, exerciseId, setIndex: index + 2, weightKg: 60, reps: 8, revision: 1, status: "live", submissionId: `cap-${index}` });
   });
   await expect(user.mutation(api.strength.undoRevision, { submissionId: "undo-overflow", setId: deleted })).rejects.toThrow(/200 sets/);
+});
+
+test("activeSession finds an unfinished session from an earlier day, skipping ended, deleted and other users' sessions", async () => {
+  const { t, user, sessionId } = await setup();
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });
+  expect(await user.query(api.strength.activeSession, {})).toBeNull();
+  const other = t.withIdentity({ subject: "user_b" });
+  await other.mutation(api.time_zone.setTimeZone, { timeZone: "UTC" });
+  await other.mutation(api.strength.startSession, { submissionId: "other", startedAt: START + 1_000 });
+  await t.run((ctx) => ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-06", timeZone: "Asia/Kolkata", startedAt: START + 2_000, submissionId: "deleted", deletedAt: START + 3_000 }));
+  const yesterday = await user.mutation(api.strength.startSession, { submissionId: "yesterday", startedAt: START - 86_400_000 });
+  expect(await user.query(api.strength.activeSession, {})).toMatchObject({ _id: yesterday, localDate: "2026-10-05" });
 });
 
 test("startSession refuses a thirty-first session on one day", async () => {

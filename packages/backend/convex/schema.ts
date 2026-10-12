@@ -757,6 +757,7 @@ export default defineSchema({
     deletedAt: v.optional(v.number()),
   })
     .index("by_userId_and_localDate", ["userId", "localDate"])
+    .index("by_userId_and_startedAt", ["userId", "startedAt"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
 
   sets: defineTable({

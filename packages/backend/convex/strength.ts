@@ -241,6 +241,16 @@ export const sessionsForDay = query({
   },
 });
 
+/** Returns the caller's newest unfinished workout, whatever day it started on. */
+export const activeSession = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const rows = await ctx.db.query("workout_sessions").withIndex("by_userId_and_startedAt", (q) => q.eq("userId", userId)).order("desc").take(20);
+    return rows.find((row) => row.endedAt === undefined && row.deletedAt === undefined) ?? null;
+  },
+});
+
 /** Loads a workout's current sets, previous hints and deterministic completion summary. */
 export const sessionDetail = query({
   args: { sessionId: v.id("workout_sessions") },
