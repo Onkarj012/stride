@@ -33,6 +33,8 @@ export type Palette = {
   dock3: string
   dockField: string
   dockIndicator: string
+  toastUndo: string
+  calendarSelectedRing: string
   scrim: string
 }
 
@@ -58,6 +60,8 @@ export const colors: Record<ColorScheme, Palette> = {
     dock3: 'rgba(244,241,233,0.55)',
     dockField: 'rgba(255,255,255,0.1)',
     dockIndicator: 'rgba(255,255,255,0.12)',
+    toastUndo: 'rgba(127,127,127,0.22)',
+    calendarSelectedRing: 'rgba(127,127,127,0.35)',
     scrim: 'rgba(15,14,12,0.36)',
   },
   dark: {
@@ -81,6 +85,8 @@ export const colors: Record<ColorScheme, Palette> = {
     dock3: 'rgba(242,238,229,0.5)',
     dockField: 'rgba(255,255,255,0.1)',
     dockIndicator: 'rgba(255,255,255,0.12)',
+    toastUndo: 'rgba(127,127,127,0.22)',
+    calendarSelectedRing: 'rgba(127,127,127,0.35)',
     scrim: 'rgba(15,14,12,0.36)',
   },
 }

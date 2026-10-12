@@ -105,7 +105,7 @@ function History({ today }: { today: string }) {
               accessibilityLabel={`${formatDayTitle(date)}${day ? `, ${formatNumber(day.nutrients.kcal)} kcal` : ', not logged'}`}
             >
               <Svg width={24} height={24} viewBox="0 0 24 24" style={s.ring}>
-                <Circle cx={12} cy={12} r={10} fill="none" strokeWidth={3} stroke={on ? 'rgba(127,127,127,0.35)' : t.c.card2} />
+                <Circle cx={12} cy={12} r={10} fill="none" strokeWidth={3} stroke={on ? t.c.calendarSelectedRing : t.c.card2} />
                 {day ? (
                   <Circle
                     cx={12}
