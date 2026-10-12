@@ -9,6 +9,9 @@ import { Toast, type ToastMessage } from './Toast'
 
 type SheetContent = { kind: 'compose'; mode: ComposeMode; defaultSlot?: MealSlot; draftId?: DraftId } | { kind: 'meal'; localDate: string; slot: MealSlot }
 
+// One sheet opening. Its session number changes on every show, so each opening mounts fresh.
+type Opening = SheetContent & { session: number }
+
 type LogApi = {
   compose: (mode?: ComposeMode, defaultSlot?: MealSlot) => void
   openDraft: (draftId: DraftId) => void
@@ -30,29 +33,37 @@ export function useLog(): LogApi {
 
 // Hosts the one bottom sheet and the toast above the tabs, and hands out the actions to open them.
 export function LogProvider({ children }: { children: ReactNode }) {
-  const [content, setContent] = useState<SheetContent | null>(null)
+  const [content, setContent] = useState<Opening | null>(null)
   const [open, setOpen] = useState(false)
   const [message, setMessage] = useState<ToastMessage | null>(null)
-  const next = useRef<SheetContent | null>(null)
+  const next = useRef<Opening | null>(null)
+  const session = useRef(0)
   const toastId = useRef(0)
   const undoRevision = useMutation(api.entries.undoRevision)
 
   const show = useCallback(
     (wanted: SheetContent) => {
       setMessage(null)
+      session.current += 1
+      const opening = { ...wanted, session: session.current }
       if (open) {
         // Swap content by closing first so the new sheet slides in fresh.
-        next.current = wanted
+        next.current = opening
         setOpen(false)
         return
       }
-      setContent(wanted)
+      setContent(opening)
       setOpen(true)
     },
     [open],
   )
 
   const close = useCallback(() => setOpen(false), [])
+
+  // Closes the sheet only if the opening that asked is still the one on screen.
+  const closeOpening = useCallback((id: number) => () => {
+    if (id === session.current) setOpen(false)
+  }, [])
 
   const closed = useCallback(() => {
     const queued = next.current
@@ -96,9 +107,11 @@ export function LogProvider({ children }: { children: ReactNode }) {
     <LogContext.Provider value={value}>
       {children}
       <Sheet open={open} onClose={close} onClosed={closed}>
-        {content?.kind === 'compose' ? <Compose initialMode={content.mode} defaultSlot={content.defaultSlot} initialDraftId={content.draftId} onClose={close} /> : null}
+        {content?.kind === 'compose' ? (
+          <Compose key={content.session} initialMode={content.mode} defaultSlot={content.defaultSlot} initialDraftId={content.draftId} onClose={closeOpening(content.session)} />
+        ) : null}
         {content?.kind === 'meal' ? (
-          <MealSheet localDate={content.localDate} slot={content.slot} onClose={close} />
+          <MealSheet key={content.session} localDate={content.localDate} slot={content.slot} onClose={closeOpening(content.session)} />
         ) : null}
       </Sheet>
       <Toast message={message} onDone={toastDone} />
