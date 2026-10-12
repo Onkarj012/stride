@@ -1,3 +1,6 @@
+import { weekdayOf } from '@stride/core'
+export { weekdayOf } from '@stride/core'
+
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 export const MONTHS_LONG = [
@@ -34,13 +37,6 @@ export function greeting(minutes: number, name: string): string {
   if (h < 12) return `Morning, ${name}.`
   if (h < 17) return `Afternoon, ${name}.`
   return `Evening, ${name}.`
-}
-
-// Weekday index (0 is Sunday) of a YYYY-MM-DD date; 1970-01-01 was a Thursday.
-export function weekdayOf(localDate: string): number {
-  const [y = 1970, m = 1, d = 1] = localDate.split('-').map(Number)
-  const day = Date.UTC(y, m - 1, d) / 86_400_000
-  return (((day + 4) % 7) + 7) % 7
 }
 
 // "Tue, 29 Sep" for a YYYY-MM-DD date.

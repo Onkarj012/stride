@@ -1,10 +1,9 @@
-import { adaptiveTdee, addDays, mifflinStJeor, weightTrend } from "@stride/core";
+import { ACTIVITY_FACTORS, GOAL_KCAL_OFFSETS, adaptiveTdee, addDays, mifflinStJeor, weightTrend } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import schema from "./schema";
-import { ACTIVITY_FACTORS, GOAL_KCAL_OFFSETS } from "./progress_v2";
 import { TDEE_USER_BATCH_SIZE } from "./tdee_recompute";
 
 const modules = import.meta.glob("./**/*.*s");

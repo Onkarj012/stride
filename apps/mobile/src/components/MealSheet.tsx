@@ -92,14 +92,7 @@ export function MealSheet({ localDate, slot, onClose }: { localDate: string; slo
         {meal.entries.map((entry, i) => (
           <EntryRow key={entry.entryKey} entry={entry} last={i === meal.entries.length - 1} blocked={busy}
             onSaving={(saving) => setSavingRows((count) => count + (saving ? 1 : -1))}
-            onRemove={async (entryId) => {
-            try {
-              const revision = await deleteEntry({ submissionId: newSubmissionId(), entryId })
-              toast({ title: `Removed ${entry.foodName}`, sub: 'Every version is kept.', undo: undoFor([revision]) })
-            } catch (err) {
-              toast({ title: "Couldn't remove that.", sub: plainError(err) })
-            }
-          }} />
+          />
         ))}
       </View>
 
@@ -136,16 +129,16 @@ export function MealSheet({ localDate, slot, onClose }: { localDate: string; slo
 }
 
 // One food in the meal: grams stepper that saves after a pause, and a remove button.
-function EntryRow({ entry, last, blocked, onRemove, onSaving }: {
+function EntryRow({ entry, last, blocked, onSaving }: {
   entry: EntryView
   last: boolean
   blocked: boolean
-  onRemove: (entryId: EntryId) => Promise<void>
   onSaving: (saving: boolean) => void
 }) {
   const s = useStyles()
   const { toast, undoFor } = useLog()
   const editEntry = useMutation(api.entries.editEntry)
+  const deleteEntry = useMutation(api.entries.deleteEntry)
   const [shown, setShown] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const pending = useRef<number | null>(null)
@@ -155,6 +148,7 @@ function EntryRow({ entry, last, blocked, onRemove, onSaving }: {
   const observed = useRef(entry)
   observed.current = entry
   const inFlight = useRef(false)
+  const removing = useRef(false)
   const mounted = useRef(true)
   const locked = useRef(false)
   const callbacks = useRef({ onSaving, toast, undoFor })
@@ -170,7 +164,7 @@ function EntryRow({ entry, last, blocked, onRemove, onSaving }: {
   }
 
   useEffect(() => {
-    if (!inFlight.current && pending.current === null && entry.revision >= head.current.revision) {
+    if (!removing.current && !inFlight.current && pending.current === null && entry.revision >= head.current.revision) {
       displayed.current = null
       setShown(null)
       markSaving(false)
@@ -221,9 +215,24 @@ function EntryRow({ entry, last, blocked, onRemove, onSaving }: {
     }
   }, [])
 
+  // Locks the row and meal until the deleted revision removes this row from the subscription.
+  async function remove() {
+    if (locked.current || blocked) return
+    removing.current = true
+    markSaving(true)
+    try {
+      const revision = await deleteEntry({ submissionId: newSubmissionId(), entryId: head.current.id })
+      callbacks.current.toast({ title: `Removed ${entry.foodName}`, sub: 'Every version is kept.', undo: callbacks.current.undoFor([revision]) })
+    } catch (err) {
+      removing.current = false
+      markSaving(false)
+      callbacks.current.toast({ title: "Couldn't remove that.", sub: plainError(err) })
+    }
+  }
+
   // Steps the amount locally and schedules the save.
   function step(direction: -1 | 1) {
-    if (blocked) return
+    if (blocked || removing.current) return
     const g = pending.current ?? displayed.current ?? head.current.grams
     const size = g < 50 ? 5 : g < 200 ? 10 : 25
     const next = Math.min(5000, Math.max(size, Math.round((g + direction * size) / size) * size))
@@ -250,7 +259,7 @@ function EntryRow({ entry, last, blocked, onRemove, onSaving }: {
         </Text>
       </View>
       <Stepper value={formatGrams(grams)} label={entry.foodName} onStep={step} />
-      <RoundButton icon="x" label={`Remove ${entry.foodName}`} tone="plain" size={36} disabled={saving || blocked} onPress={() => void onRemove(head.current.id)} />
+      <RoundButton icon="x" label={`Remove ${entry.foodName}`} tone="plain" size={36} disabled={saving || blocked} onPress={() => void remove()} />
     </Animated.View>
   )
 }

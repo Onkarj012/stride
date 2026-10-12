@@ -135,7 +135,7 @@ const useStyles = themedStyles((t) => ({
     paddingLeft: 8,
     paddingRight: 12,
     borderRadius: radii.pill,
-    backgroundColor: 'rgba(127,127,127,0.22)',
+    backgroundColor: t.c.toastUndo,
   },
   undoText: { ...font('calloutStrong'), color: t.c.bg },
 }))
