@@ -192,7 +192,7 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
   return (
     <Page
       overlay={
-        <Sheet open={picking} onClose={() => setPicking(false)}>
+        <Sheet open={picking && !ended} onClose={() => setPicking(false)}>
           <ExercisePicker
             taken={list.map((e) => e.exercise._id)}
             onPick={(exercise) => {
@@ -228,13 +228,14 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
           exercise={current.exercise}
           sets={current.sets}
           position={`${currentIndex + 1} of ${list.length}`}
+          finished={ended}
           actions={actions}
         />
       ) : (
         <Animated.View entering={FadeIn} style={s.startCard}>
           <Polo size={56} hop={1} />
-          <Text style={s.emptyTitle}>Pick your first exercise.</Text>
-          <Button label="Choose exercise" icon="plus" variant="ghost" size="sm" onPress={() => setPicking(true)} style={s.startButton} />
+          <Text style={s.emptyTitle}>{ended ? 'No sets to edit.' : 'Pick your first exercise.'}</Text>
+          {ended ? null : <Button label="Choose exercise" icon="plus" variant="ghost" size="sm" onPress={() => setPicking(true)} style={s.startButton} />}
         </Animated.View>
       )}
 
@@ -258,9 +259,11 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
               </Tap>
             </Animated.View>
           ))}
-          <Tap style={s.addEx} scale={0.98} onPress={() => setPicking(true)} accessibilityRole="button">
-            <Text style={s.addExText}>+ Add exercise</Text>
-          </Tap>
+          {ended ? null : (
+            <Tap style={s.addEx} scale={0.98} onPress={() => setPicking(true)} accessibilityRole="button">
+              <Text style={s.addExText}>+ Add exercise</Text>
+            </Tap>
+          )}
         </View>
       ) : null}
     </Page>

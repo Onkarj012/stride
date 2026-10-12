@@ -43,12 +43,15 @@ export function ExerciseBlock({
   exercise,
   sets,
   position,
+  finished,
   actions,
 }: {
   sessionId: SessionId
   exercise: Exercise
   sets: SetView[]
   position: string
+  // A finished workout can be corrected but not extended, so the new-set row is hidden.
+  finished: boolean
   actions: WorkoutActions
 }) {
   const s = useStyles()
@@ -82,16 +85,18 @@ export function ExerciseBlock({
           // Edits give a set a new id, so key by its slot in the session to keep the row mounted.
           <LoggedRow key={set.setIndex} set={set} number={i + 1} hint={previous[i]} exercise={exercise} actions={actions} />
         ))}
-        <DraftRow
-          // Remount with fresh defaults after each logged set; late hints are applied in place.
-          key={sets.length}
-          sessionId={sessionId}
-          exercise={exercise}
-          number={sets.length + 1}
-          hint={previous[sets.length]}
-          start={draft}
-          actions={actions}
-        />
+        {finished ? null : (
+          <DraftRow
+            // Remount with fresh defaults after each logged set; late hints are applied in place.
+            key={sets.length}
+            sessionId={sessionId}
+            exercise={exercise}
+            number={sets.length + 1}
+            hint={previous[sets.length]}
+            start={draft}
+            actions={actions}
+          />
+        )}
       </View>
     </View>
   )
