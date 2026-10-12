@@ -12,6 +12,7 @@ import { Icon } from '@/components/Icon'
 import { useLog } from '@/components/LogProvider'
 import { Polo } from '@/components/Polo'
 import { Screen, ScreenTitle } from '@/components/Screen'
+import { StrengthSection } from '@/components/StrengthSection'
 import { Tap } from '@/components/Tap'
 import { WeightChart, type WeightPoint } from '@/components/WeightChart'
 import { formatDayTitle, formatNumber, weekdayOf } from '@/lib/format'
@@ -54,8 +55,9 @@ export default function ProgressScreen() {
         </>
       )}
 
-      {/* Strength: StrengthSection mounts here, below everything else on this screen. */}
-      <View style={s.strengthSpot} />
+      <View style={s.strengthSpot}>
+        <StrengthSection />
+      </View>
     </Screen>
   )
 }
