@@ -8,7 +8,7 @@ import { inferSlot } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout, radii } from '@stride/ui-tokens'
 import { DayBar, Macro, Odometer } from '@/components/Budget'
-import { SUMMARY_DAYS, useBurnMilestone } from '@/components/BurnSheet'
+import { useBurnMilestone } from '@/components/BurnSheet'
 import { Button, RoundButton } from '@/components/Controls'
 import { useLog } from '@/components/LogProvider'
 import { MealRow, NextMealRow, groupMeals } from '@/components/Meals'
@@ -16,7 +16,7 @@ import { Polo } from '@/components/Polo'
 import { Screen, Section } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
 import { formatDateline, formatNumber, greeting } from '@/lib/format'
-import { DEFAULT_TARGETS, plainError, type MealSlot } from '@/lib/log'
+import { SUMMARY_DAYS, plainError, targetsFor, type MealSlot } from '@/lib/log'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
@@ -60,7 +60,7 @@ export default function TodayScreen() {
   const name = user?.firstName || user?.username || 'there'
   const now = new Date()
   const night = isNight(now)
-  const targets = DEFAULT_TARGETS
+  const targets = targetsFor(summary?.target?.kcal ?? null)
 
   // Account sheet for now: shows who is signed in and offers sign out.
   function openAccount() {

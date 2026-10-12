@@ -11,7 +11,7 @@ import { Polo } from '@/components/Polo'
 import { Screen, ScreenTitle } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
 import { MONTHS_LONG, formatDayTitle, formatNumber, weekdayOf } from '@/lib/format'
-import { DEFAULT_TARGETS } from '@/lib/log'
+import { SUMMARY_DAYS, targetsFor } from '@/lib/log'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
@@ -68,6 +68,7 @@ function History({ today }: { today: string }) {
   const from = dateOf(month, 1)
   const to = dateOf(month, total)
   const days = useQuery(api.day_totals.dayTotalsInRange, { from, to })
+  const targetKcal = targetsFor(useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS })?.target?.kcal ?? null).kcal
   const isCurrent = month.year === current.year && month.month === current.month
   const daysSoFar = isCurrent ? Number(today.slice(8)) : total
   const logged = new Map((days ?? []).map((d) => [d.localDate, d]))
@@ -109,7 +110,7 @@ function History({ today }: { today: string }) {
           const day = logged.get(date)
           const future = date > today
           const on = date === selected
-          const frac = day ? Math.min(1, day.nutrients.kcal / DEFAULT_TARGETS.kcal) : 0
+          const frac = day ? Math.min(1, day.nutrients.kcal / targetKcal) : 0
           return (
             <View key={date} style={s.cell}>
             <Tap

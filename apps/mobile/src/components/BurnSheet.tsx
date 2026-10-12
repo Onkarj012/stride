@@ -6,13 +6,11 @@ import { useQuery } from 'convex/react'
 import { KCAL_PER_KG } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
 import { formatNumber } from '@/lib/format'
+import { SUMMARY_DAYS } from '@/lib/log'
 import { font, themedStyles } from '@/theme'
 import { Button, Thinking } from './Controls'
 import { useLog } from './LogProvider'
 import { Polo } from './Polo'
-
-// Same range as Today and the Progress default, so Convex shares one subscription.
-export const SUMMARY_DAYS = 14
 
 // "−0.40 kg a week" with a real minus sign.
 export function formatRate(kgPerWeek: number): string {
