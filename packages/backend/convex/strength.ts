@@ -8,7 +8,8 @@ import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
 import { assertLedgerWritable } from "./users";
 
 const MAX_SESSION_SETS = 200;
-const MAX_HISTORY_SETS = 5000;
+// Each retained set can require a separate session and exercise read; leave room below 4,096 ranges.
+const MAX_HISTORY_SETS = 1000;
 type RevisionOp = Infer<typeof revisionOpValidator>;
 type SetContent = Pick<Doc<"sets">, "sessionId" | "exerciseId" | "setIndex" | "weightKg" | "reps" | "rpe" | "deletedAt">;
 type ReadCtx = QueryCtx | MutationCtx;
@@ -291,7 +292,7 @@ export const sessionDetail = query({
       const previous = Math.max(0, ...olderSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
       if (!past.historyLimited && best > previous) newBests.push({ exerciseId, name: exercise.name, e1rmKg: best, previousBestKg: previous === 0 ? null : previous });
     }
-    return { session, exercises, historyLimited: past.historyLimited, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
+    return { session, exercises, historyLimited: past.historyLimited, historySetLimit: MAX_HISTORY_SETS, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
   },
 });
 
@@ -331,6 +332,6 @@ export const stats = query({
       exercises.push({ exerciseId, name: exercise.name, bestE1rmKg: past.historyLimited || trend.length === 0 ? null : Math.max(...trend.map((point) => point.e1rmKg)), trend, previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId) });
     }
     exercises.sort((a, b) => (b.bestE1rmKg ?? 0) - (a.bestE1rmKg ?? 0) || a.name.localeCompare(b.name));
-    return { weeklyVolume, exercises, historyLimited: past.historyLimited };
+    return { weeklyVolume, exercises, historyLimited: past.historyLimited, historySetLimit: MAX_HISTORY_SETS };
   },
 });

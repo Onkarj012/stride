@@ -9,8 +9,8 @@ const START = Date.UTC(2026, 9, 5, 19);
 afterEach(() => vi.useRealTimers());
 
 /** Creates an IST user and a shared strength exercise without importing a dataset. */
-async function setup() {
-  const t = convexTest(schema, modules);
+async function setup(transactionLimits = false) {
+  const t = convexTest({ schema, modules, transactionLimits });
   const user = t.withIdentity({ subject: "user_a" });
   await user.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
   const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "bench", name: "Bench press", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: ["triceps"] }));
@@ -19,8 +19,8 @@ async function setup() {
 }
 
 /** Logs one baseline set into the setup workout. */
-async function withSet() {
-  const data = await setup();
+async function withSet(transactionLimits = false) {
+  const data = await setup(transactionLimits);
   const setId = await data.user.mutation(api.strength.addSet, { submissionId: "add", sessionId: data.sessionId, exerciseId: data.exerciseId, weightKg: 60, reps: 8, rpe: 7 });
   return { ...data, setId };
 }
@@ -281,6 +281,24 @@ test("large set history stays readable and marks incomplete comparisons", async 
   expect((await user.query(api.strength.exerciseHints, { sessionId, exerciseId })).previousSets).toEqual([]);
   await user.mutation(api.strength.addSet, { submissionId: "still-loggable", sessionId, exerciseId, weightKg: 65, reps: 8 });
   expect((await user.query(api.strength.sessionDetail, { sessionId })).summary.setCount).toBe(2);
+});
+
+test("history fits Convex read limits when every set has a different session and exercise", async () => {
+  const { t, user, sessionId, exerciseId } = await withSet(true);
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 5000; index++) {
+      const lift = await ctx.db.insert("exercises", { sourceId: `budget-${index}`, name: `Lift ${index}`, category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] });
+      const session = await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-07", timeZone: "Asia/Kolkata", startedAt: START + 86_400_000 + index, endedAt: START + 86_460_000 + index, submissionId: `budget-${index}` });
+      await ctx.db.insert("sets", { userId: "user_a", sessionId: session, exerciseId: lift, setIndex: 1, weightKg: 50, reps: 8, revision: 1, status: "live", submissionId: `budget-${index}` });
+    }
+  });
+  const stats = await user.query(api.strength.stats, { localDate: "2026-10-07", weeks: 1 });
+  expect(stats.historyLimited).toBe(true);
+  expect(stats.exercises).toHaveLength(stats.historySetLimit);
+  const detail = await user.query(api.strength.sessionDetail, { sessionId });
+  expect(detail.summary).toMatchObject({ setCount: 1, volumeKg: 480 });
+  expect(detail.historyLimited).toBe(true);
+  expect((await user.query(api.strength.exerciseHints, { sessionId, exerciseId })).historyLimited).toBe(true);
 });
 
 test("saved workouts page through older sessions and reopen finished sets for edits", async () => {

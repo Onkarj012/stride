@@ -6,7 +6,7 @@ import { router } from 'expo-router'
 import { useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout, motion, radii } from '@stride/ui-tokens'
-import { formatDayTitle } from '@/lib/format'
+import { formatDayTitle, formatNumber } from '@/lib/format'
 import { formatKg, muscleName, type StrengthStats } from '@/lib/strength'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
@@ -52,7 +52,7 @@ export function StrengthSection() {
         <View style={[s.card, s.empty]}>
           <Polo size={52} hop={1} />
           <Text style={s.emptyTitle}>{stats.historyLimited ? 'No recent lifts.' : 'No lifts yet.'}</Text>
-          <Text style={s.emptyBody}>{stats.historyLimited ? 'The most recent 5,000 saved sets have no lifts to show. Older workouts are still available below.' : 'Log a workout and your estimated 1-rep max and weekly sets show up here.'}</Text>
+          <Text style={s.emptyBody}>{stats.historyLimited ? `The most recent ${formatNumber(stats.historySetLimit)} saved sets have no lifts to show. Older workouts are still available below.` : 'Log a workout and your estimated 1-rep max and weekly sets show up here.'}</Text>
           {start}
           {saved}
         </View>
@@ -63,7 +63,7 @@ export function StrengthSection() {
     <View>
       <Section title="Strength" />
       <View style={s.card}>
-        {stats.historyLimited ? <Text style={s.faint}>Showing the most recent 5,000 saved sets. Trends and weekly counts may omit older sets.</Text> : null}
+        {stats.historyLimited ? <Text style={s.faint}>Showing the most recent {formatNumber(stats.historySetLimit)} saved sets. Trends and weekly counts may omit older sets.</Text> : null}
         {lifts.length > 0 ? (
           <>
             <Text style={s.eyebrow}>Estimated 1-rep max</Text>

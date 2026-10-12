@@ -318,7 +318,7 @@ function Summary({ detail, onEdit }: { detail: SessionDetail; onEdit: () => void
       </View>
       <Text style={[s.eyebrowCenter, s.doneEyebrow]}>{session.name ?? 'Workout'} · done</Text>
       <Text style={[s.bigTitle, s.centerText]}>{summary.newBests.length > 0 ? 'New best. Nice.' : 'Good session.'}</Text>
-      {detail.historyLimited ? <Text style={s.body}>All sets and totals are shown. Best comparisons are unavailable because older history is outside the recent 5,000 sets.</Text> : null}
+      {detail.historyLimited ? <Text style={s.body}>All sets and totals are shown. Best comparisons are unavailable because older history is outside the recent {formatNumber(detail.historySetLimit)} sets.</Text> : null}
 
       <View style={s.stats3}>
         <Stat value={formatNumber(minutes)} label="minutes" index={0} />
