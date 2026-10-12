@@ -140,6 +140,8 @@ test("all public strength functions reject signed-out callers", async () => {
     t.query(api.strength.sessionsForDay, {}),
     t.query(api.strength.activeSession, {}),
     t.query(api.strength.sessionDetail, { sessionId }),
+    t.query(api.strength.exerciseHints, { sessionId, exerciseId }),
+    t.query(api.strength.savedSessions, { paginationOpts: { numItems: 20, cursor: null } }),
     t.query(api.strength.stats, {}),
   ];
   for (const call of calls) await expect(call).rejects.toThrow(/Unauthenticated/);
@@ -151,12 +153,14 @@ test("session and set id arguments enforce ownership", async () => {
   await other.mutation(api.time_zone.setTimeZone, { timeZone: "UTC" });
   await expect(other.mutation(api.strength.endSession, { sessionId })).rejects.toThrow(/Session not found/);
   await expect(other.query(api.strength.sessionDetail, { sessionId })).rejects.toThrow(/Session not found/);
+  await expect(other.query(api.strength.exerciseHints, { sessionId, exerciseId })).rejects.toThrow(/Session not found/);
   await expect(other.mutation(api.strength.addSet, { submissionId: "x", sessionId, exerciseId, weightKg: 60, reps: 8 })).rejects.toThrow(/Session not found/);
   await expect(other.mutation(api.strength.editSet, { submissionId: "x", setId, reps: 9 })).rejects.toThrow(/Set not found/);
   await expect(other.mutation(api.strength.deleteSet, { submissionId: "x", setId })).rejects.toThrow(/Set not found/);
   await expect(other.mutation(api.strength.undoRevision, { submissionId: "x", setId })).rejects.toThrow(/Set not found/);
   expect(await other.query(api.strength.sessionsForDay, { localDate: "2026-10-06" })).toEqual([]);
   expect((await other.query(api.strength.stats, {})).exercises).toEqual([]);
+  expect((await other.query(api.strength.savedSessions, { paginationOpts: { numItems: 20, cursor: null } })).page).toEqual([]);
 });
 
 test("undo rejects a previous revision belonging to another user", async () => {
@@ -189,6 +193,7 @@ test("sessionDetail gives previous completed sets, totals and new e1RM bests", a
   await user.mutation(api.strength.endSession, { sessionId: future, endedAt: START + 172_860_000 });
   const detail = await user.query(api.strength.sessionDetail, { sessionId: next });
   expect(detail.exercises[0]?.previousSets.map((set) => set._id)).toEqual([setId]);
+  expect((await user.query(api.strength.exerciseHints, { sessionId: next, exerciseId })).previousSets.map((set) => set._id)).toEqual([setId]);
   expect(detail.exercises[0]?.sets.map((set) => set._id)).toEqual([nextSet]);
   expect(detail.summary).toEqual({ setCount: 1, volumeKg: 420, newBests: [{ exerciseId, name: "Bench press", e1rmKg: 84, previousBestKg: 76 }] });
   expect((await user.query(api.strength.sessionDetail, { sessionId })).summary.newBests[0]?.previousBestKg).toBeNull();
@@ -249,12 +254,65 @@ test("sessionDetail and addSet refuse session set overflow", async () => {
   await expect(user.query(api.strength.sessionDetail, { sessionId })).rejects.toThrow(/200 sets/);
 });
 
-test("stats refuses silently truncated lifetime session history", async () => {
-  const { t, user } = await setup();
+test("empty lifetime sessions do not block stats or workout details", async () => {
+  const { t, user, sessionId } = await withSet();
   await t.run(async (ctx) => {
     for (let index = 0; index < 1000; index++) await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-06", timeZone: "Asia/Kolkata", startedAt: START + index, submissionId: `history-${index}` });
   });
-  await expect(user.query(api.strength.stats, {})).rejects.toThrow(/history exceeds/);
+  expect((await user.query(api.strength.stats, {})).historyLimited).toBe(false);
+  expect((await user.query(api.strength.sessionDetail, { sessionId })).summary.setCount).toBe(1);
+});
+
+test("large set history stays readable and marks incomplete comparisons", async () => {
+  const { t, user, sessionId, exerciseId } = await withSet();
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 26; index++) {
+      const id = await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-07", timeZone: "Asia/Kolkata", startedAt: START + 86_400_000 + index, endedAt: START + 86_460_000 + index, submissionId: `large-${index}` });
+      for (let slot = 0; slot < 200; slot++) await ctx.db.insert("sets", { userId: "user_a", sessionId: id, exerciseId, setIndex: slot + 1, weightKg: 50, reps: 8, revision: 1, status: "live", submissionId: `large-${index}-${slot}` });
+    }
+  });
+  const detail = await user.query(api.strength.sessionDetail, { sessionId });
+  expect(detail.historyLimited).toBe(true);
+  expect(detail.summary).toMatchObject({ setCount: 1, volumeKg: 480, newBests: [] });
+  const stats = await user.query(api.strength.stats, { localDate: "2026-10-07", weeks: 1 });
+  expect(stats.historyLimited).toBe(true);
+  expect(stats.exercises[0]?.bestE1rmKg).toBeNull();
+  expect(stats.exercises[0]?.previousSets).toEqual([]);
+  expect((await user.query(api.strength.exerciseHints, { sessionId, exerciseId })).previousSets).toEqual([]);
+  await user.mutation(api.strength.addSet, { submissionId: "still-loggable", sessionId, exerciseId, weightKg: 65, reps: 8 });
+  expect((await user.query(api.strength.sessionDetail, { sessionId })).summary.setCount).toBe(2);
+});
+
+test("saved workouts page through older sessions and reopen finished sets for edits", async () => {
+  const { t, user, sessionId, setId } = await withSet();
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 25; index++) await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-07", timeZone: "Asia/Kolkata", startedAt: START + 86_400_000 + index, endedAt: START + 86_460_000 + index, submissionId: `saved-${index}` });
+    await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-07", timeZone: "Asia/Kolkata", startedAt: START + 172_800_000, submissionId: "hidden", deletedAt: START });
+  });
+  const first = await user.query(api.strength.savedSessions, { paginationOpts: { numItems: 20, cursor: null } });
+  expect(first.page).toHaveLength(20);
+  expect(first.isDone).toBe(false);
+  const next = await user.query(api.strength.savedSessions, { paginationOpts: { numItems: 20, cursor: first.continueCursor } });
+  expect(next.page.at(-1)?._id).toBe(sessionId);
+  expect(next.isDone).toBe(true);
+  await user.mutation(api.strength.editSet, { submissionId: "reopen-edit", setId, reps: 9 });
+  expect((await user.query(api.strength.sessionDetail, { sessionId })).exercises[0]?.sets[0]?.reps).toBe(9);
+});
+
+test("an empty session can finish and clears the resume flow", async () => {
+  const { user, sessionId } = await setup();
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });
+  expect(await user.query(api.strength.activeSession, {})).toBeNull();
+  expect((await user.query(api.strength.sessionDetail, { sessionId })).summary.setCount).toBe(0);
+});
+
+test("activeSession finds an open workout behind more than twenty finished sessions", async () => {
+  const { t, user, sessionId } = await setup();
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 25; index++) await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-07", timeZone: "Asia/Kolkata", startedAt: START + 86_400_000 + index, endedAt: START + 86_460_000 + index, submissionId: `ended-${index}` });
+  });
+  expect((await user.query(api.strength.activeSession, {}))?._id).toBe(sessionId);
 });
 
 test("deleted tail sets keep their index when added sets are undone later", async () => {

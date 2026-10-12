@@ -758,6 +758,8 @@ export default defineSchema({
   })
     .index("by_userId_and_localDate", ["userId", "localDate"])
     .index("by_userId_and_startedAt", ["userId", "startedAt"])
+    .index("by_userId_and_deletedAt_and_startedAt", ["userId", "deletedAt", "startedAt"])
+    .index("by_userId_and_endedAt_and_deletedAt_and_startedAt", ["userId", "endedAt", "deletedAt", "startedAt"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
 
   sets: defineTable({

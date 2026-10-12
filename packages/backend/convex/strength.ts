@@ -1,4 +1,5 @@
 import { addDays, epley, weekStart, weeklyVolumeByMuscle } from "@stride/core";
+import { paginationOptsValidator } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
@@ -8,7 +9,6 @@ import { assertLedgerWritable } from "./users";
 
 const MAX_SESSION_SETS = 200;
 const MAX_HISTORY_SETS = 5000;
-const MAX_HISTORY_SESSIONS = 1000;
 type RevisionOp = Infer<typeof revisionOpValidator>;
 type SetContent = Pick<Doc<"sets">, "sessionId" | "exerciseId" | "setIndex" | "weightKg" | "reps" | "rpe" | "deletedAt">;
 type ReadCtx = QueryCtx | MutationCtx;
@@ -60,15 +60,16 @@ async function sessionSets(ctx: ReadCtx, sessionId: Id<"workout_sessions">, user
   return rows.sort((a, b) => a.setIndex - b.setIndex);
 }
 
-/** Reads bounded live history and session dates without silently truncating statistics. */
+/** Reads recent live sets and their sessions, reporting when older history is omitted. */
 async function history(ctx: ReadCtx, userId: string) {
-  const [sets, sessions] = await Promise.all([
-    ctx.db.query("sets").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "live")).take(MAX_HISTORY_SETS + 1),
-    ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(MAX_HISTORY_SESSIONS + 1),
-  ]);
-  if (sets.length > MAX_HISTORY_SETS || sessions.length > MAX_HISTORY_SESSIONS) throw new Error("Strength history exceeds the supported limit (5000 live sets or 1000 sessions)");
-  const sessionMap = new Map(sessions.filter((session) => session.deletedAt === undefined).map((session) => [session._id, session]));
-  return { sets: sets.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap };
+  const rows = await ctx.db.query("sets").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "live")).order("desc").take(MAX_HISTORY_SETS + 1);
+  const sets = rows.slice(0, MAX_HISTORY_SETS);
+  const sessionMap = new Map<Id<"workout_sessions">, Doc<"workout_sessions">>();
+  for (const sessionId of new Set(sets.map((set) => set.sessionId))) {
+    const session = await ctx.db.get("workout_sessions", sessionId);
+    if (session !== null && session.userId === userId && session.deletedAt === undefined) sessionMap.set(session._id, session);
+  }
+  return { sets: sets.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap, historyLimited: rows.length > MAX_HISTORY_SETS };
 }
 
 /** Returns a set with a deterministic Epley estimate, or null outside its valid rep range. */
@@ -246,8 +247,28 @@ export const activeSession = query({
   args: {},
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
-    const rows = await ctx.db.query("workout_sessions").withIndex("by_userId_and_startedAt", (q) => q.eq("userId", userId)).order("desc").take(20);
-    return rows.find((row) => row.endedAt === undefined && row.deletedAt === undefined) ?? null;
+    return await ctx.db.query("workout_sessions").withIndex("by_userId_and_endedAt_and_deletedAt_and_startedAt", (q) => q.eq("userId", userId).eq("endedAt", undefined).eq("deletedAt", undefined)).order("desc").first();
+  },
+});
+
+/** Pages through saved workouts so even old completed sessions can be reopened. */
+export const savedSessions = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    return await ctx.db.query("workout_sessions").withIndex("by_userId_and_deletedAt_and_startedAt", (q) => q.eq("userId", userId).eq("deletedAt", undefined)).order("desc").paginate({ ...args.paginationOpts, numItems: Math.min(20, args.paginationOpts.numItems) });
+  },
+});
+
+/** Finds completed-session hints for an exercise newly selected in this workout. */
+export const exerciseHints = query({
+  args: { sessionId: v.id("workout_sessions"), exerciseId: v.id("exercises") },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    const session = await requireSession(ctx, userId, args.sessionId);
+    await requireExercise(ctx, args.exerciseId);
+    const past = await history(ctx, userId);
+    return { previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, args.exerciseId, session), historyLimited: past.historyLimited };
   },
 });
 
@@ -264,17 +285,17 @@ export const sessionDetail = query({
     for (const exerciseId of new Set(sets.map((set) => set.exerciseId))) {
       const exercise = await requireExercise(ctx, exerciseId);
       const currentSets = sets.filter((set) => set.exerciseId === exerciseId);
-      exercises.push({ exercise, sets: currentSets.map(setView), previousSets: previousSets(past.sets, past.sessions, exerciseId, session) });
+      exercises.push({ exercise, sets: currentSets.map(setView), previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId, session) });
       const best = Math.max(0, ...currentSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
       const olderSets = past.sets.filter((set) => set.exerciseId === exerciseId && (past.sessions.get(set.sessionId)?.startedAt ?? Infinity) < session.startedAt);
       const previous = Math.max(0, ...olderSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
-      if (best > previous) newBests.push({ exerciseId, name: exercise.name, e1rmKg: best, previousBestKg: previous === 0 ? null : previous });
+      if (!past.historyLimited && best > previous) newBests.push({ exerciseId, name: exercise.name, e1rmKg: best, previousBestKg: previous === 0 ? null : previous });
     }
-    return { session, exercises, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
+    return { session, exercises, historyLimited: past.historyLimited, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
   },
 });
 
-/** Returns all-time exercise bests and the requested weeks of muscle volume. */
+/** Returns exercise trends and weekly volume, with an explicit recent-history limit. */
 export const stats = query({
   args: { weeks: v.optional(v.number()), exerciseId: v.optional(v.id("exercises")), localDate: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -307,9 +328,9 @@ export const stats = query({
         if (date !== undefined && estimate !== null) daily.set(date, Math.max(daily.get(date) ?? 0, estimate));
       }
       const trend = [...daily].map(([localDate, e1rmKg]) => ({ localDate, e1rmKg })).sort((a, b) => a.localDate.localeCompare(b.localDate));
-      exercises.push({ exerciseId, name: exercise.name, bestE1rmKg: trend.length === 0 ? null : Math.max(...trend.map((point) => point.e1rmKg)), trend, previousSets: previousSets(past.sets, past.sessions, exerciseId) });
+      exercises.push({ exerciseId, name: exercise.name, bestE1rmKg: past.historyLimited || trend.length === 0 ? null : Math.max(...trend.map((point) => point.e1rmKg)), trend, previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId) });
     }
     exercises.sort((a, b) => (b.bestE1rmKg ?? 0) - (a.bestE1rmKg ?? 0) || a.name.localeCompare(b.name));
-    return { weeklyVolume, exercises };
+    return { weeklyVolume, exercises, historyLimited: past.historyLimited };
   },
 });

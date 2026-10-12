@@ -19,7 +19,6 @@ import {
   type SetId,
   type SetView,
 } from '@/lib/strength'
-import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Icon } from './Icon'
 import { Polo } from './Polo'
@@ -42,6 +41,8 @@ export function ExerciseBlock({
   sessionId,
   exercise,
   sets,
+  previousSets,
+  historyLimited,
   position,
   finished,
   actions,
@@ -49,15 +50,17 @@ export function ExerciseBlock({
   sessionId: SessionId
   exercise: Exercise
   sets: SetView[]
+  previousSets?: Hint[]
+  historyLimited: boolean
   position: string
   // A finished workout can be corrected but not extended, so the new-set row is hidden.
   finished: boolean
   actions: WorkoutActions
 }) {
   const s = useStyles()
-  const today = useLocalToday()
-  const stats = useQuery(api.strength.stats, { weeks: 1, exerciseId: exercise._id, localDate: today })
-  const previous: Hint[] = stats?.exercises[0]?.previousSets ?? []
+  const hints = useQuery(api.strength.exerciseHints, previousSets === undefined ? { sessionId, exerciseId: exercise._id } : 'skip')
+  const previous = previousSets ?? hints?.previousSets ?? []
+  const limited = historyLimited || hints?.historyLimited === true
   const muscle = exercise.primaryMuscles[0]
   const last = sets.at(-1)
   const draft: Hint = last ?? previous[sets.length] ?? previous.at(-1) ?? { weightKg: startingWeight(exercise), reps: 8 }
@@ -72,9 +75,11 @@ export function ExerciseBlock({
       <View style={s.hint}>
         <Polo size={24} mood={sets.length > 0 ? 'happy' : 'idle'} hop={sets.length} />
         <Text style={s.hintText}>
-          {stats === undefined
+          {previousSets === undefined && hints === undefined
             ? ' '
-            : previous.length > 0
+            : limited
+              ? 'Previous workout hints are unavailable for this history.'
+              : previous.length > 0
               ? `Last time: ${formatSets(previous)}.`
               : 'New lift. Start with a weight you can move for 8 clean reps.'}
         </Text>
@@ -118,6 +123,7 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
   const inFlight = useRef<Promise<void>>(Promise.resolve())
   // Count of this set's fields with focus. Typed changes save when the last one loses focus or the check is pressed.
   const editing = useRef(0)
+  const mounted = useRef(true)
   // Revision id returned by our last save, ahead of the query; edits chain onto it instead of the stale head.
   const ahead = useRef<SetId | null>(null)
 
@@ -133,7 +139,10 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
     if (next === null) return
     pending.current = null
     const head = latest.current
-    if (ahead.current === null && next.weightKg === head.weightKg && next.reps === head.reps) return setShown(null)
+    if (ahead.current === null && next.weightKg === head.weightKg && next.reps === head.reps) {
+      if (mounted.current) setShown(null)
+      return
+    }
     saving.current = true
     inFlight.current = editSet({ submissionId: newSubmissionId(), setId: ahead.current ?? head._id, weightKg: next.weightKg, reps: next.reps })
       .then(
@@ -145,12 +154,19 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
       )
       .finally(() => {
         saving.current = false
-        if (pending.current === null) setShown((v) => (v === next ? null : v))
-        else if (editing.current === 0) flush()
+        if (pending.current === null) {
+          if (mounted.current) setShown((v) => (v === next ? null : v))
+        } else if (!mounted.current || editing.current === 0) flush()
       })
   }
 
-  useEffect(() => () => flush(), [])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      flush()
+    }
+  }, [])
 
   // Changes the set locally; the save waits for a pause, or for the field to lose focus.
   function change(next: Hint) {

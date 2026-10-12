@@ -30,6 +30,7 @@ export function StrengthSection() {
   const stats = useQuery(api.strength.stats, { weeks: 1, localDate: today })
   const open = useQuery(api.strength.activeSession, {})
   const start = <Button label={open ? 'Resume workout' : 'Start workout'} icon="play" size="block" onPress={() => router.push('/workout')} style={s.start} />
+  const saved = <Button label="Saved workouts" variant="ghost" size="block" onPress={() => router.push({ pathname: '/workout', params: { view: 'history' } })} style={s.start} />
 
   if (stats === undefined)
     return (
@@ -50,9 +51,10 @@ export function StrengthSection() {
         <Section title="Strength" />
         <View style={[s.card, s.empty]}>
           <Polo size={52} hop={1} />
-          <Text style={s.emptyTitle}>No lifts yet.</Text>
-          <Text style={s.emptyBody}>Log a workout and your estimated 1-rep max and weekly sets show up here.</Text>
+          <Text style={s.emptyTitle}>{stats.historyLimited ? 'No recent lifts.' : 'No lifts yet.'}</Text>
+          <Text style={s.emptyBody}>{stats.historyLimited ? 'The most recent 5,000 saved sets have no lifts to show. Older workouts are still available below.' : 'Log a workout and your estimated 1-rep max and weekly sets show up here.'}</Text>
           {start}
+          {saved}
         </View>
       </View>
     )
@@ -61,6 +63,7 @@ export function StrengthSection() {
     <View>
       <Section title="Strength" />
       <View style={s.card}>
+        {stats.historyLimited ? <Text style={s.faint}>Showing the most recent 5,000 saved sets. Trends and weekly counts may omit older sets.</Text> : null}
         {lifts.length > 0 ? (
           <>
             <Text style={s.eyebrow}>Estimated 1-rep max</Text>
@@ -83,6 +86,7 @@ export function StrengthSection() {
           </>
         )}
         {start}
+        {saved}
       </View>
     </View>
   )

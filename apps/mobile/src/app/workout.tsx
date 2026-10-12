@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ScrollView, Text, View } from 'react-native'
 import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated'
-import { router } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useMutation, useQuery } from 'convex/react'
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout, radii } from '@stride/ui-tokens'
 import { Button, RoundButton, Thinking } from '@/components/Controls'
@@ -14,7 +14,7 @@ import { Sheet } from '@/components/Sheet'
 import { Tap } from '@/components/Tap'
 import { TimeZoneGate } from '@/components/TimeZoneGate'
 import { Toast, type ToastMessage } from '@/components/Toast'
-import { formatNumber } from '@/lib/format'
+import { formatDayTitle, formatNumber } from '@/lib/format'
 import { newSubmissionId, plainError } from '@/lib/log'
 import { formatKg, formatSets, formatTonnage, type Exercise, type ExerciseId, type SessionDetail, type SessionId, type SetId } from '@/lib/strength'
 import { font, themedStyles } from '@/theme'
@@ -37,6 +37,8 @@ export default function WorkoutScreen() {
 // The workout itself, once the user's time zone is stored for today's date.
 function Workout() {
   const s = useStyles()
+  const { view } = useLocalSearchParams<{ view?: string }>()
+  const [browsing, setBrowsing] = useState(view === 'history')
   const open = useQuery(api.strength.activeSession, {})
   const [sessionId, setSessionId] = useState<SessionId | null>(null)
   const [message, setMessage] = useState<ToastMessage | null>(null)
@@ -63,17 +65,42 @@ function Workout() {
 
   return (
     <View style={s.root}>
-      {open === undefined ? (
+      {browsing ? (
+        <SavedWorkouts onSelect={(id) => {
+          setSessionId(id)
+          setBrowsing(false)
+        }} />
+      ) : open === undefined ? (
         <Page>
           <Thinking label="Opening your workout…" />
         </Page>
       ) : active === null ? (
-        <Start onStarted={setSessionId} toast={toast} />
+        <Start onStarted={setSessionId} onHistory={() => setBrowsing(true)} toast={toast} />
       ) : (
-        <Session sessionId={active} actions={{ toast, undoFor }} />
+        <Session key={active} sessionId={active} actions={{ toast, undoFor }} />
       )}
       <Toast message={message} onDone={toastDone} />
     </View>
+  )
+}
+
+// Saved workouts, loaded a page at a time; selecting one opens its editable summary.
+function SavedWorkouts({ onSelect }: { onSelect: (id: SessionId) => void }) {
+  const s = useStyles()
+  const { results, status, loadMore } = usePaginatedQuery(api.strength.savedSessions, {}, { initialNumItems: 20 })
+  return (
+    <Page>
+      <RoundButton icon="x" label="Close" onPress={leave} />
+      <Text style={s.bigTitle}>Saved workouts</Text>
+      {status === 'LoadingFirstPage' ? <Thinking label="Opening saved workouts…" /> : results.length === 0 ? <Text style={s.body}>No saved workouts yet.</Text> : null}
+      {results.map((session) => (
+        <Tap key={session._id} style={s.upRow} onPress={() => onSelect(session._id)} accessibilityRole="button" accessibilityLabel={`Open ${session.name ?? 'Workout'}, ${formatDayTitle(session.localDate)}`}>
+          <Text style={s.upName}>{session.name ?? 'Workout'}</Text>
+          <Text style={s.upMeta}>{formatDayTitle(session.localDate)} · {session.endedAt === undefined ? 'open' : 'done'}</Text>
+        </Tap>
+      ))}
+      {status === 'CanLoadMore' || status === 'LoadingMore' ? <Button label="More workouts" variant="ghost" size="block" busy={status === 'LoadingMore'} onPress={() => loadMore(20)} style={s.startButton} /> : null}
+    </Page>
   )
 }
 
@@ -96,7 +123,7 @@ function Page({ children, overlay }: { children: ReactNode; overlay?: ReactNode 
 }
 
 // Nothing open today: a friendly start card. Starting goes straight to the exercise picker.
-function Start({ onStarted, toast }: { onStarted: (id: SessionId) => void; toast: WorkoutActions['toast'] }) {
+function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId) => void; onHistory: () => void; toast: WorkoutActions['toast'] }) {
   const s = useStyles()
   const startSession = useMutation(api.strength.startSession)
   const [busy, setBusy] = useState(false)
@@ -125,6 +152,7 @@ function Start({ onStarted, toast }: { onStarted: (id: SessionId) => void; toast
         <Text style={s.bigTitle}>Ready to lift?</Text>
         <Text style={s.body}>Pick an exercise and log each set as you go. Last session's numbers show up as hints.</Text>
         <Button label="Start workout" icon="play" variant="coral" size="block" busy={busy} onPress={() => void start()} style={s.startButton} />
+        <Button label="Saved workouts" variant="ghost" size="block" onPress={onHistory} style={s.startButton} />
       </Animated.View>
     </Page>
   )
@@ -210,7 +238,7 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
         <Text style={s.timer} accessibilityLabel={`Elapsed ${elapsed}`}>
           {elapsed}
         </Text>
-        <Button label={ended ? 'Done' : 'Finish'} size="sm" busy={finishing} disabled={!ended && detail.summary.setCount === 0} onPress={() => void finish()} />
+        <Button label={ended ? 'Done' : 'Finish'} size="sm" busy={finishing} onPress={() => void finish()} />
       </View>
 
       {list.length > 0 ? (
@@ -227,6 +255,8 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
           sessionId={detail.session._id}
           exercise={current.exercise}
           sets={current.sets}
+          previousSets={detail.exercises.find((e) => e.exercise._id === current.exercise._id)?.previousSets}
+          historyLimited={detail.historyLimited}
           position={`${currentIndex + 1} of ${list.length}`}
           finished={ended}
           actions={actions}
@@ -288,6 +318,7 @@ function Summary({ detail, onEdit }: { detail: SessionDetail; onEdit: () => void
       </View>
       <Text style={[s.eyebrowCenter, s.doneEyebrow]}>{session.name ?? 'Workout'} · done</Text>
       <Text style={[s.bigTitle, s.centerText]}>{summary.newBests.length > 0 ? 'New best. Nice.' : 'Good session.'}</Text>
+      {detail.historyLimited ? <Text style={s.body}>All sets and totals are shown. Best comparisons are unavailable because older history is outside the recent 5,000 sets.</Text> : null}
 
       <View style={s.stats3}>
         <Stat value={formatNumber(minutes)} label="minutes" index={0} />
@@ -313,7 +344,7 @@ function Summary({ detail, onEdit }: { detail: SessionDetail; onEdit: () => void
                     {best.previousBestKg === null ? `e1RM ${formatKg(best.e1rmKg)}` : `e1RM ${formatKg(best.previousBestKg)} → ${formatKg(best.e1rmKg)}`}
                   </Text>
                 ) : (
-                  <Text style={s.holding}>holding</Text>
+                  <Text style={s.holding}>{detail.historyLimited ? 'comparison unavailable' : 'holding'}</Text>
                 )}
               </View>
             )
