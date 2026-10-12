@@ -56,13 +56,13 @@ export const weightsInRange = query({
   },
 });
 
-/** Today's weigh-in and the latest recorded weight for the caller's local day. */
+/** The weigh-in on the given (or current) local day and the latest weight up to it. */
 export const todayWeight = query({
-  args: {},
+  args: { localDate: v.optional(v.string()) },
   returns: v.object({ localDate: v.string(), kg: v.union(v.number(), v.null()), latestKg: v.union(v.number(), v.null()) }),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
-    const localDate = await localDateOrToday(ctx, userId, undefined);
+    const localDate = await localDateOrToday(ctx, userId, args.localDate);
     const latest = await ctx.db.query("weights")
       .withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate))
       .order("desc").first();

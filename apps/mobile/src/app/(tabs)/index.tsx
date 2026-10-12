@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Alert, Text, View } from 'react-native'
+import { Alert, Text, TextInput, View } from 'react-native'
+import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated'
 import { router } from 'expo-router'
 import { useAuth, useUser } from '@clerk/expo'
 import { useMutation, useQuery } from 'convex/react'
-import { addDays, inferSlot } from '@stride/core'
+import { inferSlot } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout, radii } from '@stride/ui-tokens'
 import { DayBar, Macro, Odometer } from '@/components/Budget'
+import { SUMMARY_DAYS, useBurnMilestone } from '@/components/BurnSheet'
 import { Button, RoundButton } from '@/components/Controls'
 import { useLog } from '@/components/LogProvider'
 import { MealRow, NextMealRow, groupMeals } from '@/components/Meals'
@@ -52,6 +54,8 @@ export default function TodayScreen() {
   const totals = useQuery(api.day_totals.dayTotals, { localDate: today })
   const entries = useQuery(api.entries.entriesForDay, { localDate: today })
   const pendingDrafts = useQuery(api.pipeline.drafts.listPendingDrafts, {})
+  const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS })
+  useBurnMilestone(summary?.snapshot != null)
 
   const name = user?.firstName || user?.username || 'there'
   const now = new Date()
@@ -135,7 +139,7 @@ export default function TodayScreen() {
         ) : null}
       </View>
 
-      {!night && today ? <WeighCard key={today} today={today} /> : null}
+      {!night ? <WeighCard key={today} today={today} trendKg={summary?.latestTrendKg ?? null} weeklyRateKg={summary?.weeklyRateKg ?? null} /> : null}
 
       {pendingDrafts?.map((draft) => (
         <Tap key={draft._id} style={[s.card, s.weighCard, s.weighSaved]} onPress={() => openDraft(draft._id)} accessibilityRole="button">
@@ -168,31 +172,35 @@ export default function TodayScreen() {
   )
 }
 
-// Morning weigh-in. Saves with logWeight; one weigh-in per day, a second one replaces it.
-function WeighCard({ today }: { today: string }) {
+// Morning weigh-in (mock #/weigh). Type or step the kg, save with logWeight; a second save the same day replaces it.
+function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: number | null; weeklyRateKg: number | null }) {
   const t = useTheme()
   const s = useStyles()
   const { toast } = useLog()
-  const recent = useQuery(api.weights.weightsInRange, { from: addDays(today, -30), to: today })
+  const weight = useQuery(api.weights.todayWeight, { localDate: today })
   const logWeight = useMutation(api.weights.logWeight)
-  const [draft, setDraft] = useState<number | null>(null)
+  const [draft, setDraft] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  if (recent === undefined) return null
-  const todays = recent.find((w) => w.localDate === today)
-  const last = recent.at(-1)
-  const kg = draft ?? todays?.kg ?? last?.kg ?? 70
-  const step = (d: number) => setDraft(Math.round((kg + d) * 10) / 10)
+  if (weight === undefined) return null
+  // Start from today's or the latest weigh-in; 70 is only a starting point for the very first one.
+  const start = weight.kg ?? weight.latestKg ?? 70
+  const text = draft ?? start.toFixed(1)
+  const kg = Number(text.replace(',', '.'))
+  const valid = Number.isFinite(kg) && kg > 0
+  const step = (d: number) => setDraft((Math.round(((valid ? kg : start) + d) * 10) / 10).toFixed(1))
 
   // Stores the weight for today and folds the card.
   async function save() {
+    if (!valid) return
+    const value = Math.round(kg * 10) / 10
     setBusy(true)
     try {
-      await logWeight({ kg, localDate: today })
+      await logWeight({ kg: value, localDate: today })
       setEditing(false)
       setDraft(null)
-      toast({ title: `Weight saved · ${kg.toFixed(1)} kg`, sub: "Trend barely moves on one day. That's the point." })
+      toast({ title: `Weight saved · ${value.toFixed(1)} kg`, sub: "Trend barely moves on one day. That's the point." })
     } catch (err) {
       toast({ title: "Couldn't save your weight.", sub: plainError(err) })
     } finally {
@@ -200,34 +208,48 @@ function WeighCard({ today }: { today: string }) {
     }
   }
 
-  if (todays && !editing)
+  if (weight.kg !== null && !editing) {
+    const direction =
+      weeklyRateKg === null ? '' : weeklyRateKg < -0.05 ? ', heading down' : weeklyRateKg > 0.05 ? ', heading up' : ', steady'
     return (
-      <View style={[s.card, s.weighCard, s.weighSaved]}>
+      <Animated.View entering={FadeIn} layout={LinearTransition.springify()} style={[s.card, s.weighCard, s.weighSaved]}>
         <View style={s.grow}>
           <Text style={s.eyebrow}>Weighed in</Text>
           <Text style={s.weighNote}>
-            <Text style={s.weighValueInline}>{todays.kg.toFixed(1)} kg</Text>  feeds your burn estimate
+            <Text style={s.weighValueInline}>{weight.kg.toFixed(1)} kg</Text>
+            {trendKg !== null ? `  trend ${trendKg.toFixed(1)}${direction}` : '  feeds your burn estimate'}
           </Text>
         </View>
         <Button label="Edit" size="sm" variant="ghost" onPress={() => setEditing(true)} />
-      </View>
+      </Animated.View>
     )
+  }
 
   return (
-    <View style={[s.card, s.weighCard]}>
+    <Animated.View entering={FadeIn} layout={LinearTransition.springify()} style={[s.card, s.weighCard]}>
       <Text style={s.eyebrow}>Morning weight</Text>
       <Text style={[s.faintSmall, s.weighHint]}>Optional. Feeds your burn estimate.</Text>
       <View style={s.weighRow}>
         <RoundButton icon="minus" label="Less" onPress={() => step(-0.1)} />
-        <Text style={s.weighValue}>
-          {kg.toFixed(1)}
-          <Text style={[s.weighUnit, { color: t.c.ink3 }]}> kg</Text>
-        </Text>
+        <View style={s.weighField}>
+          <TextInput
+            value={text}
+            onChangeText={setDraft}
+            onSubmitEditing={() => void save()}
+            keyboardType="decimal-pad"
+            returnKeyType="done"
+            selectTextOnFocus
+            maxLength={5}
+            style={s.weighValue}
+            accessibilityLabel="Weight in kilograms"
+          />
+          <Text style={[s.weighUnit, { color: t.c.ink3 }]}>kg</Text>
+        </View>
         <RoundButton icon="plus" label="More" onPress={() => step(0.1)} />
         <View style={s.grow} />
-        <Button label="Save" size="sm" busy={busy} onPress={() => void save()} />
+        <Button label="Save" size="sm" busy={busy} disabled={!valid} onPress={() => void save()} />
       </View>
-    </View>
+    </Animated.View>
   )
 }
 
@@ -270,8 +292,9 @@ const useStyles = themedStyles((t) => ({
   weighSaved: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   weighHint: { marginTop: 4 },
   weighRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 },
-  weighValue: { ...font('stepper'), color: t.c.ink, minWidth: 92, textAlign: 'center' },
-  weighUnit: { ...font('unit') },
+  weighField: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'center', minWidth: 92 },
+  weighValue: { ...font('stepper'), color: t.c.ink, padding: 0, minWidth: 58, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  weighUnit: { ...font('unit'), marginLeft: 3 },
   weighNote: { ...font('callout'), color: t.c.ink2, marginTop: 6 },
   weighValueInline: { ...font('cardTitle'), color: t.c.ink },
   mealsCard: {
