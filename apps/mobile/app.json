@@ -14,7 +14,8 @@
     "android": {
       "package": "com.stride.mobile",
       "adaptiveIcon": {
-        "backgroundColor": "#F4F1E9"
+        "backgroundColor": "#F4F1E9",
+        "foregroundImage": "./assets/icon.png"
       },
       "predictiveBackGestureEnabled": false
     },
@@ -25,6 +26,8 @@
       [
         "expo-splash-screen",
         {
+          "image": "./assets/icon.png",
+          "imageWidth": 160,
           "backgroundColor": "#F4F1E9",
           "dark": {
             "backgroundColor": "#12110F"
@@ -56,6 +59,7 @@
       "eas": {
         "projectId": "d196dbbf-4b00-4bf6-b681-b2b7be4b9b29"
       }
-    }
+    },
+    "icon": "./assets/icon.png"
   }
 }
