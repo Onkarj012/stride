@@ -373,6 +373,55 @@ describe("day totals", () => {
   });
 });
 
+describe("mobile day views", () => {
+  test("entry keys survive sibling deletion, edits and undo, including pre-key revision chains", async () => {
+    const { t, user, rice, dal, ghee } = await setup();
+    const ids = await user.mutation(api.entries.addEntries, {
+      submissionId: "batch",
+      items: [rice, dal, ghee].map((foodId) => ({ foodId, grams: 100, source: "db" as const, loggedAt: IST_LUNCH })),
+    });
+    const date = { localDate: "2026-10-05" };
+    expect((await user.query(api.entries.entriesForDay, date)).map((row) => row.entryKey)).toEqual(ids);
+    await user.mutation(api.entries.deleteEntry, { submissionId: "delete-first", entryId: ids[0] });
+    const edited = await user.mutation(api.entries.editEntry, { submissionId: "edit-second", entryId: ids[1], grams: 125 });
+    // Simulate a revision written before stable keys were added.
+    await t.run((ctx) => ctx.db.patch("entries", edited, { entryKey: undefined }));
+    expect((await user.query(api.entries.entriesForDay, date)).map((row) => row.entryKey).sort()).toEqual([ids[1], ids[2]].sort());
+    const editedAgain = await user.mutation(api.entries.editEntry, { submissionId: "edit-again", entryId: edited, grams: 150 });
+    const restored = await user.mutation(api.entries.undoRevision, { submissionId: "undo-edit", entryId: editedAgain });
+    const rows = await user.query(api.entries.entriesForDay, date);
+    expect(rows.find((row) => row.entryKey === ids[1])).toMatchObject({ _id: restored, entryKey: ids[1], grams: 125 });
+    expect(rows.find((row) => row.entryKey === ids[2])).toMatchObject({ _id: ids[2], entryKey: ids[2], grams: 100 });
+  });
+
+  test("meal totals sum unrounded entries and remain correct through edits, deletion and undo", async () => {
+    const { user, rice, dal } = await setup();
+    const ids = await user.mutation(api.entries.addEntries, {
+      submissionId: "small-meals",
+      items: [
+        { foodId: rice, grams: 0.3, source: "db", slot: "breakfast", loggedAt: IST_LUNCH },
+        { foodId: rice, grams: 0.3, source: "db", slot: "breakfast", loggedAt: IST_LUNCH },
+        { foodId: dal, grams: 0.3, source: "db", slot: "lunch", loggedAt: IST_LUNCH },
+        { foodId: dal, grams: 0.3, source: "db", slot: "lunch", loggedAt: IST_LUNCH },
+      ],
+    });
+    const date = { localDate: "2026-10-05" };
+    const first = await user.query(api.entries.entriesForDay, date);
+    expect(first.reduce((sum, row) => sum + row.nutrients.kcal, 0)).toBe(0);
+    expect(first[0]?.mealNutrients).toEqual(sumNutrients([scaleNutrients(RICE, 0.3), scaleNutrients(RICE, 0.3)]));
+    expect(first[2]?.mealNutrients).toEqual(sumNutrients([scaleNutrients(DAL, 0.3), scaleNutrients(DAL, 0.3)]));
+    const day = await user.query(api.day_totals.dayTotals, date);
+    expect(roundNutrients(sumNutrients([first[0].mealNutrients, first[2].mealNutrients]))).toEqual(day.nutrients);
+    const edited = await user.mutation(api.entries.editEntry, { submissionId: "grow", entryId: ids[0], grams: 20 });
+    const deleted = await user.mutation(api.entries.deleteEntry, { submissionId: "remove", entryId: ids[1] });
+    expect((await user.query(api.entries.entriesForDay, date)).find((row) => row.slot === "breakfast")?.mealNutrients).toEqual(scaleNutrients(RICE, 20));
+    await user.mutation(api.entries.undoRevision, { submissionId: "restore", entryId: deleted });
+    await user.mutation(api.entries.undoRevision, { submissionId: "shrink", entryId: edited });
+    const restored = await user.query(api.entries.entriesForDay, date);
+    for (const row of restored) expect(row.mealNutrients).toEqual(first.find((original) => original.entryKey === row.entryKey)?.mealNutrients);
+  });
+});
+
 describe("account data", () => {
   test("exportAllData includes and clearAllData removes only the caller's ledger rows", async () => {
     const { t, user, rice } = await setup();

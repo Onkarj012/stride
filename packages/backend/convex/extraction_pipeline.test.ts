@@ -1,7 +1,7 @@
 import { roundNutrients, scaleNutrients, type Nutrients } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { MAX_TOOL_ITERATIONS } from "./pipeline/tools";
@@ -195,6 +195,30 @@ describe("gate: auto-commit vs draft", () => {
   });
 });
 
+describe("selected meal slot", () => {
+  test("a composer default fills omitted slots, while an explicit extracted slot overrides it", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "roti", quantity: 2 }, { food: "rice", quantity: 100, unit: "g", slot: "dinner" }]);
+    const result = await user.action(api.pipeline.log.logInput, {
+      submissionId: "breakfast-sheet",
+      defaultSlot: "breakfast",
+      input: { kind: "text", text: "2 rotis, and for dinner 100 g rice" },
+    });
+    expect(result.kind).toBe("committed");
+    expect((await entryRows(t)).map((row) => row.slot)).toEqual(["breakfast", "dinner"]);
+    expect(JSON.stringify(openRouterBodies[0]?.messages)).toContain("current meal slot is breakfast");
+  });
+
+  test("a draft keeps the selected default until confirmation", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 0.25, confidence: 0.5 }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "draft-slot", defaultSlot: "breakfast", input: { kind: "text", text: "quarter of 1 kg biryani" } });
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId });
+    expect((await entryRows(t))[0]?.slot).toBe("breakfast");
+  });
+});
+
 describe("HANDOFF #1: a correction made in the draft card is what gets stored", () => {
   test("300 kcal corrected to 600 kcal stores 600 kcal, recomputed from foods", async () => {
     const { t, user } = await setup();
@@ -331,6 +355,22 @@ describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", (
     expect(oil?.grams).toBeCloseTo(15 * 0.913, 9);
     expect(oil?.flags).toContain("cooking_oil");
     await expectComputedFromFoods(t);
+  });
+
+  test("a scaled draft quantity preview can confirm its explicit grams without dropping the fraction", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 0.25, confidence: 0.5 }]);
+    const result = await logText(user, "a quarter of 1 kg biryani");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    const item = draft?.items[0];
+    if (item?.grams === null || item?.grams === undefined || !item.quantity) throw new Error("missing scaled portion");
+    expect(item.grams).toBe(250);
+    const previewGrams = item.grams * 1.5 / item.quantity;
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, grams: previewGrams }] });
+    const [row] = await entryRows(t);
+    expect(row?.grams).toBe(375);
+    expect(row?.nutrients).toEqual(scaleNutrients(BIRYANI, previewGrams));
   });
 
   test("a fraction above the whole recipe is refused and asks", async () => {
@@ -586,7 +626,7 @@ describe("photo and voice input", () => {
   test("photo items use the photo model and are flagged estimated", async () => {
     const { t, user, foods } = await setup();
     const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
-    await user.mutation(api.uploads.registerUpload, { storageId });
+    await user.mutation(internal.uploads.registerStoredUpload, { storageId });
     llm = () => extraction([{ food: "roti", quantity: 2, fromPhoto: true }]);
     const result = await user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } });
     expect(result.kind).toBe("committed");
@@ -602,7 +642,7 @@ describe("photo and voice input", () => {
     const storageId = await t.run((ctx) =>
       ctx.storage.store(new Blob([new Uint8Array(AI_INPUT_LIMITS.imageBytes + 1)], { type: "image/jpeg" })),
     );
-    await user.mutation(api.uploads.registerUpload, { storageId });
+    await user.mutation(internal.uploads.registerStoredUpload, { storageId });
     await expect(
       user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } }),
     ).rejects.toThrow(/too large/);
@@ -613,7 +653,7 @@ describe("photo and voice input", () => {
     const { t, user } = await setup();
     const other = t.withIdentity({ subject: "user_b" });
     const theirs = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
-    await other.mutation(api.uploads.registerUpload, { storageId: theirs });
+    await other.mutation(internal.uploads.registerStoredUpload, { storageId: theirs });
     const unregistered = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
     for (const storageId of [theirs, unregistered]) {
       await expect(

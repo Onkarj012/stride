@@ -30,6 +30,7 @@ async function seedUser(t: TestConvex<typeof schema>, userId: string, sharedFood
       verified: true,
       ownerUserId: userId,
     });
+    await ctx.db.insert("uploads", { userId, storageId: fileId, createdAt: 1 });
     const chatId = await ctx.db.insert("chats", { userId, title: "Lunch", updatedAt: 1 });
     await ctx.db.insert("messages", {
       userId,
@@ -44,6 +45,8 @@ async function seedUser(t: TestConvex<typeof schema>, userId: string, sharedFood
     for (let i = 0; i < extra; i++) {
       await ctx.db.insert("messages", { userId, chatId, role: "assistant", text: `reply ${i}`, attachments: [], toolCalls: [], draftIds: [] });
       await ctx.db.insert("food_links", { userId, key: `food ${i}`, foodId: sharedFood, status: "active", uses: 1, updatedAt: 1 });
+      const photo = await ctx.storage.store(new Blob(["standalone Compose photo"], { type: "image/jpeg" }));
+      await ctx.db.insert("uploads", { userId, storageId: photo, createdAt: 1 });
     }
     const draftId = await ctx.db.insert("drafts", {
       userId,
@@ -111,6 +114,7 @@ async function remaining(t: TestConvex<typeof schema>) {
   return await t.run(async (ctx) => {
     const owners = async <T extends { userId: string }>(rows: Promise<T[]>) => [...new Set((await rows).map((r) => r.userId))];
     return {
+      uploads: await owners(ctx.db.query("uploads").take(1000)),
       chats: await owners(ctx.db.query("chats").take(1000)),
       messages: await owners(ctx.db.query("messages").take(1000)),
       drafts: await owners(ctx.db.query("drafts").take(1000)),
@@ -135,6 +139,7 @@ describe("clearAllData", () => {
 
     expect(await user.query(api.users.ledgerClearPending, {})).toBe(false);
     expect(await remaining(t)).toEqual({
+      uploads: ["user_b"],
       chats: ["user_b"],
       messages: ["user_b"],
       drafts: ["user_b"],
@@ -155,6 +160,9 @@ describe("clearAllData", () => {
     const cleared = /being cleared/;
 
     await expect(user.mutation(api.chats.createChat, {})).rejects.toThrow(cleared);
+    await expect(user.mutation(api.uploads.generateUploadUrl, {})).rejects.toThrow(cleared);
+    await expect(user.mutation(api.uploads.registerUpload, { storageId: a.fileId })).rejects.toThrow(cleared);
+    await expect(user.mutation(internal.uploads.registerStoredUpload, { storageId: a.fileId })).rejects.toThrow(cleared);
     await expect(
       t.mutation(internal.chats.claimTurn, {
         userId: "user_a",

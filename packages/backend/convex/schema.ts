@@ -710,6 +710,7 @@ export default defineSchema({
     flags: v.array(v.string()),
     revision: v.number(),
     supersedes: v.optional(v.id("entries")),
+    entryKey: v.optional(v.id("entries")),
     op: revisionOpValidator,
     status: revisionStatusValidator,
     createdBy: createdByValidator,

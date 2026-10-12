@@ -10,6 +10,7 @@ const LEDGER_TABLES = [
   "messages",
   "chats",
   "drafts",
+  "uploads",
   "food_links",
   "user_measures",
   "sets",
@@ -24,8 +25,8 @@ export const CLEAR_LEDGER_BATCH = 200;
 /** Messages deleted per clearLedgerRows transaction. Smaller because a message carries tool-call JSON. */
 export const CLEAR_MESSAGE_BATCH = 100;
 
-/** Reads up to one batch of a user's rows from one table other than messages. Foods are only rows the user owns. */
-async function ledgerBatch(ctx: MutationCtx, table: Exclude<LedgerTable, "messages">, userId: string) {
+/** Reads one batch of rows without storage files; foods include only rows the user owns. */
+async function ledgerBatch(ctx: MutationCtx, table: Exclude<LedgerTable, "messages" | "uploads">, userId: string) {
   switch (table) {
     case "entries":
       return await ctx.db.query("entries").withIndex("by_userId_and_localDate_and_status", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
@@ -52,8 +53,16 @@ async function ledgerBatch(ctx: MutationCtx, table: Exclude<LedgerTable, "messag
   }
 }
 
-/** Deletes up to one batch of a user's rows from one table, with the files their messages hold. True when more may remain. */
+/** Deletes one batch of rows and their attachment or upload files; true when another batch may remain. */
 async function clearBatch(ctx: MutationCtx, table: LedgerTable, userId: string): Promise<boolean> {
+  if (table === "uploads") {
+    const rows = await ctx.db.query("uploads").withIndex("by_userId", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    for (const row of rows) {
+      if ((await ctx.db.system.get("_storage", row.storageId)) !== null) await ctx.storage.delete(row.storageId);
+      await ctx.db.delete("uploads", row._id);
+    }
+    return rows.length === CLEAR_LEDGER_BATCH;
+  }
   if (table === "messages") {
     const rows = await ctx.db.query("messages").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId)).take(CLEAR_MESSAGE_BATCH);
     for (const row of rows) {

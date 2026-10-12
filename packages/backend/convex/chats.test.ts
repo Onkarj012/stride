@@ -1,7 +1,7 @@
 import { roundNutrients, type Nutrients } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { MAX_CHAT_ITERATIONS } from "./chats";
 import { isRecord, OPENROUTER_CHAT_URL } from "./pipeline/openrouter";
@@ -249,7 +249,7 @@ describe("chat photo ownership", () => {
     const { t, user, chatId } = await setup();
     const other = t.withIdentity({ subject: "user_b" });
     const theirs = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
-    await other.mutation(api.uploads.registerUpload, { storageId: theirs });
+    await other.mutation(internal.uploads.registerStoredUpload, { storageId: theirs });
     await expect(
       user.action(api.chats.sendMessage, { chatId, submissionId: "img", text: "what is this", imageStorageId: theirs }),
     ).rejects.toThrow(/Photo not found/);

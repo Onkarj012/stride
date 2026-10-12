@@ -1,7 +1,7 @@
-import { isLocalDate, roundNutrients, scaleNutrients } from "@stride/core";
+import { isLocalDate, roundNutrients, scaleNutrients, sumNutrients, type MealSlot, type Nutrients } from "@stride/core";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { applyToDayTotals, MAX_DAY_ENTRIES } from "./day_totals";
 import {
   createdByValidator,
@@ -52,6 +52,8 @@ export interface EntryAuthor {
 /** Entry as the day view shows it: current revision, nutrients rounded once for this entry. */
 const entryViewValidator = v.object({
   _id: v.id("entries"),
+  entryKey: v.id("entries"),
+  mealNutrients: nutrientsValidator,
   revision: v.number(),
   localDate: v.string(),
   slot: mealSlotValidator,
@@ -197,6 +199,19 @@ async function replayedRevision(
   return row._id;
 }
 
+/** Finds an entry's original row, including revision chains written before stable keys were stored. */
+async function entryKey(ctx: QueryCtx | MutationCtx, row: Doc<"entries">): Promise<Id<"entries">> {
+  let current = row;
+  for (let depth = 0; depth < 100; depth++) {
+    if (current.entryKey !== undefined) return current.entryKey;
+    if (current.supersedes === undefined) return current._id;
+    const previous = await ctx.db.get("entries", current.supersedes);
+    if (previous === null || previous.userId !== row.userId) throw new Error("Entry revision history is missing");
+    current = previous;
+  }
+  throw new Error("Entry revision history is too long to resolve");
+}
+
 /** Appends a revision on top of `head`, marks `head` superseded and moves the day totals. */
 async function writeRevision(
   ctx: MutationCtx,
@@ -212,6 +227,7 @@ async function writeRevision(
     userId: head.userId,
     revision: head.revision + 1,
     supersedes: head._id,
+    entryKey: await entryKey(ctx, head),
     op,
     status: content.deletedAt === undefined ? "live" : "deleted",
     createdBy,
@@ -351,10 +367,20 @@ export const entriesForDay = query({
         q.eq("userId", userId).eq("localDate", localDate).eq("status", "live"),
       )
       .take(MAX_DAY_ENTRIES);
-    return rows
+    const meals: Record<MealSlot, Nutrients[]> = { breakfast: [], lunch: [], snack: [], dinner: [] };
+    for (const row of rows) meals[row.slot].push(row.nutrients);
+    const mealTotals: Record<MealSlot, Nutrients> = {
+      breakfast: sumNutrients(meals.breakfast),
+      lunch: sumNutrients(meals.lunch),
+      snack: sumNutrients(meals.snack),
+      dinner: sumNutrients(meals.dinner),
+    };
+    return await Promise.all(rows
       .sort((a, b) => a.loggedAt - b.loggedAt)
-      .map((row) => ({
+      .map(async (row) => ({
         _id: row._id,
+        entryKey: await entryKey(ctx, row),
+        mealNutrients: mealTotals[row.slot],
         revision: row.revision,
         localDate: row.localDate,
         slot: row.slot,
@@ -367,6 +393,6 @@ export const entriesForDay = query({
         confidence: row.confidence,
         flags: row.flags,
         createdBy: row.createdBy,
-      }));
+      })));
   },
 });

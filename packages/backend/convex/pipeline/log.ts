@@ -4,6 +4,7 @@ import type { Id } from "../_generated/dataModel";
 import { action, internalQuery, type ActionCtx } from "../_generated/server";
 import { transcribeAudio } from "../ai";
 import { AI_INPUT_LIMITS, assertMaxChars } from "../ai_guard";
+import { mealSlotValidator } from "../ledger_validators";
 import { requireOwnUpload } from "../uploads";
 import { extractItems, type ExtractedItem } from "./extract";
 import { logResultValidator, type InputKind, type LogResult, type UnresolvedItem } from "./resolve";
@@ -74,6 +75,7 @@ export async function imageUrl(ctx: ActionCtx, storageId: Id<"_storage">): Promi
 export const logInput = action({
   args: {
     submissionId: v.string(),
+    defaultSlot: v.optional(mealSlotValidator),
     input: v.union(
       v.object({ kind: v.literal("text"), text: v.string() }),
       v.object({ kind: v.literal("voice"), audio: v.string(), mimeType: v.optional(v.string()) }),
@@ -81,7 +83,7 @@ export const logInput = action({
     ),
   },
   returns: logResultValidator,
-  handler: async (ctx, { submissionId, input }): Promise<LogResult> => {
+  handler: async (ctx, { submissionId, input, defaultSlot }): Promise<LogResult> => {
     const identity = await ctx.auth.getUserIdentity();
     if (identity === null) throw new Error("Unauthenticated");
     const userId = identity.subject;
@@ -106,9 +108,13 @@ export const logInput = action({
     const items = await extractItems(ctx, userId, {
       text,
       today: today.localDate,
-      slot: today.slot,
+      slot: defaultSlot ?? today.slot,
       ...(photoUrl === undefined ? {} : { imageUrl: photoUrl }),
     });
-    return await runPipeline(ctx, userId, { submissionId, inputKind: input.kind, items });
+    return await runPipeline(ctx, userId, {
+      submissionId,
+      inputKind: input.kind,
+      items: items.map((item) => ({ ...item, slot: item.slot ?? defaultSlot ?? null })),
+    });
   },
 });

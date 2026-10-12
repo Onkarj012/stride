@@ -37,6 +37,7 @@ import type * as foods from "../foods.js";
 import type * as foods_db from "../foods_db.js";
 import type * as goals from "../goals.js";
 import type * as history from "../history.js";
+import type * as http from "../http.js";
 import type * as insights from "../insights.js";
 import type * as ledger_validators from "../ledger_validators.js";
 import type * as lib_fetch_timeout from "../lib/fetch_timeout.js";
@@ -110,6 +111,7 @@ declare const fullApi: ApiFromModules<{
   foods_db: typeof foods_db;
   goals: typeof goals;
   history: typeof history;
+  http: typeof http;
   insights: typeof insights;
   ledger_validators: typeof ledger_validators;
   "lib/fetch_timeout": typeof lib_fetch_timeout;
