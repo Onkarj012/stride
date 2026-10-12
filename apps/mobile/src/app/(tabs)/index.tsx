@@ -54,7 +54,7 @@ export default function TodayScreen() {
   const totals = useQuery(api.day_totals.dayTotals, { localDate: today })
   const entries = useQuery(api.entries.entriesForDay, { localDate: today })
   const pendingDrafts = useQuery(api.pipeline.drafts.listPendingDrafts, {})
-  const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS })
+  const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS, localDate: today })
   useBurnMilestone(summary?.snapshot != null)
 
   const name = user?.firstName || user?.username || 'there'

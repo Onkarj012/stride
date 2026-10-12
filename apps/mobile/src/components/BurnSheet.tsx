@@ -7,6 +7,7 @@ import { KCAL_PER_KG } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
 import { formatNumber } from '@/lib/format'
 import { SUMMARY_DAYS } from '@/lib/log'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles } from '@/theme'
 import { Button, Thinking } from './Controls'
 import { useLog } from './LogProvider'
@@ -21,7 +22,8 @@ export function formatRate(kgPerWeek: number): string {
 // How the daily burn is worked out (mock #/tdee), or the one-time "burn estimate ready" milestone (mock #/milestone).
 export function BurnSheet({ milestone, onClose }: { milestone: boolean; onClose: () => void }) {
   const s = useStyles()
-  const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS })
+  const today = useLocalToday()
+  const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS, localDate: today })
   if (summary === undefined) return <Thinking label="Opening your burn…" />
   const { snapshot, weeklyRateKg, target } = summary
   if (snapshot === null)
@@ -94,7 +96,13 @@ export function useBurnMilestone(ready: boolean) {
   const { user } = useUser()
   const { openBurn, sheetOpen } = useLog()
   const checked = useRef(false)
+  // Read after the async SecureStore call, so it reflects a sheet opened in the meantime.
+  const sheetOpenRef = useRef(sheetOpen)
   const userId = user?.id
+
+  useEffect(() => {
+    sheetOpenRef.current = sheetOpen
+  }, [sheetOpen])
 
   useEffect(() => {
     if (!ready || !userId || sheetOpen || checked.current) return
@@ -102,9 +110,9 @@ export function useBurnMilestone(ready: boolean) {
     const key = `burn_ready_seen_${userId}`
     SecureStore.getItemAsync(key)
       .then(async (seen) => {
-        if (seen) return
-        await SecureStore.setItemAsync(key, '1')
+        if (seen || sheetOpenRef.current) return
         openBurn(true)
+        await SecureStore.setItemAsync(key, '1')
       })
       // If the store fails the milestone is skipped; the burn card still shows the number.
       .catch(() => undefined)

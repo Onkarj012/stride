@@ -16,6 +16,7 @@ import { Tap } from '@/components/Tap'
 import { WeightChart, type WeightPoint } from '@/components/WeightChart'
 import { formatDayTitle, formatNumber, weekdayOf } from '@/lib/format'
 import { SUMMARY_DAYS } from '@/lib/log'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
 type Summary = FunctionReturnType<typeof api.progress_v2.summary>
@@ -32,7 +33,8 @@ const DEFAULT_TIP = "Dots are weigh-ins. The line is the trend, so one salty din
 export default function ProgressScreen() {
   const s = useStyles()
   const [range, setRange] = useState<number>(SUMMARY_DAYS)
-  const fresh = useQuery(api.progress_v2.summary, { rangeDays: range })
+  const today = useLocalToday()
+  const fresh = useQuery(api.progress_v2.summary, { rangeDays: range, localDate: today })
   // Keep showing the last range while a new one loads, so switching doesn't blank the screen.
   const kept = useRef<Summary | undefined>(undefined)
   if (fresh !== undefined) kept.current = fresh
