@@ -4,37 +4,20 @@ import Svg, { Circle } from 'react-native-svg'
 import { useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { radii } from '@stride/ui-tokens'
+import { dateOf, daysIn, shiftMonth, weekdayOf, type Month } from '@stride/core'
 import { Button, RoundButton, Thinking } from '@/components/Controls'
 import { useLog } from '@/components/LogProvider'
 import { MealRow, groupMeals } from '@/components/Meals'
 import { Polo } from '@/components/Polo'
 import { Screen, ScreenTitle } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
-import { MONTHS_LONG, formatDayTitle, formatNumber, weekdayOf } from '@/lib/format'
+import { MONTHS_LONG, formatDayTitle, formatNumber } from '@/lib/format'
 import { SUMMARY_DAYS, targetsFor } from '@/lib/log'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 const RING = 2 * Math.PI * 10
-
-type Month = { year: number; month: number } // month is 1-12
-
-// YYYY-MM-DD for a day of a month.
-function dateOf({ year, month }: Month, day: number): string {
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-}
-
-// Number of days in a month.
-function daysIn({ year, month }: Month): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate()
-}
-
-// The month before or after.
-function shiftMonth({ year, month }: Month, by: -1 | 1): Month {
-  const index = year * 12 + (month - 1) + by
-  return { year: Math.floor(index / 12), month: (index % 12) + 1 }
-}
 
 // Log tab (mock #/week): a month of day rings, then the chosen day's meals and totals.
 export default function LogScreen() {
@@ -123,7 +106,7 @@ function History({ today }: { today: string }) {
               accessibilityLabel={`${formatDayTitle(date)}${day ? `, ${formatNumber(day.nutrients.kcal)} kcal` : ', not logged'}`}
             >
               <Svg width={24} height={24} viewBox="0 0 24 24" style={s.ring}>
-                <Circle cx={12} cy={12} r={10} fill="none" strokeWidth={3} stroke={on ? 'rgba(127,127,127,0.35)' : t.c.card2} />
+                <Circle cx={12} cy={12} r={10} fill="none" strokeWidth={3} stroke={on ? t.c.calendarSelectedRing : t.c.card2} />
                 {day ? (
                   <Circle
                     cx={12}

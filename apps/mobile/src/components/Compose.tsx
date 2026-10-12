@@ -398,7 +398,7 @@ function BarcodeProduct({
       </View>
       {problem ? <Text style={s.problem}>{problem}</Text> : null}
       <View style={s.askRow}>
-        <Button label="Scan again" variant="ghost" onPress={onRescan} />
+        <Button label="Scan again" variant="ghost" disabled={busy} onPress={onRescan} />
         <Button label="Log it" variant="coral" busy={busy} onPress={() => void log()} style={s.grow} />
       </View>
     </Animated.View>

@@ -21,7 +21,7 @@ import {
 } from 'expo-audio'
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import { launchImageLibraryAsync } from 'expo-image-picker'
-import { motion, radii } from '@stride/ui-tokens'
+import { cameraColors, motion, radii } from '@stride/ui-tokens'
 import { MAX_VOICE_MS } from '@/lib/log'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button, RoundButton, Tag } from './Controls'
@@ -58,23 +58,35 @@ export function VoiceCapture({ onDone, onCancel }: { onDone: (uri: string) => vo
 
   useEffect(() => {
     let alive = true
+    // Starts recording only while this capture is still active.
     const start = async () => {
       const permission = await requestRecordingPermissionsAsync()
+      if (!alive || stopped.current) return
       if (!permission.granted) {
         setProblem('Stride needs the microphone to hear you. Allow it in Settings, or type instead.')
         return
       }
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })
+      if (!alive || stopped.current) return
       await recorder.prepareToRecordAsync()
-      if (alive) recorder.record()
+      if (alive && !stopped.current) recorder.record()
     }
-    start().catch(() => setProblem("Couldn't start the microphone. Try again, or type instead."))
+    const startup = start().catch(async () => {
+      if (alive) setProblem("Couldn't start the microphone. Try again, or type instead.")
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true })
+    })
+    void startup.catch(() => undefined)
     return () => {
       alive = false
-      if (!stopped.current) {
-        stopped.current = true
-        recorder.stop().catch(() => undefined)
-      }
+      const wasStopped = stopped.current
+      stopped.current = true
+      void startup.catch(() => undefined).then(async () => {
+        try {
+          if (!wasStopped) await recorder.stop()
+        } finally {
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true })
+        }
+      }).catch(() => undefined)
     }
   }, [recorder])
 
@@ -89,8 +101,11 @@ export function VoiceCapture({ onDone, onCancel }: { onDone: (uri: string) => vo
     stopped.current = true
     const tooShort = state.durationMillis < 700
     try {
-      await recorder.stop()
-      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true })
+      try {
+        await recorder.stop()
+      } finally {
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true })
+      }
     } catch {
       setProblem("Couldn't save that recording. Try again, or type instead.")
       return
@@ -125,20 +140,44 @@ export function VoiceCapture({ onDone, onCancel }: { onDone: (uri: string) => vo
 }
 
 // Shows the camera only after permission, with a clear way forward when it is denied.
-function CameraGate({ children, onLibrary, onCancel }: { children: ReactNode; onLibrary?: () => void; onCancel: () => void }) {
+function CameraGate({ children, onLibrary, onCancel, problem }: { children: ReactNode; onLibrary?: () => void; onCancel: () => void; problem?: string | null }) {
   const s = useStyles()
   const [permission, request] = useCameraPermissions()
+  const [accessProblem, setAccessProblem] = useState<string | null>(null)
+
+  // Requests camera access and explains a failed permission call.
+  async function allowCamera() {
+    setAccessProblem(null)
+    try {
+      await request()
+    } catch {
+      setAccessProblem("Couldn't request camera access. Try again, or type instead.")
+    }
+  }
+
+  // Opens system settings and explains when the operating system cannot open them.
+  async function openSettings() {
+    setAccessProblem(null)
+    try {
+      await Linking.openSettings()
+    } catch {
+      setAccessProblem("Couldn't open Settings. Open them on your device, or type instead.")
+    }
+  }
+
   if (permission === null) return <View style={s.cam} />
   if (permission.granted) return <>{children}</>
   return (
     <View style={[s.cam, s.camAsk]}>
       <Text style={s.askTitle}>Camera is off.</Text>
       <Text style={s.askBody}>Stride uses it to see your plate or scan a barcode. Nothing is saved to your gallery.</Text>
+      {problem ? <Text style={s.askBody}>{problem}</Text> : null}
+      {accessProblem ? <Text style={s.askBody}>{accessProblem}</Text> : null}
       <View style={s.row}>
         {permission.canAskAgain ? (
-          <Button label="Allow camera" variant="coral" onPress={() => void request()} />
+          <Button label="Allow camera" variant="coral" onPress={() => void allowCamera()} />
         ) : (
-          <Button label="Open settings" variant="coral" onPress={() => void Linking.openSettings()} />
+          <Button label="Open settings" variant="coral" onPress={() => void openSettings()} />
         )}
         {onLibrary ? <Button label="Pick a photo" variant="ghost" onPress={onLibrary} /> : null}
       </View>
@@ -171,9 +210,13 @@ export function PhotoCapture({ onPhoto, onCancel }: { onPhoto: (uri: string) => 
 
   // Opens the gallery and hands back the chosen photo.
   async function pickFromLibrary() {
-    const picked = await launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5 })
-    const asset = picked.canceled ? undefined : picked.assets[0]
-    if (asset) onPhoto(asset.uri)
+    try {
+      const picked = await launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5 })
+      const asset = picked.canceled ? undefined : picked.assets[0]
+      if (asset) onPhoto(asset.uri)
+    } catch {
+      setProblem("Couldn't open the gallery. Try again, or take a photo.")
+    }
   }
 
   // Takes the picture at a size the photo model accepts.
@@ -192,7 +235,7 @@ export function PhotoCapture({ onPhoto, onCancel }: { onPhoto: (uri: string) => 
 
   return (
     <View>
-      <CameraGate onLibrary={() => void pickFromLibrary()} onCancel={onCancel}>
+      <CameraGate onLibrary={() => void pickFromLibrary()} onCancel={onCancel} problem={problem}>
         <View style={s.cam}>
           <CameraView
             ref={camera}
@@ -310,13 +353,13 @@ const useStyles = themedStyles((t) => ({
     height: CAM_HEIGHT,
     borderRadius: 24,
     overflow: 'hidden',
-    backgroundColor: '#2a2622',
+    backgroundColor: cameraColors.bg,
     marginTop: 8,
   },
   camAsk: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
-  askTitle: { ...font('emptyTitle'), color: '#F4F1E9' },
-  askBody: { ...font('callout'), color: 'rgba(244,241,233,0.7)', textAlign: 'center', marginTop: 6 },
-  link: { ...font('link'), color: 'rgba(244,241,233,0.7)', marginTop: 16, paddingVertical: 4 },
+  askTitle: { ...font('emptyTitle'), color: cameraColors.ink },
+  askBody: { ...font('callout'), color: cameraColors.ink2, textAlign: 'center', marginTop: 6 },
+  link: { ...font('link'), color: cameraColors.ink2, marginTop: 16, paddingVertical: 4 },
   fill: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
   frame: {
     position: 'absolute',
@@ -327,10 +370,10 @@ const useStyles = themedStyles((t) => ({
     bottom: 26,
     borderRadius: 18,
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.4)',
+    borderColor: cameraColors.frame,
   },
   codeFrame: { top: 110, bottom: 110 },
-  flash: { pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#fff', opacity: 0 },
+  flash: { pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: cameraColors.flash, opacity: 0 },
   sweep: { pointerEvents: 'none', position: 'absolute', left: 0, right: 0, top: 0, height: 90 },
   hint: { ...font('caption'), color: t.c.ink3, textAlign: 'center', marginTop: 12 },
   shutterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 18, paddingHorizontal: 18 },
