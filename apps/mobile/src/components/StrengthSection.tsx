@@ -8,6 +8,7 @@ import { api } from 'stride-backend/convex/_generated/api'
 import { layout, motion, radii } from '@stride/ui-tokens'
 import { formatDayTitle } from '@/lib/format'
 import { formatKg, muscleName, type StrengthStats } from '@/lib/strength'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button, Thinking } from './Controls'
 import { Polo } from './Polo'
@@ -26,7 +27,8 @@ type Lift = StrengthStats['exercises'][number]
 export function StrengthSection() {
   const s = useStyles()
   const stats = useQuery(api.strength.stats, { weeks: 1 })
-  const sessions = useQuery(api.strength.sessionsForDay, {})
+  const today = useLocalToday()
+  const sessions = useQuery(api.strength.sessionsForDay, { localDate: today })
   const open = sessions?.some((session) => session.endedAt === undefined) ?? false
   const start = <Button label={open ? 'Resume workout' : 'Start workout'} icon="play" size="block" onPress={() => router.push('/workout')} style={s.start} />
 

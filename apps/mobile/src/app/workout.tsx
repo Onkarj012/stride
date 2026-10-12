@@ -17,6 +17,7 @@ import { Toast, type ToastMessage } from '@/components/Toast'
 import { formatNumber } from '@/lib/format'
 import { newSubmissionId, plainError } from '@/lib/log'
 import { formatKg, formatSets, formatTonnage, type Exercise, type ExerciseId, type SessionDetail, type SessionId, type SetId } from '@/lib/strength'
+import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles } from '@/theme'
 
 // Leaves the workout screen, falling back to Progress when it was opened directly.
@@ -37,7 +38,8 @@ export default function WorkoutScreen() {
 // The workout itself, once the user's time zone is stored for today's date.
 function Workout() {
   const s = useStyles()
-  const sessions = useQuery(api.strength.sessionsForDay, {})
+  const today = useLocalToday()
+  const sessions = useQuery(api.strength.sessionsForDay, { localDate: today })
   const [sessionId, setSessionId] = useState<SessionId | null>(null)
   const [message, setMessage] = useState<ToastMessage | null>(null)
   const toastId = useRef(0)

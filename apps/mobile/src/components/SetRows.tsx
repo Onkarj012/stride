@@ -81,8 +81,8 @@ export function ExerciseBlock({
           <LoggedRow key={set.setIndex} set={set} number={i + 1} hint={previous[i]} exercise={exercise} actions={actions} />
         ))}
         <DraftRow
-          // Remount with fresh defaults after each logged set, and once last time's numbers arrive.
-          key={`${sets.length}-${stats === undefined ? 'wait' : 'ready'}`}
+          // Remount with fresh defaults after each logged set; late hints are applied in place.
+          key={sets.length}
           sessionId={sessionId}
           exercise={exercise}
           number={sets.length + 1}
@@ -107,6 +107,10 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
   const latest = useRef(set)
   latest.current = set
   const saving = useRef(false)
+  // The save chain in flight. Removal waits on it so it targets the revision that save returned.
+  const inFlight = useRef<Promise<void>>(Promise.resolve())
+  // Count of this set's fields with focus. Typed changes save when the last one loses focus or the check is pressed.
+  const editing = useRef(0)
   // Revision id returned by our last save, ahead of the query; edits chain onto it instead of the stale head.
   const ahead = useRef<SetId | null>(null)
 
@@ -124,7 +128,7 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
     const head = latest.current
     if (ahead.current === null && next.weightKg === head.weightKg && next.reps === head.reps) return setShown(null)
     saving.current = true
-    editSet({ submissionId: newSubmissionId(), setId: ahead.current ?? head._id, weightKg: next.weightKg, reps: next.reps })
+    inFlight.current = editSet({ submissionId: newSubmissionId(), setId: ahead.current ?? head._id, weightKg: next.weightKg, reps: next.reps })
       .then(
         (revision) => {
           ahead.current = revision
@@ -134,25 +138,34 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
       )
       .finally(() => {
         saving.current = false
-        if (pending.current !== null) flush()
-        else setShown((v) => (v === next ? null : v))
+        if (pending.current === null) setShown((v) => (v === next ? null : v))
+        else if (editing.current === 0) flush()
       })
   }
 
   useEffect(() => () => flush(), [])
 
-  // Changes the set locally and schedules the save.
+  // Changes the set locally; the save waits for a pause, or for the field to lose focus.
   function change(next: Hint) {
     pending.current = next
     setShown(next)
     if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(flush, SAVE_AFTER_MS)
+    if (editing.current === 0) timer.current = setTimeout(flush, SAVE_AFTER_MS)
   }
 
-  // Removes the set with a revision the toast can undo.
+  // Tracks focus on a field: leaving it saves what was typed, entering it holds the save.
+  function focusChange(on: boolean) {
+    editing.current += on ? 1 : -1
+    if (editing.current > 0) {
+      if (timer.current) clearTimeout(timer.current)
+    } else flush()
+  }
+
+  // Removes the set with a revision the toast can undo, after any save in flight.
   async function remove() {
     if (timer.current) clearTimeout(timer.current)
     pending.current = null
+    while (saving.current) await inFlight.current
     try {
       const revision = await deleteSet({ submissionId: newSubmissionId(), setId: ahead.current ?? latest.current._id })
       actions.toast({ title: `Removed set ${number}`, sub: 'Every version is kept.', undo: actions.undoFor(revision) })
@@ -180,6 +193,7 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
         dark
         label={`set ${number} weight`}
         onChange={(weightKg) => change({ ...value, weightKg })}
+        onFocusChange={focusChange}
       />
       <NumStep
         value={value.reps}
@@ -190,11 +204,15 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
         dark
         label={`set ${number} reps`}
         onChange={(reps) => change({ ...value, reps })}
+        onFocusChange={focusChange}
       />
       <Tap
         style={[s.ck, s.ckDone]}
         scale={0.85}
-        onPress={() => actions.toast({ title: `Set ${number} is logged`, sub: 'Hold the check to remove it.' })}
+        onPress={() => {
+          flush()
+          actions.toast({ title: `Set ${number} is logged`, sub: 'Hold the check to remove it.' })
+        }}
         onLongPress={() => void remove()}
         accessibilityRole="button"
         accessibilityLabel={`Set ${number} logged`}
@@ -230,8 +248,23 @@ function DraftRow({
   const [value, setValue] = useState(start)
   const [rpe, setRpe] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
+  // Fields the user has changed; hints that arrive later never overwrite these.
+  const touched = useRef({ weightKg: false, reps: false })
   // Kept across retries so a resend after a dropped reply logs the set once.
   const submissionId = useRef(newSubmissionId())
+
+  useEffect(() => {
+    setValue((v) => ({
+      weightKg: touched.current.weightKg ? v.weightKg : start.weightKg,
+      reps: touched.current.reps ? v.reps : start.reps,
+    }))
+  }, [start.weightKg, start.reps])
+
+  // Records a user edit to one field and keeps it.
+  function setField(field: keyof Hint, n: number) {
+    touched.current[field] = true
+    setValue((v) => ({ ...v, [field]: n }))
+  }
 
   // Saves the set; the row remounts empty once the session updates.
   async function log() {
@@ -269,7 +302,7 @@ function DraftRow({
           max={MAX_KG}
           decimals
           label={`set ${number} weight`}
-          onChange={(weightKg) => setValue((v) => ({ ...v, weightKg }))}
+          onChange={(weightKg) => setField('weightKg', weightKg)}
         />
         <NumStep
           value={value.reps}
@@ -278,7 +311,7 @@ function DraftRow({
           min={1}
           max={MAX_REPS}
           label={`set ${number} reps`}
-          onChange={(reps) => setValue((v) => ({ ...v, reps }))}
+          onChange={(reps) => setField('reps', reps)}
         />
         <Tap
           style={[s.ck, busy && s.dim]}
@@ -323,6 +356,7 @@ function NumStep({
   dark,
   label,
   onChange,
+  onFocusChange,
 }: {
   value: number
   unit: string
@@ -333,17 +367,30 @@ function NumStep({
   dark?: boolean
   label: string
   onChange: (value: number) => void
+  onFocusChange?: (focused: boolean) => void
 }) {
   const t = useTheme()
   const s = useStyles()
   const [text, setText] = useState<string | null>(null)
   const ink = dark ? t.c.bg : t.c.ink
-  const shown = decimals ? formatKg(value) : String(value)
+  const shown = format(value)
 
   // Rounds to the field's precision and keeps it in range.
   function clamp(n: number): number {
     const rounded = decimals ? Math.round(n * 10) / 10 : Math.round(n)
     return Math.min(max, Math.max(min, rounded))
+  }
+
+  // Formats a value the way the field shows it.
+  function format(n: number): string {
+    return decimals ? formatKg(n) : String(n)
+  }
+
+  // Moves by one step from the current value. A focused field's text follows the new value.
+  function nudge(next: number) {
+    const v = clamp(next)
+    setText((typed) => (typed === null ? null : format(v)))
+    onChange(v)
   }
 
   // Passes each readable keystroke on at once, so tapping the check without closing the keyboard saves what was typed.
@@ -360,19 +407,28 @@ function NumStep({
     setText(null)
   }
 
+  // Commits the typed value and tells the parent the field lost focus.
+  function leave() {
+    commit()
+    onFocusChange?.(false)
+  }
+
   return (
     <View style={[s.step, dark && s.stepDark]}>
-      <Tap onPress={() => onChange(clamp(value - step))} scale={0.85} style={s.stepBtn} accessibilityRole="button" accessibilityLabel={`Less ${label}`}>
+      <Tap onPress={() => nudge(value - step)} scale={0.85} style={s.stepBtn} accessibilityRole="button" accessibilityLabel={`Less ${label}`}>
         <Icon name="minus" size={14} color={ink} />
       </Tap>
       <View style={s.stepMid}>
         <TextInput
           style={[s.stepValue, { color: ink }]}
           value={text ?? shown}
-          onFocus={() => setText(shown)}
+          onFocus={() => {
+            setText(shown)
+            onFocusChange?.(true)
+          }}
           onChangeText={type}
-          onBlur={commit}
-          onSubmitEditing={commit}
+          onBlur={leave}
+          onSubmitEditing={leave}
           keyboardType={decimals ? 'decimal-pad' : 'number-pad'}
           selectTextOnFocus
           maxLength={6}
@@ -380,7 +436,7 @@ function NumStep({
         />
         <Text style={[s.stepUnit, dark && s.onInk]}>{unit}</Text>
       </View>
-      <Tap onPress={() => onChange(clamp(value + step))} scale={0.85} style={s.stepBtn} accessibilityRole="button" accessibilityLabel={`More ${label}`}>
+      <Tap onPress={() => nudge(value + step)} scale={0.85} style={s.stepBtn} accessibilityRole="button" accessibilityLabel={`More ${label}`}>
         <Icon name="plus" size={14} color={ink} />
       </Tap>
     </View>
