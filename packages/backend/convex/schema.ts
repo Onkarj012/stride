@@ -212,6 +212,11 @@ export default defineSchema({
         v.literal("very_active"),
       ),
     ),
+    calorieTarget: v.optional(v.object({
+      kcal: v.number(),
+      source: v.union(v.literal("formula"), v.literal("adaptive")),
+      appliedLocalDate: v.string(),
+    })),
   }).index("by_user", ["userId"]),
 
   chat_sessions: defineTable({
