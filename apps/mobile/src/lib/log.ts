@@ -62,7 +62,9 @@ function convexCode(err: unknown): string | null {
 
 // Server error text mapped to one plain line. The first match wins, so specific patterns come first.
 const PLAIN_MESSAGES: ReadonlyArray<readonly [RegExp, string]> = [
-  [/BUDGET_EXCEEDED/, "Today's AI allowance is used up. Barcode scans still work, and it resets tomorrow."],
+  // Draft item lines are already written for users; '$&' keeps the matched text as is.
+  [/Item \d+[^\n]*/, '$&'],
+  [/BUDGET_EXCEEDED/,"Today's AI allowance is used up. Barcode scans still work, and it resets tomorrow."],
   [/RATE_LIMITED/, "That's a lot at once. Give it a minute, then try again."],
   [/INPUT_TOO_LARGE/, "That's too long for me. Try something shorter."],
   [/Groq|transcription/i, "I couldn't make out that recording. Try again, or type it."],
@@ -118,8 +120,10 @@ export function plainError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   // Stack frames are dropped so their file names cannot match a pattern.
   const text = `${code ?? ''} ${raw.split(/\n\s+at /)[0]}`
-  const match = PLAIN_MESSAGES.find(([pattern]) => pattern.test(text))
-  if (match) return match[1]
+  for (const [pattern, line] of PLAIN_MESSAGES) {
+    const found = pattern.exec(text)
+    if (found) return found[0].replace(pattern, line)
+  }
   console.warn('[stride]', raw)
   return 'Something went wrong. Try again.'
 }
