@@ -88,6 +88,8 @@ function AuthGate() {
         <Stack.Protected guard={signedIn && complete}>
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="workout" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="profile" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
         </Stack.Protected>
         <Stack.Protected guard={signedIn && (!complete || holdOnboarding)}>
           <Stack.Screen name="onboarding" />

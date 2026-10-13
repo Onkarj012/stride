@@ -70,7 +70,7 @@ function FieldRow({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-const GOAL_OPTIONS: Choice<Goal>[] = [
+export const GOAL_OPTIONS: Choice<Goal>[] = [
   { value: 'lose', label: 'Lose fat, slowly', detail: 'Keeps your strength.' },
   { value: 'maintain', label: 'Stay where I am', detail: 'Eat to your real burn, train well.' },
   { value: 'gain', label: 'Build muscle', detail: 'Small surplus, progressive lifting.' },
@@ -81,7 +81,7 @@ export function GoalInput({ value, onChange }: { value: Goal | null; onChange: (
   return <ChoiceRows options={GOAL_OPTIONS} value={value} onChange={onChange} />
 }
 
-const SEX_OPTIONS: Choice<Sex>[] = [
+export const SEX_OPTIONS: Choice<Sex>[] = [
   { value: 'male', label: 'Male' },
   { value: 'female', label: 'Female' },
 ]
@@ -128,7 +128,7 @@ export function WeightInput({ value, onChange, units = deviceUnits() }: { value:
   )
 }
 
-const ACTIVITY_OPTIONS: Choice<Activity>[] = [
+export const ACTIVITY_OPTIONS: Choice<Activity>[] = [
   { value: 'sedentary', label: 'Mostly sitting', detail: 'Desk job, little exercise.' },
   { value: 'light', label: 'Lightly active', detail: 'On my feet some, a walk or two.' },
   { value: 'moderate', label: 'Moderately active', detail: 'Train a few times a week.' },
@@ -141,7 +141,7 @@ export function ActivityInput({ value, onChange }: { value: Activity | null; onC
   return <ChoiceRows options={ACTIVITY_OPTIONS} value={value} onChange={onChange} />
 }
 
-const DIET_OPTIONS: Choice<DietType>[] = [
+export const DIET_OPTIONS: Choice<DietType>[] = [
   { value: 'veg', label: 'Veg' },
   { value: 'eggetarian', label: 'Eggetarian' },
   { value: 'non_veg', label: 'Non-veg' },
@@ -154,7 +154,7 @@ export function DietInput({ value, onChange }: { value: DietType | null; onChang
   return <ChoiceRows options={DIET_OPTIONS} value={value} onChange={onChange} />
 }
 
-const PACES: Choice<Pace>[] = [
+export const PACES: Choice<Pace>[] = [
   { value: 'relaxed', label: 'Relaxed' },
   { value: 'steady', label: 'Steady' },
   { value: 'fast', label: 'Fast' },

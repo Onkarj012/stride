@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Alert, Text, TextInput, View } from 'react-native'
+import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated'
 import { router } from 'expo-router'
-import { useAuth, useUser } from '@clerk/expo'
+import { useUser } from '@clerk/expo'
 import { useMutation, useQuery } from 'convex/react'
 import { inferSlot } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout, radii } from '@stride/ui-tokens'
+import { AccountSheet, Avatar } from '@/components/AccountSheet'
 import { DayBar, Macro, Odometer } from '@/components/Budget'
 import { useBurnMilestone } from '@/components/BurnSheet'
 import { Button, RoundButton } from '@/components/Controls'
@@ -47,7 +48,7 @@ export default function TodayScreen() {
   const t = useTheme()
   const s = useStyles()
   const { user } = useUser()
-  const { signOut } = useAuth()
+  const [accountOpen, setAccountOpen] = useState(false)
   const { compose, openMeal, openDraft } = useLog()
   const minutes = useClockMinutes()
   const today = useLocalToday()
@@ -62,35 +63,30 @@ export default function TodayScreen() {
   const night = isNight(now)
   const targets = targetsFor(summary?.target?.kcal ?? null)
 
-  // Account sheet for now: shows who is signed in and offers sign out.
-  function openAccount() {
-    Alert.alert(name, user?.primaryEmailAddress?.emailAddress ?? '', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
-    ])
-  }
-
   const header = (
     <View style={s.head}>
       <View style={s.headText}>
         <Text style={s.eyebrow}>{formatDateline(now)}</Text>
         <Text style={s.greet}>{greeting(minutes, name)}</Text>
       </View>
-      <Tap style={s.avatar} scale={0.9} onPress={openAccount} accessibilityRole="button" accessibilityLabel="You">
-        <Text style={s.avatarText}>{name.charAt(0).toUpperCase()}</Text>
+      <Tap style={s.avatar} scale={0.9} onPress={() => setAccountOpen(true)} accessibilityRole="button" accessibilityLabel="You">
+        <Avatar size={layout.avatar} />
       </Tap>
     </View>
   )
 
   if (totals === undefined || entries === undefined)
     return (
-      <Screen>
-        {header}
-        <View style={s.loading}>
-          <Polo size={56} />
-          <Text style={s.loadingText}>Getting today ready…</Text>
-        </View>
-      </Screen>
+      <>
+        <Screen>
+          {header}
+          <View style={s.loading}>
+            <Polo size={56} />
+            <Text style={s.loadingText}>Getting today ready…</Text>
+          </View>
+        </Screen>
+        <AccountSheet open={accountOpen} onClose={() => setAccountOpen(false)} />
+      </>
     )
 
   const eaten = totals.nutrients
@@ -100,75 +96,78 @@ export default function TodayScreen() {
   const showNext = !night && meals.length > 0 && !meals.some((m) => m.slot === slotNow)
 
   return (
-    <Screen>
-      {header}
+    <>
+      <Screen>
+        {header}
 
-      <View style={s.hero}>
-        <View style={s.heroLabel}>
-          <Text style={s.eyebrow}>Left today</Text>
-          <Text style={s.faintSmall}>{formatNumber(eaten.kcal)} eaten</Text>
-        </View>
-        <View style={s.bignum}>
-          <Odometer value={Math.abs(left)} />
-          <Text style={s.of}>
-            {left >= 0 ? `of ${formatNumber(targets.kcal)}\nkcal` : `over\n${formatNumber(targets.kcal)} kcal`}
-          </Text>
-        </View>
-        <DayBar meals={meals.map((m) => ({ key: m.slot, kcal: m.kcal }))} target={targets.kcal} />
-        <View style={s.macros}>
-          <Macro name="Protein" eaten={eaten.protein} target={targets.proteinG} color={t.c.protein} />
-          <Macro name="Carbs" eaten={eaten.carbs} target={targets.carbsG} color={t.c.carbs} />
-          <Macro name="Fat" eaten={eaten.fat} target={targets.fatG} color={t.c.fat} />
-        </View>
-        {night ? (
-          <View style={s.nightNote}>
-            <Text style={s.nightText}>
-              {left >= 0 ? (
-                <>
-                  <Text style={s.nightStrong}>{formatNumber(left)} left</Text> and the kitchen's closing. If you're
-                  hungry, something light fits. If not, that's a good day. Sleep well.
-                </>
-              ) : (
-                <>
-                  <Text style={s.nightStrong}>{formatNumber(-left)} over</Text> today. That's fine, one day doesn't move the
-                  trend. Sleep well.
-                </>
-              )}
+        <View style={s.hero}>
+          <View style={s.heroLabel}>
+            <Text style={s.eyebrow}>Left today</Text>
+            <Text style={s.faintSmall}>{formatNumber(eaten.kcal)} eaten</Text>
+          </View>
+          <View style={s.bignum}>
+            <Odometer value={Math.abs(left)} />
+            <Text style={s.of}>
+              {left >= 0 ? `of ${formatNumber(targets.kcal)}\nkcal` : `over\n${formatNumber(targets.kcal)} kcal`}
             </Text>
           </View>
-        ) : null}
-      </View>
-
-      {!night ? <WeighCard key={today} today={today} trendKg={summary?.latestTrendKg ?? null} weeklyRateKg={summary?.weeklyRateKg ?? null} /> : null}
-
-      {pendingDrafts?.map((draft) => (
-        <Tap key={draft._id} style={[s.card, s.weighCard, s.weighSaved]} onPress={() => openDraft(draft._id)} accessibilityRole="button">
-          <View style={s.grow}>
-            <Text style={s.weighNote}>You have an unfinished log</Text>
-            <Text style={s.faintSmall}>{draft.itemCount} item{draft.itemCount === 1 ? '' : 's'} · tap to resume</Text>
+          <DayBar meals={meals.map((m) => ({ key: m.slot, kcal: m.kcal }))} target={targets.kcal} />
+          <View style={s.macros}>
+            <Macro name="Protein" eaten={eaten.protein} target={targets.proteinG} color={t.c.protein} />
+            <Macro name="Carbs" eaten={eaten.carbs} target={targets.carbsG} color={t.c.carbs} />
+            <Macro name="Fat" eaten={eaten.fat} target={targets.fatG} color={t.c.fat} />
           </View>
-        </Tap>
-      ))}
+          {night ? (
+            <View style={s.nightNote}>
+              <Text style={s.nightText}>
+                {left >= 0 ? (
+                  <>
+                    <Text style={s.nightStrong}>{formatNumber(left)} left</Text> and the kitchen's closing. If you're
+                    hungry, something light fits. If not, that's a good day. Sleep well.
+                  </>
+                ) : (
+                  <>
+                    <Text style={s.nightStrong}>{formatNumber(-left)} over</Text> today. That's fine, one day doesn't move the
+                    trend. Sleep well.
+                  </>
+                )}
+              </Text>
+            </View>
+          ) : null}
+        </View>
 
-      <Section title="Meals" link="History" onLink={() => router.navigate('/log')} />
-      <View style={s.mealsCard}>
-        {meals.length === 0 ? (
-          <View style={s.empty}>
-            <Polo size={64} hop={1} mood={night ? 'sleep' : 'idle'} />
-            <Text style={s.emptyTitle}>Clean slate.</Text>
-            <Text style={s.emptyBody}>Nothing logged yet. Tell me what you had, in any words.</Text>
-            <Button label="Log something" size="sm" onPress={() => compose('text')} style={s.emptyButton} />
-          </View>
-        ) : (
-          <>
-            {meals.map((m, i) => (
-              <MealRow key={m.slot} meal={m} first={i === 0} onPress={() => today && openMeal(today, m.slot)} />
-            ))}
-            {showNext ? <NextMealRow slot={slotNow} around={AROUND[slotNow]} first={false} onPress={() => compose('text', slotNow)} /> : null}
-          </>
-        )}
-      </View>
-    </Screen>
+        {!night ? <WeighCard key={today} today={today} trendKg={summary?.latestTrendKg ?? null} weeklyRateKg={summary?.weeklyRateKg ?? null} /> : null}
+
+        {pendingDrafts?.map((draft) => (
+          <Tap key={draft._id} style={[s.card, s.weighCard, s.weighSaved]} onPress={() => openDraft(draft._id)} accessibilityRole="button">
+            <View style={s.grow}>
+              <Text style={s.weighNote}>You have an unfinished log</Text>
+              <Text style={s.faintSmall}>{draft.itemCount} item{draft.itemCount === 1 ? '' : 's'} · tap to resume</Text>
+            </View>
+          </Tap>
+        ))}
+
+        <Section title="Meals" link="History" onLink={() => router.navigate('/log')} />
+        <View style={s.mealsCard}>
+          {meals.length === 0 ? (
+            <View style={s.empty}>
+              <Polo size={64} hop={1} mood={night ? 'sleep' : 'idle'} />
+              <Text style={s.emptyTitle}>Clean slate.</Text>
+              <Text style={s.emptyBody}>Nothing logged yet. Tell me what you had, in any words.</Text>
+              <Button label="Log something" size="sm" onPress={() => compose('text')} style={s.emptyButton} />
+            </View>
+          ) : (
+            <>
+              {meals.map((m, i) => (
+                <MealRow key={m.slot} meal={m} first={i === 0} onPress={() => today && openMeal(today, m.slot)} />
+              ))}
+              {showNext ? <NextMealRow slot={slotNow} around={AROUND[slotNow]} first={false} onPress={() => compose('text', slotNow)} /> : null}
+            </>
+          )}
+        </View>
+      </Screen>
+      <AccountSheet open={accountOpen} onClose={() => setAccountOpen(false)} />
+    </>
   )
 }
 
@@ -269,7 +268,6 @@ const useStyles = themedStyles((t) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { ...font('avatar'), color: t.c.ink },
   loading: { alignItems: 'center', marginTop: 80, gap: 12 },
   loadingText: { ...font('callout'), color: t.c.ink3 },
   hero: { marginTop: 26 },

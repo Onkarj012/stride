@@ -81,3 +81,17 @@ export function stepDate(value: string, part: DatePart, dir: -1 | 1): string {
   const nextDay = clamp(part === 'day' ? day + dir : day, 1, lastDay)
   return `${String(nextYear).padStart(4, '0')}-${String(nextMonth).padStart(2, '0')}-${String(nextDay).padStart(2, '0')}`
 }
+
+// Splits a full name at the first space into Clerk's first and last name.
+export function splitName(full: string): { firstName: string; lastName: string } {
+  const trimmed = full.trim()
+  const space = trimmed.indexOf(' ')
+  if (space === -1) return { firstName: trimmed, lastName: '' }
+  return { firstName: trimmed.slice(0, space), lastName: trimmed.slice(space + 1).trim() }
+}
+
+// Target weight on the far side of today's weight for the goal. Keeps the saved target when it already sits there, else starts 5 kg away.
+export function startTargetKg(goal: 'lose' | 'gain', targetKg: number | undefined, weightKg: number): number {
+  if (targetKg !== undefined && (goal === 'lose' ? targetKg < weightKg : targetKg > weightKg)) return targetKg
+  return clamp(round1(weightKg + (goal === 'lose' ? -5 : 5)), WEIGHT_KG.min, WEIGHT_KG.max)
+}
