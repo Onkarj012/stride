@@ -71,12 +71,27 @@ function defaultTargetKg(goal: 'lose' | 'gain', weightKg: number): number {
   return clamp(Math.round((weightKg + (goal === 'lose' ? -5 : 5)) * 10) / 10, 30, 300)
 }
 
+// Whether a target is below the weight to lose, or above it to gain.
+function targetOnSide(goal: 'lose' | 'gain', targetKg: number, weightKg: number): boolean {
+  return goal === 'lose' ? targetKg < weightKg : targetKg > weightKg
+}
+
+// Keeps the target while it is still on the goal's side of the weight. Null means the default applies.
+function keepTarget(goal: Goal | null, targetKg: number | null, weightKg: number): number | null {
+  if (goal !== 'lose' && goal !== 'gain') return targetKg
+  return targetKg !== null && !targetOnSide(goal, targetKg, weightKg) ? null : targetKg
+}
+
 // Whether the question for this step has an answer yet.
 function answered(step: StepId, form: Form): boolean {
   if (step === 'goal') return form.goal !== null
   if (step === 'sex') return form.sex !== null
   if (step === 'activity') return form.activity !== null
   if (step === 'diet') return form.dietType !== null
+  if (step === 'target') {
+    if (form.goal === null || form.goal === 'maintain') return true
+    return targetOnSide(form.goal, form.targetWeightKg ?? defaultTargetKg(form.goal, form.weightKg), form.weightKg)
+  }
   return true
 }
 
@@ -171,7 +186,11 @@ function Onboarding() {
       case 'weight':
         return (
           <Question title="What do you weigh?" lead="This is your first weigh-in.">
-            <WeightInput value={form.weightKg} units={units} onChange={(weightKg) => patch({ weightKg })} />
+            <WeightInput
+              value={form.weightKg}
+              units={units}
+              onChange={(weightKg) => patch({ weightKg, targetWeightKg: keepTarget(form.goal, form.targetWeightKg, weightKg) })}
+            />
           </Question>
         )
       case 'activity':

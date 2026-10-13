@@ -18,7 +18,7 @@ import { Screen, Section } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
 import { formatDateline, formatNumber, greeting } from '@/lib/format'
 import { SUMMARY_DAYS, plainError, targetsFor, type MealSlot } from '@/lib/log'
-import { kgLabel, savedUnits, stepKg, weightNumber, weightToKg, weightUnit } from '@/lib/profile'
+import { kgLabel, savedUnits, stepKg, weightNumber, weightToKg, weightUnit, type Units } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
@@ -180,7 +180,10 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
   const profile = useQuery(api.progress_v2.profile, {})
   const weight = useQuery(api.weights.todayWeight, { localDate: today })
   const logWeight = useMutation(api.weights.logWeight)
-  const [draft, setDraft] = useState<string | null>(null)
+  // The draft is kg, so changing units only changes how it is shown.
+  const [draftKg, setDraftKg] = useState<number | null>(null)
+  // Raw text as typed, tagged with its unit so a units change cannot reread it.
+  const [typed, setTyped] = useState<{ text: string; units: Units } | null>(null)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -188,20 +191,25 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
   const units = savedUnits(profile?.units)
   // Start from today's or the latest weigh-in; 70 is only a starting point for the very first one.
   const start = weight.kg ?? weight.latestKg ?? 70
-  const text = draft ?? weightNumber(start, units)
-  const value = Number(text.replace(',', '.'))
-  const valid = Number.isFinite(value) && value > 0
-  const step = (dir: -1 | 1) => setDraft(weightNumber(stepKg(valid ? weightToKg(value, units) : start, dir, units), units))
+  const typing = typed?.units === units ? typed.text : null
+  const typedValue = typing === null ? null : Number(typing.replace(',', '.'))
+  const valid = typedValue === null || (Number.isFinite(typedValue) && typedValue > 0)
+  const kg = valid && typedValue !== null ? weightToKg(typedValue, units) : (draftKg ?? start)
+  const text = typing ?? weightNumber(kg, units)
+  const step = (dir: -1 | 1) => {
+    setDraftKg(stepKg(kg, dir, units))
+    setTyped(null)
+  }
 
   // Stores the weight for today and folds the card.
   async function save() {
     if (!valid) return
-    const kg = weightToKg(value, units)
     setBusy(true)
     try {
       await logWeight({ kg, localDate: today })
       setEditing(false)
-      setDraft(null)
+      setDraftKg(null)
+      setTyped(null)
       toast({ title: `Weight saved · ${kgLabel(kg, units)}`, sub: "Trend barely moves on one day. That's the point." })
     } catch (err) {
       toast({ title: "Couldn't save your weight.", sub: plainError(err) })
@@ -236,7 +244,7 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
         <View style={s.weighField}>
           <TextInput
             value={text}
-            onChangeText={setDraft}
+            onChangeText={(next) => setTyped({ text: next, units })}
             onSubmitEditing={() => void save()}
             keyboardType="decimal-pad"
             returnKeyType="done"

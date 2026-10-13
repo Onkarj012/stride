@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { ActivityIndicator, Text, View, type StyleProp, type ViewStyle } from 'react-native'
+import { useEffect, useRef, useState } from 'react'
+import { ActivityIndicator, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native'
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -82,20 +82,94 @@ export function RoundButton({
   )
 }
 
-// Minus, value, plus in one pill, like the mock's meal-sheet stepper.
-export function Stepper({ value, onStep, label }: { value: string; onStep: (direction: -1 | 1) => void; label: string }) {
-  const t = useTheme()
+// Minus, value, plus in one pill, like the mock's meal-sheet stepper. Tap the value to type it when onType is set; a held button keeps stepping.
+export function Stepper({
+  value,
+  typeText,
+  onStep,
+  onType,
+  label,
+}: {
+  value: string
+  typeText?: string
+  onStep: (direction: -1 | 1) => void
+  onType?: (text: string) => void
+  label: string
+}) {
   const s = useStyles()
+  const [typing, setTyping] = useState<string | null>(null)
+
+  // Hands the typed text to the caller and goes back to showing the value.
+  function commit() {
+    if (typing !== null) onType?.(typing)
+    setTyping(null)
+  }
+
   return (
     <View style={s.step}>
-      <Tap onPress={() => onStep(-1)} scale={0.85} style={s.stepBtn} accessibilityRole="button" accessibilityLabel={`Less ${label}`}>
-        <Icon name="minus" size={16} color={t.c.ink} />
-      </Tap>
-      <Text style={s.stepValue}>{value}</Text>
-      <Tap onPress={() => onStep(1)} scale={0.85} style={s.stepBtn} accessibilityRole="button" accessibilityLabel={`More ${label}`}>
-        <Icon name="plus" size={16} color={t.c.ink} />
-      </Tap>
+      <StepButton dir={-1} icon="minus" label={`Less ${label}`} onStep={onStep} />
+      {typing === null ? (
+        <Tap
+          onPress={() => setTyping(typeText ?? value)}
+          disabled={!onType}
+          scale={0.97}
+          accessibilityRole="button"
+          accessibilityLabel={`Type ${label}`}
+        >
+          <Text style={s.stepValue}>{value}</Text>
+        </Tap>
+      ) : (
+        <TextInput
+          value={typing}
+          onChangeText={setTyping}
+          onSubmitEditing={commit}
+          onBlur={commit}
+          autoFocus
+          keyboardType="decimal-pad"
+          returnKeyType="done"
+          selectTextOnFocus
+          style={s.stepInput}
+          accessibilityLabel={`${label} value`}
+        />
+      )}
+      <StepButton dir={1} icon="plus" label={`More ${label}`} onStep={onStep} />
     </View>
+  )
+}
+
+// Minus or plus in the stepper. A tap steps once; holding keeps stepping every 80 ms until the finger lifts.
+function StepButton({ dir, icon, label, onStep }: { dir: -1 | 1; icon: IconName; label: string; onStep: (direction: -1 | 1) => void }) {
+  const t = useTheme()
+  const s = useStyles()
+  // The repeat timer reads the latest onStep, so each tick sees the value the last one produced.
+  const latest = useRef(onStep)
+  const repeat = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
+  useEffect(() => {
+    latest.current = onStep
+  }, [onStep])
+  useEffect(() => stopRepeat, [])
+
+  // Clears the repeat timer if one is running.
+  function stopRepeat() {
+    clearInterval(repeat.current)
+    repeat.current = undefined
+  }
+
+  return (
+    <Tap
+      onPress={() => onStep(dir)}
+      onLongPress={() => {
+        stopRepeat()
+        repeat.current = setInterval(() => latest.current(dir), 80)
+      }}
+      onPressOut={stopRepeat}
+      scale={0.85}
+      style={s.stepBtn}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Icon name={icon} size={16} color={t.c.ink} />
+    </Tap>
   )
 }
 
@@ -163,6 +237,14 @@ const useStyles = themedStyles((t) => ({
   step: { flexDirection: 'row', alignItems: 'center', backgroundColor: t.c.card2, borderRadius: radii.pill, height: 36 },
   stepBtn: { width: 34, height: 36, alignItems: 'center', justifyContent: 'center' },
   stepValue: { ...font('calloutStrong'), color: t.c.ink, minWidth: 44, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  stepInput: {
+    ...font('calloutStrong'),
+    color: t.c.ink,
+    minWidth: 64,
+    padding: 0,
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+  },
   tag: { paddingVertical: 3, paddingHorizontal: 7, borderRadius: radii.tag, backgroundColor: t.c.card2 },
   tagEst: { backgroundColor: t.c.poloSoft },
   tagText: { ...font('tag'), color: t.c.ink2 },

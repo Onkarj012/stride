@@ -4,6 +4,8 @@ import { PACE_KG_PER_WEEK } from '@stride/core'
 import { motion, radii } from '@stride/ui-tokens'
 import { MONTHS_LONG } from '@/lib/format'
 import {
+  HEIGHT_CM,
+  WEIGHT_KG,
   clamp,
   dateParts,
   daysLabel,
@@ -15,6 +17,8 @@ import {
   stepCm,
   stepDate,
   stepKg,
+  weightNumber,
+  weightToKg,
   type Activity,
   type DietType,
   type Goal,
@@ -29,6 +33,19 @@ import { Tap } from './Tap'
 
 type Choice<T extends string> = { value: T; label: string; detail?: string }
 export type TargetValue = { targetWeightKg: number; pace: Pace }
+
+const CM_PER_INCH = 2.54
+
+// A typed number, with a comma or dot as the decimal mark, or null when it is not above zero.
+function parsePositive(text: string): number | null {
+  const n = Number(text.replace(',', '.'))
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+// Keeps a target on the far side of today's weight, 0.1 kg short of it, as the server requires.
+function boundTarget(kg: number, goal: 'lose' | 'gain', weightKg: number): number {
+  return goal === 'lose' ? Math.min(kg, round1(weightKg - 0.1)) : Math.max(kg, round1(weightKg + 0.1))
+}
 
 // Full-width tappable rows, as in the mock's goal step. The chosen row turns ink with a Polo radio.
 function ChoiceRows<T extends string>({ options, value, onChange }: { options: Choice<T>[]; value: T | null; onChange: (v: T) => void }) {
@@ -116,23 +133,48 @@ export function DobInput({ value, onChange }: { value: string; onChange: (v: str
   )
 }
 
-// Height in cm, shown in cm or ft/in, stepped by 1 cm or 1 inch.
+// Height in cm, shown in cm or ft/in, stepped by 1 cm or 1 inch. Typed as cm, or as total inches in imperial.
 export function HeightInput({ value, onChange, units = deviceUnits() }: { value: number; onChange: (cm: number) => void; units?: Units }) {
+  // Turns a typed height into cm and keeps it inside the bounds.
+  function typeHeight(text: string) {
+    const n = parsePositive(text)
+    if (n === null) return
+    const cm = units === 'metric' ? n : n * CM_PER_INCH
+    onChange(clamp(Math.round(cm), HEIGHT_CM.min, HEIGHT_CM.max))
+  }
+  const typeText = units === 'metric' ? String(value) : String(Math.round(value / CM_PER_INCH))
   return (
     <FieldCard>
       <FieldRow label="Height">
-        <Stepper value={heightLabel(value, units)} label="height" onStep={(dir) => onChange(stepCm(value, dir, units))} />
+        <Stepper
+          value={heightLabel(value, units)}
+          typeText={typeText}
+          label="height"
+          onStep={(dir) => onChange(stepCm(value, dir, units))}
+          onType={typeHeight}
+        />
       </FieldRow>
     </FieldCard>
   )
 }
 
-// Weight in kg, shown in kg or lb, stepped by 0.1 kg or 1 lb.
+// Weight in kg, shown in kg or lb, stepped by 0.1 kg or 1 lb. Tap the number to type it.
 export function WeightInput({ value, onChange, units = deviceUnits() }: { value: number; onChange: (kg: number) => void; units?: Units }) {
+  // Turns a typed weight in the user's unit into kg and keeps it inside the bounds.
+  function typeWeight(text: string) {
+    const n = parsePositive(text)
+    if (n !== null) onChange(clamp(weightToKg(n, units), WEIGHT_KG.min, WEIGHT_KG.max))
+  }
   return (
     <FieldCard>
       <FieldRow label="Weight">
-        <Stepper value={kgLabel(value, units)} label="weight" onStep={(dir) => onChange(stepKg(value, dir, units))} />
+        <Stepper
+          value={kgLabel(value, units)}
+          typeText={weightNumber(value, units)}
+          label="weight"
+          onStep={(dir) => onChange(stepKg(value, dir, units))}
+          onType={typeWeight}
+        />
       </FieldRow>
     </FieldCard>
   )
@@ -187,16 +229,26 @@ export function TargetPaceInput({
   const s = useStyles()
   // Stops the target on the wrong side of today's weight, which the server would reject.
   function stepTarget(dir: -1 | 1) {
-    const next = stepKg(value.targetWeightKg, dir, units)
-    const bounded = goal === 'lose' ? Math.min(next, round1(weightKg - 0.1)) : Math.max(next, round1(weightKg + 0.1))
-    onChange({ ...value, targetWeightKg: bounded })
+    onChange({ ...value, targetWeightKg: boundTarget(stepKg(value.targetWeightKg, dir, units), goal, weightKg) })
+  }
+  // Turns a typed target in the user's unit into kg, kept inside the bounds and on the far side of today's weight.
+  function typeTarget(text: string) {
+    const n = parsePositive(text)
+    if (n === null) return
+    onChange({ ...value, targetWeightKg: boundTarget(clamp(weightToKg(n, units), WEIGHT_KG.min, WEIGHT_KG.max), goal, weightKg) })
   }
   const options = PACES.map((p) => ({ ...p, detail: rateLabel(PACE_KG_PER_WEEK[goal][p.value], units) }))
   return (
     <View>
       <FieldCard>
         <FieldRow label="Target weight">
-          <Stepper value={kgLabel(value.targetWeightKg, units)} label="target weight" onStep={stepTarget} />
+          <Stepper
+            value={kgLabel(value.targetWeightKg, units)}
+            typeText={weightNumber(value.targetWeightKg, units)}
+            label="target weight"
+            onStep={stepTarget}
+            onType={typeTarget}
+          />
         </FieldRow>
       </FieldCard>
       <Text style={s.caption}>Pace</Text>
