@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { Keyboard, Text, TextInput, View, type StyleProp, type TextStyle } from 'react-native'
 import { PACE_KG_PER_WEEK } from '@stride/core'
 import { motion, radii } from '@stride/ui-tokens'
+import { useLocalToday } from '@/lib/useLocalToday'
 import {
   DIET_LABELS,
   HEIGHT_CM,
@@ -217,7 +218,8 @@ export function DobInput({
   const [parts, setParts] = useState<DobParts>({ day: pad(start.day), month: pad(start.month), year: String(start.year) })
   const monthRef = useRef<TextInput>(null)
   const yearRef = useRef<TextInput>(null)
-  const valid = dobFromTyped(parts.day, parts.month, parts.year) !== null
+  const today = useLocalToday()
+  const valid = dobFromTyped(parts.day, parts.month, parts.year, today) !== null
   // Reports whether the typed date is real, on mount and after each change.
   useEffect(() => {
     onValidChange?.(valid)
@@ -225,7 +227,7 @@ export function DobInput({
   // Keeps each typed part, and passes the date on when all three make a valid one.
   function typePart(next: DobParts) {
     setParts(next)
-    const iso = dobFromTyped(next.day, next.month, next.year)
+    const iso = dobFromTyped(next.day, next.month, next.year, today)
     if (iso) onChange(iso)
   }
   return (

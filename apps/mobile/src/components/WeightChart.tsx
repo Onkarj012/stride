@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { View, type GestureResponderEvent } from 'react-native'
 import Animated, { Easing, useAnimatedProps, useSharedValue, withTiming } from 'react-native-reanimated'
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg'
@@ -137,27 +137,32 @@ function ScrubMarker({ width, spot, ink, trendColor, bg }: { width: number; spot
 export function WeightChart({ points, from, to, units, onScrub }: WeightChartProps) {
   const t = useTheme()
   const [width, setWidth] = useState(0)
-  const [spot, setSpot] = useState<Spot | null>(null)
-  // Date of the weigh-in last sent to onScrub, so moves within the same point stay silent.
-  const reported = useRef<string | null>(null)
+  // Local date of the weigh-in under the finger. The marker position comes from the plot, so it follows live changes.
+  const [selected, setSelected] = useState<string | null>(null)
   const plot = useMemo(() => layoutPlot(points, from, to, width), [points, from, to, width])
+  const spot = useMemo(() => plot.trend.find((p) => p.date === selected) ?? null, [plot, selected])
+
+  // Drops the selection when the new plot no longer has that weigh-in.
+  useEffect(() => {
+    if (selected !== null && spot === null) {
+      setSelected(null)
+      onScrub(null)
+    }
+  }, [selected, spot, onScrub])
 
   // Picks the weigh-in nearest the finger and reports it only when it changes.
   function scrub(e: GestureResponderEvent) {
     const i = nearest(plot.trend, e.nativeEvent.locationX)
     const best = points[i]
-    const pin = plot.trend[i]
-    if (!best || !pin || best.localDate === reported.current) return
-    reported.current = best.localDate
-    setSpot(pin)
+    if (!best || best.localDate === selected) return
+    setSelected(best.localDate)
     onScrub(best)
   }
 
   // Clears the scrub marker and tip.
   function release() {
-    if (reported.current === null) return
-    reported.current = null
-    setSpot(null)
+    if (selected === null) return
+    setSelected(null)
     onScrub(null)
   }
 

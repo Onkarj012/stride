@@ -36,8 +36,8 @@ export default function TabsLayout() {
   const t = useTheme()
   return (
     <TimeZoneGate>
-      <LogProvider>
-        <OpenSheetsProvider>
+      <OpenSheetsProvider>
+        <LogProvider>
           <Tabs
             tabBar={(props) => <Dock {...props} />}
             screenOptions={{
@@ -52,8 +52,8 @@ export default function TabsLayout() {
             <Tabs.Screen name="progress" options={{ title: 'Progress' }} />
             <Tabs.Screen name="coach" options={{ title: 'Coach' }} />
           </Tabs>
-        </OpenSheetsProvider>
-      </LogProvider>
+        </LogProvider>
+      </OpenSheetsProvider>
     </TimeZoneGate>
   )
 }

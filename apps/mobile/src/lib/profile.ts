@@ -1,7 +1,7 @@
 import { createContext } from 'react'
 import { getLocales } from 'expo-localization'
 import type { FunctionArgs } from 'convex/server'
-import { KCAL_FLOOR } from '@stride/core'
+import { KCAL_FLOOR, ageOnDate, isLocalDate } from '@stride/core'
 import type { api } from 'stride-backend/convex/_generated/api'
 
 type SaveProfileArgs = FunctionArgs<typeof api.progress_v2.saveProfile>
@@ -101,20 +101,13 @@ export function stepDate(value: string, part: DatePart, dir: -1 | 1): string {
   return `${String(nextYear).padStart(4, '0')}-${String(nextMonth).padStart(2, '0')}-${String(nextDay).padStart(2, '0')}`
 }
 
-// The YYYY-MM-DD date for typed day, month and year, or null unless it is real and the age is 13 to 120.
-export function dobFromTyped(day: string, month: string, year: string): string | null {
+// The YYYY-MM-DD date for typed day, month and year, or null unless it is real and the age on today is 13 to 120.
+export function dobFromTyped(day: string, month: string, year: string, today: string): string | null {
   if (!/^\d{1,2}$/.test(day) || !/^\d{1,2}$/.test(month) || !/^\d{4}$/.test(year)) return null
-  const d = Number(day)
-  const m = Number(month)
-  const y = Number(year)
-  const date = new Date(Date.UTC(y, m - 1, d))
-  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null
-  const now = new Date()
-  // A birthday later this year has not come yet, so the age is one less.
-  const birthdayPassed = now.getMonth() + 1 > m || (now.getMonth() + 1 === m && now.getDate() >= d)
-  const age = now.getFullYear() - y - (birthdayPassed ? 0 : 1)
-  if (age < 13 || age > 120) return null
-  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+  const dob = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  if (!isLocalDate(dob)) return null
+  const age = ageOnDate(dob, today)
+  return age !== null && age >= 13 && age <= 120 ? dob : null
 }
 
 // Splits a full name at the first space into Clerk's first and last name.
