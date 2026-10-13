@@ -7,14 +7,14 @@ import { useAction, useConvex, useMutation, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { motion, radii } from '@stride/ui-tokens'
 import { Button, RoundButton } from '@/components/Controls'
-import { Icon } from '@/components/Icon'
+import { ListCard, ListRow } from '@/components/ListRow'
 import { Screen, ScreenTitle, Section } from '@/components/Screen'
 import { Sheet } from '@/components/Sheet'
 import { Tap } from '@/components/Tap'
 import { TimeZoneGate } from '@/components/TimeZoneGate'
 import { plainError } from '@/lib/log'
-import { deviceUnits, type Units } from '@/lib/profile'
-import { font, setThemePref, themedStyles, useTheme, useThemePref, type ThemePref } from '@/theme'
+import { savedUnits, type Units } from '@/lib/profile'
+import { font, setThemePref, themedStyles, useThemePref, type ThemePref } from '@/theme'
 
 type SheetKind = 'clear' | 'delete'
 
@@ -52,7 +52,7 @@ function Settings() {
   const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState(false)
   const [sheet, setSheet] = useState<SheetKind | null>(null)
-  const units = unitsOf(profile?.units)
+  const units = savedUnits(profile?.units)
 
   // Saves the units choice on the server.
   async function chooseUnits(next: Units) {
@@ -90,38 +90,48 @@ function Settings() {
         <RoundButton icon="back" label="Back" onPress={() => router.back()} />
         <ScreenTitle eyebrow="You" title="Settings" />
 
-        <Section title="Units" />
-        <View style={s.card}>
-          <View style={s.pad}>
-            <Segment options={UNIT_OPTIONS} value={units} onChange={(next) => void chooseUnits(next)} />
-          </View>
-        </View>
+        <Section title="Preferences" />
+        <ListCard>
+          <SegmentRow
+            label="Units"
+            detail={units === 'metric' ? 'Kilograms and centimetres' : 'Pounds, feet and inches'}
+            options={UNIT_OPTIONS}
+            value={units}
+            onChange={(next) => void chooseUnits(next)}
+          />
+          <SegmentRow
+            label="Theme"
+            detail={pref === 'system' ? 'Follows your phone' : pref === 'light' ? 'Always light' : 'Always dark'}
+            options={THEME_OPTIONS}
+            value={pref}
+            onChange={setThemePref}
+            last
+          />
+        </ListCard>
         {unitsError ? <Text style={s.error}>{unitsError}</Text> : null}
 
-        <Section title="Theme" />
-        <View style={s.card}>
-          <View style={s.pad}>
-            <Segment options={THEME_OPTIONS} value={pref} onChange={setThemePref} />
-          </View>
-        </View>
-
         <Section title="Data" />
-        <View style={s.card}>
-          <Row label={exporting ? 'Preparing export' : 'Export data'} onPress={exporting ? undefined : () => void exportData()} />
-          <Row label="Clear all data" danger onPress={() => openSheet('clear')} />
-        </View>
+        <ListCard>
+          <ListRow
+            label={exporting ? 'Preparing export' : 'Export data'}
+            detail="Everything you've logged, as JSON"
+            busy={exporting}
+            onPress={() => void exportData()}
+          />
+          <ListRow label="Clear all data" detail="Logs, weights, chats and profile" danger onPress={() => openSheet('clear')} last />
+        </ListCard>
         {dataError ? <Text style={s.error}>{dataError}</Text> : null}
 
         <Section title="Account" />
-        <View style={s.card}>
-          <Row label="Sign out" onPress={() => void signOut()} />
-          <Row label="Delete account" danger onPress={() => openSheet('delete')} />
-        </View>
+        <ListCard>
+          <ListRow label="Sign out" onPress={() => void signOut()} />
+          <ListRow label="Delete account" detail="Your data and your sign-in" danger onPress={() => openSheet('delete')} last />
+        </ListCard>
 
         <Section title="About" />
-        <View style={s.card}>
-          <Row label="Version" value={Constants.expoConfig?.version ?? 'Unknown'} />
-        </View>
+        <ListCard>
+          <ListRow label="Version" value={Constants.expoConfig?.version ?? 'Unknown'} last />
+        </ListCard>
         <Text style={s.caption}>{FOOD_CREDITS}</Text>
       </Screen>
 
@@ -133,36 +143,47 @@ function Settings() {
   )
 }
 
-// One list row with a label, an optional value, or a chevron when tappable. Danger rows use the warning color.
-function Row({ label, value, onPress, danger = false }: { label: string; value?: string; onPress?: () => void; danger?: boolean }) {
+// A setting with its label and current meaning on top, and the choice underneath.
+function SegmentRow<T extends string>({
+  label,
+  detail,
+  options,
+  value,
+  onChange,
+  last = false,
+}: {
+  label: string
+  detail: string
+  options: { value: T; label: string }[]
+  value: T
+  onChange: (next: T) => void
+  last?: boolean
+}) {
   const s = useStyles()
-  const t = useTheme()
   return (
-    <Tap
-      onPress={onPress}
-      disabled={!onPress}
-      scale={motion.press.rowScale}
-      style={s.row}
-      accessibilityRole={onPress ? 'button' : undefined}
-      accessibilityLabel={label}
-    >
-      <Text style={[s.rowLabel, danger && s.dangerText]}>{label}</Text>
-      {value !== undefined ? (
-        <Text style={s.rowValue} numberOfLines={1}>
-          {value}
-        </Text>
-      ) : onPress ? (
-        <Icon name="chevron" size={18} color={t.c.ink3} />
-      ) : null}
-    </Tap>
+    <View style={[s.segRow, !last && s.segRowLine]}>
+      <Text style={s.segRowLabel}>{label}</Text>
+      <Text style={s.segRowDetail}>{detail}</Text>
+      <Segment label={label} options={options} value={value} onChange={onChange} />
+    </View>
   )
 }
 
 // Side-by-side choice where the picked option is filled.
-function Segment<T extends string>({ options, value, onChange }: { options: { value: T; label: string }[]; value: T; onChange: (next: T) => void }) {
+function Segment<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  options: { value: T; label: string }[]
+  value: T
+  onChange: (next: T) => void
+}) {
   const s = useStyles()
   return (
-    <View style={s.segment}>
+    <View style={s.segment} accessibilityRole="radiogroup" accessibilityLabel={label}>
       {options.map((option) => {
         const on = option.value === value
         return (
@@ -171,8 +192,8 @@ function Segment<T extends string>({ options, value, onChange }: { options: { va
             onPress={() => onChange(option.value)}
             scale={motion.press.rowScale}
             style={[s.segItem, on && s.segOn]}
-            accessibilityRole="button"
-            accessibilityState={{ selected: on }}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: on }}
             accessibilityLabel={option.label}
           >
             <Text style={[s.segLabel, on && s.segLabelOn]}>{option.label}</Text>
@@ -206,10 +227,11 @@ function ClearForm({ onDone }: { onDone: () => void }) {
 
   return (
     <View>
+      <Text style={s.sheetEyebrow}>Data</Text>
       <Text style={s.sheetTitle}>Clear all data?</Text>
       <Text style={s.body}>This deletes your logs, weights, chats and profile. It can&apos;t be undone. Your account stays.</Text>
       {error ? <Text style={s.error}>{error}</Text> : null}
-      <Button label="Clear all data" variant="coral" size="block" busy={busy} onPress={() => void clear()} style={s.danger} />
+      <Button label="Clear all data" variant="coral" icon="trash" size="block" busy={busy} onPress={() => void clear()} style={s.danger} />
       <Button label="Cancel" variant="ghost" size="block" disabled={busy} onPress={onDone} style={s.gap} />
     </View>
   )
@@ -241,6 +263,7 @@ function DeleteForm({ onDone }: { onDone: () => void }) {
 
   return (
     <View>
+      <Text style={s.sheetEyebrow}>Account</Text>
       <Text style={s.sheetTitle}>Delete account?</Text>
       <Text style={s.body}>This deletes your data and your sign-in. It can&apos;t be undone. Type {DELETE_WORD} to confirm.</Text>
       <TextInput
@@ -257,6 +280,7 @@ function DeleteForm({ onDone }: { onDone: () => void }) {
       <Button
         label="Delete account"
         variant="coral"
+        icon="trash"
         size="block"
         disabled={typed !== DELETE_WORD}
         busy={busy}
@@ -268,34 +292,20 @@ function DeleteForm({ onDone }: { onDone: () => void }) {
   )
 }
 
-// Saved units, or the device's units when none are saved.
-function unitsOf(saved: string | undefined): Units {
-  return saved === 'metric' || saved === 'imperial' ? saved : deviceUnits()
-}
-
 const useStyles = themedStyles((t) => ({
-  card: { backgroundColor: t.c.card, borderRadius: radii.card, boxShadow: t.shadow.card, paddingHorizontal: 16 },
-  pad: { paddingVertical: 14 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderColor: t.c.line,
-  },
-  rowLabel: { ...font('callout'), color: t.c.ink },
-  dangerText: { color: t.c.poloInk },
-  rowValue: { ...font('callout'), color: t.c.ink3, flexShrink: 1, textAlign: 'right' },
+  segRow: { paddingVertical: 14 },
+  segRowLine: { borderBottomWidth: 1, borderBottomColor: t.c.line },
+  segRowLabel: { ...font('bodyStrong'), color: t.c.ink },
+  segRowDetail: { ...font('caption'), color: t.c.ink3, marginTop: 2, marginBottom: 12 },
   segment: { flexDirection: 'row', backgroundColor: t.c.card2, borderRadius: radii.pill, padding: 4, gap: 4 },
   segItem: { flex: 1, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: radii.pill },
   segOn: { backgroundColor: t.c.card, boxShadow: t.shadow.card },
   segLabel: { ...font('callout'), color: t.c.ink3 },
-  segLabelOn: { color: t.c.ink },
-  caption: { ...font('caption'), color: t.c.ink3, marginTop: 10, marginHorizontal: 2 },
-  error: { ...font('callout'), color: t.c.poloInk, marginTop: 14, marginHorizontal: 2 },
-  sheetTitle: { ...font('cardTitle'), color: t.c.ink, marginBottom: 10 },
+  segLabelOn: { ...font('calloutStrong'), color: t.c.ink },
+  caption: { ...font('caption'), color: t.c.ink3, marginTop: 12, marginHorizontal: 2 },
+  error: { ...font('callout'), color: t.c.poloInk, marginTop: 10, marginHorizontal: 2 },
+  sheetEyebrow: { ...font('eyebrow'), color: t.c.ink3 },
+  sheetTitle: { ...font('cardTitle'), color: t.c.ink, marginTop: 4, marginBottom: 8 },
   body: { ...font('callout'), color: t.c.ink2, marginBottom: 18 },
   input: {
     ...font('input'),

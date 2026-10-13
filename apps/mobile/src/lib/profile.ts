@@ -1,6 +1,7 @@
 import { createContext } from 'react'
 import { getLocales } from 'expo-localization'
 import type { FunctionArgs } from 'convex/server'
+import { KCAL_FLOOR } from '@stride/core'
 import type { api } from 'stride-backend/convex/_generated/api'
 
 type SaveProfileArgs = FunctionArgs<typeof api.progress_v2.saveProfile>
@@ -94,4 +95,21 @@ export function splitName(full: string): { firstName: string; lastName: string }
 export function startTargetKg(goal: 'lose' | 'gain', targetKg: number | undefined, weightKg: number): number {
   if (targetKg !== undefined && (goal === 'lose' ? targetKg < weightKg : targetKg > weightKg)) return targetKg
   return clamp(round1(weightKg + (goal === 'lose' ? -5 : 5)), WEIGHT_KG.min, WEIGHT_KG.max)
+}
+
+// Saved units, or the device's units when none are saved.
+export function savedUnits(saved: string | undefined): Units {
+  return saved === 'metric' || saved === 'imperial' ? saved : deviceUnits()
+}
+
+// Training days as "1 day" or "4 days".
+export function daysLabel(days: number): string {
+  return days === 1 ? '1 day' : `${days} days`
+}
+
+// One line on why the target moved off the formula, or null when it did not.
+export function clampNote(clamped: 'pace_cap' | 'floor' | undefined, sex: Sex): string | null {
+  if (clamped === 'pace_cap') return 'Capped at 1% of your weight a week to keep it safe.'
+  if (clamped === 'floor') return `Raised to the ${KCAL_FLOOR[sex]} kcal minimum.`
+  return null
 }

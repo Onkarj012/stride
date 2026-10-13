@@ -1,11 +1,11 @@
-import { useContext, useState, type ReactNode } from 'react'
+import { useContext, useEffect, useState, type ReactNode } from 'react'
 import { ScrollView, Text, View } from 'react-native'
+import Animated, { FadeIn, FadeInDown, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
 import { router } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useMutation, useQuery } from 'convex/react'
-import { KCAL_FLOOR } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
-import { layout, radii } from '@stride/ui-tokens'
+import { layout, motion, radii } from '@stride/ui-tokens'
 import { Button } from '@/components/Controls'
 import { Polo } from '@/components/Polo'
 import {
@@ -25,6 +25,7 @@ import { SUMMARY_DAYS, plainError, targetsFor } from '@/lib/log'
 import {
   HoldOnboardingContext,
   clamp,
+  clampNote,
   deviceUnits,
   type Activity,
   type DietType,
@@ -77,13 +78,6 @@ function answered(step: StepId, form: Form): boolean {
   if (step === 'activity') return form.activity !== null
   if (step === 'diet') return form.dietType !== null
   return true
-}
-
-// One line on why the target moved away from the formula, or null when it did not.
-function clampNote(clamped: 'pace_cap' | 'floor' | undefined, sex: Sex): string | null {
-  if (clamped === 'pace_cap') return 'Capped at 1% of your weight a week to keep it safe.'
-  if (clamped === 'floor') return `Raised to the ${KCAL_FLOOR[sex]} kcal minimum.`
-  return null
 }
 
 // Route wrapper: waits for the time zone to be stored before the onboarding queries and saves run.
@@ -221,24 +215,28 @@ function Onboarding() {
 
   const fraction = (index + 1) / steps.length
   const isLast = current === 'training'
+  const questions = steps.length - 1
 
   return (
     <View style={[s.root, { paddingTop: insets.top + layout.screenTop, paddingBottom: insets.bottom + 16 }]}>
       <View style={s.top}>
-        {index > 0 && current !== 'reveal' ? (
-          <Button label="Back" variant="ghost" size="sm" icon="back" onPress={() => setIndex(index - 1)} />
-        ) : null}
-        <View style={s.track}>
-          <View style={[s.fill, { width: `${fraction * 100}%` }]} />
+        <Progress fraction={fraction} />
+        <View style={s.backSlot}>
+          {index > 0 && current !== 'reveal' ? (
+            <Button label="Back" variant="ghost" size="sm" disabled={busy} onPress={() => setIndex(index - 1)} />
+          ) : null}
         </View>
       </View>
       <ScrollView style={s.body} contentContainerStyle={s.bodyContent} showsVerticalScrollIndicator={false}>
-        {renderStep()}
+        <Animated.View key={current} entering={FadeIn.duration(motion.duration.press)} style={s.step}>
+          {current === 'reveal' ? null : <Text style={s.stepCount}>{`Step ${index + 1} of ${questions}`}</Text>}
+          {renderStep()}
+        </Animated.View>
       </ScrollView>
       <View style={s.footer}>
         {error ? <Text style={s.error}>{error}</Text> : null}
         {current === 'reveal' ? (
-          <Button label="Start" size="block" onPress={start} />
+          <Button label="Start" variant="coral" size="block" onPress={start} />
         ) : (
           <Button
             label={isLast ? 'Finish' : 'Next'}
@@ -249,6 +247,26 @@ function Onboarding() {
           />
         )}
       </View>
+    </View>
+  )
+}
+
+// Thin bar that springs forward as the steps advance.
+function Progress({ fraction }: { fraction: number }) {
+  const s = useStyles()
+  const width = useSharedValue(fraction)
+  useEffect(() => {
+    width.value = withSpring(fraction, motion.spring.smooth)
+  }, [fraction, width])
+  const fill = useAnimatedStyle(() => ({ width: `${Math.min(1, width.value) * 100}%` }))
+  return (
+    <View
+      style={s.track}
+      accessibilityRole="progressbar"
+      accessibilityLabel="Setup progress"
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(fraction * 100) }}
+    >
+      <Animated.View style={[s.fill, fill]} />
     </View>
   )
 }
@@ -268,71 +286,99 @@ function Question({ title, lead, children }: { title: string; lead?: string; chi
 // The starting target: the same number Today shows, its macro split, and one line if the target was clamped.
 function Reveal({ sex }: { sex: Sex }) {
   const s = useStyles()
+  const t = useTheme()
   const today = useLocalToday()
   const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS, localDate: today })
   if (summary === undefined)
     return (
       <View style={s.loading}>
         <Polo size={56} />
+        <Text style={s.loadingText}>Working out your numbers…</Text>
       </View>
     )
   const targets = targetsFor(summary.target?.kcal ?? null)
   const note = clampNote(summary.target?.clamped, sex)
   return (
     <View style={s.reveal}>
-      <Polo size={72} mood="happy" />
-      <Text style={s.eyebrow}>Your daily target</Text>
-      <Text style={s.kcal}>
-        {formatNumber(targets.kcal)} <Text style={s.kcalUnit}>kcal</Text>
-      </Text>
-      <View style={s.macros}>
-        <Macro label="Protein" grams={targets.proteinG} />
-        <Macro label="Carbs" grams={targets.carbsG} />
-        <Macro label="Fat" grams={targets.fatG} />
-      </View>
+      <Polo size={88} mood="happy" hop={1} />
+      <Text style={s.revealTitle}>You&apos;re set.</Text>
+      <Text style={s.revealEyebrow}>Your daily target</Text>
+      <Animated.View entering={FadeInDown.springify()} style={s.kcalRow}>
+        <Text style={s.kcal} numberOfLines={1} adjustsFontSizeToFit>
+          {formatNumber(targets.kcal)}
+        </Text>
+        <Text style={s.kcalUnit}>kcal</Text>
+      </Animated.View>
+      <Animated.View entering={FadeInDown.delay(120).springify()} style={s.macros}>
+        <Macro label="Protein" grams={targets.proteinG} color={t.c.protein} />
+        <View style={s.macroLine} />
+        <Macro label="Carbs" grams={targets.carbsG} color={t.c.carbs} />
+        <View style={s.macroLine} />
+        <Macro label="Fat" grams={targets.fatG} color={t.c.fat} />
+      </Animated.View>
       {note ? <Text style={s.note}>{note}</Text> : null}
+      <Text style={s.revealLead}>A starting point. It adjusts as Stride learns from your logs.</Text>
     </View>
   )
 }
 
-// One macro in the reveal: grams and its name.
-function Macro({ label, grams }: { label: string; grams: number }) {
+// One macro in the reveal: a color key, its name, and grams.
+function Macro({ label, grams, color }: { label: string; grams: number; color: string }) {
   const s = useStyles()
   return (
     <View style={s.macro}>
-      <Text style={s.macroValue}>{formatNumber(grams)} g</Text>
-      <Text style={s.macroLabel}>{label}</Text>
+      <View style={s.macroKey}>
+        <View style={[s.dot, { backgroundColor: color }]} />
+        <Text style={s.macroLabel}>{label}</Text>
+      </View>
+      <Text style={s.macroValue}>
+        {formatNumber(grams)}
+        <Text style={s.macroUnit}> g</Text>
+      </Text>
     </View>
   )
 }
 
 const useStyles = themedStyles((t) => ({
   root: { flex: 1, backgroundColor: t.c.bg, paddingHorizontal: layout.screenX },
-  top: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 36 },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 34 },
+  backSlot: { minWidth: 72, alignItems: 'flex-end' },
   track: { flex: 1, height: 6, borderRadius: radii.pill, backgroundColor: t.c.card2, overflow: 'hidden' },
   fill: { height: 6, borderRadius: radii.pill, backgroundColor: t.c.polo },
   body: { flex: 1 },
   bodyContent: { flexGrow: 1, paddingTop: 28, paddingBottom: 16 },
+  step: { flex: 1 },
+  stepCount: { ...font('eyebrow'), color: t.c.ink3, marginBottom: 8 },
   question: { flex: 1 },
   title: { ...font('screenTitle'), color: t.c.ink },
-  lead: { ...font('lead'), color: t.c.ink2, marginTop: 12 },
+  lead: { ...font('lead'), color: t.c.ink2, marginTop: 14 },
   answer: { marginTop: 24 },
   footer: { gap: 12, paddingTop: 12 },
   error: { ...font('callout'), color: t.c.poloInk, textAlign: 'center' },
-  loading: { paddingTop: 48, alignItems: 'center' },
-  reveal: { alignItems: 'center', marginTop: 16 },
-  eyebrow: { ...font('eyebrow'), color: t.c.ink2, marginTop: 18 },
-  kcal: { ...font('hero'), color: t.c.ink, marginTop: 8 },
-  kcalUnit: { ...font('heroUnit'), color: t.c.ink2 },
-  macros: { flexDirection: 'row', gap: 10, alignSelf: 'stretch', marginTop: 24 },
-  macro: {
-    flex: 1,
-    padding: 14,
+  loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingText: { ...font('callout'), color: t.c.ink3 },
+  reveal: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 12 },
+  revealTitle: { ...font('onboardTitle'), color: t.c.ink, marginTop: 18, textAlign: 'center' },
+  revealEyebrow: { ...font('eyebrow'), color: t.c.ink3, marginTop: 22 },
+  kcalRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', marginTop: 10, alignSelf: 'stretch' },
+  kcal: { ...font('hero'), color: t.c.ink, flexShrink: 1, fontVariant: ['tabular-nums'] },
+  kcalUnit: { ...font('heroUnit'), color: t.c.ink3, marginLeft: 8, marginBottom: 10 },
+  macros: {
+    flexDirection: 'row',
+    alignSelf: 'stretch',
+    marginTop: 26,
+    paddingVertical: 16,
     borderRadius: radii.card,
     backgroundColor: t.c.card,
     boxShadow: t.shadow.card,
   },
-  macroValue: { ...font('value'), color: t.c.ink },
-  macroLabel: { ...font('label'), color: t.c.ink2, marginTop: 2 },
-  note: { ...font('secondary'), color: t.c.ink2, textAlign: 'center', marginTop: 20 },
+  macro: { flex: 1, alignItems: 'center' },
+  macroLine: { width: 1, backgroundColor: t.c.line },
+  macroKey: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  macroLabel: { ...font('label'), color: t.c.ink2 },
+  macroValue: { ...font('metric'), color: t.c.ink, marginTop: 6, fontVariant: ['tabular-nums'] },
+  macroUnit: { ...font('unit'), color: t.c.ink3 },
+  note: { ...font('secondary'), color: t.c.ink2, textAlign: 'center', marginTop: 18 },
+  revealLead: { ...font('secondary'), color: t.c.ink3, textAlign: 'center', marginTop: 10, maxWidth: 300 },
 }))

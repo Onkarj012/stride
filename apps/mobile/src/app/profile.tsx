@@ -4,11 +4,12 @@ import { router } from 'expo-router'
 import { useUser } from '@clerk/expo'
 import { useMutation, useQuery } from 'convex/react'
 import type { FunctionArgs, FunctionReturnType } from 'convex/server'
-import { KCAL_FLOOR } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
-import { motion, radii } from '@stride/ui-tokens'
+import { radii } from '@stride/ui-tokens'
 import { Avatar } from '@/components/AccountSheet'
 import { Button, RoundButton } from '@/components/Controls'
+import { Icon } from '@/components/Icon'
+import { ListCard, ListRow } from '@/components/ListRow'
 import {
   ActivityInput,
   ACTIVITY_OPTIONS,
@@ -33,10 +34,12 @@ import { TimeZoneGate } from '@/components/TimeZoneGate'
 import { MONTHS_LONG, formatNumber } from '@/lib/format'
 import { SUMMARY_DAYS, plainError, targetsFor } from '@/lib/log'
 import {
+  clampNote,
   dateParts,
-  deviceUnits,
+  daysLabel,
   heightLabel,
   kgLabel,
+  savedUnits,
   splitName,
   startTargetKg,
   type Activity,
@@ -47,7 +50,7 @@ import {
   type Units,
 } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
-import { font, themedStyles } from '@/theme'
+import { font, themedStyles, useTheme } from '@/theme'
 
 type Saved = NonNullable<FunctionReturnType<typeof api.progress_v2.profile>>
 type UpdateArgs = FunctionArgs<typeof api.progress_v2.updateProfile>
@@ -93,6 +96,7 @@ export default function ProfileScreen() {
 // Clerk photo and name, the answers from onboarding, and the daily targets they produce. Tap a row to change it.
 function Profile() {
   const s = useStyles()
+  const t = useTheme()
   const { user } = useUser()
   const profile = useQuery(api.progress_v2.profile, {})
   const today = useLocalToday()
@@ -113,6 +117,7 @@ function Profile() {
         {header}
         <View style={s.loading}>
           <Polo size={56} />
+          <Text style={s.loadingText}>Getting your profile…</Text>
         </View>
       </Screen>
     )
@@ -125,17 +130,17 @@ function Profile() {
       </Screen>
     )
 
-  const units = unitsOf(profile)
+  const units = savedUnits(profile.units)
   const goal = profile.goal ?? 'maintain'
   const targets = targetsFor(summary?.target?.kcal ?? null)
-  const source = summary?.target?.source === 'adaptive' ? 'Learned from your logs' : 'From your profile'
+  const source = summary?.target?.source === 'adaptive' ? 'Learned from your logs' : 'Set from your profile'
   const note = clampNote(summary?.target?.clamped, profile.sex ?? 'male')
   const weightValue = profile.latestWeightKg === null ? 'Not set' : kgLabel(profile.latestWeightKg, units)
   const heightValue = profile.heightCm === undefined ? 'Not set' : heightLabel(profile.heightCm, units)
   const targetValue =
     profile.targetWeightKg === undefined ? 'Not set' : `${kgLabel(profile.targetWeightKg, units)} · ${labelOf(PACES, profile.pace)}`
   const days = profile.trainingDaysPerWeek
-  const trainingValue = days === undefined ? 'Not set' : days === 1 ? '1 day' : `${days} days`
+  const trainingValue = days === undefined ? 'Not set' : daysLabel(days)
 
   // Opens the sheet for one field.
   function edit(next: EditableField) {
@@ -148,62 +153,57 @@ function Profile() {
       <Screen>
         {header}
 
-        <View style={s.identity}>
-          <Avatar size={72} large />
-          <Tap onPress={() => edit('name')} accessibilityRole="button" accessibilityLabel="Edit name">
-            <Text style={s.name}>{user?.fullName || 'Add your name'}</Text>
+        <Tap
+          onPress={() => edit('name')}
+          scale={0.98}
+          style={s.identity}
+          accessibilityRole="button"
+          accessibilityLabel={user?.fullName ? `Name, ${user.fullName}. Edit` : 'Add your name'}
+        >
+          <Avatar size={64} large />
+          <View style={s.identityText}>
+            <Text style={s.name} numberOfLines={1}>
+              {user?.fullName || 'Add your name'}
+            </Text>
             <Text style={s.hint}>Tap to edit</Text>
-          </Tap>
-        </View>
-
-        <Section title="Your numbers" />
-        <View style={s.card}>
-          <Row label="Goal" value={labelOf(GOAL_OPTIONS, profile.goal)} onPress={() => edit('goal')} />
-          <Row label="Sex" value={labelOf(SEX_OPTIONS, profile.sex)} onPress={() => edit('sex')} />
-          <Row label="Date of birth" value={dobLabel(profile.dob)} onPress={() => edit('dob')} />
-          <Row label="Height" value={heightValue} onPress={() => edit('height')} />
-          <Row label="Weight" value={weightValue} onPress={() => edit('weight')} />
-          <Row label="Activity" value={labelOf(ACTIVITY_OPTIONS, profile.activity)} onPress={() => edit('activity')} />
-          <Row label="Diet" value={labelOf(DIET_OPTIONS, profile.dietType)} onPress={() => edit('diet')} />
-          {goal === 'maintain' ? null : <Row label="Target and pace" value={targetValue} onPress={() => edit('target')} />}
-          <Row label="Training" value={trainingValue} onPress={() => edit('training')} />
-        </View>
+          </View>
+          <Icon name="chevron" size={18} color={t.c.ink3} />
+        </Tap>
 
         <Section title="Daily targets" />
-        <View style={s.card}>
-          <Row label="Calories" value={`${formatNumber(targets.kcal)} kcal`} />
-          <Row label="Protein" value={`${targets.proteinG} g`} />
-          <Row label="Carbs" value={`${targets.carbsG} g`} />
-          <Row label="Fat" value={`${targets.fatG} g`} />
-        </View>
-        <Text style={s.caption}>{source}</Text>
+        {summary === undefined ? (
+          <View style={s.targetsLoading}>
+            <Polo size={40} />
+          </View>
+        ) : (
+          <ListCard>
+            <ListRow label="Calories" detail={source} value={`${formatNumber(targets.kcal)} kcal`} strong />
+            <ListRow label="Protein" value={`${formatNumber(targets.proteinG)} g`} strong />
+            <ListRow label="Carbs" value={`${formatNumber(targets.carbsG)} g`} strong />
+            <ListRow label="Fat" value={`${formatNumber(targets.fatG)} g`} strong last />
+          </ListCard>
+        )}
         {note ? <Text style={s.caption}>{note}</Text> : null}
+
+        <Section title="Your answers" />
+        <ListCard>
+          <ListRow label="Goal" value={labelOf(GOAL_OPTIONS, profile.goal)} onPress={() => edit('goal')} />
+          {goal === 'maintain' ? null : <ListRow label="Target and pace" value={targetValue} onPress={() => edit('target')} />}
+          <ListRow label="Weight" value={weightValue} onPress={() => edit('weight')} />
+          <ListRow label="Height" value={heightValue} onPress={() => edit('height')} />
+          <ListRow label="Date of birth" value={dobLabel(profile.dob)} onPress={() => edit('dob')} />
+          <ListRow label="Sex" value={labelOf(SEX_OPTIONS, profile.sex)} onPress={() => edit('sex')} />
+          <ListRow label="Activity" value={labelOf(ACTIVITY_OPTIONS, profile.activity)} onPress={() => edit('activity')} />
+          <ListRow label="Diet" value={labelOf(DIET_OPTIONS, profile.dietType)} onPress={() => edit('diet')} />
+          <ListRow label="Training" value={trainingValue} onPress={() => edit('training')} last />
+        </ListCard>
+        <Text style={s.caption}>Changes update your daily targets.</Text>
       </Screen>
 
       <Sheet open={open} onClose={() => setOpen(false)} onClosed={() => setField(null)}>
         {field ? <FieldForm key={field} field={field} saved={profile} units={units} onDone={() => setOpen(false)} /> : null}
       </Sheet>
     </>
-  )
-}
-
-// One list row: label on the left, current value on the right. Tappable only when it has an onPress.
-function Row({ label, value, onPress }: { label: string; value: string; onPress?: () => void }) {
-  const s = useStyles()
-  return (
-    <Tap
-      onPress={onPress}
-      disabled={!onPress}
-      scale={motion.press.rowScale}
-      style={s.row}
-      accessibilityRole={onPress ? 'button' : undefined}
-      accessibilityLabel={label}
-    >
-      <Text style={s.rowLabel}>{label}</Text>
-      <Text style={s.rowValue} numberOfLines={1}>
-        {value}
-      </Text>
-    </Tap>
   )
 }
 
@@ -303,6 +303,7 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
 
   return (
     <View>
+      <Text style={s.sheetEyebrow}>Profile</Text>
       <Text style={s.sheetTitle}>{FIELD_TITLE[field]}</Text>
       {input()}
       {error ? <Text style={s.error}>{error}</Text> : null}
@@ -316,12 +317,6 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
       />
     </View>
   )
-}
-
-// Saved units, or the device's units when none are saved.
-function unitsOf(saved: Saved): Units {
-  if (saved.units === 'imperial' || saved.units === 'metric') return saved.units
-  return deviceUnits()
 }
 
 // The side of today's weight a target sits on. Maintain has no target, so it reads as lose.
@@ -382,32 +377,26 @@ function dobLabel(dob: string | undefined): string {
   return `${day} ${MONTHS_LONG[month - 1] ?? ''} ${year}`
 }
 
-// Why the target moved off the formula, or null when it did not.
-function clampNote(clamped: 'pace_cap' | 'floor' | undefined, sex: Sex): string | null {
-  if (clamped === 'pace_cap') return 'Capped at 1% of your weight a week to keep it safe.'
-  if (clamped === 'floor') return `Raised to the ${KCAL_FLOOR[sex]} kcal minimum.`
-  return null
-}
-
 const useStyles = themedStyles((t) => ({
-  loading: { alignItems: 'center', marginTop: 80 },
-  identity: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 22 },
-  name: { ...font('cardTitle'), color: t.c.ink },
-  hint: { ...font('caption'), color: t.c.ink3, marginTop: 2 },
-  card: { backgroundColor: t.c.card, borderRadius: radii.card, boxShadow: t.shadow.card, paddingHorizontal: 16 },
-  row: {
+  loading: { alignItems: 'center', marginTop: 80, gap: 12 },
+  loadingText: { ...font('callout'), color: t.c.ink3 },
+  identity: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderColor: t.c.line,
+    gap: 14,
+    marginTop: 22,
+    padding: 14,
+    borderRadius: radii.card,
+    backgroundColor: t.c.card,
+    boxShadow: t.shadow.card,
   },
-  rowLabel: { ...font('callout'), color: t.c.ink2 },
-  rowValue: { ...font('callout'), color: t.c.ink, flexShrink: 1, textAlign: 'right' },
+  identityText: { flex: 1, minWidth: 0 },
+  name: { ...font('cardTitle'), color: t.c.ink },
+  hint: { ...font('caption'), color: t.c.ink3, marginTop: 2 },
+  targetsLoading: { alignItems: 'center', paddingVertical: 24 },
   caption: { ...font('caption'), color: t.c.ink3, marginTop: 10, marginHorizontal: 2 },
-  sheetTitle: { ...font('cardTitle'), color: t.c.ink, marginBottom: 14 },
+  sheetEyebrow: { ...font('eyebrow'), color: t.c.ink3 },
+  sheetTitle: { ...font('cardTitle'), color: t.c.ink, marginTop: 4, marginBottom: 16 },
   nameInput: {
     ...font('input'),
     color: t.c.ink,

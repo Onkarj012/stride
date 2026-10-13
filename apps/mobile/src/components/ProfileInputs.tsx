@@ -6,6 +6,7 @@ import { MONTHS_LONG } from '@/lib/format'
 import {
   clamp,
   dateParts,
+  daysLabel,
   deviceUnits,
   heightLabel,
   kgLabel,
@@ -29,7 +30,7 @@ import { Tap } from './Tap'
 type Choice<T extends string> = { value: T; label: string; detail?: string }
 export type TargetValue = { targetWeightKg: number; pace: Pace }
 
-// Full-width tappable rows. The chosen row gets the Polo accent and a filled radio.
+// Full-width tappable rows, as in the mock's goal step. The chosen row turns ink with a Polo radio.
 function ChoiceRows<T extends string>({ options, value, onChange }: { options: Choice<T>[]; value: T | null; onChange: (v: T) => void }) {
   const t = useTheme()
   const s = useStyles()
@@ -48,8 +49,8 @@ function ChoiceRows<T extends string>({ options, value, onChange }: { options: C
             accessibilityState={{ checked: on }}
           >
             <View style={s.rowText}>
-              <Text style={s.rowLabel}>{o.label}</Text>
-              {o.detail ? <Text style={s.rowDetail}>{o.detail}</Text> : null}
+              <Text style={[s.rowLabel, on && s.rowLabelOn]}>{o.label}</Text>
+              {o.detail ? <Text style={[s.rowDetail, on && s.rowDetailOn]}>{o.detail}</Text> : null}
             </View>
             <View style={[s.radio, on && s.radioOn]}>{on ? <Icon name="check" size={14} color={t.c.onPolo} /> : null}</View>
           </Tap>
@@ -59,11 +60,17 @@ function ChoiceRows<T extends string>({ options, value, onChange }: { options: C
   )
 }
 
-// One labelled control on a card, like the mock's basics rows.
-function FieldRow({ label, children }: { label: string; children: ReactNode }) {
+// Card holding one or more field rows, like the mock's basics card.
+function FieldCard({ children }: { children: ReactNode }) {
+  const s = useStyles()
+  return <View style={s.fieldCard}>{children}</View>
+}
+
+// One labelled control inside a field card. Rows after the first get a divider above.
+function FieldRow({ label, divider = false, children }: { label: string; divider?: boolean; children: ReactNode }) {
   const s = useStyles()
   return (
-    <View style={s.field}>
+    <View style={[s.field, divider && s.fieldLine]}>
       <Text style={s.fieldLabel}>{label}</Text>
       {children}
     </View>
@@ -93,38 +100,41 @@ export function SexInput({ value, onChange }: { value: Sex | null; onChange: (v:
 
 // Day, month and year steppers for a YYYY-MM-DD date.
 export function DobInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const s = useStyles()
   const { year, month, day } = dateParts(value)
   return (
-    <View style={s.stack}>
+    <FieldCard>
       <FieldRow label="Day">
         <Stepper value={String(day)} label="day" onStep={(dir) => onChange(stepDate(value, 'day', dir))} />
       </FieldRow>
-      <FieldRow label="Month">
+      <FieldRow label="Month" divider>
         <Stepper value={MONTHS_LONG[month - 1] ?? ''} label="month" onStep={(dir) => onChange(stepDate(value, 'month', dir))} />
       </FieldRow>
-      <FieldRow label="Year">
+      <FieldRow label="Year" divider>
         <Stepper value={String(year)} label="year" onStep={(dir) => onChange(stepDate(value, 'year', dir))} />
       </FieldRow>
-    </View>
+    </FieldCard>
   )
 }
 
 // Height in cm, shown in cm or ft/in, stepped by 1 cm or 1 inch.
 export function HeightInput({ value, onChange, units = deviceUnits() }: { value: number; onChange: (cm: number) => void; units?: Units }) {
   return (
-    <FieldRow label="Height">
-      <Stepper value={heightLabel(value, units)} label="height" onStep={(dir) => onChange(stepCm(value, dir, units))} />
-    </FieldRow>
+    <FieldCard>
+      <FieldRow label="Height">
+        <Stepper value={heightLabel(value, units)} label="height" onStep={(dir) => onChange(stepCm(value, dir, units))} />
+      </FieldRow>
+    </FieldCard>
   )
 }
 
 // Weight in kg, shown in kg or lb, stepped by 0.1 kg or 1 lb.
 export function WeightInput({ value, onChange, units = deviceUnits() }: { value: number; onChange: (kg: number) => void; units?: Units }) {
   return (
-    <FieldRow label="Weight">
-      <Stepper value={kgLabel(value, units)} label="weight" onStep={(dir) => onChange(stepKg(value, dir, units))} />
-    </FieldRow>
+    <FieldCard>
+      <FieldRow label="Weight">
+        <Stepper value={kgLabel(value, units)} label="weight" onStep={(dir) => onChange(stepKg(value, dir, units))} />
+      </FieldRow>
+    </FieldCard>
   )
 }
 
@@ -184,9 +194,11 @@ export function TargetPaceInput({
   const options = PACES.map((p) => ({ ...p, detail: rateLabel(PACE_KG_PER_WEEK[goal][p.value], units) }))
   return (
     <View>
-      <FieldRow label="Target weight">
-        <Stepper value={kgLabel(value.targetWeightKg, units)} label="target weight" onStep={stepTarget} />
-      </FieldRow>
+      <FieldCard>
+        <FieldRow label="Target weight">
+          <Stepper value={kgLabel(value.targetWeightKg, units)} label="target weight" onStep={stepTarget} />
+        </FieldRow>
+      </FieldCard>
       <Text style={s.caption}>Pace</Text>
       <ChoiceRows options={options} value={value.pace} onChange={(pace) => onChange({ ...value, pace })} />
     </View>
@@ -196,13 +208,11 @@ export function TargetPaceInput({
 // Training days per week, 0 to 7.
 export function TrainingDaysInput({ value, onChange }: { value: number; onChange: (n: number) => void }) {
   return (
-    <FieldRow label="Days a week">
-      <Stepper
-        value={value === 1 ? '1 day' : `${value} days`}
-        label="training days"
-        onStep={(dir) => onChange(clamp(value + dir, 0, 7))}
-      />
-    </FieldRow>
+    <FieldCard>
+      <FieldRow label="Days a week">
+        <Stepper value={daysLabel(value)} label="training days" onStep={(dir) => onChange(clamp(value + dir, 0, 7))} />
+      </FieldRow>
+    </FieldCard>
   )
 }
 
@@ -212,17 +222,18 @@ const useStyles = themedStyles((t) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
-    padding: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 18,
     borderRadius: radii.card,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
     backgroundColor: t.c.card,
     boxShadow: t.shadow.card,
   },
-  rowOn: { backgroundColor: t.c.poloSoft, borderColor: t.c.polo },
+  rowOn: { backgroundColor: t.c.ink },
   rowText: { flex: 1 },
-  rowLabel: { ...font('bodyStrong'), color: t.c.ink },
-  rowDetail: { ...font('secondary'), color: t.c.ink2, marginTop: 2 },
+  rowLabel: { ...font('section'), color: t.c.ink },
+  rowLabelOn: { color: t.c.bg },
+  rowDetail: { ...font('secondary'), color: t.c.ink3, marginTop: 2 },
+  rowDetailOn: { color: t.c.bg, opacity: 0.65 },
   radio: {
     width: 22,
     height: 22,
@@ -233,17 +244,9 @@ const useStyles = themedStyles((t) => ({
     justifyContent: 'center',
   },
   radioOn: { backgroundColor: t.c.polo, borderColor: t.c.polo },
-  stack: { gap: 10 },
-  field: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 60,
-    paddingHorizontal: 16,
-    borderRadius: radii.card,
-    backgroundColor: t.c.card,
-    boxShadow: t.shadow.card,
-  },
-  fieldLabel: { ...font('bodyStrong'), color: t.c.ink },
-  caption: { ...font('eyebrow'), color: t.c.ink2, marginTop: 22, marginBottom: 10 },
+  fieldCard: { backgroundColor: t.c.card, borderRadius: radii.card, boxShadow: t.shadow.card, paddingHorizontal: 16 },
+  field: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, minHeight: 64 },
+  fieldLine: { borderTopWidth: 1, borderTopColor: t.c.line },
+  fieldLabel: { ...font('bodyStrong'), color: t.c.ink, flexShrink: 1 },
+  caption: { ...font('eyebrow'), color: t.c.ink3, marginTop: 24, marginBottom: 10, marginHorizontal: 2 },
 }))
