@@ -220,10 +220,12 @@ export function DobInput({
   const yearRef = useRef<TextInput>(null)
   const today = useLocalToday()
   const valid = dobFromTyped(parts.day, parts.month, parts.year, today) !== null
-  // Reports whether the typed date is real, on mount and after each change.
+  // Reports validity, and passes the date on when it becomes valid without typing (for example, at midnight).
   useEffect(() => {
     onValidChange?.(valid)
-  }, [valid, onValidChange])
+    const iso = dobFromTyped(parts.day, parts.month, parts.year, today)
+    if (iso && iso !== value) onChange(iso)
+  }, [valid, onValidChange, parts, today, value, onChange])
   // Keeps each typed part, and passes the date on when all three make a valid one.
   function typePart(next: DobParts) {
     setParts(next)
