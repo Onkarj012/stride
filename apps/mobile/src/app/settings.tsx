@@ -53,6 +53,8 @@ function Settings() {
   const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState(false)
   const [sheet, setSheet] = useState<SheetKind | null>(null)
+  // True while the delete runs. The sheet ignores every close path until it finishes.
+  const [deleting, setDeleting] = useState(false)
   const units = savedUnits(profile?.units)
 
   // Saves the units choice on the server.
@@ -138,14 +140,16 @@ function Settings() {
 
       <Sheet
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          if (!deleting) setOpen(false)
+        }}
         onClosed={() => {
           setSheet(null)
           setHoldApp(false)
         }}
       >
         {sheet === 'clear' ? <ClearForm onDone={() => setOpen(false)} /> : null}
-        {sheet === 'delete' ? <DeleteForm onDone={() => setOpen(false)} /> : null}
+        {sheet === 'delete' ? <DeleteForm onDone={() => setOpen(false)} onBusy={setDeleting} /> : null}
       </Sheet>
     </>
   )
@@ -246,7 +250,7 @@ function ClearForm({ onDone }: { onDone: () => void }) {
 }
 
 // Confirm step for deleting the account. Delete stays off until DELETE is typed. A failure keeps the sheet open.
-function DeleteForm({ onDone }: { onDone: () => void }) {
+function DeleteForm({ onDone, onBusy }: { onDone: () => void; onBusy: (busy: boolean) => void }) {
   const s = useStyles()
   const deleteAccount = useAction(api.users.deleteAccount)
   const { signOut } = useAuth()
@@ -258,6 +262,7 @@ function DeleteForm({ onDone }: { onDone: () => void }) {
   // Deletes the caller's data and Clerk user, then signs out. Holds the app mounted so a failure can show here.
   async function remove() {
     setBusy(true)
+    onBusy(true)
     setError(null)
     setHoldApp(true)
     try {
@@ -270,6 +275,7 @@ function DeleteForm({ onDone }: { onDone: () => void }) {
       setError(plainError(err))
     } finally {
       setBusy(false)
+      onBusy(false)
     }
   }
 
