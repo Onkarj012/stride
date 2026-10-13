@@ -1,4 +1,6 @@
+import { useSyncExternalStore } from 'react'
 import { useColorScheme, StyleSheet, type TextStyle } from 'react-native'
+import * as SecureStore from 'expo-secure-store'
 // Per-weight imports so only the faces we use end up in the bundle.
 import { BricolageGrotesque_600SemiBold } from '@expo-google-fonts/bricolage-grotesque/600SemiBold'
 import { BricolageGrotesque_700Bold } from '@expo-google-fonts/bricolage-grotesque/700Bold'
@@ -66,9 +68,52 @@ const themes: Record<ColorScheme, Theme> = {
   dark: { scheme: 'dark', c: colors.dark, shadow: shadows.dark },
 }
 
-// Current color scheme from the system setting (V9). Unknown values fall back to light.
+export type ThemePref = 'system' | 'light' | 'dark'
+
+const THEME_KEY = 'stride.theme'
+let themePref: ThemePref = 'system'
+const listeners = new Set<() => void>()
+
+// Tells every subscribed component that the theme changed.
+function emit(): void {
+  listeners.forEach((listener) => listener())
+}
+
+// Adds a listener for theme changes and returns the function that removes it.
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+// Applies a theme choice app-wide and saves it on the device.
+export function setThemePref(pref: ThemePref): void {
+  themePref = pref
+  emit()
+  void SecureStore.setItemAsync(THEME_KEY, pref)
+}
+
+// Reads the saved choice once at startup. A missing or unknown value keeps the system setting.
+void SecureStore.getItemAsync(THEME_KEY)
+  .then((saved) => {
+    if (saved !== 'system' && saved !== 'light' && saved !== 'dark') return
+    themePref = saved
+    emit()
+  })
+  .catch(() => undefined)
+
+// The saved theme choice. Re-renders when it changes.
+export function useThemePref(): ThemePref {
+  return useSyncExternalStore(subscribe, () => themePref)
+}
+
+// Current color scheme: the saved choice when it is light or dark, otherwise the system setting (V9). Unknown values fall back to light.
 export function useScheme(): ColorScheme {
-  return useColorScheme() === 'dark' ? 'dark' : 'light'
+  const pref = useThemePref()
+  const system = useColorScheme()
+  if (pref === 'light' || pref === 'dark') return pref
+  return system === 'dark' ? 'dark' : 'light'
 }
 
 // Theme for the current system color scheme.

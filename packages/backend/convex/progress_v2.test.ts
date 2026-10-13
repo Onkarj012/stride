@@ -373,3 +373,11 @@ test("profile returns only the signed-in user's settings", async () => {
   expect(await t.withIdentity({ subject: "user_b" }).query(api.progress_v2.profile, {})).toBeNull();
   expect(await user.query(api.progress_v2.profile, {})).toMatchObject({ goal: "maintain", latestWeightKg: null });
 });
+
+test("setUnits saves the unit choice and keeps the frozen calorie target", async () => {
+  const { t, user } = await setup();
+  await updateSettings(t, { calorieTarget: { kcal: 2000, source: "formula", appliedLocalDate: TODAY } });
+  await user.mutation(api.progress_v2.setUnits, { units: "imperial" });
+  const settings = await t.run((ctx) => ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", "user_a")).first());
+  expect(settings).toMatchObject({ units: "imperial", calorieTarget: { kcal: 2000 } });
+});

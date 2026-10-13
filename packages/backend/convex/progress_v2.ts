@@ -283,3 +283,17 @@ export const updateProfile = mutation({
     return null;
   },
 });
+
+/** Saves the metric or imperial choice on the caller's settings row. The weekly calorie target stays as it is. */
+export const setUnits = mutation({
+  args: { units: v.union(v.literal("metric"), v.literal("imperial")) },
+  returns: v.null(),
+  handler: async (ctx, { units }) => {
+    const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
+    const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
+    if (settings === null) await ctx.db.insert("user_settings", { userId, units });
+    else await ctx.db.patch("user_settings", settings._id, { units });
+    return null;
+  },
+});
