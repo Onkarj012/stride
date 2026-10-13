@@ -141,22 +141,25 @@ export function WeightChart({ points, from, to, units, onScrub }: WeightChartPro
   const [selected, setSelected] = useState<string | null>(null)
   const plot = useMemo(() => layoutPlot(points, from, to, width), [points, from, to, width])
   const spot = useMemo(() => plot.trend.find((p) => p.date === selected) ?? null, [plot, selected])
+  const selectedPoint = useMemo(() => points.find((p) => p.localDate === selected) ?? null, [points, selected])
 
-  // Drops the selection when the new plot no longer has that weigh-in.
+  // Reports the selected weigh-in whenever its data changes, and clears the selection when its date is gone.
   useEffect(() => {
-    if (selected !== null && spot === null) {
+    if (selected === null) return
+    if (selectedPoint === null) {
       setSelected(null)
       onScrub(null)
+      return
     }
-  }, [selected, spot, onScrub])
+    onScrub(selectedPoint)
+  }, [selected, selectedPoint, onScrub])
 
-  // Picks the weigh-in nearest the finger and reports it only when it changes.
+  // Picks the weigh-in nearest the finger. The effect above reports it.
   function scrub(e: GestureResponderEvent) {
     const i = nearest(plot.trend, e.nativeEvent.locationX)
     const best = points[i]
     if (!best || best.localDate === selected) return
     setSelected(best.localDate)
-    onScrub(best)
   }
 
   // Clears the scrub marker and tip.
