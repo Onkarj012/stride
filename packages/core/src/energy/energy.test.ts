@@ -2,8 +2,17 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { addDays } from "../time/local_day.ts";
 import { adaptiveTdee, KCAL_PER_KG, TDEE_CLAMP, type TdeeDay } from "./adaptive_tdee.ts";
-import { katchMcArdle, mifflinStJeor } from "./bmr.ts";
-import { formulaBaseline, goalTargetKcal, scaleMacroTargets } from "./targets.ts";
+import { katchMcArdle, mifflinStJeor, type Sex } from "./bmr.ts";
+import {
+  formulaBaseline,
+  goalTargetKcal,
+  KCAL_FLOOR,
+  MAX_LOSS_FRACTION_PER_WEEK,
+  type Goal,
+  PACE_KG_PER_WEEK,
+  type Pace,
+  scaleMacroTargets,
+} from "./targets.ts";
 import {
   budgetAdjustmentKcal,
   densityFromSets,
@@ -45,25 +54,89 @@ describe("daily targets", () => {
     expect(formulaBaseline({ heightCm: profile.heightCm, dob: profile.dob, sex: profile.sex }, 70, "2026-10-15")).toBeNull();
   });
 
-  it("applies each goal offset before clamping and rounds only the final target", () => {
-    expect(goalTargetKcal(2400, 2400, "lose")).toBe(1900);
-    expect(goalTargetKcal(2400, 2300.6, "maintain")).toBe(2301);
-    expect(goalTargetKcal(2400, 2400, "gain")).toBe(2700);
-    expect(goalTargetKcal(2000, 1500, "lose")).toBe(1500);
-    expect(goalTargetKcal(2000, 2600, "gain")).toBe(2600);
+  it("maintain rounds maintenance with no clamp", () => {
+    expect(goalTargetKcal({ baseline: 2400, maintenance: 2300.6, goal: "maintain", pace: undefined, weightKg: 80, sex: "male" })).toEqual({
+      kcal: 2301,
+      clamped: null,
+    });
   });
 
-  it("property: every goal target stays inside the rounded baseline clamp", () => {
-    fc.assert(fc.property(
-      fc.integer({ min: 1200, max: 4000 }),
-      fc.integer({ min: 500, max: 6000 }),
-      fc.constantFrom("lose", "maintain", "gain"),
-      (baseline, maintenance, goal) => {
-        const target = goalTargetKcal(baseline, maintenance, goal);
-        expect(target).toBeGreaterThanOrEqual(Math.round(baseline * TDEE_CLAMP.min));
-        expect(target).toBeLessThanOrEqual(Math.round(baseline * TDEE_CLAMP.max));
-      },
-    ));
+  it("lose at steady pace subtracts 0.5 kg/week as 550 kcal/day", () => {
+    expect(goalTargetKcal({ baseline: 2400, maintenance: 2400, goal: "lose", pace: "steady", weightKg: 80, sex: "male" })).toEqual({
+      kcal: 1850,
+      clamped: null,
+    });
+  });
+
+  it("caps fast loss at 1% of body weight per week", () => {
+    // Baseline 2300 keeps 1740 above the 0.75 × baseline bound.
+    expect(goalTargetKcal({ baseline: 2300, maintenance: 2400, goal: "lose", pace: "fast", weightKg: 60, sex: "male" })).toEqual({
+      kcal: 1740,
+      clamped: "pace_cap",
+    });
+  });
+
+  it("applies the female floor to fast loss", () => {
+    expect(goalTargetKcal({ baseline: 1500, maintenance: 1500, goal: "lose", pace: "fast", weightKg: 60, sex: "female" })).toEqual({
+      kcal: 1200,
+      clamped: "floor",
+    });
+  });
+
+  it("applies the male floor", () => {
+    expect(goalTargetKcal({ baseline: 1700, maintenance: 1700, goal: "lose", pace: "steady", weightKg: 80, sex: "male" })).toEqual({
+      kcal: 1500,
+      clamped: "floor",
+    });
+  });
+
+  it("gain at fast pace adds 0.5 kg/week as 550 kcal/day", () => {
+    expect(goalTargetKcal({ baseline: 2400, maintenance: 2400, goal: "gain", pace: "fast", weightKg: 80, sex: "male" })).toEqual({
+      kcal: 2950,
+      clamped: null,
+    });
+  });
+
+  const goalArb = fc.constantFrom<Goal>("lose", "maintain", "gain");
+  const paceArb = fc.constantFrom<Pace | undefined>("relaxed", "steady", "fast", undefined);
+  const sexArb = fc.constantFrom<Sex>("male", "female");
+  const baselineArb = fc.integer({ min: 1200, max: 4000 });
+  const maintenanceArb = fc.integer({ min: 500, max: 6000 });
+  const weightArb = fc.double({ min: 40, max: 150, noNaN: true });
+
+  it("property: weight loss never exceeds the 1% weekly cap", () => {
+    fc.assert(fc.property(baselineArb, maintenanceArb, weightArb, paceArb, sexArb, (baseline, maintenance, weightKg, pace, sex) => {
+      if (maintenance > baseline * TDEE_CLAMP.max) return;
+      const target = goalTargetKcal({ baseline, maintenance, goal: "lose", pace, weightKg, sex });
+      const maxDailyLoss = (weightKg * MAX_LOSS_FRACTION_PER_WEEK * KCAL_PER_KG) / 7;
+      expect(maintenance - target.kcal).toBeLessThanOrEqual(maxDailyLoss + 1);
+    }));
+  });
+
+  it("property: every target is at or above the sex floor", () => {
+    fc.assert(fc.property(baselineArb, maintenanceArb, goalArb, paceArb, weightArb, sexArb, (baseline, maintenance, goal, pace, weightKg, sex) => {
+      const target = goalTargetKcal({ baseline, maintenance, goal, pace, weightKg, sex });
+      expect(target.kcal).toBeGreaterThanOrEqual(KCAL_FLOOR[sex]);
+    }));
+  });
+
+  it("property: maintain has no clamp when maintenance is inside the bounds and above the floor", () => {
+    fc.assert(fc.property(baselineArb, maintenanceArb, weightArb, sexArb, (baseline, maintenance, weightKg, sex) => {
+      if (maintenance < baseline * TDEE_CLAMP.min || maintenance > baseline * TDEE_CLAMP.max || maintenance < KCAL_FLOOR[sex]) return;
+      const target = goalTargetKcal({ baseline, maintenance, goal: "maintain", pace: undefined, weightKg, sex });
+      expect(target.clamped).toBeNull();
+    }));
+  });
+
+  it("property: a target that differs from the unadjusted pace target always has a clamp reason", () => {
+    fc.assert(fc.property(baselineArb, maintenanceArb, goalArb, paceArb, weightArb, sexArb, (baseline, maintenance, goal, pace, weightKg, sex) => {
+      const target = goalTargetKcal({ baseline, maintenance, goal, pace, weightKg, sex });
+      const direction = goal === "lose" ? -1 : 1;
+      const presetKg = goal === "maintain" ? 0 : PACE_KG_PER_WEEK[goal][pace ?? "steady"];
+      const raw = maintenance + (direction * presetKg * KCAL_PER_KG) / 7;
+      const inBounds = raw >= baseline * TDEE_CLAMP.min && raw <= baseline * TDEE_CLAMP.max;
+      if (inBounds && target.kcal !== Math.round(raw)) expect(target.clamped).not.toBeNull();
+    }));
   });
 
   it("scales the reference macro split and retains it when there is no target", () => {
