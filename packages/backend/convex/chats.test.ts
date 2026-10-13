@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { MAX_CHAT_ITERATIONS, STREAM_FLUSH_CHARS } from "./chats";
-import { isRecord, OPENROUTER_CHAT_URL } from "./pipeline/openrouter";
+import { isRecord, OPENROUTER_CHAT_URL, PHOTO_MODEL } from "./pipeline/openrouter";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -318,6 +318,48 @@ describe("chat cannot log food", () => {
     expect(await entryRows(t)).toHaveLength(0);
   });
 });
+
+describe("Log this (A11)", () => {
+  test("a photo is discussed, not logged: the photo model gets the image and the reply offers Log this with it", async () => {
+    const { t, user, chatId } = await setup();
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    await user.mutation(internal.uploads.registerStoredUpload, { storageId });
+    llm = () => ({ content: "Looks like dal and rice." });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "img", text: "what is this", imageStorageId: storageId });
+
+    const first = bodies[0] ?? {};
+    expect(first.model).toBe(PHOTO_MODEL);
+    expect(JSON.stringify(lastMessage(first))).toContain("image_url");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("drafts").take(10))).toHaveLength(0);
+    expect(await replyRow(t)).toMatchObject({ status: "done", logAction: { storageId, text: "what is this" } });
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } });
+    expect(page.page[0]).toMatchObject({ role: "assistant", logAction: { storageId, text: "what is this" } });
+  });
+
+  test("asking to log food offers Log this with the food text and creates no entry", async () => {
+    const { t, user, chatId } = await setup();
+    llm = (body) =>
+      afterToolResult(body)
+        ? { content: "Tap Log this." }
+        : { toolCalls: [{ name: "offer_log", args: { text: "2 roti and dal" } }] };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "log 2 roti and dal" });
+
+    expect(await entryRows(t)).toHaveLength(0);
+    expect((await replyRow(t)).logAction).toEqual({ text: "2 roti and dal" });
+  });
+
+  test("a plain text reply has no Log this action", async () => {
+    const { t, user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect((await replyRow(t)).logAction).toBeUndefined();
+  });
+});
+
+/** The last message of a request body, or undefined. */
+function lastMessage(body: RequestBody): unknown {
+  return Array.isArray(body.messages) ? body.messages.at(-1) : undefined;
+}
 
 describe("chat corrections (D8)", () => {
   test("edit_entry writes a revision row by the AI and undo restores the prior revision", async () => {

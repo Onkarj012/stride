@@ -852,6 +852,8 @@ export default defineSchema({
     stopRequested: v.optional(v.boolean()), // assistant replies: the user pressed stop while it streamed
     answersMessageId: v.optional(v.id("messages")), // assistant replies: the user message they answer
     deletedAt: v.optional(v.number()), // a reply replaced by regenerate; hidden everywhere but its entries
+    // Assistant replies: a "Log this" button that opens Compose with this food text and/or this photo.
+    logAction: v.optional(v.object({ text: v.optional(v.string()), storageId: v.optional(v.id("_storage")) })),
   })
     .index("by_chatId", ["chatId"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"])

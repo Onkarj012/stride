@@ -19,10 +19,17 @@ import { MAX_DAY_ENTRIES } from "./day_totals";
 import { deleteEntryAs, editEntryAs } from "./entries";
 import { isVisibleFood } from "./foods_db";
 import { mealSlotValidator } from "./ledger_validators";
-import { extractItems } from "./pipeline/extract";
-import { imageUrl, runPipeline } from "./pipeline/log";
-import { PIPELINE_MODEL, streamOpenRouter, type ChatMessage, type JsonValue, type ToolDefinition } from "./pipeline/openrouter";
-import { resolveFoodPortion, userFoodsOf, userMeasuresOf, type LogResult } from "./pipeline/resolve";
+import { imageUrl } from "./pipeline/log";
+import {
+  PHOTO_MODEL,
+  PIPELINE_MODEL,
+  streamOpenRouter,
+  type ChatMessage,
+  type ContentPart,
+  type JsonValue,
+  type ToolDefinition,
+} from "./pipeline/openrouter";
+import { resolveFoodPortion, userFoodsOf, userMeasuresOf } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
 import { requireUserId, resolveLocalDay } from "./time_zone";
 import { requireOwnUpload } from "./uploads";
@@ -57,6 +64,11 @@ const MAX_PRIOR_DRAFTS = 10;
 /** A streaming reply is written to its row at most this often, or once this many new characters arrive (A12). */
 export const STREAM_FLUSH_MS = 300;
 export const STREAM_FLUSH_CHARS = 200;
+/** Most characters of the food text a "Log this" action keeps. */
+const MAX_LOG_TEXT_CHARS = 500;
+/** What the history says about a photo sent without words, and the question a photo turn asks when it has none. */
+const PHOTO_HISTORY_TEXT = "(sent a photo)";
+const PHOTO_QUESTION = "What's in this photo?";
 
 const replyStatusValidator = v.union(v.literal("streaming"), v.literal("done"), v.literal("stopped"), v.literal("failed"));
 
@@ -64,6 +76,10 @@ const replyStatusValidator = v.union(v.literal("streaming"), v.literal("done"), 
 function isFinished(message: Doc<"messages">): boolean {
   return message.status === undefined || message.status === "done" || message.status === "stopped";
 }
+
+/** A reply's "Log this" button: opens Compose with this food text and/or this photo attached. */
+const logActionValidator = v.object({ text: v.optional(v.string()), storageId: v.optional(v.id("_storage")) });
+type LogAction = Infer<typeof logActionValidator>;
 
 const messageViewValidator = v.object({
   _id: v.id("messages"),
@@ -75,12 +91,20 @@ const messageViewValidator = v.object({
   draftIds: v.array(v.id("drafts")),
   entryIds: v.array(v.id("entries")),
   status: replyStatusValidator,
+  logAction: v.optional(logActionValidator),
 });
 
 const toolCallRecordValidator = v.object({ name: v.string(), argsJson: v.string(), resultJson: v.optional(v.string()) });
 type ToolCallRecord = Infer<typeof toolCallRecordValidator>;
 /** What a turn's work produced, before the reply is finished. `stopped` when the user stopped it mid-stream. */
-type Turn = { reply: string; toolCalls: ToolCallRecord[]; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[]; stopped: boolean };
+type Turn = {
+  reply: string;
+  toolCalls: ToolCallRecord[];
+  draftIds: Id<"drafts">[];
+  entryIds: Id<"entries">[];
+  stopped: boolean;
+  logAction: LogAction | undefined;
+};
 
 /** What one chat turn produced: both messages, the reply text, and the drafts and entries its cards point at. */
 const turnResultValidator = v.object({
@@ -236,6 +260,7 @@ export const listMessages = query({
         draftIds: m.draftIds,
         entryIds: m.entryIds ?? [],
         status: m.status ?? "done",
+        logAction: m.logAction,
       })),
     };
   },
@@ -528,6 +553,7 @@ export const finishReply = internalMutation({
     toolCalls: v.array(toolCallRecordValidator),
     draftIds: v.array(v.id("drafts")),
     entryIds: v.array(v.id("entries")),
+    logAction: v.optional(logActionValidator),
   },
   returns: v.union(v.null(), v.object({ text: v.string(), status: v.union(v.literal("done"), v.literal("stopped")) })),
   handler: async (ctx, args) => {
@@ -540,6 +566,7 @@ export const finishReply = internalMutation({
       toolCalls: args.toolCalls,
       draftIds: args.draftIds,
       entryIds: args.entryIds,
+      logAction: args.logAction,
       stopRequested: undefined,
     });
     // The chat may have been deleted mid-turn; then the purge job removes this message too.
@@ -577,11 +604,12 @@ export const turnContext = internalQuery({
       .filter((m) => m.deletedAt === undefined)
       .reverse()
       // A reply still streaming (this turn's own) or one that failed was never a finished answer.
-      .flatMap((m) =>
-        m.role === "tool" || m.text === "" || !isFinished(m)
-          ? []
-          : [{ role: m.role, text: m.text.slice(0, AI_INPUT_LIMITS.historyEntryChars) }],
-      );
+      .flatMap((m) => {
+        if (m.role === "tool" || !isFinished(m)) return [];
+        // A photo sent without words still shows in history, so the model knows this turn's image came with it.
+        const text = m.text === "" ? (m.attachments.length > 0 ? PHOTO_HISTORY_TEXT : "") : m.text;
+        return text === "" ? [] : [{ role: m.role, text: text.slice(0, AI_INPUT_LIMITS.historyEntryChars) }];
+      });
     const live = await ctx.db
       .query("entries")
       .withIndex("by_userId_and_localDate_and_status", (q) =>
@@ -693,7 +721,7 @@ export const applyDelete = internalMutation({
   },
 });
 
-/** D8 correction tools. The chat cannot log food; Compose does that. */
+/** D8 correction tools and the Log this offer. The chat cannot log food; Compose does that. */
 const CHAT_TOOLS: ToolDefinition[] = [
   {
     type: "function",
@@ -723,6 +751,19 @@ const CHAT_TOOLS: ToolDefinition[] = [
       parameters: { type: "object", additionalProperties: false, required: ["entry_id"], properties: { entry_id: { type: "string" } } },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "offer_log",
+      description: "Call when the user wants to log food. Shows a Log this button that opens Compose with this text. You cannot log food yourself.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["text"],
+        properties: { text: { type: "string", description: "What to log, in the user's words" } },
+      },
+    },
+  },
   ...LOOKUP_TOOLS,
 ];
 
@@ -734,7 +775,8 @@ function systemPrompt(context: TurnContext): string {
   return [
     "You are Polo, the coach in Stride, a nutrition tracker. Replies are short and plain.",
     "Fix or remove logged foods with edit_entry or delete_entry, using the entry ids below.",
-    "You cannot log food. If the user wants to log something, tell them to use Compose (the + button).",
+    "You cannot log food. If the user wants to log something, call offer_log and tell them to tap Log this.",
+    "When the user sends a photo, describe what you see and its rough nutrition if asked. You cannot log it; the app shows a Log this button.",
     "Only quote calorie numbers that tool results or the entry list give. Never work out nutrients yourself.",
     `Today is ${context.localDate}. The current meal slot is ${context.slot}.`,
     `Today's entries (id | slot | food | grams | kcal):\n${entries}`,
@@ -742,25 +784,10 @@ function systemPrompt(context: TurnContext): string {
   ].join("\n");
 }
 
-/** A plain reply for results the model did not describe (photo turns, or a turn that ran out of iterations). */
-function describeResult(result: LogResult): string {
-  if (result.kind === "empty") return "I couldn't find any food in that.";
-  const list = result.lines
-    .map((line) => `${line.foodName ?? line.text}${line.kcal === null ? "" : ` (${line.kcal} kcal)`}`)
-    .join(", ");
-  return result.kind === "committed" ? `Logged ${list}.` : `Please check the card before I log: ${list}.`;
-}
-
 /** Caps a tool result for storage on the message. */
 function capJson(value: JsonValue): string {
   const json = JSON.stringify(value);
   return json.length > MAX_TOOL_RESULT_CHARS ? `${json.slice(0, MAX_TOOL_RESULT_CHARS)}…` : json;
-}
-
-/** Ids of entries a pipeline result committed, or of the draft it opened. */
-function collect(result: LogResult, draftIds: Id<"drafts">[], entryIds: Id<"entries">[]): void {
-  if (result.kind === "committed") entryIds.push(...result.entryIds);
-  if (result.kind === "draft") draftIds.push(result.draftId);
 }
 
 /** The reply row a turn streams into, and the claim time that proves this attempt still owns it. */
@@ -805,26 +832,52 @@ class ReplyStream {
   }
 }
 
-/** Runs one text turn: luna with the chat tools, in a bounded loop, streaming text and executing ledger tools as it goes. */
+/** A photo sent in a chat turn: its storage id, a URL the model can fetch, and the words sent with it ("" for none). */
+type PhotoInput = { storageId: Id<"_storage">; url: string; text: string };
+
+/** The photo turn's user message: the words sent with the image, or a question when there are none. */
+function photoMessage(photo: PhotoInput): ChatMessage {
+  const parts: ContentPart[] = [
+    { type: "text", text: photo.text === "" ? PHOTO_QUESTION : photo.text },
+    { type: "image_url", image_url: { url: photo.url } },
+  ];
+  return { role: "user", content: parts };
+}
+
+/**
+ * Runs one chat turn: luna with the chat tools, in a bounded loop, streaming text and executing ledger tools as it
+ * goes. A photo turn uses the photo model instead and only discusses the image; the reply offers Log this for it.
+ */
 async function runChatTurn(
   ctx: ActionCtx,
   userId: string,
   chatId: Id<"chats">,
   submissionId: string,
   target: ReplyTarget,
+  photo?: PhotoInput,
 ): Promise<Turn> {
   const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId });
   const messages: ChatMessage[] = [
     { role: "system", content: systemPrompt(context) },
     ...context.history.map((m): ChatMessage => ({ role: m.role, content: m.text })),
   ];
+  // The newest history entry is this turn's own user message; the photo takes its place.
+  if (photo !== undefined) {
+    if (messages.at(-1)?.role !== "user") throw new Error("Photo message is missing");
+    messages[messages.length - 1] = photoMessage(photo);
+  }
+  const model = photo === undefined ? PIPELINE_MODEL : PHOTO_MODEL;
   const toolCalls: ToolCallRecord[] = [];
   const draftIds: Id<"drafts">[] = [];
   const entryIds: Id<"entries">[] = [];
   const seen: SeenFoods = new Map();
   const notes: string[] = [];
+  let offered: LogAction | undefined;
+  // A photo's Log this always opens Compose with that photo; a text turn's Log this carries the food the model named.
+  const logAction = (): LogAction | undefined =>
+    photo === undefined ? offered : { storageId: photo.storageId, ...(photo.text === "" ? {} : { text: photo.text }) };
   const stream = new ReplyStream(ctx, target);
-  const stopped = (): Turn => ({ reply: stream.shown, toolCalls, draftIds, entryIds, stopped: true });
+  const stopped = (): Turn => ({ reply: stream.shown, toolCalls, draftIds, entryIds, stopped: true, logAction: logAction() });
 
   for (let i = 0; i < MAX_CHAT_ITERATIONS; i++) {
     // A stop pressed while tools ran ends the turn before the next model call.
@@ -833,11 +886,13 @@ async function runChatTurn(
     const reply = await streamOpenRouter(
       ctx,
       userId,
-      { model: PIPELINE_MODEL, maxTokens: CHAT_MAX_TOKENS, messages, tools: CHAT_TOOLS },
+      { model, maxTokens: CHAT_MAX_TOKENS, messages, tools: CHAT_TOOLS },
       (text) => stream.push(text),
     );
     if (reply.stopped) return stopped();
-    if (reply.toolCalls.length === 0) return { reply: stream.text, toolCalls, draftIds, entryIds, stopped: false };
+    if (reply.toolCalls.length === 0) {
+      return { reply: stream.text, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
+    }
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
 
     for (const [k, call] of reply.toolCalls.entries()) {
@@ -862,6 +917,10 @@ async function runChatTurn(
           entryIds.push(changed.entry_id);
           notes.push(`${call.function.name === "delete_entry" ? "Removed" : "Updated"} ${changed.food}.`);
           result = { status: "ok", ...changed };
+        } else if (call.function.name === "offer_log") {
+          if (typeof args.text !== "string" || args.text.trim() === "") throw new Error("text must be the food to log");
+          offered = { text: args.text.trim().slice(0, MAX_LOG_TEXT_CHARS) };
+          result = { status: "button_shown" };
         } else {
           result = (await runLookupTool(ctx, userId, call.function.name, args, seen)) ?? { error: `Unknown tool ${call.function.name}` };
         }
@@ -873,7 +932,14 @@ async function runChatTurn(
     }
   }
   const fallback = notes.length === 0 ? "Sorry, I couldn't finish that. Try again?" : notes.join(" ");
-  return { reply: [stream.text, fallback].filter((part) => part !== "").join("\n\n"), toolCalls, draftIds, entryIds, stopped: false };
+  return {
+    reply: [stream.text, fallback].filter((part) => part !== "").join("\n\n"),
+    toolCalls,
+    draftIds,
+    entryIds,
+    stopped: false,
+    logAction: logAction(),
+  };
 }
 
 /** Refuses an empty or oversized message before any model work. */
@@ -891,7 +957,7 @@ function isSlot(value: unknown): value is MealSlot {
 
 /**
  * Sends one message to a chat and returns the reply. Text and voice (Groq Whisper) run a luna turn with the
- * ledger tools; a photo runs the extraction pipeline on the image. Same submissionId twice returns the first turn.
+ * ledger tools; a photo is discussed by the photo model and never logged. Same submissionId twice returns the first turn.
  */
 export const sendMessage = action({
   args: {
@@ -935,7 +1001,7 @@ export const sendMessage = action({
         checkMessage(text, args.imageStorageId);
         await ctx.runMutation(internal.chats.saveTranscript, { userId, messageId: userMessageId, text });
       }
-      const turn = await runTurn(ctx, userId, args, text, userMessageId, claim.retry, target);
+      const turn = await runTurn(ctx, userId, args, text, claim.retry, target);
       const stored: { text: string } | null = await ctx.runMutation(internal.chats.finishReply, {
         userId,
         ...target,
@@ -944,6 +1010,7 @@ export const sendMessage = action({
         toolCalls: turn.toolCalls,
         draftIds: turn.draftIds,
         entryIds: turn.entryIds,
+        logAction: turn.logAction,
       });
       return {
         userMessageId,
@@ -1011,6 +1078,7 @@ export const regenerate = action({
         toolCalls: turn.toolCalls,
         draftIds: turn.draftIds,
         entryIds: turn.entryIds,
+        logAction: turn.logAction,
       });
       return { assistantMessageId: claim.replyId, reply: stored?.text ?? turn.reply };
     } catch (err) {
@@ -1076,7 +1144,6 @@ async function runTurn(
   userId: string,
   args: { chatId: Id<"chats">; submissionId: string; imageStorageId?: Id<"_storage"> },
   text: string,
-  userMessageId: Id<"messages">,
   retry: boolean,
   target: ReplyTarget,
 ): Promise<Turn> {
@@ -1085,25 +1152,13 @@ async function runTurn(
       internal.chats.priorTurnWrites,
       { userId, submissionId: args.submissionId },
     );
-    if (prior.reply !== "") return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, entryIds: prior.entryIds, stopped: false };
+    if (prior.reply !== "") {
+      return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, entryIds: prior.entryIds, stopped: false, logAction: undefined };
+    }
   }
-  if (args.imageStorageId === undefined) return await runChatTurn(ctx, userId, args.chatId, args.submissionId, target);
-  const today = await ctx.runQuery(internal.pipeline.resolve.logContext, { userId });
-  const items = await extractItems(ctx, userId, {
-    text,
-    today: today.localDate,
-    slot: today.slot,
-    imageUrl: await imageUrl(ctx, args.imageStorageId),
-  });
-  const result = await runPipeline(ctx, userId, {
-    submissionId: `${args.submissionId}:photo`,
-    inputKind: "photo",
-    items,
-    chatId: args.chatId,
-    messageId: userMessageId,
-  });
-  const draftIds: Id<"drafts">[] = [];
-  const entryIds: Id<"entries">[] = [];
-  collect(result, draftIds, entryIds);
-  return { reply: describeResult(result), toolCalls: [], draftIds, entryIds, stopped: false };
+  const photo: PhotoInput | undefined =
+    args.imageStorageId === undefined
+      ? undefined
+      : { storageId: args.imageStorageId, url: await imageUrl(ctx, args.imageStorageId), text };
+  return await runChatTurn(ctx, userId, args.chatId, args.submissionId, target, photo);
 }
