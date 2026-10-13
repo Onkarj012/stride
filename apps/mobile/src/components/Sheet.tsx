@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { BackHandler, PanResponder, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native'
 import Animated, {
   useAnimatedKeyboard,
@@ -13,6 +13,23 @@ import { motion, radii } from '@stride/ui-tokens'
 import { themedStyles } from '@/theme'
 
 const CLOSE_DRAG = 70
+
+type OpenSheets = { count: number; change: (delta: number) => void }
+
+const OpenSheetsContext = createContext<OpenSheets | null>(null)
+
+// Wraps a tab navigator so its dock can hide while a sheet inside any tab is showing.
+export function OpenSheetsProvider({ children }: { children: ReactNode }) {
+  const [count, setCount] = useState(0)
+  const change = useCallback((delta: number) => setCount((n) => n + delta), [])
+  const value = useMemo(() => ({ count, change }), [count, change])
+  return <OpenSheetsContext.Provider value={value}>{children}</OpenSheetsContext.Provider>
+}
+
+// True while a sheet under OpenSheetsProvider is open or still sliding away.
+export function useSheetCovered(): boolean {
+  return (useContext(OpenSheetsContext)?.count ?? 0) > 0
+}
 
 type SheetProps = {
   open: boolean
@@ -32,6 +49,8 @@ export function Sheet({ open, onClose, onClosed, children }: SheetProps) {
   const drag = useSharedValue(0)
   const scrim = useSharedValue(0)
   const keyboard = useAnimatedKeyboard()
+  const registry = useContext(OpenSheetsContext)
+  const change = registry?.change
 
   if (open && !mounted) setMounted(true)
 
@@ -63,6 +82,13 @@ export function Sheet({ open, onClose, onClosed, children }: SheetProps) {
     })
     return () => sub.remove()
   }, [open, onClose])
+
+  // Counts while mounted, so the dock stays hidden until the sheet has slid away.
+  useEffect(() => {
+    if (!mounted || !change) return
+    change(1)
+    return () => change(-1)
+  }, [mounted, change])
 
   const pan = useMemo(
     () =>
