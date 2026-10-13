@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import { Alert, Text, TextInput, View } from 'react-native'
 import { router } from 'expo-router'
 import { useMutation, useQuery } from 'convex/react'
@@ -7,13 +7,15 @@ import { api } from 'stride-backend/convex/_generated/api'
 import { ChatRow } from '@/components/ChatRow'
 import { Button, RoundButton } from '@/components/Controls'
 import { Polo } from '@/components/Polo'
-import { Screen, ScreenTitle } from '@/components/Screen'
+import { ListScreen, ScreenTitle } from '@/components/Screen'
 import { Sheet } from '@/components/Sheet'
 import { plainError } from '@/lib/log'
 import { font, themedStyles, useTheme } from '@/theme'
 import { radii } from '@stride/ui-tokens'
 
 type ChatItem = FunctionReturnType<typeof api.chats.listChats>[number]
+// One list row: a chat, or a search hit (which has no chat to rename or delete).
+type Row = { key: string; chatId: string; title: string; preview?: string | null; time?: string; chat?: ChatItem }
 
 const SEARCH_DEBOUNCE_MS = 250
 const TITLE_MAX = 60
@@ -104,8 +106,22 @@ export default function CoachScreen() {
     }
   }
 
+  const now = Date.now()
   // Search hits while the query is non-empty, otherwise the chat list.
-  function renderBody(): ReactNode {
+  const rows: Row[] =
+    trimmed !== ''
+      ? (hits ?? []).map((hit) => ({ key: hit.messageId, chatId: hit.chatId, title: hit.title, preview: hit.snippet }))
+      : (chats ?? []).map((chat) => ({
+          key: chat._id,
+          chatId: chat._id,
+          title: chat.title,
+          preview: chat.lastMessage,
+          time: ageLabel(chat.updatedAt, now),
+          chat,
+        }))
+
+  // What the list shows when it has no rows: loading, empty, or no search hits.
+  function emptyState(): ReactElement | null {
     if (trimmed !== '') {
       if (hits === undefined) return <Text style={s.note}>Searching…</Text>
       if (hits.length === 0)
@@ -115,9 +131,7 @@ export default function CoachScreen() {
             <Text style={s.note}>Nothing matches "{trimmed}".</Text>
           </View>
         )
-      return hits.map((hit) => (
-        <ChatRow key={hit.messageId} title={hit.title} preview={hit.snippet} onPress={() => router.push(`/chat/${hit.chatId}`)} />
-      ))
+      return null
     }
     if (chats === undefined)
       return (
@@ -135,84 +149,93 @@ export default function CoachScreen() {
           <Button label="Start a chat" size="sm" icon="plus" busy={busy} onPress={() => void newChat()} style={s.emptyButton} />
         </View>
       )
-    const now = Date.now()
-    return chats.map((chat) => (
-      <ChatRow
-        key={chat._id}
-        title={chat.title}
-        preview={chat.lastMessage}
-        time={ageLabel(chat.updatedAt, now)}
-        onPress={() => router.push(`/chat/${chat._id}`)}
-        onLongPress={() => openSheet(chat)}
-      />
-    ))
+    return null
   }
 
   return (
-    <Screen>
-      <ScreenTitle
-        eyebrow="Coach"
-        title="Chats"
-        aside={<Button label="New chat" size="sm" icon="plus" busy={busy} onPress={() => void newChat()} />}
-      />
-      <Text style={s.intro}>Polo reads your logs and can fix them when you ask. Every change shows up with an undo.</Text>
-      {chats && chats.length > 0 ? (
-        <View style={s.search}>
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search chats"
-            placeholderTextColor={t.c.ink3}
-            style={s.searchInput}
-            autoCorrect={false}
-            returnKeyType="search"
-            accessibilityLabel="Search chats"
+    <ListScreen
+      data={rows}
+      keyExtractor={(row) => row.key}
+      empty={emptyState()}
+      header={
+        <View style={s.head}>
+          <ScreenTitle
+            eyebrow="Coach"
+            title="Chats"
+            aside={<Button label="New chat" size="sm" icon="plus" busy={busy} onPress={() => void newChat()} />}
           />
-          {query !== '' ? <RoundButton icon="x" label="Clear search" tone="plain" size={32} onPress={() => setQuery('')} /> : null}
+          <Text style={s.intro}>Polo reads your logs and can fix them when you ask. Every change shows up with an undo.</Text>
+          {chats && chats.length > 0 ? (
+            <View style={s.search}>
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search chats"
+                placeholderTextColor={t.c.ink3}
+                style={s.searchInput}
+                autoCorrect={false}
+                returnKeyType="search"
+                accessibilityLabel="Search chats"
+              />
+              {query !== '' ? <RoundButton icon="x" label="Clear search" tone="plain" size={32} onPress={() => setQuery('')} /> : null}
+            </View>
+          ) : null}
         </View>
-      ) : null}
-      <View style={s.list}>{renderBody()}</View>
-
-      <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
-        {target ? (
-          <>
-            <Text style={s.sheetTitle} numberOfLines={1}>
-              {target.title}
-            </Text>
-            <Text style={s.sheetLabel}>Rename</Text>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              maxLength={TITLE_MAX}
-              placeholder="Chat title"
-              placeholderTextColor={t.c.ink3}
-              style={s.field}
-              accessibilityLabel="Chat title"
-            />
-            <Button
-              label="Save"
-              size="block"
-              disabled={!draft.trim() || draft.trim() === target.title}
-              busy={busy}
-              onPress={() => void rename(target)}
-              style={s.gap}
-            />
-            <View style={s.divider} />
-            {confirming ? (
-              <>
-                <Text style={s.confirmText}>Delete this chat? Changes it made to your log stay.</Text>
-                <View style={s.row}>
-                  <Button label="Cancel" variant="ghost" size="block" onPress={() => setConfirming(false)} style={s.flex} />
-                  <Button label="Delete" variant="coral" size="block" busy={busy} onPress={() => void remove(target)} style={s.flex} />
-                </View>
-              </>
-            ) : (
-              <Button label="Delete chat" variant="ghost" icon="trash" size="block" onPress={() => setConfirming(true)} />
-            )}
-          </>
-        ) : null}
-      </Sheet>
-    </Screen>
+      }
+      renderItem={({ item }) => {
+        const chat = item.chat
+        return (
+          <ChatRow
+            title={item.title}
+            preview={item.preview}
+            time={item.time}
+            onPress={() => router.push(`/chat/${item.chatId}`)}
+            onLongPress={chat ? () => openSheet(chat) : undefined}
+          />
+        )
+      }}
+      overlay={
+        <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
+          {target ? (
+            <>
+              <Text style={s.sheetTitle} numberOfLines={1}>
+                {target.title}
+              </Text>
+              <Text style={s.sheetLabel}>Rename</Text>
+              <TextInput
+                value={draft}
+                onChangeText={setDraft}
+                maxLength={TITLE_MAX}
+                placeholder="Chat title"
+                placeholderTextColor={t.c.ink3}
+                style={s.field}
+                accessibilityLabel="Chat title"
+              />
+              <Button
+                label="Save"
+                size="block"
+                disabled={!draft.trim() || draft.trim() === target.title}
+                busy={busy}
+                onPress={() => void rename(target)}
+                style={s.gap}
+              />
+              <View style={s.divider} />
+              {confirming ? (
+                <>
+                  <Text style={s.confirmText}>Delete this chat? Changes it made to your log stay.</Text>
+                  <View style={s.row}>
+                    <Button label="Cancel" variant="ghost" size="block" onPress={() => setConfirming(false)} style={s.flex} />
+                    <Button label="Delete" variant="coral" size="block" busy={busy} onPress={() => void remove(target)} style={s.flex} />
+                  </View>
+                </>
+              ) : (
+                <Button label="Delete chat" variant="ghost" icon="trash" size="block" onPress={() => setConfirming(true)} />
+              )}
+            </>
+          ) : null}
+        </Sheet>
+      }
+    />
   )
 }
 
@@ -229,7 +252,7 @@ const useStyles = themedStyles((t) => ({
     marginTop: 16,
   },
   searchInput: { ...font('input'), flex: 1, color: t.c.ink, padding: 0, height: '100%' },
-  list: { marginTop: 6 },
+  head: { paddingBottom: 6 },
   quiet: { alignItems: 'center', marginTop: 48, gap: 12 },
   note: { ...font('callout'), color: t.c.ink3, textAlign: 'center' },
   empty: {

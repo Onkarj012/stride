@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import { FlatList, ScrollView, Text, View, type StyleProp, type TextStyle } from 'react-native'
 import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated'
-import { router, useLocalSearchParams } from 'expo-router'
+import { router, useIsFocused, useLocalSearchParams } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
@@ -84,23 +84,36 @@ function Workout() {
   )
 }
 
-// Saved workouts, loaded a page at a time; selecting one opens its editable summary.
+// Saved workouts, loaded a page at a time as the list nears its end; selecting one opens its editable summary.
 function SavedWorkouts({ onSelect }: { onSelect: (id: SessionId) => void }) {
   const s = useStyles()
+  const insets = useSafeAreaInsets()
   const { results, status, loadMore } = usePaginatedQuery(api.strength.savedSessions, {}, { initialNumItems: 20 })
   return (
-    <Page>
-      <RoundButton icon="x" label="Close" onPress={leave} />
-      <Text style={s.bigTitle}>Saved workouts</Text>
-      {status === 'LoadingFirstPage' ? <Thinking label="Opening saved workouts…" /> : results.length === 0 ? <Text style={s.body}>No saved workouts yet.</Text> : null}
-      {results.map((session) => (
-        <Tap key={session._id} style={s.upRow} onPress={() => onSelect(session._id)} accessibilityRole="button" accessibilityLabel={`Open ${session.name ?? 'Workout'}, ${formatDayTitle(session.localDate)}`}>
+    <FlatList
+      data={results}
+      keyExtractor={(session) => session._id}
+      renderItem={({ item: session }) => (
+        <Tap style={s.upRow} onPress={() => onSelect(session._id)} accessibilityRole="button" accessibilityLabel={`Open ${session.name ?? 'Workout'}, ${formatDayTitle(session.localDate)}`}>
           <Text style={s.upName}>{session.name ?? 'Workout'}</Text>
           <Text style={s.upMeta}>{formatDayTitle(session.localDate)} · {session.endedAt === undefined ? 'open' : 'done'}</Text>
         </Tap>
-      ))}
-      {status === 'CanLoadMore' || status === 'LoadingMore' ? <Button label="More workouts" variant="ghost" size="block" busy={status === 'LoadingMore'} onPress={() => loadMore(20)} style={s.startButton} /> : null}
-    </Page>
+      )}
+      onEndReached={() => {
+        if (status === 'CanLoadMore') loadMore(20)
+      }}
+      ListHeaderComponent={
+        <>
+          <RoundButton icon="x" label="Close" onPress={leave} />
+          <Text style={s.bigTitle}>Saved workouts</Text>
+        </>
+      }
+      ListEmptyComponent={status === 'LoadingFirstPage' ? <Thinking label="Opening saved workouts…" /> : <Text style={s.body}>No saved workouts yet.</Text>}
+      ListFooterComponent={status === 'CanLoadMore' || status === 'LoadingMore' ? <Button label="More workouts" variant="ghost" size="block" busy={status === 'LoadingMore'} onPress={() => loadMore(20)} style={s.startButton} /> : null}
+      contentContainerStyle={{ paddingTop: insets.top + layout.screenTop, paddingBottom: insets.bottom + 120, paddingHorizontal: layout.screenX }}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    />
   )
 }
 
@@ -172,18 +185,26 @@ function Session({ sessionId, actions }: { sessionId: SessionId; actions: Workou
   return <Live detail={detail} actions={actions} onFinish={() => setEditing(false)} />
 }
 
-// Elapsed time from a start instant to an end instant (default now) as m:ss or h:mm:ss, ticking every second.
-function useElapsed(since: number, until?: number): string {
+// Elapsed time from a start to an end instant (default now) as m:ss or h:mm:ss. Only a live timer ticks, and only while the screen is focused.
+function Elapsed({ since, until, style }: { since: number; until?: number; style: StyleProp<TextStyle> }) {
+  const focused = useIsFocused()
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
+    if (until !== undefined || !focused) return
+    setNow(Date.now())
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [])
+  }, [until, focused])
   const total = Math.max(0, Math.floor(((until ?? now) - since) / 1000))
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
   const sec = String(total % 60).padStart(2, '0')
-  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
+  const text = h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
+  return (
+    <Text style={style} accessibilityLabel={`Elapsed ${text}`}>
+      {text}
+    </Text>
+  )
 }
 
 // Live session: timer and Finish (or Done when editing a finished one), progress bar, the current exercise's sets, and the session list.
@@ -191,7 +212,6 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
   const s = useStyles()
   const endSession = useMutation(api.strength.endSession)
   const ended = detail.session.endedAt !== undefined
-  const elapsed = useElapsed(detail.session.startedAt, detail.session.endedAt)
   const [picked, setPicked] = useState<Exercise[]>([])
   const [currentId, setCurrentId] = useState<ExerciseId | null>(null)
   const [picking, setPicking] = useState(detail.exercises.length === 0)
@@ -235,9 +255,7 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
       <View style={s.head}>
         <RoundButton icon="x" label="Minimise workout" onPress={leave} />
         <View style={s.grow} />
-        <Text style={s.timer} accessibilityLabel={`Elapsed ${elapsed}`}>
-          {elapsed}
-        </Text>
+        <Elapsed since={detail.session.startedAt} until={detail.session.endedAt} style={s.timer} />
         <Button label={ended ? 'Done' : 'Finish'} size="sm" busy={finishing} onPress={() => void finish()} />
       </View>
 

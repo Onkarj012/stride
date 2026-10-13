@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import type { ReactElement, ReactNode } from 'react'
+import { FlatList, ScrollView, Text, View, type ListRenderItem } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { layout, radii } from '@stride/ui-tokens'
@@ -8,10 +8,8 @@ import { Polo } from './Polo'
 
 // Scrolling page with the v5 paddings, room for the dock, and the soft fade under the status bar.
 export function Screen({ children }: { children: ReactNode }) {
-  const t = useTheme()
   const s = useStyles()
   const insets = useSafeAreaInsets()
-  const fade = insets.top + 6
 
   return (
     <View style={s.root}>
@@ -26,16 +24,69 @@ export function Screen({ children }: { children: ReactNode }) {
       >
         {children}
       </ScrollView>
-      <Svg style={[s.fade, { height: fade }]} width="100%" height={fade}>
-        <Defs>
-          <LinearGradient id="topfade" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0.62" stopColor={t.c.bg} stopOpacity={1} />
-            <Stop offset="1" stopColor={t.c.bg} stopOpacity={0} />
-          </LinearGradient>
-        </Defs>
-        <Rect width="100%" height="100%" fill="url(#topfade)" />
-      </Svg>
+      <TopFade />
     </View>
+  )
+}
+
+// Virtualized page for long lists: the header and empty state scroll with the rows, and only visible rows mount.
+export function ListScreen<T>({
+  header,
+  data,
+  keyExtractor,
+  renderItem,
+  empty,
+  overlay,
+}: {
+  header?: ReactElement | null
+  data: readonly T[]
+  keyExtractor: (item: T) => string
+  renderItem: ListRenderItem<T>
+  empty?: ReactElement | null
+  overlay?: ReactNode
+}) {
+  const s = useStyles()
+  const insets = useSafeAreaInsets()
+
+  return (
+    <View style={s.root}>
+      <FlatList
+        data={data}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        ListHeaderComponent={header}
+        ListEmptyComponent={empty}
+        contentContainerStyle={{
+          paddingTop: insets.top + layout.screenTop,
+          paddingBottom: layout.screenBottom + insets.bottom,
+          paddingHorizontal: layout.screenX,
+        }}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      />
+      <TopFade />
+      {overlay}
+    </View>
+  )
+}
+
+// Soft fade under the status bar, so content scrolling up under it fades out.
+function TopFade() {
+  const t = useTheme()
+  const s = useStyles()
+  const insets = useSafeAreaInsets()
+  const fade = insets.top + 6
+
+  return (
+    <Svg style={[s.fade, { height: fade }]} width="100%" height={fade}>
+      <Defs>
+        <LinearGradient id="topfade" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0.62" stopColor={t.c.bg} stopOpacity={1} />
+          <Stop offset="1" stopColor={t.c.bg} stopOpacity={0} />
+        </LinearGradient>
+      </Defs>
+      <Rect width="100%" height="100%" fill="url(#topfade)" />
+    </Svg>
   )
 }
 

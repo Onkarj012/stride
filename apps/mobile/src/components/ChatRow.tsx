@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Text, View } from 'react-native'
 import { motion } from '@stride/ui-tokens'
 import { font, themedStyles } from '@/theme'
@@ -12,7 +13,7 @@ type ChatRowProps = {
 }
 
 // One chat in a list (mock v5 .thread): title, a two-line preview and a short age label. Long-press is optional.
-export function ChatRow({ title, preview, time, onPress, onLongPress }: ChatRowProps) {
+export const ChatRow = memo(function ChatRow({ title, preview, time, onPress, onLongPress }: ChatRowProps) {
   const s = useStyles()
   const label = [title, preview, time].filter(Boolean).join(', ')
   return (
@@ -38,7 +39,7 @@ export function ChatRow({ title, preview, time, onPress, onLongPress }: ChatRowP
       {time ? <Text style={s.time}>{time}</Text> : null}
     </Tap>
   )
-}
+})
 
 const useStyles = themedStyles((t) => ({
   row: {
