@@ -841,7 +841,7 @@ describe("coach sees the profile (10f)", () => {
       heightCm: 175,
       dob: "1990-01-01",
       activity: "moderate",
-      dietType: "jain",
+      dietTypes: ["jain"],
       targetWeightKg: 68,
       pace: "steady",
       trainingDaysPerWeek: 4,
@@ -851,11 +851,25 @@ describe("coach sees the profile (10f)", () => {
     const system = systemText(bodies[0] ?? {});
     expect(system).toContain("About the user:");
     expect(system).toContain("Goal: lose, steady pace (0.5 kg a week). Target weight 68 kg.");
-    expect(system).toContain("Diet: jain.");
-    expect(system).toContain("no onion or garlic for jain");
+    expect(system).toContain("Diet: Jain.");
+    expect(system).toContain("never onion or garlic if Jain is listed");
     expect(system).toContain("Trains 4 days a week.");
     expect(system).toMatch(/Daily target: \d+ kcal, protein \d+ g, carbs \d+ g, fat \d+ g\./);
     expect(system).toContain("Weight trend: 72.4 kg.");
+  });
+
+  test("a user who eats both veg and non-veg has both diets in the system prompt", async () => {
+    const { user, chatId } = await setup();
+    await user.mutation(api.progress_v2.saveProfile, {
+      goal: "maintain",
+      sex: "male",
+      heightCm: 175,
+      dob: "1990-01-01",
+      activity: "moderate",
+      dietTypes: ["veg", "non_veg"],
+    });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "dinner ideas?" });
+    expect(systemText(bodies[0] ?? {})).toContain("Diet: Vegetarian, Non-vegetarian.");
   });
 
   test("a user with no profile gets no About block and no crash", async () => {

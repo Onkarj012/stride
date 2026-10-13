@@ -1,4 +1,5 @@
 import { ACTIVITY_FACTORS, adaptiveTdee, addDays, mifflinStJeor, weightTrend } from "@stride/core";
+import type { FunctionArgs } from "convex/server";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
@@ -9,7 +10,7 @@ import { TDEE_USER_BATCH_SIZE } from "./tdee_recompute";
 const modules = import.meta.glob("./**/*.*s");
 const TODAY = "2026-10-15";
 const BASELINE = (mifflinStJeor({ weightKg: 70, heightCm: 175, ageYears: 26, sex: "male" }) ?? 0) * ACTIVITY_FACTORS.moderate;
-const PROFILE = { goal: "maintain", sex: "male", heightCm: 175, dob: "2000-01-01", activity: "moderate", dietType: "veg" } as const;
+const PROFILE: FunctionArgs<typeof api.progress_v2.saveProfile> = { goal: "maintain", sex: "male", heightCm: 175, dob: "2000-01-01", activity: "moderate", dietTypes: ["veg"] };
 
 afterEach(() => {
   vi.useRealTimers();
@@ -342,6 +343,28 @@ test("profileStatus lists missing fields until the profile and a weight are save
   expect(await user.query(api.progress_v2.profileStatus, {})).toEqual({ complete: true, missing: [] });
 });
 
+test("saveProfile keeps every picked diet once", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, dietTypes: ["veg", "non_veg", "veg"] });
+  expect(await user.query(api.progress_v2.profile, {})).toMatchObject({ dietTypes: ["veg", "non_veg"] });
+});
+
+test("saveProfile rejects an empty diet pick", async () => {
+  const { user } = await setup();
+  await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, dietTypes: [] })).rejects.toThrow("Pick at least one diet");
+});
+
+test("a row saved with the old single dietType reads back as a one-item list", async () => {
+  const { t, user } = await setup();
+  await t.run(async (ctx) => {
+    const row = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", "user_a")).first();
+    if (row === null) throw new Error("setup row missing");
+    await ctx.db.patch("user_settings", row._id, { dietType: "vegan" });
+  });
+  expect(await user.query(api.progress_v2.profile, {})).toMatchObject({ dietTypes: ["vegan"] });
+  expect((await user.query(api.progress_v2.profileStatus, {})).missing).not.toContain("dietType");
+});
+
 test("updateProfile changing the pace re-freezes the target at once", async () => {
   const { user } = await setup();
   await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose", pace: "steady" });
@@ -364,7 +387,7 @@ test("updateProfile on unrelated fields still works once the target weight is re
   const { user } = await setup();
   await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose", targetWeightKg: 65 });
   await user.mutation(api.weights.logWeight, { kg: 64 });
-  await expect(user.mutation(api.progress_v2.updateProfile, { dietType: "vegan" })).resolves.toBeNull();
+  await expect(user.mutation(api.progress_v2.updateProfile, { dietTypes: ["vegan"] })).resolves.toBeNull();
   await expect(user.mutation(api.progress_v2.updateProfile, {})).resolves.toBeNull();
   await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 70 })).rejects.toThrow(/targetWeightKg/);
 });
