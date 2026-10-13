@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useContext, useState } from 'react'
 import { Share, Text, TextInput, View } from 'react-native'
 import Constants from 'expo-constants'
 import { router } from 'expo-router'
@@ -13,7 +13,7 @@ import { Sheet } from '@/components/Sheet'
 import { Tap } from '@/components/Tap'
 import { TimeZoneGate } from '@/components/TimeZoneGate'
 import { plainError } from '@/lib/log'
-import { savedUnits, type Units } from '@/lib/profile'
+import { HoldAppContext, savedUnits, type Units } from '@/lib/profile'
 import { font, setThemePref, themedStyles, useThemePref, type ThemePref } from '@/theme'
 
 type SheetKind = 'clear' | 'delete'
@@ -47,6 +47,7 @@ function Settings() {
   const convex = useConvex()
   const setUnits = useMutation(api.progress_v2.setUnits)
   const { signOut } = useAuth()
+  const setHoldApp = useContext(HoldAppContext)
   const [unitsError, setUnitsError] = useState<string | null>(null)
   const [dataError, setDataError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -135,7 +136,14 @@ function Settings() {
         <Text style={s.caption}>{FOOD_CREDITS}</Text>
       </Screen>
 
-      <Sheet open={open} onClose={() => setOpen(false)} onClosed={() => setSheet(null)}>
+      <Sheet
+        open={open}
+        onClose={() => setOpen(false)}
+        onClosed={() => {
+          setSheet(null)
+          setHoldApp(false)
+        }}
+      >
         {sheet === 'clear' ? <ClearForm onDone={() => setOpen(false)} /> : null}
         {sheet === 'delete' ? <DeleteForm onDone={() => setOpen(false)} /> : null}
       </Sheet>
@@ -242,17 +250,21 @@ function DeleteForm({ onDone }: { onDone: () => void }) {
   const s = useStyles()
   const deleteAccount = useAction(api.users.deleteAccount)
   const { signOut } = useAuth()
+  const setHoldApp = useContext(HoldAppContext)
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Deletes the caller's data and Clerk user, then signs out.
+  // Deletes the caller's data and Clerk user, then signs out. Holds the app mounted so a failure can show here.
   async function remove() {
     setBusy(true)
     setError(null)
+    setHoldApp(true)
     try {
       await deleteAccount({})
       await signOut()
+      // Settings unmounts once signed out, so release the hold here rather than on sheet close.
+      setHoldApp(false)
       onDone()
     } catch (err) {
       setError(plainError(err))

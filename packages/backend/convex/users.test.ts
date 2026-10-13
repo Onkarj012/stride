@@ -329,7 +329,7 @@ describe("deleteAccount", () => {
     expect(settings.map((row) => row.userId)).toEqual(["user_a", "user_b"]);
   });
 
-  test("reports a Clerk failure with its status and clears nothing", async () => {
+  test("clears the caller's data before a Clerk failure, which reports its status", async () => {
     vi.useFakeTimers();
     vi.stubEnv("CLERK_SECRET_KEY", "sk_test");
     vi.stubGlobal("fetch", vi.fn(async (_url: string, _init?: RequestInit) => new Response("upstream detail", { status: 500 })));
@@ -347,11 +347,11 @@ describe("deleteAccount", () => {
       chats: (await ctx.db.query("chats").take(10)).map((r) => r.userId),
     }));
     expect(owners).toEqual({
-      users: ["user_a", "user_b"],
-      user_settings: ["user_a", "user_b"],
-      weights: ["user_a", "user_b"],
-      entries: ["user_a", "user_b"],
-      chats: ["user_a", "user_b"],
+      users: ["user_b"],
+      user_settings: ["user_b"],
+      weights: ["user_b"],
+      entries: ["user_b"],
+      chats: ["user_b"],
     });
     expect(await user.query(api.users.ledgerClearPending, {})).toBe(false);
   });

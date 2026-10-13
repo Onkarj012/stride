@@ -21,6 +21,9 @@ export const HEIGHT_CM = { min: 100, max: 250 }
 // Lets the onboarding screen stay mounted after the profile is saved, so its reveal step can show.
 export const HoldOnboardingContext = createContext<(hold: boolean) => void>(() => {})
 
+// Keeps the signed-in screens mounted while an account delete runs, so its error can still show.
+export const HoldAppContext = createContext<(hold: boolean) => void>(() => {})
+
 // Metric when the device uses metric units; lb and ft/in otherwise.
 export function deviceUnits(): Units {
   return getLocales()[0]?.measurementSystem === 'metric' ? 'metric' : 'imperial'

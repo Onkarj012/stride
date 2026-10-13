@@ -14,7 +14,7 @@ import { api } from 'stride-backend/convex/_generated/api'
 import { layout } from '@stride/ui-tokens'
 import { Polo } from '@/components/Polo'
 import { readConfig } from '@/lib/config'
-import { HoldOnboardingContext } from '@/lib/profile'
+import { HoldAppContext, HoldOnboardingContext } from '@/lib/profile'
 import { font, fontAssets, themedStyles, useTheme } from '@/theme'
 
 void SplashScreen.preventAutoHideAsync()
@@ -71,6 +71,8 @@ function AuthGate() {
   const status = useQuery(api.progress_v2.profileStatus, isAuthenticated ? {} : 'skip')
   // Set by onboarding while it saves, so the reveal stays mounted after the profile turns complete.
   const [holdOnboarding, setHoldOnboarding] = useState(false)
+  // Set by Settings while an account delete runs, so its screen and error stay mounted after the data clears.
+  const [holdApp, setHoldApp] = useState(false)
 
   const signedIn = isSignedIn === true
   const waiting = !isLoaded || (signedIn && (isLoading || (isAuthenticated && status === undefined)))
@@ -84,20 +86,22 @@ function AuthGate() {
   const complete = status?.complete === true
   return (
     <HoldOnboardingContext.Provider value={setHoldOnboarding}>
-      <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-        <Stack.Protected guard={signedIn && complete}>
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="workout" options={{ animation: 'slide_from_bottom' }} />
-          <Stack.Screen name="profile" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
-        </Stack.Protected>
-        <Stack.Protected guard={signedIn && (!complete || holdOnboarding)}>
-          <Stack.Screen name="onboarding" />
-        </Stack.Protected>
-        <Stack.Protected guard={!signedIn}>
-          <Stack.Screen name="sign-in" />
-        </Stack.Protected>
-      </Stack>
+      <HoldAppContext.Provider value={setHoldApp}>
+        <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+          <Stack.Protected guard={signedIn && (complete || holdApp)}>
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="workout" options={{ animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="profile" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+          </Stack.Protected>
+          <Stack.Protected guard={signedIn && !holdApp && (!complete || holdOnboarding)}>
+            <Stack.Screen name="onboarding" />
+          </Stack.Protected>
+          <Stack.Protected guard={!signedIn}>
+            <Stack.Screen name="sign-in" />
+          </Stack.Protected>
+        </Stack>
+      </HoldAppContext.Provider>
     </HoldOnboardingContext.Provider>
   )
 }

@@ -226,7 +226,7 @@ export const clearUserDataInternal = internalMutation({
   },
 });
 
-/** Deletes the Clerk user first, then clears the caller's data. A Clerk failure leaves all data in place. */
+/** Clears the caller's data, then deletes their Clerk user. A Clerk failure keeps the sign-in, so a retry clears nothing new and finishes the delete. */
 export const deleteAccount = action({
   args: {},
   returns: v.null(),
@@ -237,14 +237,14 @@ export const deleteAccount = action({
     const key = process.env.CLERK_SECRET_KEY;
     if (!key) throw new Error("CLERK_SECRET_KEY is not set");
 
+    await ctx.runMutation(internal.users.clearUserDataInternal, { userId });
+
     const res = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(userId)}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${key}` },
     });
     // 404 means Clerk already removed the user.
     if (res.status !== 200 && res.status !== 404) throw new Error(`Clerk delete failed (${res.status})`);
-
-    await ctx.runMutation(internal.users.clearUserDataInternal, { userId });
     return null;
   },
 });
