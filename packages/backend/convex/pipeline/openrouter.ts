@@ -19,6 +19,8 @@ const REQUEST_TIMEOUT_MS = 60_000;
 const RETRY_BACKOFF_MS = 500;
 /** One retry on 429, 5xx or a network failure. Callers are idempotent by submission id, so the user can resend. */
 const MAX_ATTEMPTS = 2;
+/** How often a quiet stream still calls back, so stops and buffered text don't wait for the next chunk. */
+const STREAM_TICK_MS = 300;
 
 /** A JSON value, for tool parameter and response schemas. */
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -245,7 +247,8 @@ function applyChunk(chunk: unknown, state: StreamState): string {
 }
 
 /**
- * Streams one OpenRouter reply, passing each new piece of text to `onText`. When `onText` returns true the stream
+ * Streams one OpenRouter reply, passing each new piece of text to `onText`, and "" every STREAM_TICK_MS while nothing
+ * arrives. When `onText` returns true the stream
  * is cancelled and the text so far comes back with `stopped`. Retries only before any of the body is read, and
  * reserves and settles spend through `ai_guard` like `callOpenRouter`.
  */
@@ -307,13 +310,25 @@ export async function streamOpenRouter(
       let finished = false;
       let sawDone = false;
       let stopped = false;
+      // Reads settle to a value, never reject, so a read left pending behind an idle tick can't go unhandled.
+      const read = () => reader.read().then((result) => ({ result }), (error: unknown) => ({ error }));
+      let pending = read();
       try {
         while (!finished && !stopped) {
-          const chunk = await reader.read().catch((err: unknown) => {
+          const next = await Promise.race([pending, sleep(STREAM_TICK_MS).then(() => null)]);
+          if (next === null) {
+            // No bytes for a tick: let the caller write buffered text and notice a stop, even mid tool call or keep-alive.
+            if (await onText("")) stopped = true;
+            continue;
+          }
+          if ("error" in next) {
+            const err = next.error;
             throw err instanceof Error && err.name === "AbortError"
               ? new Error(`OpenRouter stream stalled for ${REQUEST_TIMEOUT_MS / 1000}s`)
               : err;
-          });
+          }
+          const chunk = next.result;
+          if (!chunk.done) pending = read();
           clearTimeout(timeout);
           timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
           buffer += chunk.done ? decoder.decode() + "\n" : decoder.decode(chunk.value, { stream: true });

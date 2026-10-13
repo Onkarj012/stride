@@ -760,4 +760,46 @@ describe("review fixes", () => {
     expect(await user.query(api.chats.getChat, { chatId })).toMatchObject({ _id: chatId });
     expect(await t.withIdentity({ subject: "user_b" }).query(api.chats.getChat, { chatId })).toBeNull();
   });
+
+  test("stop is noticed while the stream is silent, without waiting for more text", async () => {
+    const { t, user, chatId } = await setup();
+    llm = () => ({
+      chunks: ["Hello", " later"],
+      beforeEvent: async (i) => {
+        if (i !== 1) return;
+        await user.mutation(api.chats.stopMessage, { messageId: (await waitForText(t, "Hello"))._id });
+        // The provider goes quiet (keep-alives only) for longer than the turn should take to stop.
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      },
+    });
+    const started = Date.now();
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(turn.reply).toBe("Hello");
+    expect(await replyRow(t)).toMatchObject({ status: "stopped" });
+  });
+
+  test("a regenerate that fails keeps the old reply's undo cards on its row", async () => {
+    const { user, chatId, foods } = await setup();
+    const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.chapati, grams: 80, source: "db" }] });
+    llm = (body) =>
+      afterToolResult(body) ? { content: "Updated." } : { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] };
+    const first = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "3 rotis" });
+    llm = () => ({});
+    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toThrow();
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
+    const failed = page.page.find((m) => m.role === "assistant");
+    expect(failed).toMatchObject({ status: "failed", entryIds: first.entryIds });
+  });
+
+  test("a regenerated reply can't run log changes again", async () => {
+    const { user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    llm = () => ({ content: "Again." });
+    await user.action(api.chats.regenerate, { chatId });
+    const names = JSON.stringify(bodies.at(-1)?.tools ?? []);
+    expect(names).not.toContain("edit_entry");
+    expect(names).not.toContain("delete_entry");
+    expect(names).toContain("offer_log");
+  });
 });

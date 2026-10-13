@@ -433,8 +433,9 @@ export const claimRegenerate = internalMutation({
       text: "",
       attachments: [],
       toolCalls: [],
-      draftIds: [],
-      entryIds: [],
+      // The hidden reply's cards move here now, so they survive even if this attempt fails.
+      draftIds: old.draftIds,
+      entryIds: old.entryIds ?? [],
       answersMessageId: args.userMessageId,
       submissionId: `${args.userSubmissionId}:reply:${now}`,
       status: "streaming",
@@ -793,6 +794,14 @@ const CHAT_TOOLS: ToolDefinition[] = [
   ...LOOKUP_TOOLS,
 ];
 
+/** Tools for a regenerated reply: the earlier reply already made its log changes, so they can't run twice. */
+const REGENERATE_TOOLS: ToolDefinition[] = CHAT_TOOLS.filter(
+  (tool) => tool.function.name !== "edit_entry" && tool.function.name !== "delete_entry",
+);
+/** Told to the model when it rewrites a reply, so it doesn't promise changes it can no longer make. */
+const REGENERATE_NOTE =
+  "You are rewriting your last reply. Any log changes it made are already saved and can't be repeated; only answer again.";
+
 /** System prompt for one turn, carrying the D12 context. */
 function systemPrompt(context: TurnContext): string {
   const entries = context.entries.length === 0
@@ -836,6 +845,8 @@ class ReplyStream {
 
   /** Adds streamed text and writes it once enough has built up. True means stop the stream. */
   async push(text: string): Promise<boolean> {
+    // An empty push is the stream's idle tick: it writes buffered text that is due and checks for a stop.
+    if (text === "") return Date.now() - this.lastFlush >= STREAM_FLUSH_MS ? await this.flush() : false;
     if (this.paragraph && this.text !== "") this.text += "\n\n";
     this.paragraph = false;
     this.text += text;
@@ -881,10 +892,13 @@ async function runChatTurn(
   submissionId: string,
   target: ReplyTarget,
   photo?: PhotoInput,
+  regenerating = false,
 ): Promise<Turn> {
   const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId });
+  const system = systemPrompt(context);
+  const tools = regenerating ? REGENERATE_TOOLS : CHAT_TOOLS;
   const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt(context) },
+    { role: "system", content: regenerating ? `${system}\n${REGENERATE_NOTE}` : system },
     ...context.history.map((m): ChatMessage => ({ role: m.role, content: m.text })),
   ];
   // The newest history entry is this turn's own user message; the photo takes its place.
@@ -912,7 +926,7 @@ async function runChatTurn(
     const reply = await streamOpenRouter(
       ctx,
       userId,
-      { model, maxTokens: CHAT_MAX_TOKENS, messages, tools: CHAT_TOOLS },
+      { model, maxTokens: CHAT_MAX_TOKENS, messages, tools },
       (text) => stream.push(text),
     );
     if (reply.stopped) return stopped();
@@ -1109,7 +1123,7 @@ export const regenerate = action({
     const target: ReplyTarget = { messageId: claim.replyId, claimedAt: claim.claimedAt };
     try {
       // The claim time keeps this attempt's tool writes apart from the replaced reply's.
-      const turn = await runChatTurn(ctx, userId, chatId, `${old.userSubmissionId}:regen:${claim.claimedAt}`, target);
+      const turn = await runChatTurn(ctx, userId, chatId, `${old.userSubmissionId}:regen:${claim.claimedAt}`, target, undefined, true);
       const stored: { text: string } | null = await ctx.runMutation(internal.chats.finishReply, {
         userId,
         ...target,
