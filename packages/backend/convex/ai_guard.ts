@@ -301,6 +301,8 @@ export const checkAndReserve = internalMutation({
     estimatedInputTokens: v.number(),
     estimatedOutputTokens: v.number(),
     estimatedCostUsd: v.number(),
+    // A call made with the user's own key pays for itself, so only the rate limit applies.
+    ownKey: v.optional(v.boolean()),
     now: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -325,19 +327,21 @@ export const checkAndReserve = internalMutation({
       rateLimitError(recentRequests[0]! + AI_RATE_LIMIT_WINDOW_MS);
     }
 
-    const dailySpend = (userDay?.costUsd ?? 0) + (userDay?.reservedCostUsd ?? 0);
-    if (dailySpend + estimatedCostUsd > AI_DAILY_BUDGET_USD) {
-      budgetError("daily", AI_DAILY_BUDGET_USD);
-    }
+    if (args.ownKey !== true) {
+      const dailySpend = (userDay?.costUsd ?? 0) + (userDay?.reservedCostUsd ?? 0);
+      if (dailySpend + estimatedCostUsd > AI_DAILY_BUDGET_USD) {
+        budgetError("daily", AI_DAILY_BUDGET_USD);
+      }
 
-    const userMonthlySpend = sumUsage(userMonth);
-    if (userMonthlySpend.costUsd + userMonthlySpend.reservedCostUsd + estimatedCostUsd > AI_MONTHLY_BUDGET_USD) {
-      budgetError("monthly", AI_MONTHLY_BUDGET_USD);
-    }
+      const userMonthlySpend = sumUsage(userMonth);
+      if (userMonthlySpend.costUsd + userMonthlySpend.reservedCostUsd + estimatedCostUsd > AI_MONTHLY_BUDGET_USD) {
+        budgetError("monthly", AI_MONTHLY_BUDGET_USD);
+      }
 
-    const globalMonthlySpend = sumUsage(globalMonth);
-    if (globalMonthlySpend.costUsd + globalMonthlySpend.reservedCostUsd + estimatedCostUsd > AI_GLOBAL_MONTHLY_BUDGET_USD) {
-      budgetError("global", AI_GLOBAL_MONTHLY_BUDGET_USD);
+      const globalMonthlySpend = sumUsage(globalMonth);
+      if (globalMonthlySpend.costUsd + globalMonthlySpend.reservedCostUsd + estimatedCostUsd > AI_GLOBAL_MONTHLY_BUDGET_USD) {
+        budgetError("global", AI_GLOBAL_MONTHLY_BUDGET_USD);
+      }
     }
 
     const timestamps = [...(userDay?.rateLimitTimestamps ?? []), now]

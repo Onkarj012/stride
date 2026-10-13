@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
@@ -135,11 +136,19 @@ function preparedRequest(request: ChatRequest, stream: boolean) {
   return { payload, estimatedInputTokens, estimatedOutputTokens };
 }
 
-/** The OpenRouter key, or a clear error when the deployment has none. */
-function openRouterKey(): string {
+/** The caller's own OpenRouter key when they set one, else the deployment key. `own` skips the allowance. */
+async function openRouterKey(ctx: ActionCtx, userId: string): Promise<{ key: string; own: boolean }> {
+  const own = await ctx.runQuery(internal.api_keys.ownOpenRouterKey, { userId });
+  if (own !== null) return { key: own, own: true };
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
-  return key;
+  return { key, own: false };
+}
+
+/** Rejects a call made with the user's own key when OpenRouter refuses it. Other failures pass through. */
+function ownKeyRejected(own: boolean, status: number): ConvexError<{ code: string; message: string }> | null {
+  if (!own || (status !== 401 && status !== 403)) return null;
+  return new ConvexError({ code: "OWN_KEY_INVALID", message: "Your OpenRouter key was rejected. Check it in Settings." });
 }
 
 /**
@@ -147,7 +156,7 @@ function openRouterKey(): string {
  * `ai_guard` budget first and settles or releases it afterwards, so no call can skip the budget.
  */
 export async function callOpenRouter(ctx: ActionCtx, userId: string, request: ChatRequest): Promise<ChatReply> {
-  const key = openRouterKey();
+  const { key, own } = await openRouterKey(ctx, userId);
   const { payload, estimatedInputTokens, estimatedOutputTokens } = preparedRequest(request, false);
   let lastError: Error = new Error("OpenRouter call failed");
 
@@ -159,6 +168,7 @@ export async function callOpenRouter(ctx: ActionCtx, userId: string, request: Ch
       estimatedInputTokens,
       estimatedOutputTokens,
       estimatedCostUsd: estimateCostUsd(request.model, estimatedInputTokens, estimatedOutputTokens),
+      ownKey: own,
     });
     // Once fetch may have reached the provider, the reserve stays unless we settle: the call may be billed.
     let release = true;
@@ -182,6 +192,8 @@ export async function callOpenRouter(ctx: ActionCtx, userId: string, request: Ch
       }
       if (!res.ok) {
         release = true;
+        const rejected = ownKeyRejected(own, res.status);
+        if (rejected) throw rejected;
         lastError = new Error(`OpenRouter error ${res.status}: ${(await res.text()).slice(0, 300)}`);
         if (res.status === 429 || res.status >= 500) continue;
         throw lastError;
@@ -258,7 +270,7 @@ export async function streamOpenRouter(
   request: ChatRequest,
   onText: (text: string) => Promise<boolean>,
 ): Promise<StreamedReply> {
-  const key = openRouterKey();
+  const { key, own } = await openRouterKey(ctx, userId);
   const { payload, estimatedInputTokens, estimatedOutputTokens } = preparedRequest(request, true);
   let lastError: Error = new Error("OpenRouter call failed");
 
@@ -270,6 +282,7 @@ export async function streamOpenRouter(
       estimatedInputTokens,
       estimatedOutputTokens,
       estimatedCostUsd: estimateCostUsd(request.model, estimatedInputTokens, estimatedOutputTokens),
+      ownKey: own,
     });
     let release = true;
     const controller = new AbortController();
@@ -293,6 +306,8 @@ export async function streamOpenRouter(
       }
       if (!res.ok) {
         release = true;
+        const rejected = ownKeyRejected(own, res.status);
+        if (rejected) throw rejected;
         lastError = new Error(`OpenRouter error ${res.status}: ${(await res.text()).slice(0, 300)}`);
         if (res.status === 429 || res.status >= 500) continue;
         throw lastError;
