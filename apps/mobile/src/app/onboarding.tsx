@@ -254,7 +254,7 @@ function Onboarding() {
         </View>
       </View>
       <ScrollView style={s.body} contentContainerStyle={s.bodyContent} showsVerticalScrollIndicator={false}>
-        <Animated.View key={current} entering={FadeIn.duration(motion.duration.press)} style={s.step}>
+        <Animated.View key={current} entering={FadeIn.duration(motion.duration.press)}>
           {current === 'reveal' ? null : <Text style={s.stepCount}>{`Step ${index + 1} of ${questions}`}</Text>}
           {renderStep()}
         </Animated.View>
@@ -372,8 +372,7 @@ const useStyles = themedStyles((t) => ({
   track: { flex: 1, height: 6, borderRadius: radii.pill, backgroundColor: t.c.card2, overflow: 'hidden' },
   fill: { height: 6, borderRadius: radii.pill, backgroundColor: t.c.polo },
   body: { flex: 1 },
-  bodyContent: { flexGrow: 1, paddingTop: 28, paddingBottom: 16 },
-  step: { flex: 1 },
+  bodyContent: { flexGrow: 1, justifyContent: 'center', paddingTop: 28, paddingBottom: 16 },
   stepCount: { ...font('eyebrow'), color: t.c.ink3, marginBottom: 8 },
   question: { flex: 1 },
   title: { ...font('screenTitle'), color: t.c.ink },
