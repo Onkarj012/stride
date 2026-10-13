@@ -350,6 +350,8 @@ export async function streamOpenRouter(
               break;
             }
           }
+          // Keep-alives and tool-call pieces carry no text but can arrive faster than the tick, so check here too.
+          if (!stopped && !finished && (await onText(""))) stopped = true;
         }
       } finally {
         if (!finished) await reader.cancel().catch(() => undefined);

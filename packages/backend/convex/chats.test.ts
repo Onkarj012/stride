@@ -527,6 +527,8 @@ describe("streaming replies (A12)", () => {
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(/connection reset/);
     const failed = await replyRow(t);
     expect(failed).toMatchObject({ status: "failed", text: "Partial" });
+    const view = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } });
+    expect(view.page.find((m) => m._id === failed._id)?.retrySubmissionId).toBe("m1");
 
     // A failed reply is not history: the retry's model call sees only the user's message.
     llm = () => ({ content: "Full answer." });
@@ -801,5 +803,30 @@ describe("review fixes", () => {
     expect(names).not.toContain("edit_entry");
     expect(names).not.toContain("delete_entry");
     expect(names).toContain("offer_log");
+  });
+
+  test("stop is noticed while keep-alives arrive faster than the idle tick", async () => {
+    const { t, user, chatId } = await setup();
+    const encoder = new TextEncoder();
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      let timer: ReturnType<typeof setInterval> | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" } }] })}\n\n`));
+          timer = setInterval(() => controller.enqueue(encoder.encode(": OPENROUTER PROCESSING\n\n")), 100);
+        },
+        cancel() {
+          clearInterval(timer);
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }));
+    const sending = user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    await user.mutation(api.chats.stopMessage, { messageId: (await waitForText(t, "Hello"))._id });
+    const started = Date.now();
+    const turn = await sending;
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(turn.reply).toBe("Hello");
+    expect(await replyRow(t)).toMatchObject({ status: "stopped" });
   });
 });

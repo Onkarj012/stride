@@ -95,6 +95,8 @@ const messageViewValidator = v.object({
   status: replyStatusValidator,
   logAction: v.optional(logActionValidator),
   imageUrl: v.union(v.string(), v.null()),
+  /** On a failed reply: the submission id of the message it answers, so the client retries exactly that send. */
+  retrySubmissionId: v.union(v.string(), v.null()),
 });
 
 const toolCallRecordValidator = v.object({ name: v.string(), argsJson: v.string(), resultJson: v.optional(v.string()) });
@@ -279,6 +281,8 @@ export const listMessages = query({
           status: m.status ?? "done",
           logAction: m.logAction,
           imageUrl: image === undefined ? null : await ctx.storage.getUrl(image.storageId),
+          // Reply keys are `${submissionId}:reply` (or `:reply:<time>` after a regenerate); client ids have no ':'.
+          retrySubmissionId: m.role === "assistant" && m.status === "failed" ? (m.submissionId?.split(":")[0] ?? null) : null,
         };
       }),
     );
@@ -834,7 +838,10 @@ class ReplyStream {
   text = "";
   /** The text last written to the row: what the user has seen. A stopped reply ends here. */
   shown = "";
+  /** When text was last written; only a real write moves it, so the first text after a quiet start shows at once. */
   private lastFlush = 0;
+  /** When the row was last read for a stop, written or not. Paces the empty callbacks. */
+  private lastCheck = 0;
   private paragraph = false;
   private stopped = false;
 
@@ -846,7 +853,11 @@ class ReplyStream {
   /** Adds streamed text and writes it once enough has built up. True means stop the stream. */
   async push(text: string): Promise<boolean> {
     // An empty push is the stream's idle tick: it writes buffered text that is due and checks for a stop.
-    if (text === "") return Date.now() - this.lastFlush >= STREAM_FLUSH_MS ? await this.flush() : false;
+    if (text === "") {
+      const now = Date.now();
+      const due = (this.text !== this.shown && now - this.lastFlush >= STREAM_FLUSH_MS) || now - this.lastCheck >= STREAM_FLUSH_MS;
+      return due ? await this.flush() : false;
+    }
     if (this.paragraph && this.text !== "") this.text += "\n\n";
     this.paragraph = false;
     this.text += text;
@@ -857,7 +868,8 @@ class ReplyStream {
   /** Writes the text so far and checks for a stop. True means stop. */
   async flush(): Promise<boolean> {
     if (this.stopped) return true;
-    this.lastFlush = Date.now();
+    this.lastCheck = Date.now();
+    if (this.text !== this.shown) this.lastFlush = this.lastCheck;
     this.stopped = await this.ctx.runMutation(internal.chats.appendReply, { ...this.target, text: this.text });
     if (!this.stopped) this.shown = this.text;
     return this.stopped;
