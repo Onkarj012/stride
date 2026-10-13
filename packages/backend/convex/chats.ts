@@ -1,4 +1,15 @@
-import { roundTo, scaleNutrients, type MealSlot } from "@stride/core";
+import {
+  addDays,
+  daysBetween,
+  leastSquaresSlope,
+  PACE_KG_PER_WEEK,
+  roundTo,
+  scaleMacroTargets,
+  scaleNutrients,
+  weightTrend,
+  type DailyTargets,
+  type MealSlot,
+} from "@stride/core";
 import { paginationOptsValidator } from "convex/server";
 import { v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
@@ -31,6 +42,7 @@ import {
 } from "./pipeline/openrouter";
 import { resolveFoodPortion, userFoodsOf, userMeasuresOf } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
+import { calorieTarget, MAX_PROGRESS_RANGE_DAYS, tdeeInput } from "./progress_v2";
 import { requireUserId, resolveLocalDay } from "./time_zone";
 import { requireOwnUpload } from "./uploads";
 import { assertLedgerWritable } from "./users";
@@ -606,6 +618,30 @@ export const finishReply = internalMutation({
   },
 });
 
+/** The app's daily macro reference at the default calorie target. Mirrors DEFAULT_TARGETS in apps/mobile/src/lib/log.ts. */
+const DEFAULT_TARGETS: DailyTargets = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 };
+const DIET_LABELS = { veg: "vegetarian", eggetarian: "eggetarian", non_veg: "non-vegetarian", vegan: "vegan", jain: "jain" } as const;
+
+const coachProfileValidator = v.union(
+  v.null(),
+  v.object({
+    goal: v.optional(v.union(v.literal("lose"), v.literal("maintain"), v.literal("gain"))),
+    pace: v.optional(v.union(v.literal("relaxed"), v.literal("steady"), v.literal("fast"))),
+    dietType: v.optional(
+      v.union(v.literal("veg"), v.literal("eggetarian"), v.literal("non_veg"), v.literal("vegan"), v.literal("jain")),
+    ),
+    trainingDaysPerWeek: v.optional(v.number()),
+    targetWeightKg: v.optional(v.number()),
+    targetKcal: v.union(v.number(), v.null()),
+    proteinG: v.union(v.number(), v.null()),
+    carbsG: v.union(v.number(), v.null()),
+    fatG: v.union(v.number(), v.null()),
+    latestTrendKg: v.union(v.number(), v.null()),
+    weeklyRateKg: v.union(v.number(), v.null()),
+  }),
+);
+type CoachProfile = NonNullable<Infer<typeof coachProfileValidator>>;
+
 const contextValidator = v.object({
   localDate: v.string(),
   slot: mealSlotValidator,
@@ -614,10 +650,47 @@ const contextValidator = v.object({
     v.object({ entryId: v.id("entries"), slot: mealSlotValidator, foodName: v.string(), grams: v.number(), kcal: v.number() }),
   ),
   userFoods: v.array(v.string()),
+  profile: coachProfileValidator,
 });
 type TurnContext = Infer<typeof contextValidator>;
 
-/** D12 context for one turn: recent chat history, today's live entries (current revisions) and the user's foods. */
+/** The profile, targets and weight trend the coach sees: the numbers Today and Progress show. Null without a settings row. */
+async function coachProfileOf(ctx: QueryCtx, userId: string, localDate: string): Promise<CoachProfile | null> {
+  const input = await tdeeInput(ctx, userId, localDate);
+  const settings = input.settings;
+  if (settings === null) return null;
+  const from = addDays(localDate, 1 - MAX_PROGRESS_RANGE_DAYS);
+  const [rows, snapshot] = await Promise.all([
+    ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", from).lte("localDate", localDate)).take(MAX_PROGRESS_RANGE_DAYS),
+    ctx.db.query("tdee_snapshots").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first(),
+  ]);
+  // The trend warms up over the same range Progress uses, so these numbers match its chart.
+  const trend = weightTrend(rows.map((row) => ({ date: row.localDate, weightKg: row.kg, intakeKcal: null })));
+  const last = rows.at(-1);
+  const recent = rows.filter((row) => row.localDate >= addDays(localDate, -7));
+  const first = recent[0];
+  const weeklyRateKg =
+    first === undefined || recent.length < 2
+      ? null
+      : 7 * leastSquaresSlope(recent.map((row) => ({ x: daysBetween(first.localDate, row.localDate), y: trend.get(row.localDate) ?? row.kg })));
+  const kcal = calorieTarget(settings, input.baseline, snapshot, localDate, input.latestWeightKg)?.kcal ?? null;
+  const macros = kcal === null ? null : scaleMacroTargets(kcal, DEFAULT_TARGETS);
+  return {
+    goal: settings.goal,
+    pace: settings.pace,
+    dietType: settings.dietType,
+    trainingDaysPerWeek: settings.trainingDaysPerWeek,
+    targetWeightKg: settings.targetWeightKg,
+    targetKcal: kcal,
+    proteinG: macros?.proteinG ?? null,
+    carbsG: macros?.carbsG ?? null,
+    fatG: macros?.fatG ?? null,
+    latestTrendKg: last === undefined ? null : (trend.get(last.localDate) ?? last.kg),
+    weeklyRateKg,
+  };
+}
+
+/** D12 context for one turn: recent chat history, today's live entries (current revisions), the user's foods and profile. */
 export const turnContext = internalQuery({
   args: { userId: v.string(), chatId: v.id("chats") },
   returns: contextValidator,
@@ -657,7 +730,8 @@ export const turnContext = internalQuery({
         kcal: roundTo(row.nutrients.kcal, 0),
       }));
     const userFoods = (await userFoodsOf(ctx, userId)).slice(0, MAX_CONTEXT_USER_FOODS).map((food) => food.name);
-    return { localDate: day.localDate, slot: day.slot, history, entries, userFoods };
+    const profile = await coachProfileOf(ctx, userId, day.localDate);
+    return { localDate: day.localDate, slot: day.slot, history, entries, userFoods, profile };
   },
 });
 
@@ -806,11 +880,40 @@ const REGENERATE_TOOLS: ToolDefinition[] = CHAT_TOOLS.filter(
 const REGENERATE_NOTE =
   "You are rewriting your last reply. Any log changes it made are already saved and can't be repeated; only answer again.";
 
+/** Lines about the user's goal, diet, targets and weight trend. Only lines that have data. */
+function aboutUser(profile: CoachProfile | null): string[] {
+  if (profile === null) return [];
+  const lines: string[] = [];
+  const rate =
+    profile.goal === undefined || profile.goal === "maintain" || profile.pace === undefined ? undefined : PACE_KG_PER_WEEK[profile.goal][profile.pace];
+  const paceText = rate === undefined ? "" : `, ${profile.pace} pace (${rate} kg a week)`;
+  const goal = profile.goal === undefined ? "" : `Goal: ${profile.goal}${paceText}.`;
+  const target = profile.targetWeightKg === undefined ? "" : `Target weight ${profile.targetWeightKg} kg.`;
+  const goalLine = [goal, target].filter((part) => part !== "").join(" ");
+  if (goalLine !== "") lines.push(goalLine);
+  if (profile.dietType !== undefined) {
+    lines.push(`Diet: ${DIET_LABELS[profile.dietType]}.`);
+    lines.push("Respect the user's diet in every suggestion (no meat for veg, no egg for veg or vegan, no onion or garlic for jain).");
+  }
+  if (profile.trainingDaysPerWeek !== undefined) {
+    lines.push(`Trains ${profile.trainingDaysPerWeek} ${profile.trainingDaysPerWeek === 1 ? "day" : "days"} a week.`);
+  }
+  if (profile.targetKcal !== null) {
+    lines.push(`Daily target: ${profile.targetKcal} kcal, protein ${profile.proteinG} g, carbs ${profile.carbsG} g, fat ${profile.fatG} g.`);
+  }
+  if (profile.latestTrendKg !== null) {
+    const weekly = profile.weeklyRateKg === null ? "" : `, ${roundTo(profile.weeklyRateKg, 1)} kg a week`;
+    lines.push(`Weight trend: ${roundTo(profile.latestTrendKg, 1)} kg${weekly}.`);
+  }
+  return lines;
+}
+
 /** System prompt for one turn, carrying the D12 context. */
 function systemPrompt(context: TurnContext): string {
   const entries = context.entries.length === 0
     ? "(none yet)"
     : context.entries.map((e) => `- ${e.entryId} | ${e.slot} | ${e.foodName} | ${e.grams} g | ${e.kcal} kcal`).join("\n");
+  const about = aboutUser(context.profile);
   return [
     "You are Polo, the coach in Stride, a nutrition tracker. Replies are short and plain.",
     "Fix or remove logged foods with edit_entry or delete_entry, using the entry ids below.",
@@ -820,6 +923,7 @@ function systemPrompt(context: TurnContext): string {
     `Today is ${context.localDate}. The current meal slot is ${context.slot}.`,
     `Today's entries (id | slot | food | grams | kcal):\n${entries}`,
     `The user's own foods: ${context.userFoods.length === 0 ? "(none)" : context.userFoods.join(", ")}.`,
+    ...(about.length === 0 ? [] : [`About the user:\n${about.join("\n")}`]),
   ].join("\n");
 }
 

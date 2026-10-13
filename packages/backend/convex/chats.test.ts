@@ -830,3 +830,37 @@ describe("review fixes", () => {
     expect(await replyRow(t)).toMatchObject({ status: "stopped" });
   });
 });
+
+describe("coach sees the profile (10f)", () => {
+  test("a saved profile reaches the system prompt with diet, training, targets and weight trend", async () => {
+    const { user, chatId } = await setup();
+    await user.mutation(api.weights.logWeight, { kg: 72.4 });
+    await user.mutation(api.progress_v2.saveProfile, {
+      goal: "lose",
+      sex: "male",
+      heightCm: 175,
+      dob: "1990-01-01",
+      activity: "moderate",
+      dietType: "jain",
+      targetWeightKg: 68,
+      pace: "steady",
+      trainingDaysPerWeek: 4,
+    });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "what should I eat?" });
+
+    const system = systemText(bodies[0] ?? {});
+    expect(system).toContain("About the user:");
+    expect(system).toContain("Goal: lose, steady pace (0.5 kg a week). Target weight 68 kg.");
+    expect(system).toContain("Diet: jain.");
+    expect(system).toContain("no onion or garlic for jain");
+    expect(system).toContain("Trains 4 days a week.");
+    expect(system).toMatch(/Daily target: \d+ kcal, protein \d+ g, carbs \d+ g, fat \d+ g\./);
+    expect(system).toContain("Weight trend: 72.4 kg.");
+  });
+
+  test("a user with no profile gets no About block and no crash", async () => {
+    const { user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(systemText(bodies[0] ?? {})).not.toContain("About the user");
+  });
+});
