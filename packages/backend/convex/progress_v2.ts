@@ -88,8 +88,8 @@ export async function initializeCalorieTarget(ctx: MutationCtx, userId: string):
   await ctx.db.patch("user_settings", settings._id, { calorieTarget: target });
 }
 
-/** Rejects profile values that would make the formula, the target or the weigh-in history nonsensical. */
-async function validateProfile(ctx: MutationCtx, userId: string, profile: ProfileInput): Promise<void> {
+/** Rejects profile values that would make the formula, the target or the weigh-in history nonsensical. Target-side checks run only when checkTargetSide is true. */
+async function validateProfile(ctx: MutationCtx, userId: string, profile: ProfileInput, checkTargetSide: boolean): Promise<void> {
   const { goal, heightCm, dob, targetWeightKg, trainingDaysPerWeek } = profile;
   if (heightCm === undefined || !Number.isFinite(heightCm) || heightCm < 100 || heightCm > 250) {
     throw new Error(`heightCm must be within 100-250, got ${heightCm}`);
@@ -106,6 +106,7 @@ async function validateProfile(ctx: MutationCtx, userId: string, profile: Profil
   if (!Number.isFinite(targetWeightKg) || targetWeightKg < 30 || targetWeightKg > 300) {
     throw new Error(`targetWeightKg must be within 30-300, got ${targetWeightKg}`);
   }
+  if (!checkTargetSide) return;
   const latest = await ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first();
   if (latest === null) return;
   if (goal === "lose" && targetWeightKg >= latest.kg) {
@@ -211,11 +212,10 @@ export const profile = query({
   })),
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
-    const [settings, latestWeight] = await Promise.all([
-      ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
-      ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).order("desc").first(),
-    ]);
+    const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (settings === null) return null;
+    const localDate = await localDateOrToday(ctx, userId, undefined);
+    const latestWeight = await ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first();
     return {
       goal: settings.goal,
       sex: settings.sex,
@@ -248,7 +248,7 @@ export const saveProfile = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
-    await validateProfile(ctx, userId, args);
+    await validateProfile(ctx, userId, args, true);
     await assertLedgerWritable(ctx, userId);
     const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (settings === null) await ctx.db.insert("user_settings", { userId, ...args });
@@ -276,7 +276,7 @@ export const updateProfile = mutation({
     const userId = await requireUserId(ctx);
     const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (settings === null) throw new Error("Finish onboarding first");
-    await validateProfile(ctx, userId, { ...settings, ...args });
+    await validateProfile(ctx, userId, { ...settings, ...args }, args.targetWeightKg !== undefined || args.goal !== undefined);
     await assertLedgerWritable(ctx, userId);
     await ctx.db.patch("user_settings", settings._id, { ...args, calorieTarget: undefined });
     await initializeCalorieTarget(ctx, userId);

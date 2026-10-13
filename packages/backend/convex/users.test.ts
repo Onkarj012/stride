@@ -329,13 +329,30 @@ describe("deleteAccount", () => {
     expect(settings.map((row) => row.userId)).toEqual(["user_a", "user_b"]);
   });
 
-  test("reports a Clerk failure with its status", async () => {
+  test("reports a Clerk failure with its status and clears nothing", async () => {
     vi.useFakeTimers();
     vi.stubEnv("CLERK_SECRET_KEY", "sk_test");
     vi.stubGlobal("fetch", vi.fn(async (_url: string, _init?: RequestInit) => new Response("upstream detail", { status: 500 })));
-    const { t, user } = await setup();
+    const { t, sharedFood, user } = await setup();
+    await seedAccountRows(t, sharedFood);
 
     await expect(user.action(api.users.deleteAccount, {})).rejects.toThrow("Clerk delete failed (500)");
     await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const owners = await t.run(async (ctx) => ({
+      users: (await ctx.db.query("users").take(10)).map((r) => r.clerkId),
+      user_settings: (await ctx.db.query("user_settings").take(10)).map((r) => r.userId),
+      weights: (await ctx.db.query("weights").take(10)).map((r) => r.userId),
+      entries: (await ctx.db.query("entries").take(10)).map((r) => r.userId),
+      chats: (await ctx.db.query("chats").take(10)).map((r) => r.userId),
+    }));
+    expect(owners).toEqual({
+      users: ["user_a", "user_b"],
+      user_settings: ["user_a", "user_b"],
+      weights: ["user_a", "user_b"],
+      entries: ["user_a", "user_b"],
+      chats: ["user_a", "user_b"],
+    });
+    expect(await user.query(api.users.ledgerClearPending, {})).toBe(false);
   });
 });

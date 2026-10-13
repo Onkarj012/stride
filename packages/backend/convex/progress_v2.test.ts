@@ -356,6 +356,23 @@ test("updateProfile rejects a target weight on the wrong side of the current wei
   await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 65 })).resolves.toBeNull();
 });
 
+test("updateProfile on unrelated fields still works once the target weight is reached", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose", targetWeightKg: 65 });
+  await user.mutation(api.weights.logWeight, { kg: 64 });
+  await expect(user.mutation(api.progress_v2.updateProfile, { dietType: "vegan" })).resolves.toBeNull();
+  await expect(user.mutation(api.progress_v2.updateProfile, {})).resolves.toBeNull();
+  await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 70 })).rejects.toThrow(/targetWeightKg/);
+});
+
+test("profile ignores a weigh-in dated after today", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.saveProfile, PROFILE);
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  await user.mutation(api.weights.logWeight, { kg: 80, localDate: addDays(TODAY, 1) });
+  expect(await user.query(api.progress_v2.profile, {})).toMatchObject({ latestWeightKg: 70 });
+});
+
 test("updateProfile rejects trainingDaysPerWeek outside 0-7", async () => {
   const { user } = await setup();
   await expect(user.mutation(api.progress_v2.updateProfile, { trainingDaysPerWeek: 8 })).rejects.toThrow(/trainingDaysPerWeek/);
