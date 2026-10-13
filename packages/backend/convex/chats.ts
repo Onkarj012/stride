@@ -41,6 +41,8 @@ export const DEFAULT_CHAT_TITLE = "New chat";
 export const MAX_CHATS_LISTED = 50;
 /** Most earlier messages the model sees each turn (D12). */
 export const HISTORY_WINDOW = 20;
+/** Rows read per window, so hidden replies from regenerating don't shrink the history the model sees. */
+const HISTORY_READ_FACTOR = 3;
 /** Most model calls in one chat turn. Each may run tools; the turn ends when the model stops calling them. */
 export const MAX_CHAT_ITERATIONS = 4;
 
@@ -189,6 +191,18 @@ async function previewOf(ctx: QueryCtx, chatId: Id<"chats">): Promise<string | n
   return newest === undefined ? null : newest.text.slice(0, PREVIEW_CHARS);
 }
 
+/** One of the caller's chats by id, or null if it is gone or not theirs. The thread screen opens chats past the list's cap. */
+export const getChat = query({
+  args: { chatId: v.id("chats") },
+  returns: v.union(v.null(), v.object({ _id: v.id("chats"), title: v.string(), updatedAt: v.number() })),
+  handler: async (ctx, { chatId }) => {
+    const userId = await requireUserId(ctx);
+    const chat = await ctx.db.get("chats", chatId);
+    if (chat === null || chat.userId !== userId) return null;
+    return { _id: chat._id, title: chat.title, updatedAt: chat.updatedAt };
+  },
+});
+
 /** Renames one of the caller's chats. Other chat fields, including the update time, stay as they are. */
 export const renameChat = mutation({
   args: { chatId: v.id("chats"), title: v.string() },
@@ -284,13 +298,17 @@ async function messageBySubmission(
     .first();
 }
 
+/** Most replies to one user message a lookup reads. Regenerate hides the old one, so the live reply is the newest. */
+const MAX_REPLIES_READ = 5;
+
 /** The live (not regenerated away) assistant replies to one user message, oldest first. */
 async function liveReplies(ctx: QueryCtx | MutationCtx, userMessageId: Id<"messages">): Promise<Doc<"messages">[]> {
   const rows = await ctx.db
     .query("messages")
     .withIndex("by_answersMessageId", (q) => q.eq("answersMessageId", userMessageId))
-    .collect();
-  return rows.filter((row) => row.deletedAt === undefined).sort((a, b) => a._creationTime - b._creationTime);
+    .order("desc")
+    .take(MAX_REPLIES_READ);
+  return rows.filter((row) => row.deletedAt === undefined).reverse();
 }
 
 /** The finished (or stopped) turn for a submission id, so a retried send returns it without calling the model. */
@@ -605,9 +623,11 @@ export const turnContext = internalQuery({
       .query("messages")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .order("desc")
-      .take(HISTORY_WINDOW);
+      .take(HISTORY_WINDOW * HISTORY_READ_FACTOR);
+    // Hidden (regenerated) replies are dropped before the window is cut, so they can't push the question out.
     const history = recent
       .filter((m) => m.deletedAt === undefined)
+      .slice(0, HISTORY_WINDOW)
       .reverse()
       // A reply still streaming (this turn's own) or one that failed was never a finished answer.
       .flatMap((m) => {
@@ -902,6 +922,8 @@ async function runChatTurn(
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
 
     for (const [k, call] of reply.toolCalls.entries()) {
+      // A tool-only stream never calls back with text, so a stop must be checked before each ledger write.
+      if (await stream.flush()) return stopped();
       const args = parseToolArgs(call.function.arguments);
       const subId = `${submissionId}:${call.function.name}:${i}:${k}`;
       let result: JsonValue;
@@ -1035,7 +1057,13 @@ export const sendMessage = action({
 /** The newest visible reply of a chat and the user message it answers. Refuses a photo turn or a reply still streaming. */
 export const regenerateTarget = internalQuery({
   args: { userId: v.string(), chatId: v.id("chats") },
-  returns: v.object({ userMessageId: v.id("messages"), userSubmissionId: v.string(), replyId: v.id("messages") }),
+  returns: v.object({
+    userMessageId: v.id("messages"),
+    userSubmissionId: v.string(),
+    replyId: v.id("messages"),
+    draftIds: v.array(v.id("drafts")),
+    entryIds: v.array(v.id("entries")),
+  }),
   handler: async (ctx, { userId, chatId }) => {
     await ownChat(ctx, userId, chatId);
     const recent = await ctx.db
@@ -1049,7 +1077,7 @@ export const regenerateTarget = internalQuery({
     const user = reply.answersMessageId === undefined ? null : await ctx.db.get("messages", reply.answersMessageId);
     if (user === null || user.userId !== userId || user.submissionId === undefined) throw new Error("Nothing to regenerate yet.");
     if (user.attachments.some((a) => a.kind === "image")) throw new Error("Photo replies can't be regenerated yet.");
-    return { userMessageId: user._id, userSubmissionId: user.submissionId, replyId: reply._id };
+    return { userMessageId: user._id, userSubmissionId: user.submissionId, replyId: reply._id, draftIds: reply.draftIds, entryIds: reply.entryIds ?? [] };
   },
 });
 
@@ -1061,7 +1089,13 @@ export const regenerate = action({
     const identity = await ctx.auth.getUserIdentity();
     if (identity === null) throw new Error("Unauthenticated");
     const userId = identity.subject;
-    const old: { userMessageId: Id<"messages">; userSubmissionId: string; replyId: Id<"messages"> } = await ctx.runQuery(
+    const old: {
+      userMessageId: Id<"messages">;
+      userSubmissionId: string;
+      replyId: Id<"messages">;
+      draftIds: Id<"drafts">[];
+      entryIds: Id<"entries">[];
+    } = await ctx.runQuery(
       internal.chats.regenerateTarget,
       { userId, chatId },
     );
@@ -1082,8 +1116,9 @@ export const regenerate = action({
         status: turn.stopped ? "stopped" : "done",
         text: turn.reply,
         toolCalls: turn.toolCalls,
-        draftIds: turn.draftIds,
-        entryIds: turn.entryIds,
+        // The hidden reply's cards move to its replacement, so the entries it changed stay undoable from the chat.
+        draftIds: [...new Set([...old.draftIds, ...turn.draftIds])],
+        entryIds: [...new Set([...old.entryIds, ...turn.entryIds])],
         logAction: turn.logAction,
       });
       return { assistantMessageId: claim.replyId, reply: stored?.text ?? turn.reply };

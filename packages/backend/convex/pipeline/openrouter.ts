@@ -305,6 +305,7 @@ export async function streamOpenRouter(
       const decoder = new TextDecoder();
       let buffer = "";
       let finished = false;
+      let sawDone = false;
       let stopped = false;
       try {
         while (!finished && !stopped) {
@@ -325,6 +326,7 @@ export async function streamOpenRouter(
             const data = line.slice(5).trim();
             if (data === "[DONE]") {
               finished = true;
+              sawDone = true;
               break;
             }
             const text = applyChunk(JSON.parse(data), state);
@@ -346,6 +348,8 @@ export async function streamOpenRouter(
       const content = state.content === "" ? null : state.content;
       await settleCall(ctx, reservation.reservationId, request.model, state.usage, estimatedInputTokens, estimatedOutputTokens, content, toolCalls);
       if (stopped) return { content, toolCalls, stopped };
+      // A connection closed cleanly mid-answer looks like EOF; only a finish reason or [DONE] means the reply is whole.
+      if (!sawDone && state.finishReason === undefined) throw new Error("OpenRouter stream ended before the reply finished");
       if (state.finishReason === "length") throw new Error("OpenRouter reply was cut off (finish_reason: length)");
       if (content === null && toolCalls.length === 0) throw new Error("OpenRouter returned an empty reply");
       return { content, toolCalls, stopped };

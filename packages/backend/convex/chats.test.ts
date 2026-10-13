@@ -686,3 +686,78 @@ describe("rename, preview and search", () => {
     expect(await user.query(api.chats.searchChats, { query: "naan" })).toHaveLength(20);
   });
 });
+
+describe("review fixes", () => {
+  test("a stop pressed during a tool-only reply runs no ledger tool", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.dal, grams: 100, source: "db" }] });
+    llm = (_body, n) =>
+      n === 1
+        ? {
+            toolCalls: [{ name: "delete_entry", args: { entry_id: entry } }],
+            beforeEvent: async (i) => {
+              if (i === 0) await user.mutation(api.chats.stopMessage, { messageId: (await replyRow(t))._id });
+            },
+          }
+        : { content: "Never sent." };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "delete the dal" });
+    expect((await entryRows(t)).every((row) => row.status === "live")).toBe(true);
+    expect(await replyRow(t)).toMatchObject({ status: "stopped" });
+  });
+
+  test("a stream that closes before a finish event fails instead of saving a cut-off reply", async () => {
+    const { t, user, chatId } = await setup();
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "Half an ans" } }] })}\n\n`));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }));
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(/ended before/);
+    expect(await replyRow(t)).toMatchObject({ status: "failed" });
+  });
+
+  test("regenerating a reply that edited an entry keeps its undo card on the replacement", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.chapati, grams: 80, source: "db" }] });
+    llm = (body) =>
+      afterToolResult(body) ? { content: "Updated." } : { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] };
+    const first = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "3 rotis" });
+    llm = () => ({ content: "Here's another take." });
+    const again = await user.action(api.chats.regenerate, { chatId });
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
+    const visible = page.page.find((m) => m._id === again.assistantMessageId);
+    expect(visible?.entryIds).toEqual(first.entryIds);
+  });
+
+  test("many regenerations don't push the question out of the model's history", async () => {
+    const { t, user, chatId } = await setup();
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "the question" });
+    // 25 earlier regenerations: hidden replies newer than the question, then the live reply newest of all.
+    await t.run(async (ctx) => {
+      await ctx.db.patch("messages", turn.assistantMessageId, { deletedAt: 1 });
+      for (let i = 0; i < 25; i++) {
+        await ctx.db.insert("messages", {
+          userId: "user_a", chatId, role: "assistant", text: `old ${i}`, attachments: [], toolCalls: [], draftIds: [],
+          answersMessageId: turn.userMessageId, deletedAt: 1, status: "done",
+        });
+      }
+      await ctx.db.insert("messages", {
+        userId: "user_a", chatId, role: "assistant", text: "live", attachments: [], toolCalls: [], draftIds: [],
+        answersMessageId: turn.userMessageId, status: "done",
+      });
+    });
+    await user.action(api.chats.regenerate, { chatId });
+    const roles = Array.isArray(bodies.at(-1)?.messages) ? (bodies.at(-1)?.messages as unknown[]).map((m) => (isRecord(m) ? m.role : "")) : [];
+    expect(roles).toEqual(["system", "user"]);
+  });
+
+  test("getChat returns the caller's chat and null for anyone else", async () => {
+    const { t, user, chatId } = await setup();
+    expect(await user.query(api.chats.getChat, { chatId })).toMatchObject({ _id: chatId });
+    expect(await t.withIdentity({ subject: "user_b" }).query(api.chats.getChat, { chatId })).toBeNull();
+  });
+});
