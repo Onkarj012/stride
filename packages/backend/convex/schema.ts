@@ -220,7 +220,14 @@ export default defineSchema({
       v.literal("non_veg"),
       v.literal("vegan"),
       v.literal("jain"),
-    )),
+    )), // legacy single diet, read through dietsOf
+    dietTypes: v.optional(v.array(v.union(
+      v.literal("veg"),
+      v.literal("eggetarian"),
+      v.literal("non_veg"),
+      v.literal("vegan"),
+      v.literal("jain"),
+    ))),
     targetWeightKg: v.optional(v.number()),
     pace: v.optional(v.union(v.literal("relaxed"), v.literal("steady"), v.literal("fast"))),
     trainingDaysPerWeek: v.optional(v.number()),

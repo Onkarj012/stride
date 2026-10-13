@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { Image, Text, View } from 'react-native'
 import Animated, {
   FadeIn,
@@ -28,18 +28,20 @@ const STREAM_HOP_MS = 1600
 
 type Props = {
   message: ChatMessageView
-  // Set only on the newest reply, so only it offers a regenerate.
-  onRegenerate?: () => void
-  regenerating?: boolean
-  // Set only when the failed attempt is still known, so only then Retry shows.
-  onRetry?: () => void
+  // Only the newest reply offers a regenerate.
+  canRegenerate: boolean
+  regenerating: boolean
+  // Only a failed reply whose attempt is still known offers Retry.
+  canRetry: boolean
+  onRegenerate: () => void
+  onRetry: (submissionId: string) => void
 }
 
-// One message in the thread: a bubble for the user, a reply with its cards and actions for the coach.
-export function ChatMessage({ message, onRegenerate, regenerating, onRetry }: Props) {
-  if (message.role === 'user') return <UserBubble message={message} />
-  return <Reply message={message} onRegenerate={onRegenerate} regenerating={regenerating} onRetry={onRetry} />
-}
+// One message in the thread: a bubble for the user, a reply with its cards and actions for the coach. Memoized so a row re-renders only when its own props change.
+export const ChatMessage = memo(function ChatMessage(props: Props) {
+  if (props.message.role === 'user') return <UserBubble message={props.message} />
+  return <Reply {...props} />
+})
 
 // The user's line (mock v5 .msg.me), with the sent photo as a rounded thumbnail above it.
 function UserBubble({ message }: { message: ChatMessageView }) {
@@ -79,27 +81,45 @@ function useStreamHop(active: boolean): number {
   return hops
 }
 
-// The coach's reply (mock v5 .msg.ai): markdown text, how it ended, undo and draft cards, and its actions.
-function Reply({ message, onRegenerate, regenerating, onRetry }: Props) {
+// Hops Polo beside a reply while it streams. Only this small part re-renders on each hop.
+function ReplyPolo({ streaming, failed }: { streaming: boolean; failed: boolean }) {
+  const s = useStyles()
+  const hops = useStreamHop(streaming)
+  return (
+    <View style={s.polo}>
+      <Polo size={26} hop={hops} mood={failed ? 'wow' : 'idle'} />
+    </View>
+  )
+}
+
+// The reply's words: plain text while streaming, so each update is cheap; markdown once it settles.
+function ReplyText({ text, streaming, failed }: { text: string; streaming: boolean; failed: boolean }) {
   const s = useStyles()
   const md = useMarkdownStyles()
+  if (streaming) return <Text style={s.streamText}>{text}</Text>
+  return (
+    <View style={failed ? s.dim : undefined}>
+      <Markdown style={md}>{text}</Markdown>
+    </View>
+  )
+}
+
+// The coach's reply (mock v5 .msg.ai): text, how it ended, undo and draft cards, and its actions.
+function Reply({ message, canRegenerate, regenerating, canRetry, onRegenerate, onRetry }: Props) {
+  const s = useStyles()
   const { compose } = useLog()
   const streaming = message.status === 'streaming'
   const failed = message.status === 'failed'
   const stopped = message.status === 'stopped'
   const logAction = message.logAction
-  const hops = useStreamHop(streaming)
+  const retryId = message.retrySubmissionId
 
   return (
     <Animated.View entering={FadeIn.duration(220)} style={s.reply}>
-      <View style={s.polo}>
-        <Polo size={26} hop={hops} mood={failed ? 'wow' : 'idle'} />
-      </View>
+      <ReplyPolo streaming={streaming} failed={failed} />
       <View style={s.replyBody}>
         {message.text ? (
-          <View style={failed ? s.dim : undefined}>
-            <Markdown style={md}>{message.text}</Markdown>
-          </View>
+          <ReplyText text={message.text} streaming={streaming} failed={failed} />
         ) : streaming ? (
           <TypingDots />
         ) : null}
@@ -107,8 +127,8 @@ function Reply({ message, onRegenerate, regenerating, onRetry }: Props) {
         {failed ? (
           <View style={s.row}>
             <Text style={s.caption}>{message.text ? "Didn't finish." : "Couldn't answer that."}</Text>
-            {onRetry ? (
-              <Tap onPress={onRetry} scale={0.94} hitSlop={8} accessibilityRole="button" accessibilityLabel="Try again">
+            {canRetry && retryId ? (
+              <Tap onPress={() => onRetry(retryId)} scale={0.94} hitSlop={8} accessibilityRole="button" accessibilityLabel="Try again">
                 <Text style={s.link}>Try again</Text>
               </Tap>
             ) : null}
@@ -123,7 +143,7 @@ function Reply({ message, onRegenerate, regenerating, onRetry }: Props) {
           <DraftCard key={draftId} draftId={draftId} onCommitted={() => undefined} onDiscarded={() => undefined} />
         ))}
 
-        {!streaming && (logAction || onRegenerate) ? (
+        {!streaming && (logAction || canRegenerate) ? (
           <View style={[s.row, s.actions]}>
             {logAction ? (
               <Button
@@ -133,7 +153,7 @@ function Reply({ message, onRegenerate, regenerating, onRetry }: Props) {
                 onPress={() => compose('text', undefined, { text: logAction.text, storageId: logAction.storageId })}
               />
             ) : null}
-            {onRegenerate ? (
+            {canRegenerate ? (
               <Tap
                 onPress={onRegenerate}
                 disabled={regenerating}
@@ -221,6 +241,7 @@ const useStyles = themedStyles((t) => ({
     paddingHorizontal: 15,
   },
   bubbleText: { ...font('body'), color: t.c.bg },
+  streamText: { ...font('lead'), color: t.c.ink },
   thumb: { width: 176, height: 176, borderRadius: radii.md, backgroundColor: t.c.card2 },
   thumbAlone: { borderBottomRightRadius: 6 },
   photoChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: radii.pill, backgroundColor: t.c.card2 },

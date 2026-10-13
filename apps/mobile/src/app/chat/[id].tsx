@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import { ActivityIndicator, FlatList, Image, ScrollView, Text, TextInput, View, type ListRenderItemInfo } from 'react-native'
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated'
 import { router, useLocalSearchParams } from 'expo-router'
@@ -58,6 +58,11 @@ function withoutAttempt(attempts: Map<string, Attempt>, submissionId: string): M
   const next = new Map(attempts)
   next.delete(submissionId)
   return next
+}
+
+// Stable list key for a message.
+function keyForMessage(message: ChatMessageView): string {
+  return message._id
 }
 
 // Leaves the thread, falling back to Coach when it was opened directly.
@@ -131,113 +136,101 @@ function Thread({ chat }: { chat: ChatSummary }) {
   const regenerate = useAction(api.chats.regenerate)
   const stopMessage = useMutation(api.chats.stopMessage)
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl)
-  const [text, setText] = useState('')
-  const [photoUri, setPhotoUri] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   // Sends that threw, by submission id, so each failed reply can resend its own message with the same id.
   const [attempts, setAttempts] = useState<Map<string, Attempt>>(new Map())
   const [problem, setProblem] = useState<{ text: string; retry?: Attempt } | null>(null)
   const [regenerating, setRegenerating] = useState(false)
 
-  const messages = page.results.filter((m) => m.role !== 'tool')
+  const messages = useMemo(() => page.results.filter((m) => m.role !== 'tool'), [page.results])
   const latestIndex = messages.findIndex((m) => m.role === 'assistant')
   const latestReply = latestIndex === -1 ? undefined : messages[latestIndex]
+  const latestReplyId = latestReply?._id
   // The backend can't regenerate a photo reply yet, so the control hides for those.
   const askedWithPhoto = messages.slice(latestIndex + 1).find((m) => m.role === 'user')?.attachments.some((a) => a.kind === 'image') ?? false
   const streaming = latestReply?.status === 'streaming'
-  const canSend = (text.trim() !== '' || photoUri !== null) && !sending
   const failedAttempt = problem?.retry
-
-  // Maps each failed reply to the attempt it answers, by the submission id the backend returns.
-  const retries = new Map<string, Attempt>()
-  for (const m of messages) {
-    if (m.status !== 'failed' || !m.retrySubmissionId) continue
-    const attempt = attempts.get(m.retrySubmissionId)
-    if (attempt) retries.set(m._id, attempt)
-  }
 
   // Lifts the whole thread above the keyboard so the list shrinks and the composer stays in view.
   const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(insets.bottom, keyboard.height.value) }))
 
   // Uploads a picked photo and returns its storage id.
-  async function uploadAttachment(uri: string): Promise<StorageId> {
-    const token = await getToken({ template: 'convex' })
-    if (!token) throw new PlainError('You are signed out. Sign in again.')
-    return uploadPhoto(await generateUploadUrl({}), uri, token)
-  }
+  const uploadAttachment = useCallback(
+    async (uri: string): Promise<StorageId> => {
+      const token = await getToken({ template: 'convex' })
+      if (!token) throw new PlainError('You are signed out. Sign in again.')
+      return uploadPhoto(await generateUploadUrl({}), uri, token)
+    },
+    [getToken, generateUploadUrl],
+  )
 
   // Sends one attempt. Its submission id is reused on retry, so the server runs the turn once.
-  async function send(attempt: Attempt) {
-    setProblem(null)
-    setSending(true)
-    try {
-      const imageStorageId = attempt.photoUri ? await uploadAttachment(attempt.photoUri) : undefined
-      await sendMessage({ chatId: chat._id, submissionId: attempt.submissionId, text: attempt.text || undefined, imageStorageId })
-      setAttempts((prev) => withoutAttempt(prev, attempt.submissionId))
-    } catch (err) {
-      setAttempts((prev) => new Map(prev).set(attempt.submissionId, attempt))
-      setProblem({ text: plainError(err), retry: attempt })
-    } finally {
-      setSending(false)
-    }
-  }
+  const send = useCallback(
+    async (attempt: Attempt) => {
+      setProblem(null)
+      setSending(true)
+      try {
+        const imageStorageId = attempt.photoUri ? await uploadAttachment(attempt.photoUri) : undefined
+        await sendMessage({ chatId: chat._id, submissionId: attempt.submissionId, text: attempt.text || undefined, imageStorageId })
+        setAttempts((prev) => withoutAttempt(prev, attempt.submissionId))
+      } catch (err) {
+        setAttempts((prev) => new Map(prev).set(attempt.submissionId, attempt))
+        setProblem({ text: plainError(err), retry: attempt })
+      } finally {
+        setSending(false)
+      }
+    },
+    [chat._id, sendMessage, uploadAttachment],
+  )
 
-  // Sends what is in the composer and clears it.
-  function submitTyped() {
-    const trimmed = text.trim()
-    if (!canSend) return
-    setText('')
-    setPhotoUri(null)
-    void send({ submissionId: newSubmissionId(), text: trimmed, photoUri: photoUri ?? undefined })
-  }
+  // Sends what the composer holds as a new message.
+  const submitTyped = useCallback((text: string, photoUri?: string) => void send({ submissionId: newSubmissionId(), text, photoUri }), [send])
 
-  // Asks the user's library for one photo to send with the next message.
-  async function attach() {
-    try {
-      const picked = await launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5 })
-      const asset = picked.canceled ? undefined : picked.assets[0]
-      if (asset) setPhotoUri(asset.uri)
-    } catch {
-      setProblem({ text: "Couldn't open the gallery. Try again." })
-    }
-  }
+  // Shows a problem line above the composer.
+  const reportProblem = useCallback((text: string) => setProblem({ text }), [])
 
   // Stops the reply that is streaming now. The partial text stays.
-  async function stop() {
-    if (!latestReply) return
-    try {
-      await stopMessage({ messageId: latestReply._id })
-    } catch (err) {
-      setProblem({ text: plainError(err) })
-    }
-  }
+  const stop = useCallback(() => {
+    if (!latestReplyId) return
+    void stopMessage({ messageId: latestReplyId }).catch((err: unknown) => setProblem({ text: plainError(err) }))
+  }, [latestReplyId, stopMessage])
 
   // Replaces the newest reply.
-  async function regenerateReply() {
+  const regenerateReply = useCallback(() => {
     setRegenerating(true)
     setProblem(null)
-    try {
-      await regenerate({ chatId: chat._id })
-    } catch (err) {
-      setProblem({ text: plainError(err) })
-    } finally {
-      setRegenerating(false)
-    }
-  }
+    void regenerate({ chatId: chat._id })
+      .catch((err: unknown) => setProblem({ text: plainError(err) }))
+      .finally(() => setRegenerating(false))
+  }, [chat._id, regenerate])
+
+  // Resends the failed attempt that a reply answers, if it is still known.
+  const retry = useCallback(
+    (submissionId: string) => {
+      const attempt = attempts.get(submissionId)
+      if (attempt) void send(attempt)
+    },
+    [attempts, send],
+  )
 
   // One row of the inverted list: a message, with regenerate only on the newest reply.
-  function renderMessage({ item }: ListRenderItemInfo<ChatMessageView>) {
-    const isLatest = item._id === latestReply?._id
-    const retry = retries.get(item._id)
-    return (
-      <ChatMessage
-        message={item}
-        onRegenerate={isLatest && !askedWithPhoto ? () => void regenerateReply() : undefined}
-        regenerating={isLatest && regenerating}
-        onRetry={retry ? () => void send(retry) : undefined}
-      />
-    )
-  }
+  const renderMessage = useCallback(
+    ({ item }: ListRenderItemInfo<ChatMessageView>) => {
+      const isLatest = item._id === latestReplyId
+      const retryId = item.status === 'failed' ? item.retrySubmissionId : null
+      return (
+        <ChatMessage
+          message={item}
+          canRegenerate={isLatest && !askedWithPhoto}
+          regenerating={isLatest && regenerating}
+          canRetry={retryId !== null && attempts.has(retryId)}
+          onRegenerate={regenerateReply}
+          onRetry={retry}
+        />
+      )
+    },
+    [latestReplyId, askedWithPhoto, regenerating, attempts, regenerateReply, retry],
+  )
 
   return (
     <Animated.View style={[s.flex, lift]}>
@@ -254,7 +247,7 @@ function Thread({ chat }: { chat: ChatSummary }) {
         <FlatList
           inverted
           data={messages}
-          keyExtractor={(m) => m._id}
+          keyExtractor={keyForMessage}
           renderItem={renderMessage}
           contentContainerStyle={s.list}
           keyboardShouldPersistTaps="handled"
@@ -275,60 +268,91 @@ function Thread({ chat }: { chat: ChatSummary }) {
         </Animated.View>
       ) : null}
 
-      <View style={s.composer}>
-        {photoUri ? (
-          <Animated.View entering={FadeIn} style={s.pendingPhoto}>
-            <Image source={{ uri: photoUri }} style={s.pendingThumb} accessibilityLabel="Photo to send" />
-            <View style={s.removePhoto}>
-              <RoundButton icon="x" label="Remove photo" tone="card" size={26} onPress={() => setPhotoUri(null)} />
-            </View>
-          </Animated.View>
-        ) : null}
-        <View style={s.inputRow}>
-          <RoundButton icon="image" label="Attach a photo" tone="card" size={46} onPress={() => void attach()} />
-          <View style={s.field}>
-            <TextInput
-              style={s.input}
-              value={text}
-              onChangeText={setText}
-              placeholder="Message Polo"
-              placeholderTextColor={t.c.ink3}
-              multiline
-              accessibilityLabel="Message"
-            />
-            {streaming ? (
-              <Tap
-                style={[s.send, s.stopButton]}
-                scale={motion.press.iconScale}
-                onPress={() => void stop()}
-                accessibilityRole="button"
-                accessibilityLabel="Stop the reply"
-              >
-                <View style={s.stopGlyph} />
-              </Tap>
-            ) : (
-              <Tap
-                style={[s.send, canSend ? s.sendOn : s.sendOff]}
-                scale={motion.press.iconScale}
-                disabled={!canSend}
-                onPress={submitTyped}
-                accessibilityRole="button"
-                accessibilityLabel="Send"
-                accessibilityState={{ disabled: !canSend, busy: sending }}
-              >
-                {sending ? (
-                  <ActivityIndicator size="small" color={t.c.ink3} />
-                ) : (
-                  <Icon name="up" size={18} color={canSend ? t.c.onPolo : t.c.ink3} />
-                )}
-              </Tap>
-            )}
-          </View>
-        </View>
-      </View>
+      <Composer streaming={streaming} sending={sending} onSubmit={submitTyped} onStop={stop} onProblem={reportProblem} />
     </Animated.View>
   )
 }
+
+type ComposerProps = {
+  streaming: boolean
+  sending: boolean
+  onSubmit: (text: string, photoUri?: string) => void
+  onStop: () => void
+  onProblem: (text: string) => void
+}
+
+// The message box: text, an optional photo, and send or stop. It keeps its own text, so typing doesn't re-render the thread.
+const Composer = memo(function Composer({ streaming, sending, onSubmit, onStop, onProblem }: ComposerProps) {
+  const s = useStyles()
+  const t = useTheme()
+  const [text, setText] = useState('')
+  const [photoUri, setPhotoUri] = useState<string | null>(null)
+  const canSend = (text.trim() !== '' || photoUri !== null) && !sending
+
+  // Sends what is in the box and clears it.
+  function submitTyped() {
+    if (!canSend) return
+    const trimmed = text.trim()
+    setText('')
+    setPhotoUri(null)
+    onSubmit(trimmed, photoUri ?? undefined)
+  }
+
+  // Asks the user's library for one photo to send with the next message.
+  async function attach() {
+    try {
+      const picked = await launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5 })
+      const asset = picked.canceled ? undefined : picked.assets[0]
+      if (asset) setPhotoUri(asset.uri)
+    } catch {
+      onProblem("Couldn't open the gallery. Try again.")
+    }
+  }
+
+  return (
+    <View style={s.composer}>
+      {photoUri ? (
+        <Animated.View entering={FadeIn} style={s.pendingPhoto}>
+          <Image source={{ uri: photoUri }} style={s.pendingThumb} accessibilityLabel="Photo to send" />
+          <View style={s.removePhoto}>
+            <RoundButton icon="x" label="Remove photo" tone="card" size={26} onPress={() => setPhotoUri(null)} />
+          </View>
+        </Animated.View>
+      ) : null}
+      <View style={s.inputRow}>
+        <RoundButton icon="image" label="Attach a photo" tone="card" size={46} onPress={() => void attach()} />
+        <View style={s.field}>
+          <TextInput
+            style={s.input}
+            value={text}
+            onChangeText={setText}
+            placeholder="Message Polo"
+            placeholderTextColor={t.c.ink3}
+            multiline
+            accessibilityLabel="Message"
+          />
+          {streaming ? (
+            <Tap style={[s.send, s.stopButton]} scale={motion.press.iconScale} onPress={onStop} accessibilityRole="button" accessibilityLabel="Stop the reply">
+              <View style={s.stopGlyph} />
+            </Tap>
+          ) : (
+            <Tap
+              style={[s.send, canSend ? s.sendOn : s.sendOff]}
+              scale={motion.press.iconScale}
+              disabled={!canSend}
+              onPress={submitTyped}
+              accessibilityRole="button"
+              accessibilityLabel="Send"
+              accessibilityState={{ disabled: !canSend, busy: sending }}
+            >
+              {sending ? <ActivityIndicator size="small" color={t.c.ink3} /> : <Icon name="up" size={18} color={canSend ? t.c.onPolo : t.c.ink3} />}
+            </Tap>
+          )}
+        </View>
+      </View>
+    </View>
+  )
+})
 
 // Empty chat (mock v5 #/thread-new): Polo, a short line, and starter prompts from the user's day.
 function NewChat({ disabled, onPick }: { disabled: boolean; onPick: (prompt: string) => void }) {

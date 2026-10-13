@@ -60,23 +60,71 @@ function convexCode(err: unknown): string | null {
   return null
 }
 
+// Server error text mapped to one plain line. The first match wins, so specific patterns come first.
+const PLAIN_MESSAGES: ReadonlyArray<readonly [RegExp, string]> = [
+  // Draft item lines are already written for users; '$&' keeps the matched text as is.
+  [/Item \d+[^\n]*/, '$&'],
+  [/BUDGET_EXCEEDED/,"Today's AI allowance is used up. Barcode scans still work, and it resets tomorrow."],
+  [/RATE_LIMITED/, "That's a lot at once. Give it a minute, then try again."],
+  [/INPUT_TOO_LARGE/, "That's too long for me. Try something shorter."],
+  [/Groq|transcription/i, "I couldn't make out that recording. Try again, or type it."],
+  [/Connection lost|Network request failed|network|WebSocket|offline/i, 'No connection. Check your internet and try again.'],
+  [/Unauthenticated/, 'You are signed out. Sign in again.'],
+  [/CLERK_SECRET_KEY|Clerk delete failed/, "Couldn't delete your account right now. Try again later."],
+  [/Your data is being cleared/, 'Your data is being cleared. Try again in a moment.'],
+  [/Finish onboarding first/, 'Finish setting up your profile first.'],
+  [/already being handled/, 'Still working on your last message.'],
+  [/Wait for the reply to finish/, 'Wait for the reply to finish, then regenerate it.'],
+  [/Nothing to regenerate yet/, 'Nothing to regenerate yet.'],
+  [/Photo replies can't be regenerated/, "Photo replies can't be regenerated yet."],
+  [/can't be regenerated right now/, "This reply can't be regenerated right now."],
+  [/Send the voice note again/, 'Send the voice note again.'],
+  [/Message is empty/, 'Type a message or add a photo first.'],
+  [/Photo not found|Upload not found/, "That photo didn't upload. Try again."],
+  [/Photo is too large/, 'That photo is too large. Try again from a little further away.'],
+  [/not an image/, "That file isn't a photo. Pick a photo and try again."],
+  [/Unknown (entry_id|food_id|food)|not found/i, "That's no longer there."],
+  [/newer revision|changed since|Reload and retry/, 'This changed somewhere else. Reload and try again.'],
+  [/can't undo/, "That can't be undone anymore."],
+  [/Nothing left to log/, 'Nothing left to log. Discard the draft instead.'],
+  [/could not be parsed/, 'This entry could not be parsed. Edit it before saving.'],
+  [/heightCm must be/, 'Height should be between 100 and 250 cm.'],
+  [/targetWeightKg must be below/, 'For losing weight, pick a target below your current weight.'],
+  [/targetWeightKg must be above/, 'For gaining weight, pick a target above your current weight.'],
+  [/targetWeightKg must be/, 'Target weight should be between 30 and 300 kg.'],
+  [/kg must be within/, "That weight doesn't look right. Check it and try again."],
+  [/weightKg must|reps must|rpe must/, "That weight, rep, or effort value isn't allowed."],
+  [/dob must be/, 'Check your date of birth.'],
+  [/trainingDaysPerWeek/, 'Training days should be a whole number from 0 to 7.'],
+  [/Pick at least one diet/, 'Pick at least one diet.'],
+  [/unrealistically high/, "That's more calories than makes sense. Check the amount."],
+  [/grams must be|cannot turn that amount/, "That amount doesn't look right. Enter the grams."],
+  [/Barcode must be/, "That barcode doesn't look right. Try scanning again."],
+  [/Open Food Facts/, "The food database isn't responding. Try again later."],
+  [/Food name must be|Nutrients must be|Macros cannot exceed/, "Check the food's name and nutrition numbers."],
+  [/personal foods/, "You've reached the limit for personal foods."],
+  [/Session exceeds|Day exceeds|holds at most/, "That's too much for one day or workout."],
+  [/must not precede|at or after startedAt/, 'That end time is before the start time.'],
+  [/Session is finished/, 'This workout is already finished.'],
+  [/already deleted|is deleted/, "That's already deleted."],
+  [/muscles/, 'Check the muscle groups and try again.'],
+  [/must be 1-\d+ characters|Title must be|name must be|query must be/, "That's empty or too long. Shorten it and try again."],
+  [/YYYY-MM-DD|calendar date|HH:MM|Timestamp must|epoch|date and time must/, "That date or time doesn't look right."],
+]
+
 // One plain sentence for any error thrown by a Convex call or an upload.
 export function plainError(err: unknown): string {
   // Checked by name: transpiled Error subclasses do not always keep instanceof.
   if (err instanceof Error && err.name === 'PlainError') return err.message
   const code = convexCode(err)
   const raw = err instanceof Error ? err.message : String(err)
-  const text = `${code ?? ''} ${raw}`
-  if (/BUDGET_EXCEEDED/.test(text)) return "Today's AI allowance is used up. Barcode scans still work, and it resets tomorrow."
-  if (/RATE_LIMITED/.test(text)) return "That's a lot at once. Give it a minute, then try again."
-  if (/INPUT_TOO_LARGE/.test(text)) return "That's too long for me. Try something shorter."
-  if (/Groq|transcription/i.test(text)) return "I couldn't make out that recording. Try again, or type it."
-  if (/Connection lost|Network request failed|network|WebSocket|offline/i.test(text))
-    return 'No connection. Check your internet and try again.'
-  if (/Unauthenticated/.test(text)) return 'You are signed out. Sign in again.'
-  // Dev deployments send "Uncaught Error: <message>" with a stack; the first line is the readable part.
-  const uncaught = /Uncaught (?:Convex)?Error: ([^\n]+)/.exec(raw)?.[1]?.replace(/\s+at .*$/, '').trim()
-  if (uncaught) return uncaught
+  // Stack frames are dropped so their file names cannot match a pattern.
+  const text = `${code ?? ''} ${raw.split(/\n\s+at /)[0]}`
+  for (const [pattern, line] of PLAIN_MESSAGES) {
+    const found = pattern.exec(text)
+    if (found) return found[0].replace(pattern, line)
+  }
+  console.warn('[stride]', raw)
   return 'Something went wrong. Try again.'
 }
 
