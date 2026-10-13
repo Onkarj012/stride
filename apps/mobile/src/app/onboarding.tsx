@@ -1,6 +1,13 @@
 import { useContext, useEffect, useState, type ReactNode } from 'react'
 import { ScrollView, Text, View } from 'react-native'
-import Animated, { FadeIn, FadeInDown, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  useAnimatedKeyboard,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated'
 import { router } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useMutation, useQuery } from 'convex/react'
@@ -108,6 +115,7 @@ export default function OnboardingScreen() {
 function Onboarding() {
   const s = useStyles()
   const insets = useSafeAreaInsets()
+  const keyboard = useAnimatedKeyboard()
   const holdOnboarding = useContext(HoldOnboardingContext)
   const logWeight = useMutation(api.weights.logWeight)
   const saveProfile = useMutation(api.progress_v2.saveProfile)
@@ -242,9 +250,11 @@ function Onboarding() {
   const fraction = (index + 1) / steps.length
   const isLast = current === 'training'
   const questions = steps.length - 1
+  // Lifts the screen above the keyboard so the focused field and Next stay in view.
+  const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(insets.bottom + 16, keyboard.height.value) }))
 
   return (
-    <View style={[s.root, { paddingTop: insets.top + layout.screenTop, paddingBottom: insets.bottom + 16 }]}>
+    <Animated.View style={[s.root, { paddingTop: insets.top + layout.screenTop }, lift]}>
       <View style={s.top}>
         <Progress fraction={fraction} />
         <View style={s.backSlot}>
@@ -253,7 +263,12 @@ function Onboarding() {
           ) : null}
         </View>
       </View>
-      <ScrollView style={s.body} contentContainerStyle={s.bodyContent} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={s.body}
+        contentContainerStyle={s.bodyContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         <Animated.View key={current} entering={FadeIn.duration(motion.duration.press)}>
           {current === 'reveal' ? null : <Text style={s.stepCount}>{`Step ${index + 1} of ${questions}`}</Text>}
           {renderStep()}
@@ -273,7 +288,7 @@ function Onboarding() {
           />
         )}
       </View>
-    </View>
+    </Animated.View>
   )
 }
 
