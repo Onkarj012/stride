@@ -863,4 +863,28 @@ describe("coach sees the profile (10f)", () => {
     await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
     expect(systemText(bodies[0] ?? {})).not.toContain("About the user");
   });
+
+  test("retrying an older failed question sends history that ends at that question", async () => {
+    const { user, chatId } = await setup();
+    llm = () => ({});
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "a", text: "question A" })).rejects.toThrow();
+    llm = () => ({ content: "Answer B." });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "b", text: "question B" });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "a", text: "question A" });
+    const sent = Array.isArray(bodies.at(-1)?.messages) ? (bodies.at(-1)?.messages as unknown[]) : [];
+    const texts = sent.map((m) => (isRecord(m) && typeof m.content === "string" ? m.content : ""));
+    expect(texts.at(-1)).toBe("question A");
+    expect(texts).not.toContain("question B");
+  });
+
+  test("a turn that fails after a correction keeps its Undo card on the failed reply", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.chapati, grams: 80, source: "db" }] });
+    llm = (_body, n) => (n === 1 ? { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] } : {});
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "3 rotis" })).rejects.toThrow();
+    const failed = await replyRow(t);
+    const revision = (await entryRows(t)).at(-1);
+    expect(failed.status).toBe("failed");
+    expect(failed.entryIds).toEqual([revision?._id]);
+  });
 });

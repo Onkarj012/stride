@@ -484,6 +484,22 @@ export const appendReply = internalMutation({
   },
 });
 
+/** Records the cards a streaming reply has produced so far, while the claiming attempt still owns the row. */
+export const saveReplyCards = internalMutation({
+  args: { messageId: v.id("messages"), claimedAt: v.number(), entryIds: v.array(v.id("entries")), draftIds: v.array(v.id("drafts")) },
+  returns: v.null(),
+  handler: async (ctx, { messageId, claimedAt, entryIds, draftIds }) => {
+    const row = await ownedStream(ctx, messageId, claimedAt);
+    if (row === null) return null;
+    // Regenerate seeds the row with the hidden reply's cards; keep them alongside this attempt's.
+    await ctx.db.patch("messages", messageId, {
+      entryIds: [...new Set([...(row.entryIds ?? []), ...entryIds])],
+      draftIds: [...new Set([...row.draftIds, ...draftIds])],
+    });
+    return null;
+  },
+});
+
 /** Asks a streaming reply to stop. The turn keeps the text written so far and ends as `stopped`. */
 export const stopMessage = mutation({
   args: { messageId: v.id("messages") },
@@ -692,14 +708,18 @@ async function coachProfileOf(ctx: QueryCtx, userId: string, localDate: string):
 
 /** D12 context for one turn: recent chat history, today's live entries (current revisions), the user's foods and profile. */
 export const turnContext = internalQuery({
-  args: { userId: v.string(), chatId: v.id("chats") },
+  args: { userId: v.string(), chatId: v.id("chats"), replyId: v.id("messages") },
   returns: contextValidator,
-  handler: async (ctx, { userId, chatId }): Promise<TurnContext> => {
+  handler: async (ctx, { userId, chatId, replyId }): Promise<TurnContext> => {
     await ownChat(ctx, userId, chatId);
     const day = await resolveLocalDay(ctx, userId, Date.now());
+    // History ends at the message this reply answers, so retrying an older question doesn't see later turns.
+    const reply = await ctx.db.get("messages", replyId);
+    const answers = reply?.answersMessageId === undefined ? null : await ctx.db.get("messages", reply.answersMessageId);
+    const cutoff = answers?._creationTime;
     const recent = await ctx.db
       .query("messages")
-      .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+      .withIndex("by_chatId", (q) => (cutoff === undefined ? q.eq("chatId", chatId) : q.eq("chatId", chatId).lte("_creationTime", cutoff)))
       .order("desc")
       .take(HISTORY_WINDOW * HISTORY_READ_FACTOR);
     // Hidden (regenerated) replies are dropped before the window is cut, so they can't push the question out.
@@ -1010,7 +1030,7 @@ async function runChatTurn(
   photo?: PhotoInput,
   regenerating = false,
 ): Promise<Turn> {
-  const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId });
+  const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId, replyId: target.messageId });
   const system = systemPrompt(context);
   const tools = regenerating ? REGENERATE_TOOLS : CHAT_TOOLS;
   const messages: ChatMessage[] = [
@@ -1073,6 +1093,8 @@ async function runChatTurn(
                 ...(typeof args.date === "string" ? { localDate: args.date } : {}),
               });
           entryIds.push(changed.entry_id);
+          // Saved on the reply now, so a later model failure still leaves this change's Undo card.
+          await ctx.runMutation(internal.chats.saveReplyCards, { ...target, entryIds, draftIds });
           notes.push(`${call.function.name === "delete_entry" ? "Removed" : "Updated"} ${changed.food}.`);
           result = { status: "ok", ...changed };
         } else if (call.function.name === "offer_log") {
