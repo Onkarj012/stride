@@ -212,10 +212,21 @@ export default defineSchema({
         v.literal("very_active"),
       ),
     ),
+    dietType: v.optional(v.union(
+      v.literal("veg"),
+      v.literal("eggetarian"),
+      v.literal("non_veg"),
+      v.literal("vegan"),
+      v.literal("jain"),
+    )),
+    targetWeightKg: v.optional(v.number()),
+    pace: v.optional(v.union(v.literal("relaxed"), v.literal("steady"), v.literal("fast"))),
+    trainingDaysPerWeek: v.optional(v.number()),
     calorieTarget: v.optional(v.object({
       kcal: v.number(),
       source: v.union(v.literal("formula"), v.literal("adaptive")),
       appliedLocalDate: v.string(),
+      clamped: v.optional(v.union(v.literal("pace_cap"), v.literal("floor"))),
     })),
   }).index("by_user", ["userId"]),
 

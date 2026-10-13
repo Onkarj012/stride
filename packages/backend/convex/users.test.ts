@@ -14,6 +14,8 @@ type Seeded = { chatId: Id<"chats">; draftId: Id<"drafts">; linkId: Id<"food_lin
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 /** Inserts one row in every per-user restart table for `userId`, plus `extraMessages` more messages and links. */
@@ -251,5 +253,125 @@ describe("exportAllData", () => {
     expect(data.messages).toHaveLength(EXPORT_MESSAGE_LIMIT);
     expect(data.truncated.messages).toBe(true);
     expect(data.truncated.food_links).toBe(false);
+  });
+});
+
+describe("deleteAccount", () => {
+  /** Adds a users row, a weight and an entry for both seeded users, since the restart seed has neither. */
+  async function seedAccountRows(t: TestConvex<typeof schema>, sharedFood: Id<"foods">) {
+    await t.run(async (ctx) => {
+      for (const userId of ["user_a", "user_b"]) {
+        await ctx.db.insert("users", { clerkId: userId, email: `${userId}@example.com`, name: userId });
+        await ctx.db.insert("weights", { userId, localDate: "2026-10-05", kg: 72, loggedAt: 1 });
+        await ctx.db.insert("entries", {
+          userId,
+          localDate: "2026-10-05",
+          timeZone: "Asia/Kolkata",
+          slot: "lunch",
+          loggedAt: 1,
+          foodId: sharedFood,
+          foodName: "Rice",
+          grams: 150,
+          nutrients: { kcal: 195, protein: 4, carbs: 42, fat: 0.4, fiber: null, sugar: null, sodiumMg: null },
+          source: "db",
+          confidence: 1,
+          flags: [],
+          revision: 1,
+          op: "add",
+          status: "live",
+          createdBy: "user",
+          submissionId: `${userId}:e0`,
+        });
+      }
+    });
+  }
+
+  test("clears the caller's rows, deletes their Clerk user, and leaves other users alone", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("CLERK_SECRET_KEY", "sk_test");
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { t, sharedFood, user } = await setup();
+    await seedAccountRows(t, sharedFood);
+
+    await user.action(api.users.deleteAccount, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(fetchMock).toHaveBeenCalledWith("https://api.clerk.com/v1/users/user_a", {
+      method: "DELETE",
+      headers: { Authorization: "Bearer sk_test" },
+    });
+    const owners = await t.run(async (ctx) => ({
+      users: (await ctx.db.query("users").take(10)).map((r) => r.clerkId),
+      user_settings: (await ctx.db.query("user_settings").take(10)).map((r) => r.userId),
+      weights: (await ctx.db.query("weights").take(10)).map((r) => r.userId),
+      entries: (await ctx.db.query("entries").take(10)).map((r) => r.userId),
+      messages: (await ctx.db.query("messages").take(10)).map((r) => r.userId),
+    }));
+    expect(owners).toEqual({
+      users: ["user_b"],
+      user_settings: ["user_b"],
+      weights: ["user_b"],
+      entries: ["user_b"],
+      messages: ["user_b"],
+    });
+  });
+
+  test("rows written after the first clear but before Clerk answers are swept too", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("CLERK_SECRET_KEY", "sk_test");
+    const { t, sharedFood, user } = await setup();
+    await seedAccountRows(t, sharedFood);
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      // The first clear's batches finish and drop the write block; then another device logs a weight.
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      await t.run((ctx) => ctx.db.insert("weights", { userId: "user_a", localDate: "2026-10-06", kg: 71, loggedAt: 2 }));
+      return new Response(null, { status: 200 });
+    }));
+
+    await user.action(api.users.deleteAccount, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const weights = await t.run(async (ctx) => (await ctx.db.query("weights").take(10)).map((r) => r.userId));
+    expect(weights).toEqual(["user_b"]);
+  });
+
+  test("throws before clearing anything when the Clerk key is missing", async () => {
+    vi.stubEnv("CLERK_SECRET_KEY", "");
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { t, user } = await setup();
+
+    await expect(user.action(api.users.deleteAccount, {})).rejects.toThrow("CLERK_SECRET_KEY is not set");
+    expect(fetchMock).not.toHaveBeenCalled();
+    const settings = await t.run((ctx) => ctx.db.query("user_settings").take(10));
+    expect(settings.map((row) => row.userId)).toEqual(["user_a", "user_b"]);
+  });
+
+  test("clears the caller's data before a Clerk failure, which reports its status", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("CLERK_SECRET_KEY", "sk_test");
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, _init?: RequestInit) => new Response("upstream detail", { status: 500 })));
+    const { t, sharedFood, user } = await setup();
+    await seedAccountRows(t, sharedFood);
+
+    await expect(user.action(api.users.deleteAccount, {})).rejects.toThrow("Clerk delete failed (500)");
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const owners = await t.run(async (ctx) => ({
+      users: (await ctx.db.query("users").take(10)).map((r) => r.clerkId),
+      user_settings: (await ctx.db.query("user_settings").take(10)).map((r) => r.userId),
+      weights: (await ctx.db.query("weights").take(10)).map((r) => r.userId),
+      entries: (await ctx.db.query("entries").take(10)).map((r) => r.userId),
+      chats: (await ctx.db.query("chats").take(10)).map((r) => r.userId),
+    }));
+    expect(owners).toEqual({
+      users: ["user_b"],
+      user_settings: ["user_b"],
+      weights: ["user_b"],
+      entries: ["user_b"],
+      chats: ["user_b"],
+    });
+    expect(await user.query(api.users.ledgerClearPending, {})).toBe(false);
   });
 });

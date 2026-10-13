@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Alert, Text, TextInput, View } from 'react-native'
+import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeIn, LinearTransition } from 'react-native-reanimated'
 import { router } from 'expo-router'
-import { useAuth, useUser } from '@clerk/expo'
+import { useUser } from '@clerk/expo'
 import { useMutation, useQuery } from 'convex/react'
 import { inferSlot } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout, radii } from '@stride/ui-tokens'
+import { AccountSheet, Avatar } from '@/components/AccountSheet'
 import { DayBar, Macro, Odometer } from '@/components/Budget'
 import { useBurnMilestone } from '@/components/BurnSheet'
 import { Button, RoundButton } from '@/components/Controls'
@@ -17,6 +18,7 @@ import { Screen, Section } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
 import { formatDateline, formatNumber, greeting } from '@/lib/format'
 import { SUMMARY_DAYS, plainError, targetsFor, type MealSlot } from '@/lib/log'
+import { kgLabel, savedUnits, stepKg, weightNumber, weightToKg, weightUnit, type Units } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
@@ -47,7 +49,7 @@ export default function TodayScreen() {
   const t = useTheme()
   const s = useStyles()
   const { user } = useUser()
-  const { signOut } = useAuth()
+  const [accountOpen, setAccountOpen] = useState(false)
   const { compose, openMeal, openDraft } = useLog()
   const minutes = useClockMinutes()
   const today = useLocalToday()
@@ -62,35 +64,30 @@ export default function TodayScreen() {
   const night = isNight(now)
   const targets = targetsFor(summary?.target?.kcal ?? null)
 
-  // Account sheet for now: shows who is signed in and offers sign out.
-  function openAccount() {
-    Alert.alert(name, user?.primaryEmailAddress?.emailAddress ?? '', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
-    ])
-  }
-
   const header = (
     <View style={s.head}>
       <View style={s.headText}>
         <Text style={s.eyebrow}>{formatDateline(now)}</Text>
         <Text style={s.greet}>{greeting(minutes, name)}</Text>
       </View>
-      <Tap style={s.avatar} scale={0.9} onPress={openAccount} accessibilityRole="button" accessibilityLabel="You">
-        <Text style={s.avatarText}>{name.charAt(0).toUpperCase()}</Text>
+      <Tap style={s.avatar} scale={0.9} onPress={() => setAccountOpen(true)} accessibilityRole="button" accessibilityLabel="You">
+        <Avatar size={layout.avatar} />
       </Tap>
     </View>
   )
 
   if (totals === undefined || entries === undefined)
     return (
-      <Screen>
-        {header}
-        <View style={s.loading}>
-          <Polo size={56} />
-          <Text style={s.loadingText}>Getting today ready…</Text>
-        </View>
-      </Screen>
+      <>
+        <Screen>
+          {header}
+          <View style={s.loading}>
+            <Polo size={56} />
+            <Text style={s.loadingText}>Getting today ready…</Text>
+          </View>
+        </Screen>
+        <AccountSheet open={accountOpen} onClose={() => setAccountOpen(false)} />
+      </>
     )
 
   const eaten = totals.nutrients
@@ -100,107 +97,120 @@ export default function TodayScreen() {
   const showNext = !night && meals.length > 0 && !meals.some((m) => m.slot === slotNow)
 
   return (
-    <Screen>
-      {header}
+    <>
+      <Screen>
+        {header}
 
-      <View style={s.hero}>
-        <View style={s.heroLabel}>
-          <Text style={s.eyebrow}>Left today</Text>
-          <Text style={s.faintSmall}>{formatNumber(eaten.kcal)} eaten</Text>
-        </View>
-        <View style={s.bignum}>
-          <Odometer value={Math.abs(left)} />
-          <Text style={s.of}>
-            {left >= 0 ? `of ${formatNumber(targets.kcal)}\nkcal` : `over\n${formatNumber(targets.kcal)} kcal`}
-          </Text>
-        </View>
-        <DayBar meals={meals.map((m) => ({ key: m.slot, kcal: m.kcal }))} target={targets.kcal} />
-        <View style={s.macros}>
-          <Macro name="Protein" eaten={eaten.protein} target={targets.proteinG} color={t.c.protein} />
-          <Macro name="Carbs" eaten={eaten.carbs} target={targets.carbsG} color={t.c.carbs} />
-          <Macro name="Fat" eaten={eaten.fat} target={targets.fatG} color={t.c.fat} />
-        </View>
-        {night ? (
-          <View style={s.nightNote}>
-            <Text style={s.nightText}>
-              {left >= 0 ? (
-                <>
-                  <Text style={s.nightStrong}>{formatNumber(left)} left</Text> and the kitchen's closing. If you're
-                  hungry, something light fits. If not, that's a good day. Sleep well.
-                </>
-              ) : (
-                <>
-                  <Text style={s.nightStrong}>{formatNumber(-left)} over</Text> today. That's fine, one day doesn't move the
-                  trend. Sleep well.
-                </>
-              )}
+        <View style={s.hero}>
+          <View style={s.heroLabel}>
+            <Text style={s.eyebrow}>Left today</Text>
+            <Text style={s.faintSmall}>{formatNumber(eaten.kcal)} eaten</Text>
+          </View>
+          <View style={s.bignum}>
+            <Odometer value={Math.abs(left)} />
+            <Text style={s.of}>
+              {left >= 0 ? `of ${formatNumber(targets.kcal)}\nkcal` : `over\n${formatNumber(targets.kcal)} kcal`}
             </Text>
           </View>
-        ) : null}
-      </View>
-
-      {!night ? <WeighCard key={today} today={today} trendKg={summary?.latestTrendKg ?? null} weeklyRateKg={summary?.weeklyRateKg ?? null} /> : null}
-
-      {pendingDrafts?.map((draft) => (
-        <Tap key={draft._id} style={[s.card, s.weighCard, s.weighSaved]} onPress={() => openDraft(draft._id)} accessibilityRole="button">
-          <View style={s.grow}>
-            <Text style={s.weighNote}>You have an unfinished log</Text>
-            <Text style={s.faintSmall}>{draft.itemCount} item{draft.itemCount === 1 ? '' : 's'} · tap to resume</Text>
+          <DayBar meals={meals.map((m) => ({ key: m.slot, kcal: m.kcal }))} target={targets.kcal} />
+          <View style={s.macros}>
+            <Macro name="Protein" eaten={eaten.protein} target={targets.proteinG} color={t.c.protein} />
+            <Macro name="Carbs" eaten={eaten.carbs} target={targets.carbsG} color={t.c.carbs} />
+            <Macro name="Fat" eaten={eaten.fat} target={targets.fatG} color={t.c.fat} />
           </View>
-        </Tap>
-      ))}
+          {night ? (
+            <View style={s.nightNote}>
+              <Text style={s.nightText}>
+                {left >= 0 ? (
+                  <>
+                    <Text style={s.nightStrong}>{formatNumber(left)} left</Text> and the kitchen's closing. If you're
+                    hungry, something light fits. If not, that's a good day. Sleep well.
+                  </>
+                ) : (
+                  <>
+                    <Text style={s.nightStrong}>{formatNumber(-left)} over</Text> today. That's fine, one day doesn't move the
+                    trend. Sleep well.
+                  </>
+                )}
+              </Text>
+            </View>
+          ) : null}
+        </View>
 
-      <Section title="Meals" link="History" onLink={() => router.navigate('/log')} />
-      <View style={s.mealsCard}>
-        {meals.length === 0 ? (
-          <View style={s.empty}>
-            <Polo size={64} hop={1} mood={night ? 'sleep' : 'idle'} />
-            <Text style={s.emptyTitle}>Clean slate.</Text>
-            <Text style={s.emptyBody}>Nothing logged yet. Tell me what you had, in any words.</Text>
-            <Button label="Log something" size="sm" onPress={() => compose('text')} style={s.emptyButton} />
-          </View>
-        ) : (
-          <>
-            {meals.map((m, i) => (
-              <MealRow key={m.slot} meal={m} first={i === 0} onPress={() => today && openMeal(today, m.slot)} />
-            ))}
-            {showNext ? <NextMealRow slot={slotNow} around={AROUND[slotNow]} first={false} onPress={() => compose('text', slotNow)} /> : null}
-          </>
-        )}
-      </View>
-    </Screen>
+        {!night ? <WeighCard key={today} today={today} trendKg={summary?.latestTrendKg ?? null} weeklyRateKg={summary?.weeklyRateKg ?? null} /> : null}
+
+        {pendingDrafts?.map((draft) => (
+          <Tap key={draft._id} style={[s.card, s.weighCard, s.weighSaved]} onPress={() => openDraft(draft._id)} accessibilityRole="button">
+            <View style={s.grow}>
+              <Text style={s.weighNote}>You have an unfinished log</Text>
+              <Text style={s.faintSmall}>{draft.itemCount} item{draft.itemCount === 1 ? '' : 's'} · tap to resume</Text>
+            </View>
+          </Tap>
+        ))}
+
+        <Section title="Meals" link="History" onLink={() => router.navigate('/log')} />
+        <View style={s.mealsCard}>
+          {meals.length === 0 ? (
+            <View style={s.empty}>
+              <Polo size={64} hop={1} mood={night ? 'sleep' : 'idle'} />
+              <Text style={s.emptyTitle}>Clean slate.</Text>
+              <Text style={s.emptyBody}>Nothing logged yet. Tell me what you had, in any words.</Text>
+              <Button label="Log something" size="sm" onPress={() => compose('text')} style={s.emptyButton} />
+            </View>
+          ) : (
+            <>
+              {meals.map((m, i) => (
+                <MealRow key={m.slot} meal={m} first={i === 0} onPress={() => today && openMeal(today, m.slot)} />
+              ))}
+              {showNext ? <NextMealRow slot={slotNow} around={AROUND[slotNow]} first={false} onPress={() => compose('text', slotNow)} /> : null}
+            </>
+          )}
+        </View>
+      </Screen>
+      <AccountSheet open={accountOpen} onClose={() => setAccountOpen(false)} />
+    </>
   )
 }
 
-// Morning weigh-in (mock #/weigh). Type or step the kg, save with logWeight; a second save the same day replaces it.
+// Morning weigh-in (mock #/weigh). Type or step the weight in the user's unit, save with logWeight in kg; a second save the same day replaces it.
 function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: number | null; weeklyRateKg: number | null }) {
   const t = useTheme()
   const s = useStyles()
   const { toast } = useLog()
+  const profile = useQuery(api.progress_v2.profile, {})
   const weight = useQuery(api.weights.todayWeight, { localDate: today })
   const logWeight = useMutation(api.weights.logWeight)
-  const [draft, setDraft] = useState<string | null>(null)
+  // The draft is kg, so changing units only changes how it is shown.
+  const [draftKg, setDraftKg] = useState<number | null>(null)
+  // Raw text as typed, tagged with its unit so a units change cannot reread it.
+  const [typed, setTyped] = useState<{ text: string; units: Units } | null>(null)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
 
   if (weight === undefined) return null
+  const units = savedUnits(profile?.units)
   // Start from today's or the latest weigh-in; 70 is only a starting point for the very first one.
   const start = weight.kg ?? weight.latestKg ?? 70
-  const text = draft ?? start.toFixed(1)
-  const kg = Number(text.replace(',', '.'))
-  const valid = Number.isFinite(kg) && kg > 0
-  const step = (d: number) => setDraft((Math.round(((valid ? kg : start) + d) * 10) / 10).toFixed(1))
+  const typing = typed?.units === units ? typed.text : null
+  const typedValue = typing === null ? null : Number(typing.replace(',', '.'))
+  const valid = typedValue === null || (Number.isFinite(typedValue) && typedValue > 0)
+  const kg = valid && typedValue !== null ? weightToKg(typedValue, units) : (draftKg ?? start)
+  const text = typing ?? weightNumber(kg, units)
+  const step = (dir: -1 | 1) => {
+    setDraftKg(stepKg(kg, dir, units))
+    setTyped(null)
+  }
 
   // Stores the weight for today and folds the card.
   async function save() {
     if (!valid) return
-    const value = Math.round(kg * 10) / 10
     setBusy(true)
     try {
-      await logWeight({ kg: value, localDate: today })
+      await logWeight({ kg, localDate: today })
       setEditing(false)
-      setDraft(null)
-      toast({ title: `Weight saved · ${value.toFixed(1)} kg`, sub: "Trend barely moves on one day. That's the point." })
+      setDraftKg(null)
+      setTyped(null)
+      toast({ title: `Weight saved · ${kgLabel(kg, units)}`, sub: "Trend barely moves on one day. That's the point." })
     } catch (err) {
       toast({ title: "Couldn't save your weight.", sub: plainError(err) })
     } finally {
@@ -216,8 +226,8 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
         <View style={s.grow}>
           <Text style={s.eyebrow}>Weighed in</Text>
           <Text style={s.weighNote}>
-            <Text style={s.weighValueInline}>{weight.kg.toFixed(1)} kg</Text>
-            {trendKg !== null ? `  trend ${trendKg.toFixed(1)}${direction}` : '  feeds your burn estimate'}
+            <Text style={s.weighValueInline}>{kgLabel(weight.kg, units)}</Text>
+            {trendKg !== null ? `  trend ${kgLabel(trendKg, units)}${direction}` : '  feeds your burn estimate'}
           </Text>
         </View>
         <Button label="Edit" size="sm" variant="ghost" onPress={() => setEditing(true)} />
@@ -230,22 +240,22 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
       <Text style={s.eyebrow}>Morning weight</Text>
       <Text style={[s.faintSmall, s.weighHint]}>Optional. Feeds your burn estimate.</Text>
       <View style={s.weighRow}>
-        <RoundButton icon="minus" label="Less" onPress={() => step(-0.1)} />
+        <RoundButton icon="minus" label="Less" onPress={() => step(-1)} />
         <View style={s.weighField}>
           <TextInput
             value={text}
-            onChangeText={setDraft}
+            onChangeText={(next) => setTyped({ text: next, units })}
             onSubmitEditing={() => void save()}
             keyboardType="decimal-pad"
             returnKeyType="done"
             selectTextOnFocus
             maxLength={5}
             style={s.weighValue}
-            accessibilityLabel="Weight in kilograms"
+            accessibilityLabel={`Weight in ${weightUnit(units)}`}
           />
-          <Text style={[s.weighUnit, { color: t.c.ink3 }]}>kg</Text>
+          <Text style={[s.weighUnit, { color: t.c.ink3 }]}>{weightUnit(units)}</Text>
         </View>
-        <RoundButton icon="plus" label="More" onPress={() => step(0.1)} />
+        <RoundButton icon="plus" label="More" onPress={() => step(1)} />
         <View style={s.grow} />
         <Button label="Save" size="sm" busy={busy} disabled={!valid} onPress={() => void save()} />
       </View>
@@ -269,7 +279,6 @@ const useStyles = themedStyles((t) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { ...font('avatar'), color: t.c.ink },
   loading: { alignItems: 'center', marginTop: 80, gap: 12 },
   loadingText: { ...font('callout'), color: t.c.ink3 },
   hero: { marginTop: 26 },
