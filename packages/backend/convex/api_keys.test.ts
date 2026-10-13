@@ -14,6 +14,7 @@ const ENV_KEY = "env-key";
 
 let calls: { url: string; auth: string | null }[];
 let keyCheckStatus: number;
+let keyCheckHold: Promise<void> | null;
 let chatStatus: number;
 let promptTokens: number;
 
@@ -31,7 +32,10 @@ function streamedReply(): Response {
 async function fakeFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   calls.push({ url, auth: new Headers(init?.headers).get("Authorization") });
-  if (url === OPENROUTER_KEY_CHECK_URL) return new Response("{}", { status: keyCheckStatus });
+  if (url === OPENROUTER_KEY_CHECK_URL) {
+    await keyCheckHold;
+    return new Response("{}", { status: keyCheckStatus });
+  }
   if (url !== OPENROUTER_CHAT_URL) throw new Error(`Unexpected fetch: ${url}`);
   if (chatStatus !== 200) return new Response("denied", { status: chatStatus });
   return streamedReply();
@@ -40,6 +44,7 @@ async function fakeFetch(input: string | URL | Request, init?: RequestInit): Pro
 beforeEach(() => {
   calls = [];
   keyCheckStatus = 200;
+  keyCheckHold = null;
   chatStatus = 200;
   promptTokens = 300;
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
@@ -47,13 +52,20 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
 
+/** Creates the profile row a real save needs. Saves only come from Settings, after onboarding. */
+async function completeProfile(t: ReturnType<typeof convexTest>, userId: string): Promise<void> {
+  await t.run((ctx) => ctx.db.insert("user_settings", { userId, timeZone: "Asia/Kolkata" }));
+}
+
 describe("own OpenRouter key settings", () => {
   test("saving a verified key reports only its last 4 characters", async () => {
     const t = convexTest(schema, modules);
+    await completeProfile(t, "user_a");
     const user = t.withIdentity({ subject: "user_a" });
     expect(await user.action(api.api_keys.saveOpenRouterKey, { key: `  ${FAKE_KEY}  ` })).toEqual({ last4: "0000" });
 
@@ -66,9 +78,9 @@ describe("own OpenRouter key settings", () => {
   test("a malformed key is refused before any check, and nothing is stored", async () => {
     const t = convexTest(schema, modules);
     const user = t.withIdentity({ subject: "user_a" });
-    await expect(user.action(api.api_keys.saveOpenRouterKey, { key: "not-a-key" })).rejects.toThrow(
-      "That doesn't look like an OpenRouter key.",
-    );
+    await expect(user.action(api.api_keys.saveOpenRouterKey, { key: "not-a-key" })).rejects.toMatchObject({
+      data: { code: "KEY_FORMAT" },
+    });
     expect(calls).toHaveLength(0);
     expect(await t.run((ctx) => ctx.db.query("user_api_keys").take(10))).toEqual([]);
   });
@@ -76,15 +88,50 @@ describe("own OpenRouter key settings", () => {
   test("a key OpenRouter rejects is not stored", async () => {
     keyCheckStatus = 401;
     const t = convexTest(schema, modules);
+    await completeProfile(t, "user_a");
     const user = t.withIdentity({ subject: "user_a" });
-    await expect(user.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY })).rejects.toThrow(
-      "OpenRouter rejected that key.",
-    );
+    await expect(user.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY })).rejects.toMatchObject({
+      data: { code: "KEY_REJECTED" },
+    });
+    expect(await t.run((ctx) => ctx.db.query("user_api_keys").take(10))).toEqual([]);
+  });
+
+  test("an OpenRouter outage is reported as KEY_CHECK_FAILED and nothing is stored", async () => {
+    keyCheckStatus = 503;
+    const t = convexTest(schema, modules);
+    await completeProfile(t, "user_a");
+    const user = t.withIdentity({ subject: "user_a" });
+    await expect(user.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY })).rejects.toMatchObject({
+      data: { code: "KEY_CHECK_FAILED" },
+    });
+    expect(await t.run((ctx) => ctx.db.query("user_api_keys").take(10))).toEqual([]);
+  });
+
+  test("a save whose check is still pending when data is cleared stores no key", async () => {
+    const t = convexTest(schema, modules);
+    await completeProfile(t, "user_a");
+    const user = t.withIdentity({ subject: "user_a" });
+    let releaseCheck!: () => void;
+    keyCheckHold = new Promise<void>((resolve) => {
+      releaseCheck = resolve;
+    });
+
+    const save = user.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY });
+    await vi.waitFor(() => expect(calls.some((call) => call.url === OPENROUTER_KEY_CHECK_URL)).toBe(true));
+
+    // Another device clears the data while the OpenRouter check is still open.
+    vi.useFakeTimers();
+    await user.mutation(api.users.clearAllData, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    releaseCheck();
+    await expect(save).rejects.toMatchObject({ data: { code: "KEY_SAVE_CANCELLED" } });
     expect(await t.run((ctx) => ctx.db.query("user_api_keys").take(10))).toEqual([]);
   });
 
   test("removing the key clears the status", async () => {
     const t = convexTest(schema, modules);
+    await completeProfile(t, "user_a");
     const user = t.withIdentity({ subject: "user_a" });
     await user.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY });
     await user.mutation(api.api_keys.removeOpenRouterKey, {});
@@ -93,6 +140,7 @@ describe("own OpenRouter key settings", () => {
 
   test("each user sees only their own key status", async () => {
     const t = convexTest(schema, modules);
+    await completeProfile(t, "user_a");
     const userA = t.withIdentity({ subject: "user_a" });
     const userB = t.withIdentity({ subject: "user_b" });
     await userA.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY });
