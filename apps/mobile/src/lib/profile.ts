@@ -101,6 +101,22 @@ export function stepDate(value: string, part: DatePart, dir: -1 | 1): string {
   return `${String(nextYear).padStart(4, '0')}-${String(nextMonth).padStart(2, '0')}-${String(nextDay).padStart(2, '0')}`
 }
 
+// The YYYY-MM-DD date for typed day, month and year, or null unless it is real and the age is 13 to 120.
+export function dobFromTyped(day: string, month: string, year: string): string | null {
+  if (!/^\d{1,2}$/.test(day) || !/^\d{1,2}$/.test(month) || !/^\d{4}$/.test(year)) return null
+  const d = Number(day)
+  const m = Number(month)
+  const y = Number(year)
+  const date = new Date(Date.UTC(y, m - 1, d))
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null
+  const now = new Date()
+  // A birthday later this year has not come yet, so the age is one less.
+  const birthdayPassed = now.getMonth() + 1 > m || (now.getMonth() + 1 === m && now.getDate() >= d)
+  const age = now.getFullYear() - y - (birthdayPassed ? 0 : 1)
+  if (age < 13 || age > 120) return null
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
 // Splits a full name at the first space into Clerk's first and last name.
 export function splitName(full: string): { firstName: string; lastName: string } {
   const trimmed = full.trim()
