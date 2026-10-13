@@ -2,6 +2,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import { AI_DAILY_BUDGET_USD } from "./ai_guard";
+import { KEY_CHECK_TIMEOUT_MS } from "./api_keys";
 import { OPENROUTER_CHAT_URL, PIPELINE_MODEL } from "./pipeline/openrouter";
 import schema from "./schema";
 
@@ -107,6 +108,28 @@ describe("own OpenRouter key settings", () => {
     expect(await t.run((ctx) => ctx.db.query("user_api_keys").take(10))).toEqual([]);
   });
 
+  test("a key check that never answers times out as KEY_CHECK_FAILED and stores nothing", async () => {
+    const t = convexTest(schema, modules);
+    await completeProfile(t, "user_a");
+    const user = t.withIdentity({ subject: "user_a" });
+    // Stands in for a hung connection: only the abort signal ends the request.
+    const hungFetch = vi.fn(
+      (_input: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    vi.stubGlobal("fetch", hungFetch);
+    vi.useFakeTimers();
+
+    const save = user.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY });
+    const outcome = expect(save).rejects.toMatchObject({ data: { code: "KEY_CHECK_FAILED" } });
+    await vi.waitFor(() => expect(hungFetch).toHaveBeenCalled());
+    vi.advanceTimersByTime(KEY_CHECK_TIMEOUT_MS);
+    await outcome;
+    expect(await t.run((ctx) => ctx.db.query("user_api_keys").take(10))).toEqual([]);
+  });
+
   test("a save whose check is still pending when data is cleared stores no key", async () => {
     const t = convexTest(schema, modules);
     await completeProfile(t, "user_a");
@@ -123,6 +146,8 @@ describe("own OpenRouter key settings", () => {
     vi.useFakeTimers();
     await user.mutation(api.users.clearAllData, {});
     await t.finishAllScheduledFunctions(vi.runAllTimers);
+    // Settings recreates the profile row under a new id before the check returns.
+    await user.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
 
     releaseCheck();
     await expect(save).rejects.toMatchObject({ data: { code: "KEY_SAVE_CANCELLED" } });

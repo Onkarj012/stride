@@ -58,7 +58,7 @@ function Settings() {
   const [sheetBusy, setSheetBusy] = useState(false)
   const units = savedUnits(profile?.units)
   const ownLast4 = ownKey?.set ? ownKey.last4 : null
-  const keyValue = ownLast4 ? `Yours ••••${ownLast4}` : "Stride's key"
+  const keyValue = ownKey === undefined ? '…' : ownLast4 ? `Yours ••••${ownLast4}` : "Stride's key"
 
   // Saves the units choice on the server.
   async function chooseUnits(next: Units) {
@@ -122,7 +122,7 @@ function Settings() {
             label="OpenRouter key"
             detail="Use your own key. Your AI use then doesn't count against the daily allowance."
             value={keyValue}
-            onPress={() => openSheet('key')}
+            onPress={ownKey === undefined ? undefined : () => openSheet('key')}
             last
           />
         </ListCard>
