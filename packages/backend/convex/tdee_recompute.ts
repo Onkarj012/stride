@@ -41,7 +41,7 @@ export const recomputeUser = internalMutation({
     const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (settings?.timeZone === undefined || !isValidTimeZone(settings.timeZone)) return null;
     const { localDate } = await resolveLocalDay(ctx, userId, Date.now());
-    const { result, baseline } = await tdeeInput(ctx, userId, localDate);
+    const { result, baseline, latestWeightKg } = await tdeeInput(ctx, userId, localDate);
     const existing = await ctx.db.query("tdee_snapshots").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).eq("localDate", localDate)).unique();
     if (result.status === "ok") {
       const row = { userId, localDate, estimateKcal: result.tdeeKcal, trendKg: result.trendKg, windowDays: result.windowDays, confidence: result.loggedFraction };
@@ -50,7 +50,7 @@ export const recomputeUser = internalMutation({
     } else if (existing !== null) await ctx.db.delete("tdee_snapshots", existing._id);
     if (settings.calorieTarget !== undefined && daysBetween(settings.calorieTarget.appliedLocalDate, localDate) < TARGET_UPDATE_DAYS) return null;
     const snapshot = await ctx.db.query("tdee_snapshots").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first();
-    const target = calorieTarget({ ...settings, calorieTarget: undefined }, baseline, snapshot, localDate);
+    const target = calorieTarget({ ...settings, calorieTarget: undefined }, baseline, snapshot, localDate, latestWeightKg);
     if (target !== null) await ctx.db.patch("user_settings", settings._id, { calorieTarget: target });
     return null;
   },

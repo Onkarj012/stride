@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { action, internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -152,59 +152,102 @@ export const ensureUser = mutation({
   },
 });
 
+/** Deletes every row the user owns in the legacy tables, and schedules the restart-table clear. */
+async function clearUserData(ctx: MutationCtx, userId: string): Promise<void> {
+  const byUserDate = [
+    "meals", "workouts", "daily_goals", "insights",
+    "water_logs", "sleep_logs", "mood_logs", "steps_logs",
+    "weight_logs", "check_in_answers", "check_in_llm_questions",
+  ] as const;
+  for (const table of byUserDate) {
+    const rows = await (ctx.db.query(table as any) as any)
+      .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
+      .collect();
+    await Promise.all(rows.map((r: any) => ctx.db.delete(r._id)));
+  }
+
+  const byUser = [
+    "chat_messages", "chat_sessions", "user_behavior",
+    "recipes", "food_memory", "workout_memory", "user_ingredients",
+    "user_profiles", "user_settings", "user_metabolic_profiles", "calorie_feedback",
+    "check_in_template_settings",
+  ] as const;
+  for (const table of byUser) {
+    const rows = await (ctx.db.query(table as any) as any)
+      .withIndex("by_user", (q: any) => q.eq("userId", userId))
+      .collect();
+    await Promise.all(rows.map((r: any) => ctx.db.delete(r._id)));
+  }
+
+  // nudges only has by_user_status, whose userId prefix covers every status.
+  const nudges = await ctx.db.query("nudges")
+    .withIndex("by_user_status", (q) => q.eq("userId", userId))
+    .collect();
+  await Promise.all(nudges.map((r) => ctx.db.delete(r._id)));
+
+  // weekly_summaries uses by_user_week index
+  const weeklies = await ctx.db.query("weekly_summaries")
+    .withIndex("by_user_week", (q) => q.eq("userId", userId))
+    .collect();
+  await Promise.all(weeklies.map((r) => ctx.db.delete(r._id)));
+
+  // user_gamification
+  const gam = await ctx.db.query("user_gamification").withIndex("by_user", (q) => q.eq("userId", userId)).first();
+  if (gam) await ctx.db.delete(gam._id);
+
+  // Restart tables grow without bound, so they go in scheduled batches. The marker blocks writes to them until done.
+  if ((await pendingLedgerClear(ctx, userId)) === null) {
+    await ctx.db.insert("ledger_clears", { userId });
+    await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: 0 });
+  }
+}
+
+/** Clears the caller's data and keeps their account. */
 export const clearAllData = mutation({
   args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Unauthenticated");
+    await clearUserData(ctx, identity.subject);
+    return null;
+  },
+});
+
+/** Clears one user's data and their users row. Only deleteAccount calls it. */
+export const clearUserDataInternal = internalMutation({
+  args: { userId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { userId }) => {
+    await clearUserData(ctx, userId);
+    const row = await ctx.db.query("users").withIndex("by_clerk_id", (q) => q.eq("clerkId", userId)).unique();
+    if (row !== null) await ctx.db.delete(row._id);
+    return null;
+  },
+});
+
+/** Clears the caller's data, then deletes their Clerk user. A Clerk failure keeps the sign-in, so a retry clears nothing new and finishes the delete. */
+export const deleteAccount = action({
+  args: {},
+  returns: v.null(),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
+    const key = process.env.CLERK_SECRET_KEY;
+    if (!key) throw new Error("CLERK_SECRET_KEY is not set");
 
-    const byUserDate = [
-      "meals", "workouts", "daily_goals", "insights",
-      "water_logs", "sleep_logs", "mood_logs", "steps_logs",
-      "weight_logs", "check_in_answers", "check_in_llm_questions",
-    ] as const;
-    for (const table of byUserDate) {
-      const rows = await (ctx.db.query(table as any) as any)
-        .withIndex("by_user_date", (q: any) => q.eq("userId", userId))
-        .collect();
-      await Promise.all(rows.map((r: any) => ctx.db.delete(r._id)));
-    }
+    await ctx.runMutation(internal.users.clearUserDataInternal, { userId });
 
-    const byUser = [
-      "chat_messages", "chat_sessions", "user_behavior",
-      "recipes", "food_memory", "workout_memory", "user_ingredients",
-      "user_profiles", "user_settings", "user_metabolic_profiles", "calorie_feedback",
-      "check_in_template_settings",
-    ] as const;
-    for (const table of byUser) {
-      const rows = await (ctx.db.query(table as any) as any)
-        .withIndex("by_user", (q: any) => q.eq("userId", userId))
-        .collect();
-      await Promise.all(rows.map((r: any) => ctx.db.delete(r._id)));
-    }
-
-    // nudges only has by_user_status, whose userId prefix covers every status.
-    const nudges = await ctx.db.query("nudges")
-      .withIndex("by_user_status", (q) => q.eq("userId", userId))
-      .collect();
-    await Promise.all(nudges.map((r) => ctx.db.delete(r._id)));
-
-    // weekly_summaries uses by_user_week index
-    const weeklies = await ctx.db.query("weekly_summaries")
-      .withIndex("by_user_week", (q) => q.eq("userId", userId))
-      .collect();
-    await Promise.all(weeklies.map((r) => ctx.db.delete(r._id)));
-
-    // user_gamification
-    const gam = await ctx.db.query("user_gamification").withIndex("by_user", (q) => q.eq("userId", userId)).first();
-    if (gam) await ctx.db.delete(gam._id);
-
-    // Restart tables grow without bound, so they go in scheduled batches. The marker blocks writes to them until done.
-    if ((await pendingLedgerClear(ctx, userId)) === null) {
-      await ctx.db.insert("ledger_clears", { userId });
-      await ctx.scheduler.runAfter(0, internal.users.clearLedgerRows, { userId, tableIndex: 0 });
-    }
+    const res = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    // 404 means Clerk already removed the user.
+    if (res.status !== 200 && res.status !== 404) throw new Error(`Clerk delete failed (${res.status})`);
+    // A second sweep catches rows another signed-in device wrote after the first clear finished but before Clerk answered.
+    await ctx.runMutation(internal.users.clearUserDataInternal, { userId });
+    return null;
   },
 });
 

@@ -1,4 +1,4 @@
-import { ACTIVITY_FACTORS, GOAL_KCAL_OFFSETS, adaptiveTdee, addDays, mifflinStJeor, weightTrend } from "@stride/core";
+import { ACTIVITY_FACTORS, adaptiveTdee, addDays, mifflinStJeor, weightTrend } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
@@ -9,7 +9,7 @@ import { TDEE_USER_BATCH_SIZE } from "./tdee_recompute";
 const modules = import.meta.glob("./**/*.*s");
 const TODAY = "2026-10-15";
 const BASELINE = (mifflinStJeor({ weightKg: 70, heightCm: 175, ageYears: 26, sex: "male" }) ?? 0) * ACTIVITY_FACTORS.moderate;
-const PROFILE = { goal: "maintain", sex: "male", heightCm: 175, dob: "2000-01-01", activity: "moderate" } as const;
+const PROFILE = { goal: "maintain", sex: "male", heightCm: 175, dob: "2000-01-01", activity: "moderate", dietType: "veg" } as const;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -167,22 +167,26 @@ test.each(["sex", "heightCm", "dob", "activity", "goal"] as const)("missing %s g
   expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target).toBeNull();
 });
 
-test.each(["lose", "maintain", "gain"] as const)("%s goal applies its documented fixed offset", async (goal) => {
+test.each([{ goal: "lose", offset: -550 }, { goal: "maintain", offset: 0 }, { goal: "gain", offset: 275 }] as const)("$goal steady pace applies its offset of $offset kcal", async ({ goal, offset }) => {
   const { t, user } = await setup();
   await seedDays(t, { kcal: 2600 });
   await updateSettings(t, { goal });
   await t.mutation(internal.tdee_recompute.recomputeUser, { userId: "user_a" });
-  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBe(2600 + GOAL_KCAL_OFFSETS[goal]);
+  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBe(2600 + offset);
 });
 
-test.each([{ goal: "lose", intake: 100, multiplier: 0.75 }, { goal: "gain", intake: 10000, multiplier: 1.3 }] as const)("$goal target obeys the $multiplier baseline clamp", async ({ goal, intake, multiplier }) => {
+// The bound applies to the burn estimate; the steady pace then moves the target from there (male floor 1500).
+test.each([
+  { goal: "lose", intake: 100, multiplier: 0.75, offset: -550 },
+  { goal: "gain", intake: 10000, multiplier: 1.3, offset: 275 },
+] as const)("$goal target applies its pace to the $multiplier-bounded estimate", async ({ goal, intake, multiplier, offset }) => {
   const { t, user } = await setup();
   await seedDays(t, { kcal: intake });
   await updateSettings(t, { goal });
   await t.mutation(internal.tdee_recompute.recomputeUser, { userId: "user_a" });
   const result = await user.query(api.progress_v2.summary, { rangeDays: 14 });
   expect(result.snapshot?.estimate).toBe(Math.round(BASELINE * multiplier));
-  expect(result.target?.kcal).toBe(Math.round(BASELINE * multiplier));
+  expect(result.target?.kcal).toBe(Math.max(1500, Math.round(BASELINE * multiplier + offset)));
 });
 
 test("logging the first measured weight freezes the formula target until seven local days pass", async () => {
@@ -326,5 +330,75 @@ test("changing the goal re-freezes the calorie target at once", async () => {
   await user.mutation(api.weights.logWeight, { kg: 70 });
   expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBe(Math.round(BASELINE));
   await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose" });
-  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBe(Math.round(BASELINE + GOAL_KCAL_OFFSETS.lose));
+  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBe(Math.round(BASELINE - 550));
+});
+
+test("profileStatus lists missing fields until the profile and a weight are saved", async () => {
+  const { user } = await setup();
+  expect(await user.query(api.progress_v2.profileStatus, {})).toEqual({ complete: false, missing: ["dietType", "weight"] });
+  await user.mutation(api.progress_v2.saveProfile, PROFILE);
+  expect(await user.query(api.progress_v2.profileStatus, {})).toEqual({ complete: false, missing: ["weight"] });
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  expect(await user.query(api.progress_v2.profileStatus, {})).toEqual({ complete: true, missing: [] });
+});
+
+test("updateProfile changing the pace re-freezes the target at once", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose", pace: "steady" });
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  const steady = (await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal;
+  expect(steady).toBe(Math.round(BASELINE - 550));
+  await user.mutation(api.progress_v2.updateProfile, { pace: "fast" });
+  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBeLessThan(steady ?? 0);
+});
+
+test("updateProfile rejects a target weight on the wrong side of the current weight", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose" });
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 75 })).rejects.toThrow(/targetWeightKg/);
+  await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 65 })).resolves.toBeNull();
+});
+
+test("updateProfile on unrelated fields still works once the target weight is reached", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose", targetWeightKg: 65 });
+  await user.mutation(api.weights.logWeight, { kg: 64 });
+  await expect(user.mutation(api.progress_v2.updateProfile, { dietType: "vegan" })).resolves.toBeNull();
+  await expect(user.mutation(api.progress_v2.updateProfile, {})).resolves.toBeNull();
+  await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 70 })).rejects.toThrow(/targetWeightKg/);
+});
+
+test("profile ignores a weigh-in dated after today", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.saveProfile, PROFILE);
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  await user.mutation(api.weights.logWeight, { kg: 80, localDate: addDays(TODAY, 1) });
+  expect(await user.query(api.progress_v2.profile, {})).toMatchObject({ latestWeightKg: 70 });
+});
+
+test("updateProfile rejects trainingDaysPerWeek outside 0-7", async () => {
+  const { user } = await setup();
+  await expect(user.mutation(api.progress_v2.updateProfile, { trainingDaysPerWeek: 8 })).rejects.toThrow(/trainingDaysPerWeek/);
+});
+
+test("a low-maintenance female target is lifted to the sex floor and reports why", async () => {
+  const { user } = await setup();
+  await user.mutation(api.progress_v2.updateProfile, { sex: "female", heightCm: 160, dob: "1986-01-01", activity: "sedentary", goal: "lose" });
+  await user.mutation(api.weights.logWeight, { kg: 50 });
+  expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target).toEqual({ kcal: 1200, source: "formula", appliedLocalDate: TODAY, clamped: "floor" });
+});
+
+test("profile returns only the signed-in user's settings", async () => {
+  const { t, user } = await setup();
+  expect(await t.withIdentity({ subject: "user_b" }).query(api.progress_v2.profile, {})).toBeNull();
+  expect(await user.query(api.progress_v2.profile, {})).toMatchObject({ goal: "maintain", latestWeightKg: null });
+});
+
+test("setUnits saves the unit choice and keeps the frozen calorie target", async () => {
+  const { t, user } = await setup();
+  await updateSettings(t, { calorieTarget: { kcal: 2000, source: "formula", appliedLocalDate: TODAY } });
+  await user.mutation(api.progress_v2.setUnits, { units: "imperial" });
+  const settings = await t.run((ctx) => ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", "user_a")).first());
+  expect(settings).toMatchObject({ units: "imperial", calorieTarget: { kcal: 2000 } });
 });
