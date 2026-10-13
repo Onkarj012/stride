@@ -6,7 +6,7 @@ import type { FunctionReturnType } from 'convex/server'
 import { addDays, daysBetween } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
 import { motion, radii } from '@stride/ui-tokens'
-import { formatRate, useBurnMilestone } from '@/components/BurnSheet'
+import { useBurnMilestone } from '@/components/BurnSheet'
 import { Tag, Thinking } from '@/components/Controls'
 import { Icon } from '@/components/Icon'
 import { useLog } from '@/components/LogProvider'
@@ -17,6 +17,7 @@ import { Tap } from '@/components/Tap'
 import { WeightChart, type WeightPoint } from '@/components/WeightChart'
 import { formatDayTitle, formatNumber, weekdayOf } from '@/lib/format'
 import { SUMMARY_DAYS } from '@/lib/log'
+import { kgLabel, rateLabel, savedUnits, weightNumber, weightUnit, type Units } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
@@ -36,6 +37,8 @@ export default function ProgressScreen() {
   const [range, setRange] = useState<number>(SUMMARY_DAYS)
   const today = useLocalToday()
   const fresh = useQuery(api.progress_v2.summary, { rangeDays: range, localDate: today })
+  const profile = useQuery(api.progress_v2.profile, {})
+  const units = savedUnits(profile?.units)
   // Keep showing the last range while a new one loads, so switching doesn't blank the screen.
   const kept = useRef<{ summary: Summary; range: number } | undefined>(undefined)
   if (fresh !== undefined) kept.current = { summary: fresh, range }
@@ -50,7 +53,7 @@ export default function ProgressScreen() {
         <Thinking label="Reading your weigh-ins…" />
       ) : (
         <>
-          <WeightCard key={loaded.range} summary={loaded.summary} range={loaded.range} />
+          <WeightCard key={loaded.range} summary={loaded.summary} range={loaded.range} units={units} />
           <BurnCard summary={loaded.summary} />
           <WeekCard summary={loaded.summary} />
         </>
@@ -114,8 +117,14 @@ function spanText(days: number): string {
   return `in ${Math.round(days / 7)} weeks`
 }
 
+// Weekly rate with a sign and the user's unit, e.g. "−0.45 kg a week".
+function rateText(kgPerWeek: number, units: Units): string {
+  const sign = kgPerWeek < -0.005 ? '−' : kgPerWeek > 0.005 ? '+' : ''
+  return `${sign}${rateLabel(Math.abs(kgPerWeek), units)}`
+}
+
 // Weight trend card: latest trend, change over the range, weekly rate and the chart.
-function WeightCard({ summary, range }: { summary: Summary; range: number }) {
+function WeightCard({ summary, range, units }: { summary: Summary; range: number; units: Units }) {
   const s = useStyles()
   const [scrub, setScrub] = useState<WeightPoint | null>(null)
   const { weights, latestTrendKg, weeklyRateKg, localDate } = summary
@@ -137,8 +146,8 @@ function WeightCard({ summary, range }: { summary: Summary; range: number }) {
     <View style={s.card}>
       <Text style={s.eyebrow}>Weight trend</Text>
       <Text style={[s.big, s.bigTop]}>
-        {latestTrendKg.toFixed(1)}
-        <Text style={s.bigUnit}> kg</Text>
+        {weightNumber(latestTrendKg, units)}
+        <Text style={s.bigUnit}> {weightUnit(units)}</Text>
       </Text>
       <Text style={s.delta}>
         {weights.length < 2 ? (
@@ -147,19 +156,19 @@ function WeightCard({ summary, range }: { summary: Summary; range: number }) {
           <>
             <Text style={s.deltaStrong}>
               {change < -0.05 ? '−' : change > 0.05 ? '+' : ''}
-              {Math.abs(change).toFixed(1)} kg
+              {weightNumber(Math.abs(change), units)} {weightUnit(units)}
             </Text>{' '}
             {spanText(covered)}
-            {weeklyRateKg !== null ? ` · ${formatRate(weeklyRateKg)}` : ''}
+            {weeklyRateKg !== null ? ` · ${rateText(weeklyRateKg, units)}` : ''}
           </>
         )}
       </Text>
-      <WeightChart points={weights} from={addDays(localDate, 1 - range)} to={localDate} onScrub={setScrub} />
+      <WeightChart points={weights} from={addDays(localDate, 1 - range)} to={localDate} units={units} onScrub={setScrub} />
       <Text style={s.tip} numberOfLines={1}>
         {scrub ? (
           <>
-            <Text style={s.tipStrong}>{formatDayTitle(scrub.localDate)}</Text> · trend {scrub.trendKg.toFixed(1)} kg · scale
-            said {scrub.kg.toFixed(1)}
+            <Text style={s.tipStrong}>{formatDayTitle(scrub.localDate)}</Text> · trend {kgLabel(scrub.trendKg, units)} · scale
+            said {kgLabel(scrub.kg, units)}
           </>
         ) : (
           DEFAULT_TIP

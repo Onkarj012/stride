@@ -18,6 +18,7 @@ import { Screen, Section } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
 import { formatDateline, formatNumber, greeting } from '@/lib/format'
 import { SUMMARY_DAYS, plainError, targetsFor, type MealSlot } from '@/lib/log'
+import { kgLabel, savedUnits, stepKg, weightNumber, weightToKg, weightUnit } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
@@ -171,11 +172,12 @@ export default function TodayScreen() {
   )
 }
 
-// Morning weigh-in (mock #/weigh). Type or step the kg, save with logWeight; a second save the same day replaces it.
+// Morning weigh-in (mock #/weigh). Type or step the weight in the user's unit, save with logWeight in kg; a second save the same day replaces it.
 function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: number | null; weeklyRateKg: number | null }) {
   const t = useTheme()
   const s = useStyles()
   const { toast } = useLog()
+  const profile = useQuery(api.progress_v2.profile, {})
   const weight = useQuery(api.weights.todayWeight, { localDate: today })
   const logWeight = useMutation(api.weights.logWeight)
   const [draft, setDraft] = useState<string | null>(null)
@@ -183,23 +185,24 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
   const [busy, setBusy] = useState(false)
 
   if (weight === undefined) return null
+  const units = savedUnits(profile?.units)
   // Start from today's or the latest weigh-in; 70 is only a starting point for the very first one.
   const start = weight.kg ?? weight.latestKg ?? 70
-  const text = draft ?? start.toFixed(1)
-  const kg = Number(text.replace(',', '.'))
-  const valid = Number.isFinite(kg) && kg > 0
-  const step = (d: number) => setDraft((Math.round(((valid ? kg : start) + d) * 10) / 10).toFixed(1))
+  const text = draft ?? weightNumber(start, units)
+  const value = Number(text.replace(',', '.'))
+  const valid = Number.isFinite(value) && value > 0
+  const step = (dir: -1 | 1) => setDraft(weightNumber(stepKg(valid ? weightToKg(value, units) : start, dir, units), units))
 
   // Stores the weight for today and folds the card.
   async function save() {
     if (!valid) return
-    const value = Math.round(kg * 10) / 10
+    const kg = weightToKg(value, units)
     setBusy(true)
     try {
-      await logWeight({ kg: value, localDate: today })
+      await logWeight({ kg, localDate: today })
       setEditing(false)
       setDraft(null)
-      toast({ title: `Weight saved · ${value.toFixed(1)} kg`, sub: "Trend barely moves on one day. That's the point." })
+      toast({ title: `Weight saved · ${kgLabel(kg, units)}`, sub: "Trend barely moves on one day. That's the point." })
     } catch (err) {
       toast({ title: "Couldn't save your weight.", sub: plainError(err) })
     } finally {
@@ -215,8 +218,8 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
         <View style={s.grow}>
           <Text style={s.eyebrow}>Weighed in</Text>
           <Text style={s.weighNote}>
-            <Text style={s.weighValueInline}>{weight.kg.toFixed(1)} kg</Text>
-            {trendKg !== null ? `  trend ${trendKg.toFixed(1)}${direction}` : '  feeds your burn estimate'}
+            <Text style={s.weighValueInline}>{kgLabel(weight.kg, units)}</Text>
+            {trendKg !== null ? `  trend ${kgLabel(trendKg, units)}${direction}` : '  feeds your burn estimate'}
           </Text>
         </View>
         <Button label="Edit" size="sm" variant="ghost" onPress={() => setEditing(true)} />
@@ -229,7 +232,7 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
       <Text style={s.eyebrow}>Morning weight</Text>
       <Text style={[s.faintSmall, s.weighHint]}>Optional. Feeds your burn estimate.</Text>
       <View style={s.weighRow}>
-        <RoundButton icon="minus" label="Less" onPress={() => step(-0.1)} />
+        <RoundButton icon="minus" label="Less" onPress={() => step(-1)} />
         <View style={s.weighField}>
           <TextInput
             value={text}
@@ -240,11 +243,11 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
             selectTextOnFocus
             maxLength={5}
             style={s.weighValue}
-            accessibilityLabel="Weight in kilograms"
+            accessibilityLabel={`Weight in ${weightUnit(units)}`}
           />
-          <Text style={[s.weighUnit, { color: t.c.ink3 }]}>kg</Text>
+          <Text style={[s.weighUnit, { color: t.c.ink3 }]}>{weightUnit(units)}</Text>
         </View>
-        <RoundButton icon="plus" label="More" onPress={() => step(0.1)} />
+        <RoundButton icon="plus" label="More" onPress={() => step(1)} />
         <View style={s.grow} />
         <Button label="Save" size="sm" busy={busy} disabled={!valid} onPress={() => void save()} />
       </View>

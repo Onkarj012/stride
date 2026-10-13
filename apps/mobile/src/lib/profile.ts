@@ -41,6 +41,21 @@ export function kgLabel(kg: number, units: Units): string {
   return units === 'metric' ? `${kg.toFixed(1)} kg` : `${Math.round(kg * LB_PER_KG)} lb`
 }
 
+// Weight as a number in the user's unit, without the unit: "78.4" or "173".
+export function weightNumber(kg: number, units: Units): string {
+  return units === 'metric' ? kg.toFixed(1) : String(Math.round(kg * LB_PER_KG))
+}
+
+// The weight unit word, "kg" or "lb".
+export function weightUnit(units: Units): string {
+  return units === 'metric' ? 'kg' : 'lb'
+}
+
+// Turns a weight typed in the user's unit into kg, rounded to 0.1 for storage.
+export function weightToKg(value: number, units: Units): number {
+  return round1(units === 'metric' ? value : value / LB_PER_KG)
+}
+
 // Height in the user's unit, e.g. "176 cm" or "5 ft 9 in".
 export function heightLabel(cm: number, units: Units): string {
   if (units === 'metric') return `${cm} cm`

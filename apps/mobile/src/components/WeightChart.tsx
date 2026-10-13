@@ -3,6 +3,7 @@ import { View, type GestureResponderEvent } from 'react-native'
 import Animated, { Easing, useAnimatedProps, useSharedValue, withTiming } from 'react-native-reanimated'
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg'
 import { daysBetween } from '@stride/core'
+import { weightNumber, type Units } from '@/lib/profile'
 import { useTheme } from '@/theme'
 
 const AnimatedPath = Animated.createAnimatedComponent(Path)
@@ -17,12 +18,13 @@ type WeightChartProps = {
   points: WeightPoint[]
   from: string
   to: string
+  units: Units
   // Called with the weigh-in under the finger while scrubbing, and null when the finger lifts.
   onScrub: (point: WeightPoint | null) => void
 }
 
 // Weigh-ins as dots and the EMA trend as a coral line that draws in, laid out by date so gaps show (mock #/progress).
-export function WeightChart({ points, from, to, onScrub }: WeightChartProps) {
+export function WeightChart({ points, from, to, units, onScrub }: WeightChartProps) {
   const t = useTheme()
   const [width, setWidth] = useState(0)
   const [active, setActive] = useState<WeightPoint | null>(null)
@@ -90,7 +92,7 @@ export function WeightChart({ points, from, to, onScrub }: WeightChartProps) {
             ))}
             {ticks.map((tick) => (
               <SvgText key={`t${tick}`} x={width - 6} y={Y(tick) - 4} textAnchor="end" fontSize={10.5} fill={t.c.ink3}>
-                {tick.toFixed(1)}
+                {weightNumber(tick, units)}
               </SvgText>
             ))}
             {xy.length > 1 ? <Path d={`${line}L${lastX},150L${firstX},150Z`} fill={t.c.polo} opacity={0.06} /> : null}
