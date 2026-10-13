@@ -245,6 +245,8 @@ export const deleteAccount = action({
     });
     // 404 means Clerk already removed the user.
     if (res.status !== 200 && res.status !== 404) throw new Error(`Clerk delete failed (${res.status})`);
+    // A second sweep catches rows another signed-in device wrote after the first clear finished but before Clerk answered.
+    await ctx.runMutation(internal.users.clearUserDataInternal, { userId });
     return null;
   },
 });

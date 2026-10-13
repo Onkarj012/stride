@@ -317,6 +317,25 @@ describe("deleteAccount", () => {
     });
   });
 
+  test("rows written after the first clear but before Clerk answers are swept too", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("CLERK_SECRET_KEY", "sk_test");
+    const { t, sharedFood, user } = await setup();
+    await seedAccountRows(t, sharedFood);
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      // The first clear's batches finish and drop the write block; then another device logs a weight.
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      await t.run((ctx) => ctx.db.insert("weights", { userId: "user_a", localDate: "2026-10-06", kg: 71, loggedAt: 2 }));
+      return new Response(null, { status: 200 });
+    }));
+
+    await user.action(api.users.deleteAccount, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const weights = await t.run(async (ctx) => (await ctx.db.query("weights").take(10)).map((r) => r.userId));
+    expect(weights).toEqual(["user_b"]);
+  });
+
   test("throws before clearing anything when the Clerk key is missing", async () => {
     vi.stubEnv("CLERK_SECRET_KEY", "");
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, { status: 200 }));
