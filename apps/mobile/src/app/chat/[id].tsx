@@ -148,15 +148,13 @@ function Thread({ chat }: { chat: ChatSummary }) {
   const canSend = (text.trim() !== '' || photoUri !== null) && !sending
   const failedAttempt = problem?.retry
 
-  // Maps each failed reply to the attempt its user message came from. The message just older than the reply is its question.
+  // Maps each failed reply to the attempt it answers, by the submission id the backend returns.
   const retries = new Map<string, Attempt>()
-  messages.forEach((m, i) => {
-    const asked = messages[i + 1]
-    if (m.role !== 'assistant' || m.status !== 'failed' || asked?.role !== 'user') return
-    const hasPhoto = asked.attachments.some((a) => a.kind === 'image')
-    const attempt = [...attempts.values()].find((a) => a.text === asked.text && (a.photoUri !== undefined) === hasPhoto)
+  for (const m of messages) {
+    if (m.status !== 'failed' || !m.retrySubmissionId) continue
+    const attempt = attempts.get(m.retrySubmissionId)
     if (attempt) retries.set(m._id, attempt)
-  })
+  }
 
   // Lifts the whole thread above the keyboard so the list shrinks and the composer stays in view.
   const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(insets.bottom, keyboard.height.value) }))
