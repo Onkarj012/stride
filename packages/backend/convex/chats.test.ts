@@ -1,4 +1,4 @@
-import { roundNutrients, type Nutrients } from "@stride/core";
+import type { Nutrients } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
@@ -210,20 +210,19 @@ describe("multi-chat (D12)", () => {
     expect(bodies).toHaveLength(1);
   });
 
-  test("a retry after a failed turn reports its saved meal instead of logging it again", async () => {
+  test("a retry after a failed turn reports its saved entries instead of asking the model again", async () => {
     const { t, user, chatId, foods } = await setup();
-    // Attempt 1 logs 2 rotis, then the next model call fails (an empty reply throws).
-    llm = (_body, n) => (n === 1 ? { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95 } }] } : {});
+    // Attempt 1 fails at its first model call (an empty reply throws) after a write under its key was saved.
+    llm = () => ({});
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" })).rejects.toThrow();
-    expect(await entryRows(t)).toHaveLength(1);
+    await user.mutation(api.entries.addEntries, {
+      submissionId: "m1:edit_entry:0:0",
+      items: [{ foodId: foods.chapati, grams: 80, source: "db" }],
+    });
     const calls = bodies.length;
 
-    // A fresh model run would look something up first and add the same meal under a new key.
-    llm = (_body, n) => {
-      if (n === calls + 1) return { toolCalls: [{ name: "get_user_foods", args: {} }] };
-      if (n === calls + 2) return { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95 } }] };
-      return { content: "Logged." };
-    };
+    // A fresh model run would add the same meal again under a new key.
+    llm = () => ({ content: "Logged." });
     const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" });
 
     const rows = await entryRows(t);
@@ -305,35 +304,17 @@ describe("chat photo ownership", () => {
   });
 });
 
-describe("chat logging runs the same pipeline", () => {
-  test("add_entry items commit through the gate, linked to the chat message, with nutrients from foods", async () => {
-    const { t, user, chatId, foods } = await setup();
+describe("chat cannot log food", () => {
+  test("add_entry is not offered, and a call to it gets an unknown-tool error and logs nothing", async () => {
+    const { t, user, chatId } = await setup();
     llm = (body) =>
       afterToolResult(body)
-        ? { content: "Logged 2 rotis." }
-        : { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95, kcal: 5000 } }] };
-    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" });
+        ? { content: "Use Compose to log that." }
+        : { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95 } }] };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" });
 
-    expect(turn.reply).toBe("Logged 2 rotis.");
-    const [row] = await entryRows(t);
-    expect(row).toMatchObject({ foodId: foods.chapati, grams: 80, createdBy: "ai", chatId, messageId: turn.userMessageId });
-    expect(roundNutrients(row?.nutrients ?? CHAPATI).kcal).toBe(238);
-    expect(turn.entryIds).toEqual([row?._id]);
-    const reply = await t.run((ctx) => ctx.db.get("messages", turn.assistantMessageId));
-    expect(reply?.entryIds).toEqual([row?._id]);
-    expect(reply?.toolCalls[0]?.name).toBe("add_entry");
-  });
-
-  test("an unmatched add_entry becomes a draft card on the message", async () => {
-    const { t, user, chatId } = await setup();
-    llm = (body) => {
-      if (afterToolResult(body)) return { content: "Please check the card." };
-      const tools = Array.isArray(body.tools) ? JSON.stringify(body.tools) : "";
-      if (tools.includes("choose_food")) return { content: "no idea" };
-      return { toolCalls: [{ name: "add_entry", args: { food: "mystery sabzi", quantity: 1, unit: "katori", confidence: 0.9 } }] };
-    };
-    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "mystery sabzi" });
-    expect(turn.draftIds).toHaveLength(1);
+    expect(JSON.stringify(bodies[0]?.tools)).not.toContain("add_entry");
+    expect(JSON.stringify(bodies[1]?.messages)).toContain("Unknown tool add_entry");
     expect(await entryRows(t)).toHaveLength(0);
   });
 });
@@ -537,5 +518,128 @@ describe("streaming replies (A12)", () => {
     await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
     const other = t.withIdentity({ subject: "user_b" });
     await expect(other.mutation(api.chats.stopMessage, { messageId: (await replyRow(t))._id })).rejects.toThrow(/Message not found/);
+  });
+});
+
+describe("regenerate", () => {
+  test("hides the last reply, streams a new one, and keeps the hidden reply's entry links", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [original] = await user.mutation(api.entries.addEntries, {
+      submissionId: "e1",
+      items: [{ foodId: foods.chapati, grams: 80, source: "db" }],
+    });
+    llm = (body) =>
+      afterToolResult(body)
+        ? { content: "Updated to 3 rotis." }
+        : { toolCalls: [{ name: "edit_entry", args: { entry_id: original, quantity: 3, unit: null } }] };
+    const first = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "it was 3 rotis" });
+    const oldReply = await replyRow(t);
+
+    llm = () => ({ content: "Try again: 3 rotis." });
+    const calls = bodies.length;
+    const result = await user.action(api.chats.regenerate, { chatId });
+
+    expect(bodies).toHaveLength(calls + 1);
+    expect(result.reply).toBe("Try again: 3 rotis.");
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
+    expect(page.page.map((m) => m._id)).toEqual([result.assistantMessageId, first.userMessageId]);
+    expect(page.page[0]).toMatchObject({ _id: result.assistantMessageId, text: "Try again: 3 rotis.", status: "done" });
+    expect(await t.run((ctx) => ctx.db.get("messages", oldReply._id))).toMatchObject({
+      deletedAt: expect.any(Number),
+      entryIds: first.entryIds,
+    });
+    expect(first.entryIds).toHaveLength(1);
+    // The hidden reply is not history: the new attempt sees only the user's message.
+    const roles = Array.isArray(bodies.at(-1)?.messages) ? (bodies.at(-1)?.messages as unknown[]).map((m) => (isRecord(m) ? m.role : "")) : [];
+    expect(roles).toEqual(["system", "user"]);
+  });
+
+  test("refuses while the last reply is still streaming", async () => {
+    const { t, user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    const reply = await replyRow(t);
+    await t.run((ctx) =>
+      ctx.db.insert("messages", {
+        userId: "user_a",
+        chatId,
+        role: "assistant",
+        text: "",
+        attachments: [],
+        toolCalls: [],
+        draftIds: [],
+        entryIds: [],
+        submissionId: "m1:reply:live",
+        answersMessageId: reply.answersMessageId,
+        status: "streaming",
+        claimedAt: Date.now(),
+      }),
+    );
+    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toThrow(/Wait for the reply/);
+    expect(bodies).toHaveLength(1);
+  });
+
+  test("a resend of the original message after regenerate is refused without a model call", async () => {
+    const { user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    await user.action(api.chats.regenerate, { chatId });
+    const calls = bodies.length;
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(/already being handled/);
+    expect(bodies).toHaveLength(calls);
+  });
+});
+
+describe("rename, preview and search", () => {
+  test("renameChat: the owner renames the chat; others get Chat not found; bad titles throw", async () => {
+    const { t, user, chatId } = await setup();
+    await user.mutation(api.chats.renameChat, { chatId, title: "  Dinner ideas  " });
+    expect((await user.query(api.chats.listChats, {}))[0]?.title).toBe("Dinner ideas");
+
+    const other = t.withIdentity({ subject: "user_b" });
+    await expect(other.mutation(api.chats.renameChat, { chatId, title: "Mine" })).rejects.toThrow(/Chat not found/);
+    await expect(user.mutation(api.chats.renameChat, { chatId, title: "   " })).rejects.toThrow(/1-60 characters/);
+    await expect(user.mutation(api.chats.renameChat, { chatId, title: "x".repeat(61) })).rejects.toThrow(/1-60 characters/);
+    expect((await user.query(api.chats.listChats, {}))[0]?.title).toBe("Dinner ideas");
+  });
+
+  test("listChats previews each chat's newest message", async () => {
+    const { user, chatId } = await setup();
+    expect((await user.query(api.chats.listChats, {}))[0]?.lastMessage).toBeNull();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect((await user.query(api.chats.listChats, {}))[0]?.lastMessage).toBe("Hi!");
+  });
+
+  test("searchChats finds a message by word and hides other users' and deleted messages", async () => {
+    const { t, user, chatId } = await setup();
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "I had paneer tikka for lunch" });
+    expect(await user.query(api.chats.searchChats, { query: "paneer" })).toEqual([
+      { chatId, title: "I had paneer tikka for lunch", snippet: "I had paneer tikka for lunch", messageId: turn.userMessageId },
+    ]);
+    expect(await user.query(api.chats.searchChats, { query: "   " })).toEqual([]);
+
+    const other = t.withIdentity({ subject: "user_b" });
+    expect(await other.query(api.chats.searchChats, { query: "paneer" })).toEqual([]);
+
+    await t.run((ctx) => ctx.db.patch("messages", turn.userMessageId, { deletedAt: Date.now() }));
+    expect(await user.query(api.chats.searchChats, { query: "paneer" })).toEqual([]);
+  });
+
+  test("searchChats returns at most 20 chats", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 25; i++) {
+        const chat = await ctx.db.insert("chats", { userId: "user_a", title: `Chat ${i}`, updatedAt: Date.now() });
+        await ctx.db.insert("messages", {
+          userId: "user_a",
+          chatId: chat,
+          role: "user",
+          text: `garlic naan ${i}`,
+          attachments: [],
+          toolCalls: [],
+          draftIds: [],
+          submissionId: `s${i}`,
+        });
+      }
+    });
+    expect(await user.query(api.chats.searchChats, { query: "naan" })).toHaveLength(20);
   });
 });

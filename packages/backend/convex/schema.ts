@@ -850,9 +850,13 @@ export default defineSchema({
     // Assistant replies. Missing means done (rows from before streaming).
     status: v.optional(v.union(v.literal("streaming"), v.literal("done"), v.literal("stopped"), v.literal("failed"))),
     stopRequested: v.optional(v.boolean()), // assistant replies: the user pressed stop while it streamed
+    answersMessageId: v.optional(v.id("messages")), // assistant replies: the user message they answer
+    deletedAt: v.optional(v.number()), // a reply replaced by regenerate; hidden everywhere but its entries
   })
     .index("by_chatId", ["chatId"])
-    .index("by_userId_and_submissionId", ["userId", "submissionId"]),
+    .index("by_userId_and_submissionId", ["userId", "submissionId"])
+    .index("by_answersMessageId", ["answersMessageId"])
+    .searchIndex("search_text", { searchField: "text", filterFields: ["userId"] }),
 
   // Extracted items awaiting confirmation (D7). Matcher output only; nutrients are computed on commit.
   drafts: defineTable({
