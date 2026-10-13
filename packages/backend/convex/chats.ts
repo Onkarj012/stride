@@ -21,7 +21,7 @@ import { isVisibleFood } from "./foods_db";
 import { mealSlotValidator } from "./ledger_validators";
 import { extractItems, ITEM_JSON_SCHEMA, PARSE_RULES, parseItem } from "./pipeline/extract";
 import { imageUrl, runPipeline } from "./pipeline/log";
-import { callOpenRouter, PIPELINE_MODEL, type ChatMessage, type JsonValue, type ToolDefinition } from "./pipeline/openrouter";
+import { PIPELINE_MODEL, streamOpenRouter, type ChatMessage, type JsonValue, type ToolDefinition } from "./pipeline/openrouter";
 import { resolveFoodPortion, userFoodsOf, userMeasuresOf, type LogResult } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
 import { requireUserId, resolveLocalDay } from "./time_zone";
@@ -46,6 +46,16 @@ const CHAT_MAX_TOKENS = 800;
 /** How long a started turn holds its message. Matches the Convex action time limit, so a crashed turn frees it. */
 const TURN_LEASE_MS = 10 * 60_000;
 const MAX_PRIOR_DRAFTS = 10;
+/** A streaming reply is written to its row at most this often, or once this many new characters arrive (A12). */
+export const STREAM_FLUSH_MS = 300;
+export const STREAM_FLUSH_CHARS = 200;
+
+const replyStatusValidator = v.union(v.literal("streaming"), v.literal("done"), v.literal("stopped"), v.literal("failed"));
+
+/** True for a reply the user can read as final. Rows from before streaming have no status and are done. */
+function isFinished(message: Doc<"messages">): boolean {
+  return message.status === undefined || message.status === "done" || message.status === "stopped";
+}
 
 const messageViewValidator = v.object({
   _id: v.id("messages"),
@@ -56,12 +66,13 @@ const messageViewValidator = v.object({
   attachments: v.array(v.object({ kind: v.union(v.literal("image"), v.literal("audio")), storageId: v.id("_storage") })),
   draftIds: v.array(v.id("drafts")),
   entryIds: v.array(v.id("entries")),
+  status: replyStatusValidator,
 });
 
 const toolCallRecordValidator = v.object({ name: v.string(), argsJson: v.string(), resultJson: v.optional(v.string()) });
 type ToolCallRecord = Infer<typeof toolCallRecordValidator>;
-/** What a turn's work produced, before the reply message is stored. */
-type Turn = { reply: string; toolCalls: ToolCallRecord[]; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] };
+/** What a turn's work produced, before the reply is finished. `stopped` when the user stopped it mid-stream. */
+type Turn = { reply: string; toolCalls: ToolCallRecord[]; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[]; stopped: boolean };
 
 /** What one chat turn produced: both messages, the reply text, and the drafts and entries its cards point at. */
 const turnResultValidator = v.object({
@@ -73,8 +84,18 @@ const turnResultValidator = v.object({
 });
 type TurnResult = Infer<typeof turnResultValidator>;
 
-/** A claimed turn: its user message, whether an earlier attempt ran, and the text saved so far. */
-const claimValidator = v.object({ messageId: v.id("messages"), retry: v.boolean(), text: v.string(), audioPending: v.boolean() });
+/**
+ * A claimed turn: its user message, the reply row it streams into, the claim time that fences the reply's writes,
+ * whether an earlier attempt ran, and the text saved so far.
+ */
+const claimValidator = v.object({
+  messageId: v.id("messages"),
+  replyId: v.id("messages"),
+  claimedAt: v.number(),
+  retry: v.boolean(),
+  text: v.string(),
+  audioPending: v.boolean(),
+});
 type Claim = Infer<typeof claimValidator>;
 
 /** Loads one of the user's chats or throws. */
@@ -168,6 +189,7 @@ export const listMessages = query({
         attachments: m.attachments,
         draftIds: m.draftIds,
         entryIds: m.entryIds ?? [],
+        status: m.status ?? "done",
       })),
     };
   },
@@ -185,14 +207,14 @@ async function messageBySubmission(
     .first();
 }
 
-/** The finished turn for a submission id, so a retried send returns it without calling the model. */
+/** The finished (or stopped) turn for a submission id, so a retried send returns it without calling the model. */
 export const findTurn = internalQuery({
   args: { userId: v.string(), submissionId: v.string() },
   returns: v.union(turnResultValidator, v.null()),
   handler: async (ctx, { userId, submissionId }): Promise<TurnResult | null> => {
     const user = await messageBySubmission(ctx, userId, submissionId);
     const reply = await messageBySubmission(ctx, userId, `${submissionId}:reply`);
-    if (user === null || reply === null) return null;
+    if (user === null || reply === null || !isFinished(reply)) return null;
     return {
       userMessageId: user._id,
       assistantMessageId: reply._id,
@@ -205,7 +227,8 @@ export const findTurn = internalQuery({
 
 /**
  * Claims a turn before any model work: stores the user's message once per submission id, names an untitled chat
- * after it, and bumps the chat. A second send while the first still runs is refused; `retry` marks a failed turn.
+ * after it, bumps the chat, and opens the reply row the turn streams into. A second send while the first still runs
+ * is refused; `retry` marks a failed turn, whose reply row is reset and reused.
  */
 export const claimTurn = internalMutation({
   args: {
@@ -221,28 +244,99 @@ export const claimTurn = internalMutation({
     await assertLedgerWritable(ctx, args.userId);
     const chat = await ownChat(ctx, args.userId, args.chatId);
     const existing = await messageBySubmission(ctx, args.userId, args.submissionId);
+    const replyKey = `${args.submissionId}:reply`;
     const now = Date.now();
+    let claim: Omit<Claim, "replyId">;
+    let reply: Doc<"messages"> | null = null;
     if (existing !== null) {
-      const reply = await messageBySubmission(ctx, args.userId, `${args.submissionId}:reply`);
+      reply = await messageBySubmission(ctx, args.userId, replyKey);
       const running = existing.claimedAt !== undefined && now - existing.claimedAt < TURN_LEASE_MS;
-      if (reply !== null || running) throw new Error("This message is already being handled. Try again in a moment.");
+      if (running || (reply !== null && isFinished(reply))) {
+        throw new Error("This message is already being handled. Try again in a moment.");
+      }
       await ctx.db.patch("messages", existing._id, { claimedAt: now });
-      return { messageId: existing._id, retry: true, text: existing.text, audioPending: existing.audioPending === true };
+      claim = { messageId: existing._id, claimedAt: now, retry: true, text: existing.text, audioPending: existing.audioPending === true };
+    } else {
+      const id = await ctx.db.insert("messages", {
+        userId: args.userId,
+        chatId: args.chatId,
+        role: "user",
+        text: args.text,
+        attachments: args.attachments,
+        toolCalls: [],
+        draftIds: [],
+        submissionId: args.submissionId,
+        claimedAt: now,
+        ...(args.audioPending ? { audioPending: true } : {}),
+      });
+      await ctx.db.patch("chats", chat._id, { title: titleFor(chat, args.text), updatedAt: now });
+      claim = { messageId: id, claimedAt: now, retry: false, text: args.text, audioPending: args.audioPending };
     }
-    const id = await ctx.db.insert("messages", {
-      userId: args.userId,
-      chatId: args.chatId,
-      role: "user",
-      text: args.text,
-      attachments: args.attachments,
-      toolCalls: [],
-      draftIds: [],
-      submissionId: args.submissionId,
-      claimedAt: now,
-      ...(args.audioPending ? { audioPending: true } : {}),
-    });
-    await ctx.db.patch("chats", chat._id, { title: titleFor(chat, args.text), updatedAt: now });
-    return { messageId: id, retry: false, text: args.text, audioPending: args.audioPending };
+
+    // The reply row exists from the start so the client can show it filling in (A12).
+    const fresh = { text: "", toolCalls: [], draftIds: [], entryIds: [], status: "streaming" as const, stopRequested: undefined, claimedAt: now };
+    let replyId: Id<"messages">;
+    if (reply === null) {
+      replyId = await ctx.db.insert("messages", {
+        userId: args.userId,
+        chatId: args.chatId,
+        role: "assistant",
+        attachments: [],
+        submissionId: replyKey,
+        ...fresh,
+      });
+    } else {
+      replyId = reply._id;
+      await ctx.db.patch("messages", replyId, fresh);
+    }
+    // A turn that dies without reaching its catch block (a crash or the action time limit) must not stream forever.
+    await ctx.scheduler.runAfter(TURN_LEASE_MS, internal.chats.expireReply, { messageId: replyId, claimedAt: now });
+    return { ...claim, replyId };
+  },
+});
+
+/** Loads a reply row only while the attempt that claimed it at `claimedAt` still owns it and it is streaming. */
+async function ownedStream(ctx: MutationCtx, messageId: Id<"messages">, claimedAt: number): Promise<Doc<"messages"> | null> {
+  const row = await ctx.db.get("messages", messageId);
+  return row !== null && row.claimedAt === claimedAt && row.status === "streaming" ? row : null;
+}
+
+/**
+ * Writes the reply text streamed so far. Returns true when the turn should stop: the user pressed stop, the chat was
+ * deleted, or a newer attempt owns the row. Text that arrived after a stop is not written, so the reply ends where
+ * the user saw it end.
+ */
+export const appendReply = internalMutation({
+  args: { messageId: v.id("messages"), claimedAt: v.number(), text: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, { messageId, claimedAt, text }) => {
+    const row = await ownedStream(ctx, messageId, claimedAt);
+    if (row === null || row.stopRequested === true) return true;
+    if (row.text !== text) await ctx.db.patch("messages", messageId, { text });
+    return false;
+  },
+});
+
+/** Asks a streaming reply to stop. The turn keeps the text written so far and ends as `stopped`. */
+export const stopMessage = mutation({
+  args: { messageId: v.id("messages") },
+  returns: v.null(),
+  handler: async (ctx, { messageId }) => {
+    const userId = await requireUserId(ctx);
+    const row = await ctx.db.get("messages", messageId);
+    if (row === null || row.userId !== userId || row.role !== "assistant") throw new Error("Message not found");
+    if (row.status === "streaming") await ctx.db.patch("messages", messageId, { stopRequested: true });
+    return null;
+  },
+});
+
+/** Marks a reply failed if the attempt that claimed it at `claimedAt` never finished it. */
+export const expireReply = internalMutation({
+  args: { messageId: v.id("messages"), claimedAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { messageId, claimedAt }) => {
+    if ((await ownedStream(ctx, messageId, claimedAt)) !== null) await ctx.db.patch("messages", messageId, { status: "failed" });
+    return null;
   },
 });
 
@@ -265,16 +359,25 @@ export const saveTranscript = internalMutation({
   },
 });
 
-/** Frees a failed turn's claim so the client can retry it right away. A voice message with no transcript yet is removed. */
+/**
+ * Frees a failed turn's claim so the client can retry it right away, and marks its reply failed with the text it
+ * reached. A voice message with no transcript yet is removed together with its empty reply.
+ */
 export const releaseTurn = internalMutation({
-  args: { userId: v.string(), messageId: v.id("messages") },
+  args: { userId: v.string(), messageId: v.id("messages"), replyId: v.id("messages"), claimedAt: v.number() },
   returns: v.null(),
-  handler: async (ctx, { userId, messageId }) => {
+  handler: async (ctx, { userId, messageId, replyId, claimedAt }) => {
     const message = await ctx.db.get("messages", messageId);
     if (message === null || message.userId !== userId) return null;
+    const reply = await ownedStream(ctx, replyId, claimedAt);
     // Nothing ran yet for a message still waiting on its transcript, so it leaves no empty bubble behind.
-    if (message.audioPending === true) await ctx.db.delete("messages", messageId);
-    else await ctx.db.patch("messages", messageId, { claimedAt: undefined });
+    if (message.audioPending === true) {
+      await ctx.db.delete("messages", messageId);
+      if (reply !== null) await ctx.db.delete("messages", replyId);
+      return null;
+    }
+    if (message.claimedAt === claimedAt) await ctx.db.patch("messages", messageId, { claimedAt: undefined });
+    if (reply !== null) await ctx.db.patch("messages", replyId, { status: "failed", stopRequested: undefined });
     return null;
   },
 });
@@ -309,39 +412,40 @@ export const priorTurnWrites = internalQuery({
   },
 });
 
-/** Stores the assistant's reply with its tool calls and card links, once per turn. */
-export const insertAssistantMessage = internalMutation({
+/**
+ * Ends a turn: writes the reply's final text, tool calls and card links, and marks it done or stopped. A stop that
+ * landed after the last streamed write still wins, keeping the text the user saw. Only the attempt that claimed the
+ * row writes; a stale one changes nothing and gets null. Returns the reply as stored.
+ */
+export const finishReply = internalMutation({
   args: {
     userId: v.string(),
-    chatId: v.id("chats"),
-    submissionId: v.string(),
+    messageId: v.id("messages"),
+    claimedAt: v.number(),
+    status: v.union(v.literal("done"), v.literal("stopped")),
     text: v.string(),
     toolCalls: v.array(toolCallRecordValidator),
     draftIds: v.array(v.id("drafts")),
     entryIds: v.array(v.id("entries")),
   },
-  returns: v.id("messages"),
-  handler: async (ctx, args): Promise<Id<"messages">> => {
+  returns: v.union(v.null(), v.object({ text: v.string(), status: v.union(v.literal("done"), v.literal("stopped")) })),
+  handler: async (ctx, args) => {
     await assertLedgerWritable(ctx, args.userId);
-    const chat = await ctx.db.get("chats", args.chatId);
-    const replyKey = `${args.submissionId}:reply`;
-    const existing = await messageBySubmission(ctx, args.userId, replyKey);
-    if (existing !== null) return existing._id;
-    const id = await ctx.db.insert("messages", {
-      userId: args.userId,
-      chatId: args.chatId,
-      role: "assistant",
-      text: args.text,
-      attachments: [],
+    const row = await ownedStream(ctx, args.messageId, args.claimedAt);
+    if (row === null || row.userId !== args.userId) return null;
+    const final = row.stopRequested === true ? { text: row.text, status: "stopped" as const } : { text: args.text, status: args.status };
+    await ctx.db.patch("messages", args.messageId, {
+      ...final,
       toolCalls: args.toolCalls,
       draftIds: args.draftIds,
       entryIds: args.entryIds,
-      submissionId: replyKey,
+      stopRequested: undefined,
     });
     // The chat may have been deleted mid-turn; then the purge job removes this message too.
+    const chat = await ctx.db.get("chats", row.chatId);
     if (chat !== null) await ctx.db.patch("chats", chat._id, { updatedAt: Date.now() });
-    else await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId: args.chatId });
-    return id;
+    else await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId: row.chatId });
+    return final;
   },
 });
 
@@ -370,8 +474,11 @@ export const turnContext = internalQuery({
       .take(HISTORY_WINDOW);
     const history = recent
       .reverse()
+      // A reply still streaming (this turn's own) or one that failed was never a finished answer.
       .flatMap((m) =>
-        m.role === "tool" || m.text === "" ? [] : [{ role: m.role, text: m.text.slice(0, AI_INPUT_LIMITS.historyEntryChars) }],
+        m.role === "tool" || m.text === "" || !isFinished(m)
+          ? []
+          : [{ role: m.role, text: m.text.slice(0, AI_INPUT_LIMITS.historyEntryChars) }],
       );
     const live = await ctx.db
       .query("entries")
@@ -571,13 +678,56 @@ function collect(result: LogResult, draftIds: Id<"drafts">[], entryIds: Id<"entr
   if (result.kind === "draft") draftIds.push(result.draftId);
 }
 
-/** Runs one text turn: luna with the chat tools, in a bounded loop, executing ledger tools as it goes. */
+/** The reply row a turn streams into, and the claim time that proves this attempt still owns it. */
+type ReplyTarget = { messageId: Id<"messages">; claimedAt: number };
+
+/** Writes a streaming reply to its row in batches (A12) and reports when the user asked it to stop. */
+class ReplyStream {
+  /** Everything streamed so far, across model steps. */
+  text = "";
+  /** The text last written to the row: what the user has seen. A stopped reply ends here. */
+  shown = "";
+  private lastFlush = 0;
+  private paragraph = false;
+  private stopped = false;
+
+  constructor(
+    private readonly ctx: ActionCtx,
+    private readonly target: ReplyTarget,
+  ) {}
+
+  /** Adds streamed text and writes it once enough has built up. True means stop the stream. */
+  async push(text: string): Promise<boolean> {
+    if (this.paragraph && this.text !== "") this.text += "\n\n";
+    this.paragraph = false;
+    this.text += text;
+    const due = this.text.length - this.shown.length >= STREAM_FLUSH_CHARS || Date.now() - this.lastFlush >= STREAM_FLUSH_MS;
+    return due ? await this.flush() : false;
+  }
+
+  /** Writes the text so far and checks for a stop. True means stop. */
+  async flush(): Promise<boolean> {
+    if (this.stopped) return true;
+    this.lastFlush = Date.now();
+    this.stopped = await this.ctx.runMutation(internal.chats.appendReply, { ...this.target, text: this.text });
+    if (!this.stopped) this.shown = this.text;
+    return this.stopped;
+  }
+
+  /** Starts the next model step's text on a new paragraph. */
+  nextStep(): void {
+    this.paragraph = true;
+  }
+}
+
+/** Runs one text turn: luna with the chat tools, in a bounded loop, streaming text and executing ledger tools as it goes. */
 async function runChatTurn(
   ctx: ActionCtx,
   userId: string,
   chatId: Id<"chats">,
   messageId: Id<"messages">,
   submissionId: string,
+  target: ReplyTarget,
 ): Promise<Turn> {
   const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId });
   const messages: ChatMessage[] = [
@@ -589,10 +739,21 @@ async function runChatTurn(
   const entryIds: Id<"entries">[] = [];
   const seen: SeenFoods = new Map();
   const notes: string[] = [];
+  const stream = new ReplyStream(ctx, target);
+  const stopped = (): Turn => ({ reply: stream.shown, toolCalls, draftIds, entryIds, stopped: true });
 
   for (let i = 0; i < MAX_CHAT_ITERATIONS; i++) {
-    const reply = await callOpenRouter(ctx, userId, { model: PIPELINE_MODEL, maxTokens: CHAT_MAX_TOKENS, messages, tools: CHAT_TOOLS });
-    if (reply.toolCalls.length === 0) return { reply: reply.content ?? "", toolCalls, draftIds, entryIds };
+    // A stop pressed while tools ran ends the turn before the next model call.
+    if (i > 0 && (await stream.flush())) return stopped();
+    stream.nextStep();
+    const reply = await streamOpenRouter(
+      ctx,
+      userId,
+      { model: PIPELINE_MODEL, maxTokens: CHAT_MAX_TOKENS, messages, tools: CHAT_TOOLS },
+      (text) => stream.push(text),
+    );
+    if (reply.stopped) return stopped();
+    if (reply.toolCalls.length === 0) return { reply: stream.text, toolCalls, draftIds, entryIds, stopped: false };
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
 
     // Every add_entry in one model step becomes one pipeline submission, so a meal lands as one card.
@@ -648,7 +809,8 @@ async function runChatTurn(
       toolCalls.push({ name: call.function.name, argsJson: call.function.arguments.slice(0, MAX_TOOL_RESULT_CHARS), resultJson: capJson(result) });
     }
   }
-  return { reply: notes.length === 0 ? "Sorry, I couldn't finish that. Try again?" : notes.join(" "), toolCalls, draftIds, entryIds };
+  const fallback = notes.length === 0 ? "Sorry, I couldn't finish that. Try again?" : notes.join(" ");
+  return { reply: [stream.text, fallback].filter((part) => part !== "").join("\n\n"), toolCalls, draftIds, entryIds, stopped: false };
 }
 
 /** Refuses an empty or oversized message before any model work. */
@@ -701,6 +863,7 @@ export const sendMessage = action({
       audioPending: args.audio !== undefined,
     });
     const userMessageId = claim.messageId;
+    const target: ReplyTarget = { messageId: claim.replyId, claimedAt: claim.claimedAt };
     try {
       let text = claim.text;
       if (claim.audioPending) {
@@ -709,19 +872,25 @@ export const sendMessage = action({
         checkMessage(text, args.imageStorageId);
         await ctx.runMutation(internal.chats.saveTranscript, { userId, messageId: userMessageId, text });
       }
-      const turn = await runTurn(ctx, userId, args, text, userMessageId, claim.retry);
-      const assistantMessageId: Id<"messages"> = await ctx.runMutation(internal.chats.insertAssistantMessage, {
+      const turn = await runTurn(ctx, userId, args, text, userMessageId, claim.retry, target);
+      const stored: { text: string } | null = await ctx.runMutation(internal.chats.finishReply, {
         userId,
-        chatId: args.chatId,
-        submissionId: args.submissionId,
+        ...target,
+        status: turn.stopped ? "stopped" : "done",
         text: turn.reply,
         toolCalls: turn.toolCalls,
         draftIds: turn.draftIds,
         entryIds: turn.entryIds,
       });
-      return { userMessageId, assistantMessageId, reply: turn.reply, draftIds: turn.draftIds, entryIds: turn.entryIds };
+      return {
+        userMessageId,
+        assistantMessageId: claim.replyId,
+        reply: stored?.text ?? turn.reply,
+        draftIds: turn.draftIds,
+        entryIds: turn.entryIds,
+      };
     } catch (err) {
-      await ctx.runMutation(internal.chats.releaseTurn, { userId, messageId: userMessageId });
+      await ctx.runMutation(internal.chats.releaseTurn, { userId, messageId: userMessageId, replyId: target.messageId, claimedAt: target.claimedAt });
       throw err;
     }
   },
@@ -738,15 +907,16 @@ async function runTurn(
   text: string,
   userMessageId: Id<"messages">,
   retry: boolean,
+  target: ReplyTarget,
 ): Promise<Turn> {
   if (retry) {
     const prior: { reply: string; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] } = await ctx.runQuery(
       internal.chats.priorTurnWrites,
       { userId, submissionId: args.submissionId },
     );
-    if (prior.reply !== "") return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, entryIds: prior.entryIds };
+    if (prior.reply !== "") return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, entryIds: prior.entryIds, stopped: false };
   }
-  if (args.imageStorageId === undefined) return await runChatTurn(ctx, userId, args.chatId, userMessageId, args.submissionId);
+  if (args.imageStorageId === undefined) return await runChatTurn(ctx, userId, args.chatId, userMessageId, args.submissionId, target);
   const today = await ctx.runQuery(internal.pipeline.resolve.logContext, { userId });
   const items = await extractItems(ctx, userId, {
     text,
@@ -764,5 +934,5 @@ async function runTurn(
   const draftIds: Id<"drafts">[] = [];
   const entryIds: Id<"entries">[] = [];
   collect(result, draftIds, entryIds);
-  return { reply: describeResult(result), toolCalls: [], draftIds, entryIds };
+  return { reply: describeResult(result), toolCalls: [], draftIds, entryIds, stopped: false };
 }

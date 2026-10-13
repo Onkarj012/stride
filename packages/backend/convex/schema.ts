@@ -844,8 +844,12 @@ export default defineSchema({
     draftIds: v.array(v.id("drafts")),
     entryIds: v.optional(v.array(v.id("entries"))),
     submissionId: v.optional(v.string()),
-    claimedAt: v.optional(v.number()), // user messages: when a chat turn last started work on it
+    // User messages: when a turn last started work on it. Assistant replies: the same time, fencing their writes to that attempt.
+    claimedAt: v.optional(v.number()),
     audioPending: v.optional(v.boolean()), // user voice messages: claimed, transcript not saved yet
+    // Assistant replies. Missing means done (rows from before streaming).
+    status: v.optional(v.union(v.literal("streaming"), v.literal("done"), v.literal("stopped"), v.literal("failed"))),
+    stopRequested: v.optional(v.boolean()), // assistant replies: the user pressed stop while it streamed
   })
     .index("by_chatId", ["chatId"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
