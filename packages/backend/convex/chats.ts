@@ -42,7 +42,7 @@ import {
 } from "./pipeline/openrouter";
 import { resolveFoodPortion, userFoodsOf, userMeasuresOf } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
-import { calorieTarget, MAX_PROGRESS_RANGE_DAYS, tdeeInput } from "./progress_v2";
+import { calorieTarget, dietsOf, MAX_PROGRESS_RANGE_DAYS, tdeeInput } from "./progress_v2";
 import { requireUserId, resolveLocalDay } from "./time_zone";
 import { requireOwnUpload } from "./uploads";
 import { assertLedgerWritable } from "./users";
@@ -636,14 +636,14 @@ export const finishReply = internalMutation({
 
 /** The app's daily macro reference at the default calorie target. Mirrors DEFAULT_TARGETS in apps/mobile/src/lib/log.ts. */
 const DEFAULT_TARGETS: DailyTargets = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 };
-const DIET_LABELS = { veg: "vegetarian", eggetarian: "eggetarian", non_veg: "non-vegetarian", vegan: "vegan", jain: "jain" } as const;
+const DIET_LABELS = { veg: "Vegetarian", eggetarian: "Eggetarian", non_veg: "Non-vegetarian", vegan: "Vegan", jain: "Jain" } as const;
 
 const coachProfileValidator = v.union(
   v.null(),
   v.object({
     goal: v.optional(v.union(v.literal("lose"), v.literal("maintain"), v.literal("gain"))),
     pace: v.optional(v.union(v.literal("relaxed"), v.literal("steady"), v.literal("fast"))),
-    dietType: v.optional(
+    dietTypes: v.array(
       v.union(v.literal("veg"), v.literal("eggetarian"), v.literal("non_veg"), v.literal("vegan"), v.literal("jain")),
     ),
     trainingDaysPerWeek: v.optional(v.number()),
@@ -694,7 +694,7 @@ async function coachProfileOf(ctx: QueryCtx, userId: string, localDate: string):
   return {
     goal: settings.goal,
     pace: settings.pace,
-    dietType: settings.dietType,
+    dietTypes: dietsOf(settings),
     trainingDaysPerWeek: settings.trainingDaysPerWeek,
     targetWeightKg: settings.targetWeightKg,
     targetKcal: kcal,
@@ -911,9 +911,9 @@ function aboutUser(profile: CoachProfile | null): string[] {
   const target = profile.targetWeightKg === undefined ? "" : `Target weight ${profile.targetWeightKg} kg.`;
   const goalLine = [goal, target].filter((part) => part !== "").join(" ");
   if (goalLine !== "") lines.push(goalLine);
-  if (profile.dietType !== undefined) {
-    lines.push(`Diet: ${DIET_LABELS[profile.dietType]}.`);
-    lines.push("Respect the user's diet in every suggestion (no meat for veg, no egg for veg or vegan, no onion or garlic for jain).");
+  if (profile.dietTypes.length > 0) {
+    lines.push(`Diet: ${profile.dietTypes.map((diet) => DIET_LABELS[diet]).join(", ")}.`);
+    lines.push("Respect the user's diets: suggest only foods that fit at least one of them, and never onion or garlic if Jain is listed.");
   }
   if (profile.trainingDaysPerWeek !== undefined) {
     lines.push(`Trains ${profile.trainingDaysPerWeek} ${profile.trainingDaysPerWeek === 1 ? "day" : "days"} a week.`);

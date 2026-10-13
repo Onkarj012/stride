@@ -6,6 +6,7 @@ import { layout, motion } from '@stride/ui-tokens'
 import { Button } from '@/components/Controls'
 import { Dock } from '@/components/Dock'
 import { LogProvider } from '@/components/LogProvider'
+import { OpenSheetsProvider } from '@/components/Sheet'
 import { Polo } from '@/components/Polo'
 import { TimeZoneGate } from '@/components/TimeZoneGate'
 import { plainError } from '@/lib/log'
@@ -35,22 +36,24 @@ export default function TabsLayout() {
   const t = useTheme()
   return (
     <TimeZoneGate>
-      <LogProvider>
-        <Tabs
-          tabBar={(props) => <Dock {...props} />}
-          screenOptions={{
-            headerShown: false,
-            sceneStyle: { backgroundColor: t.c.bg },
-            sceneStyleInterpolator: shift,
-            transitionSpec: { animation: 'spring', config: motion.spring.smooth },
-          }}
-        >
-          <Tabs.Screen name="index" options={{ title: 'Today' }} />
-          <Tabs.Screen name="log" options={{ title: 'Log' }} />
-          <Tabs.Screen name="progress" options={{ title: 'Progress' }} />
-          <Tabs.Screen name="coach" options={{ title: 'Coach' }} />
-        </Tabs>
-      </LogProvider>
+      <OpenSheetsProvider>
+        <LogProvider>
+          <Tabs
+            tabBar={(props) => <Dock {...props} />}
+            screenOptions={{
+              headerShown: false,
+              sceneStyle: { backgroundColor: t.c.bg },
+              sceneStyleInterpolator: shift,
+              transitionSpec: { animation: 'spring', config: motion.spring.smooth },
+            }}
+          >
+            <Tabs.Screen name="index" options={{ title: 'Today' }} />
+            <Tabs.Screen name="log" options={{ title: 'Log' }} />
+            <Tabs.Screen name="progress" options={{ title: 'Progress' }} />
+            <Tabs.Screen name="coach" options={{ title: 'Coach' }} />
+          </Tabs>
+        </LogProvider>
+      </OpenSheetsProvider>
     </TimeZoneGate>
   )
 }

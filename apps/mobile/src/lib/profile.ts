@@ -1,14 +1,14 @@
 import { createContext } from 'react'
 import { getLocales } from 'expo-localization'
 import type { FunctionArgs } from 'convex/server'
-import { KCAL_FLOOR } from '@stride/core'
+import { KCAL_FLOOR, ageOnDate, isLocalDate } from '@stride/core'
 import type { api } from 'stride-backend/convex/_generated/api'
 
 type SaveProfileArgs = FunctionArgs<typeof api.progress_v2.saveProfile>
 export type Goal = SaveProfileArgs['goal']
 export type Sex = SaveProfileArgs['sex']
 export type Activity = SaveProfileArgs['activity']
-export type DietType = SaveProfileArgs['dietType']
+export type DietType = SaveProfileArgs['dietTypes'][number]
 export type Pace = NonNullable<SaveProfileArgs['pace']>
 export type Units = 'metric' | 'imperial'
 export type DatePart = 'day' | 'month' | 'year'
@@ -101,6 +101,15 @@ export function stepDate(value: string, part: DatePart, dir: -1 | 1): string {
   return `${String(nextYear).padStart(4, '0')}-${String(nextMonth).padStart(2, '0')}-${String(nextDay).padStart(2, '0')}`
 }
 
+// The YYYY-MM-DD date for typed day, month and year, or null unless it is real and the age on today is 13 to 120.
+export function dobFromTyped(day: string, month: string, year: string, today: string): string | null {
+  if (!/^\d{1,2}$/.test(day) || !/^\d{1,2}$/.test(month) || !/^\d{4}$/.test(year)) return null
+  const dob = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  if (!isLocalDate(dob)) return null
+  const age = ageOnDate(dob, today)
+  return age !== null && age >= 13 && age <= 120 ? dob : null
+}
+
 // Splits a full name at the first space into Clerk's first and last name.
 export function splitName(full: string): { firstName: string; lastName: string } {
   const trimmed = full.trim()
@@ -123,6 +132,19 @@ export function savedUnits(saved: string | undefined): Units {
 // Training days as "1 day" or "4 days".
 export function daysLabel(days: number): string {
   return days === 1 ? '1 day' : `${days} days`
+}
+
+export const DIET_LABELS: Record<DietType, string> = {
+  veg: 'Vegetarian',
+  eggetarian: 'Eggetarian',
+  non_veg: 'Non-vegetarian',
+  vegan: 'Vegan',
+  jain: 'Jain',
+}
+
+// The chosen diets joined with commas, e.g. "Vegetarian, Non-vegetarian", or "Not set" when none.
+export function dietsLabel(list: DietType[]): string {
+  return list.length === 0 ? 'Not set' : list.map((d) => DIET_LABELS[d]).join(', ')
 }
 
 // One line on why the target moved off the formula, or null when it did not.

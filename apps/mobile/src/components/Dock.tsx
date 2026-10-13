@@ -9,6 +9,7 @@ import { Icon, type IconName } from './Icon'
 import { useLog } from './LogProvider'
 import { Polo } from './Polo'
 import { Tap } from './Tap'
+import { useSheetCovered } from './Sheet'
 
 const TAB_ICONS: Record<string, { icon: IconName; label: string }> = {
   index: { icon: 'today', label: 'Today' },
@@ -60,11 +61,13 @@ export function Dock({ state, navigation }: BottomTabBarProps) {
   const [hops, setHops] = useState(0)
   const [night] = useState(() => isNight(new Date()))
   const { compose, sheetOpen } = useLog()
+  const covered = useSheetCovered()
+  const hidden = sheetOpen || covered
   const away = useSharedValue(0)
 
   useEffect(() => {
-    away.value = withSpring(sheetOpen ? 1 : 0, motion.spring.smooth)
-  }, [sheetOpen, away])
+    away.value = withSpring(hidden ? 1 : 0, motion.spring.smooth)
+  }, [hidden, away])
   const awayStyle = useAnimatedStyle(() => ({ opacity: 1 - away.value, transform: [{ translateY: away.value * 130 }] }))
 
   const pill = useSharedValue(index * layout.dockButton)
@@ -83,7 +86,7 @@ export function Dock({ state, navigation }: BottomTabBarProps) {
     <Animated.View
       style={[
         s.wrap,
-        { bottom: Math.max(layout.dockInsetBottom, insets.bottom + 8), pointerEvents: sheetOpen ? 'none' : 'box-none' },
+        { bottom: Math.max(layout.dockInsetBottom, insets.bottom + 8), pointerEvents: hidden ? 'none' : 'box-none' },
         awayStyle,
       ]}
     >

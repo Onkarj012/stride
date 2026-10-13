@@ -14,6 +14,7 @@ export const TARGET_UPDATE_DAYS = 7;
 
 type CalorieTarget = NonNullable<Doc<"user_settings">["calorieTarget"]>;
 type ProfileInput = Pick<Doc<"user_settings">, "goal" | "heightCm" | "dob" | "targetWeightKg" | "trainingDaysPerWeek">;
+type DietType = NonNullable<Doc<"user_settings">["dietType"]>;
 
 const goalValidator = v.union(v.literal("lose"), v.literal("maintain"), v.literal("gain"));
 const sexValidator = v.union(v.literal("male"), v.literal("female"));
@@ -33,6 +34,19 @@ const dietTypeValidator = v.union(
 );
 const paceValidator = v.union(v.literal("relaxed"), v.literal("steady"), v.literal("fast"));
 const clampedValidator = v.union(v.literal("pace_cap"), v.literal("floor"));
+const dietTypesValidator = v.array(dietTypeValidator);
+
+/** The diets a settings row holds. Rows saved before the multi-select have only the legacy single dietType. */
+export function dietsOf(settings: Pick<Doc<"user_settings">, "dietType" | "dietTypes"> | null): DietType[] {
+  return settings?.dietTypes ?? (settings?.dietType ? [settings.dietType] : []);
+}
+
+/** Deduplicates the picked diets and rejects an empty pick. */
+function pickedDiets(dietTypes: DietType[]): DietType[] {
+  const unique = [...new Set(dietTypes)];
+  if (unique.length === 0) throw new Error("Pick at least one diet");
+  return unique;
+}
 
 /** Builds the D11 input from the last 28 complete local days; older weigh-ins over the chart's range only warm up the EMA so it matches the chart. */
 export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, localDate: string) {
@@ -188,7 +202,7 @@ export const profileStatus = query({
     if (settings?.dob === undefined) missing.push("dob");
     if (settings?.heightCm === undefined) missing.push("heightCm");
     if (settings?.activity === undefined) missing.push("activity");
-    if (settings?.dietType === undefined) missing.push("dietType");
+    if (dietsOf(settings).length === 0) missing.push("dietType");
     if (weight === null) missing.push("weight");
     return { complete: missing.length === 0, missing };
   },
@@ -203,7 +217,7 @@ export const profile = query({
     dob: v.optional(v.string()),
     heightCm: v.optional(v.number()),
     activity: v.optional(activityValidator),
-    dietType: v.optional(dietTypeValidator),
+    dietTypes: dietTypesValidator,
     targetWeightKg: v.optional(v.number()),
     pace: v.optional(paceValidator),
     trainingDaysPerWeek: v.optional(v.number()),
@@ -222,7 +236,7 @@ export const profile = query({
       dob: settings.dob,
       heightCm: settings.heightCm,
       activity: settings.activity,
-      dietType: settings.dietType,
+      dietTypes: dietsOf(settings),
       targetWeightKg: settings.targetWeightKg,
       pace: settings.pace,
       trainingDaysPerWeek: settings.trainingDaysPerWeek,
@@ -240,7 +254,7 @@ export const saveProfile = mutation({
     heightCm: v.number(),
     dob: v.string(),
     activity: activityValidator,
-    dietType: dietTypeValidator,
+    dietTypes: dietTypesValidator,
     targetWeightKg: v.optional(v.number()),
     pace: v.optional(paceValidator),
     trainingDaysPerWeek: v.optional(v.number()),
@@ -248,11 +262,12 @@ export const saveProfile = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
+    const dietTypes = pickedDiets(args.dietTypes);
     await validateProfile(ctx, userId, args, true);
     await assertLedgerWritable(ctx, userId);
     const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
-    if (settings === null) await ctx.db.insert("user_settings", { userId, ...args });
-    else await ctx.db.patch("user_settings", settings._id, { ...args, calorieTarget: undefined });
+    if (settings === null) await ctx.db.insert("user_settings", { userId, ...args, dietTypes });
+    else await ctx.db.patch("user_settings", settings._id, { ...args, dietTypes, dietType: undefined, calorieTarget: undefined });
     await initializeCalorieTarget(ctx, userId);
     return null;
   },
@@ -266,7 +281,7 @@ export const updateProfile = mutation({
     heightCm: v.optional(v.number()),
     dob: v.optional(v.string()),
     activity: v.optional(activityValidator),
-    dietType: v.optional(dietTypeValidator),
+    dietTypes: v.optional(dietTypesValidator),
     targetWeightKg: v.optional(v.number()),
     pace: v.optional(paceValidator),
     trainingDaysPerWeek: v.optional(v.number()),
@@ -276,9 +291,10 @@ export const updateProfile = mutation({
     const userId = await requireUserId(ctx);
     const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (settings === null) throw new Error("Finish onboarding first");
+    const dietPatch = args.dietTypes === undefined ? {} : { dietTypes: pickedDiets(args.dietTypes), dietType: undefined };
     await validateProfile(ctx, userId, { ...settings, ...args }, args.targetWeightKg !== undefined || args.goal !== undefined);
     await assertLedgerWritable(ctx, userId);
-    await ctx.db.patch("user_settings", settings._id, { ...args, calorieTarget: undefined });
+    await ctx.db.patch("user_settings", settings._id, { ...args, ...dietPatch, calorieTarget: undefined });
     await initializeCalorieTarget(ctx, userId);
     return null;
   },
