@@ -12,6 +12,28 @@ import { assertLedgerWritable } from "./users";
 export const MAX_PROGRESS_RANGE_DAYS = 180;
 export const TARGET_UPDATE_DAYS = 7;
 
+type CalorieTarget = NonNullable<Doc<"user_settings">["calorieTarget"]>;
+type ProfileInput = Pick<Doc<"user_settings">, "goal" | "heightCm" | "dob" | "targetWeightKg" | "trainingDaysPerWeek">;
+
+const goalValidator = v.union(v.literal("lose"), v.literal("maintain"), v.literal("gain"));
+const sexValidator = v.union(v.literal("male"), v.literal("female"));
+const activityValidator = v.union(
+  v.literal("sedentary"),
+  v.literal("light"),
+  v.literal("moderate"),
+  v.literal("active"),
+  v.literal("very_active"),
+);
+const dietTypeValidator = v.union(
+  v.literal("veg"),
+  v.literal("eggetarian"),
+  v.literal("non_veg"),
+  v.literal("vegan"),
+  v.literal("jain"),
+);
+const paceValidator = v.union(v.literal("relaxed"), v.literal("steady"), v.literal("fast"));
+const clampedValidator = v.union(v.literal("pace_cap"), v.literal("floor"));
+
 /** Builds the D11 input from the last 28 complete local days; older weigh-ins over the chart's range only warm up the EMA so it matches the chart. */
 export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, localDate: string) {
   const end = addDays(localDate, -1);
@@ -34,7 +56,7 @@ export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, loc
     }
   }
   const baseline = formulaBaseline(settings, latestWeight?.kg ?? null, localDate);
-  return { settings, baseline, result: adaptiveTdee({ days, baselineTdeeKcal: baseline, warmupWeights }) };
+  return { settings, baseline, latestWeightKg: latestWeight?.kg ?? null, result: adaptiveTdee({ days, baselineTdeeKcal: baseline, warmupWeights }) };
 }
 
 /** The goal-adjusted target, or null until the profile and measured weight supply a formula baseline. */
@@ -43,12 +65,13 @@ export function calorieTarget(
   baseline: number | null,
   snapshot: Doc<"tdee_snapshots"> | null,
   localDate: string,
-): { kcal: number; source: "formula" | "adaptive"; appliedLocalDate: string } | null {
-  if (settings?.goal === undefined || baseline === null) return null;
+  weightKg: number | null,
+): CalorieTarget | null {
+  if (settings?.goal === undefined || settings.sex === undefined || baseline === null || weightKg === null) return null;
   if (settings.calorieTarget !== undefined) return settings.calorieTarget;
   const maintenance = snapshot?.estimateKcal ?? baseline;
-  const kcal = goalTargetKcal(baseline, maintenance, settings.goal);
-  return { kcal, source: snapshot === null ? "formula" : "adaptive", appliedLocalDate: localDate };
+  const { kcal, clamped } = goalTargetKcal({ baseline, maintenance, goal: settings.goal, pace: settings.pace, weightKg, sex: settings.sex });
+  return { kcal, source: snapshot === null ? "formula" : "adaptive", appliedLocalDate: localDate, ...(clamped === null ? {} : { clamped }) };
 }
 
 /** Freezes the first usable target when a weigh-in supplies the missing measured weight. */
@@ -59,10 +82,38 @@ export async function initializeCalorieTarget(ctx: MutationCtx, userId: string):
   const latestWeight = await ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first();
   const baseline = formulaBaseline(settings, latestWeight?.kg ?? null, localDate);
   const snapshot = await ctx.db.query("tdee_snapshots").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first();
-  const target = calorieTarget(settings, baseline, snapshot, localDate);
+  const target = calorieTarget(settings, baseline, snapshot, localDate, latestWeight?.kg ?? null);
   if (target === null) return;
   await assertLedgerWritable(ctx, userId);
   await ctx.db.patch("user_settings", settings._id, { calorieTarget: target });
+}
+
+/** Rejects profile values that would make the formula, the target or the weigh-in history nonsensical. */
+async function validateProfile(ctx: MutationCtx, userId: string, profile: ProfileInput): Promise<void> {
+  const { goal, heightCm, dob, targetWeightKg, trainingDaysPerWeek } = profile;
+  if (heightCm === undefined || !Number.isFinite(heightCm) || heightCm < 100 || heightCm > 250) {
+    throw new Error(`heightCm must be within 100-250, got ${heightCm}`);
+  }
+  const localDate = await localDateOrToday(ctx, userId, undefined);
+  const age = dob === undefined ? null : ageOnDate(dob, localDate);
+  if (age === null || age < 13 || age > 120) {
+    throw new Error(`dob must be a valid date giving an age of 13-120, got ${dob}`);
+  }
+  if (trainingDaysPerWeek !== undefined && (!Number.isInteger(trainingDaysPerWeek) || trainingDaysPerWeek < 0 || trainingDaysPerWeek > 7)) {
+    throw new Error(`trainingDaysPerWeek must be an integer from 0 to 7, got ${trainingDaysPerWeek}`);
+  }
+  if (targetWeightKg === undefined) return;
+  if (!Number.isFinite(targetWeightKg) || targetWeightKg < 30 || targetWeightKg > 300) {
+    throw new Error(`targetWeightKg must be within 30-300, got ${targetWeightKg}`);
+  }
+  const latest = await ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first();
+  if (latest === null) return;
+  if (goal === "lose" && targetWeightKg >= latest.kg) {
+    throw new Error(`targetWeightKg must be below your current weight of ${latest.kg} kg to lose weight, got ${targetWeightKg}`);
+  }
+  if (goal === "gain" && targetWeightKg <= latest.kg) {
+    throw new Error(`targetWeightKg must be above your current weight of ${latest.kg} kg to gain weight, got ${targetWeightKg}`);
+  }
 }
 
 /** Signed-in weight trends, D11 gate progress, expenditure and the current weekly calorie target. */
@@ -80,7 +131,12 @@ export const summary = query({
       windowDays: v.number(), weighIns: v.number(), loggedFraction: v.number(), loggedDays: v.number(),
       minDays: v.number(), minWeighIns: v.number(), minLoggedFraction: v.number(),
     }),
-    target: v.union(v.null(), v.object({ kcal: v.number(), source: v.union(v.literal("formula"), v.literal("adaptive")), appliedLocalDate: v.string() })),
+    target: v.union(v.null(), v.object({
+      kcal: v.number(),
+      source: v.union(v.literal("formula"), v.literal("adaptive")),
+      appliedLocalDate: v.string(),
+      clamped: v.optional(clampedValidator),
+    })),
   }),
   handler: async (ctx, { rangeDays, localDate: requestedDate }) => {
     const userId = await requireUserId(ctx);
@@ -110,42 +166,119 @@ export const summary = query({
       weeklyRateKg,
       snapshot: latestSnapshot === null ? null : { localDate: latestSnapshot.localDate, estimate: latestSnapshot.estimateKcal, trendKg: latestSnapshot.trendKg, windowDays: latestSnapshot.windowDays, confidence: latestSnapshot.confidence },
       gate: { status: result.status, reasons, windowDays: result.windowDays, weighIns: result.weighIns, loggedFraction: result.loggedFraction, loggedDays: Math.round(result.loggedFraction * result.windowDays), minDays: TDEE_MIN_WINDOW_DAYS, minWeighIns: TDEE_MIN_WEIGH_INS, minLoggedFraction: TDEE_MIN_LOGGED_FRACTION },
-      target: calorieTarget(input.settings, input.baseline, latestSnapshot, localDate),
+      target: calorieTarget(input.settings, input.baseline, latestSnapshot, localDate, input.latestWeightKg),
     };
   },
 });
 
-/** Saves the profile inputs for the formula, then clears and re-freezes the weekly target. */
+/** Which profile fields are still missing before the calorie target can be trusted. */
+export const profileStatus = query({
+  args: {},
+  returns: v.object({ complete: v.boolean(), missing: v.array(v.string()) }),
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const [settings, weight] = await Promise.all([
+      ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
+      ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).first(),
+    ]);
+    const missing: string[] = [];
+    if (settings?.goal === undefined) missing.push("goal");
+    if (settings?.sex === undefined) missing.push("sex");
+    if (settings?.dob === undefined) missing.push("dob");
+    if (settings?.heightCm === undefined) missing.push("heightCm");
+    if (settings?.activity === undefined) missing.push("activity");
+    if (settings?.dietType === undefined) missing.push("dietType");
+    if (weight === null) missing.push("weight");
+    return { complete: missing.length === 0, missing };
+  },
+});
+
+/** The saved profile for the Profile screen, or null before onboarding has created it. */
+export const profile = query({
+  args: {},
+  returns: v.union(v.null(), v.object({
+    goal: v.optional(goalValidator),
+    sex: v.optional(sexValidator),
+    dob: v.optional(v.string()),
+    heightCm: v.optional(v.number()),
+    activity: v.optional(activityValidator),
+    dietType: v.optional(dietTypeValidator),
+    targetWeightKg: v.optional(v.number()),
+    pace: v.optional(paceValidator),
+    trainingDaysPerWeek: v.optional(v.number()),
+    units: v.optional(v.string()),
+    latestWeightKg: v.union(v.number(), v.null()),
+  })),
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const [settings, latestWeight] = await Promise.all([
+      ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
+      ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).order("desc").first(),
+    ]);
+    if (settings === null) return null;
+    return {
+      goal: settings.goal,
+      sex: settings.sex,
+      dob: settings.dob,
+      heightCm: settings.heightCm,
+      activity: settings.activity,
+      dietType: settings.dietType,
+      targetWeightKg: settings.targetWeightKg,
+      pace: settings.pace,
+      trainingDaysPerWeek: settings.trainingDaysPerWeek,
+      units: settings.units,
+      latestWeightKg: latestWeight?.kg ?? null,
+    };
+  },
+});
+
+/** Saves the full onboarding profile, then clears and re-freezes the weekly target. */
 export const saveProfile = mutation({
   args: {
-    goal: v.union(v.literal("lose"), v.literal("maintain"), v.literal("gain")),
-    sex: v.union(v.literal("male"), v.literal("female")),
+    goal: goalValidator,
+    sex: sexValidator,
     heightCm: v.number(),
     dob: v.string(),
-    activity: v.union(
-      v.literal("sedentary"),
-      v.literal("light"),
-      v.literal("moderate"),
-      v.literal("active"),
-      v.literal("very_active"),
-    ),
+    activity: activityValidator,
+    dietType: dietTypeValidator,
+    targetWeightKg: v.optional(v.number()),
+    pace: v.optional(paceValidator),
+    trainingDaysPerWeek: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
-    if (!Number.isFinite(args.heightCm) || args.heightCm < 100 || args.heightCm > 250) {
-      throw new Error(`heightCm must be within 100-250, got ${args.heightCm}`);
-    }
-    const localDate = await localDateOrToday(ctx, userId, undefined);
-    const age = ageOnDate(args.dob, localDate);
-    if (age === null || age < 13 || age > 120) {
-      throw new Error(`dob must be a valid date giving an age of 13-120, got ${args.dob}`);
-    }
+    await validateProfile(ctx, userId, args);
     await assertLedgerWritable(ctx, userId);
-    const profile = { goal: args.goal, sex: args.sex, heightCm: args.heightCm, dob: args.dob, activity: args.activity };
     const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
-    if (settings === null) await ctx.db.insert("user_settings", { userId, ...profile });
-    else await ctx.db.patch("user_settings", settings._id, { ...profile, calorieTarget: undefined });
+    if (settings === null) await ctx.db.insert("user_settings", { userId, ...args });
+    else await ctx.db.patch("user_settings", settings._id, { ...args, calorieTarget: undefined });
+    await initializeCalorieTarget(ctx, userId);
+    return null;
+  },
+});
+
+/** Updates any profile fields the Profile screen sends, then clears and re-freezes the weekly target. */
+export const updateProfile = mutation({
+  args: {
+    goal: v.optional(goalValidator),
+    sex: v.optional(sexValidator),
+    heightCm: v.optional(v.number()),
+    dob: v.optional(v.string()),
+    activity: v.optional(activityValidator),
+    dietType: v.optional(dietTypeValidator),
+    targetWeightKg: v.optional(v.number()),
+    pace: v.optional(paceValidator),
+    trainingDaysPerWeek: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
+    if (settings === null) throw new Error("Finish onboarding first");
+    await validateProfile(ctx, userId, { ...settings, ...args });
+    await assertLedgerWritable(ctx, userId);
+    await ctx.db.patch("user_settings", settings._id, { ...args, calorieTarget: undefined });
     await initializeCalorieTarget(ctx, userId);
     return null;
   },
