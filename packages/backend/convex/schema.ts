@@ -855,11 +855,21 @@ export default defineSchema({
     draftIds: v.array(v.id("drafts")),
     entryIds: v.optional(v.array(v.id("entries"))),
     submissionId: v.optional(v.string()),
-    claimedAt: v.optional(v.number()), // user messages: when a chat turn last started work on it
+    // User messages: when a turn last started work on it. Assistant replies: the same time, fencing their writes to that attempt.
+    claimedAt: v.optional(v.number()),
     audioPending: v.optional(v.boolean()), // user voice messages: claimed, transcript not saved yet
+    // Assistant replies. Missing means done (rows from before streaming).
+    status: v.optional(v.union(v.literal("streaming"), v.literal("done"), v.literal("stopped"), v.literal("failed"))),
+    stopRequested: v.optional(v.boolean()), // assistant replies: the user pressed stop while it streamed
+    answersMessageId: v.optional(v.id("messages")), // assistant replies: the user message they answer
+    deletedAt: v.optional(v.number()), // a reply replaced by regenerate; hidden everywhere but its entries
+    // Assistant replies: a "Log this" button that opens Compose with this food text and/or this photo.
+    logAction: v.optional(v.object({ text: v.optional(v.string()), storageId: v.optional(v.id("_storage")) })),
   })
     .index("by_chatId", ["chatId"])
-    .index("by_userId_and_submissionId", ["userId", "submissionId"]),
+    .index("by_userId_and_submissionId", ["userId", "submissionId"])
+    .index("by_answersMessageId", ["answersMessageId"])
+    .searchIndex("search_text", { searchField: "text", filterFields: ["userId"] }),
 
   // Extracted items awaiting confirmation (D7). Matcher output only; nutrients are computed on commit.
   drafts: defineTable({

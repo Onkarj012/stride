@@ -1,4 +1,15 @@
-import { roundTo, scaleNutrients, type MealSlot } from "@stride/core";
+import {
+  addDays,
+  daysBetween,
+  leastSquaresSlope,
+  PACE_KG_PER_WEEK,
+  roundTo,
+  scaleMacroTargets,
+  scaleNutrients,
+  weightTrend,
+  type DailyTargets,
+  type MealSlot,
+} from "@stride/core";
 import { paginationOptsValidator } from "convex/server";
 import { v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
@@ -19,11 +30,19 @@ import { MAX_DAY_ENTRIES } from "./day_totals";
 import { deleteEntryAs, editEntryAs } from "./entries";
 import { isVisibleFood } from "./foods_db";
 import { mealSlotValidator } from "./ledger_validators";
-import { extractItems, ITEM_JSON_SCHEMA, PARSE_RULES, parseItem } from "./pipeline/extract";
-import { imageUrl, runPipeline } from "./pipeline/log";
-import { callOpenRouter, PIPELINE_MODEL, type ChatMessage, type JsonValue, type ToolDefinition } from "./pipeline/openrouter";
-import { resolveFoodPortion, userFoodsOf, userMeasuresOf, type LogResult } from "./pipeline/resolve";
+import { imageUrl } from "./pipeline/log";
+import {
+  PHOTO_MODEL,
+  PIPELINE_MODEL,
+  streamOpenRouter,
+  type ChatMessage,
+  type ContentPart,
+  type JsonValue,
+  type ToolDefinition,
+} from "./pipeline/openrouter";
+import { resolveFoodPortion, userFoodsOf, userMeasuresOf } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
+import { calorieTarget, MAX_PROGRESS_RANGE_DAYS, tdeeInput } from "./progress_v2";
 import { requireUserId, resolveLocalDay } from "./time_zone";
 import { requireOwnUpload } from "./uploads";
 import { assertLedgerWritable } from "./users";
@@ -34,11 +53,21 @@ export const DEFAULT_CHAT_TITLE = "New chat";
 export const MAX_CHATS_LISTED = 50;
 /** Most earlier messages the model sees each turn (D12). */
 export const HISTORY_WINDOW = 20;
+/** Rows read per window, so hidden replies from regenerating don't shrink the history the model sees. */
+const HISTORY_READ_FACTOR = 3;
 /** Most model calls in one chat turn. Each may run tools; the turn ends when the model stops calling them. */
 export const MAX_CHAT_ITERATIONS = 4;
 
 const MAX_SUBMISSION_ID_CHARS = 96;
 const MAX_TITLE_CHARS = 60;
+/** Most chats `searchChats` returns, and how many raw hits it reads to find them. */
+const MAX_SEARCH_CHATS = 20;
+const SEARCH_HITS = 50;
+const SNIPPET_CHARS = 80;
+const SNIPPET_LEAD_CHARS = 30;
+/** Characters of a chat's newest message `listChats` previews, and how many recent rows it reads to find one. */
+const PREVIEW_CHARS = 100;
+const PREVIEW_SCAN = 5;
 const MAX_CONTEXT_USER_FOODS = 30;
 const MAX_TOOL_RESULT_CHARS = 4_000;
 const PURGE_BATCH = 100;
@@ -46,6 +75,25 @@ const CHAT_MAX_TOKENS = 800;
 /** How long a started turn holds its message. Matches the Convex action time limit, so a crashed turn frees it. */
 const TURN_LEASE_MS = 10 * 60_000;
 const MAX_PRIOR_DRAFTS = 10;
+/** A streaming reply is written to its row at most this often, or once this many new characters arrive (A12). */
+export const STREAM_FLUSH_MS = 300;
+export const STREAM_FLUSH_CHARS = 200;
+/** Most characters of the food text a "Log this" action keeps. */
+const MAX_LOG_TEXT_CHARS = 500;
+/** What the history says about a photo sent without words, and the question a photo turn asks when it has none. */
+const PHOTO_HISTORY_TEXT = "(sent a photo)";
+const PHOTO_QUESTION = "What's in this photo?";
+
+const replyStatusValidator = v.union(v.literal("streaming"), v.literal("done"), v.literal("stopped"), v.literal("failed"));
+
+/** True for a reply the user can read as final. Rows from before streaming have no status and are done. */
+function isFinished(message: Doc<"messages">): boolean {
+  return message.status === undefined || message.status === "done" || message.status === "stopped";
+}
+
+/** A reply's "Log this" button: opens Compose with this food text and/or this photo attached. */
+const logActionValidator = v.object({ text: v.optional(v.string()), storageId: v.optional(v.id("_storage")) });
+type LogAction = Infer<typeof logActionValidator>;
 
 const messageViewValidator = v.object({
   _id: v.id("messages"),
@@ -56,12 +104,24 @@ const messageViewValidator = v.object({
   attachments: v.array(v.object({ kind: v.union(v.literal("image"), v.literal("audio")), storageId: v.id("_storage") })),
   draftIds: v.array(v.id("drafts")),
   entryIds: v.array(v.id("entries")),
+  status: replyStatusValidator,
+  logAction: v.optional(logActionValidator),
+  imageUrl: v.union(v.string(), v.null()),
+  /** On a failed reply: the submission id of the message it answers, so the client retries exactly that send. */
+  retrySubmissionId: v.union(v.string(), v.null()),
 });
 
 const toolCallRecordValidator = v.object({ name: v.string(), argsJson: v.string(), resultJson: v.optional(v.string()) });
 type ToolCallRecord = Infer<typeof toolCallRecordValidator>;
-/** What a turn's work produced, before the reply message is stored. */
-type Turn = { reply: string; toolCalls: ToolCallRecord[]; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] };
+/** What a turn's work produced, before the reply is finished. `stopped` when the user stopped it mid-stream. */
+type Turn = {
+  reply: string;
+  toolCalls: ToolCallRecord[];
+  draftIds: Id<"drafts">[];
+  entryIds: Id<"entries">[];
+  stopped: boolean;
+  logAction: LogAction | undefined;
+};
 
 /** What one chat turn produced: both messages, the reply text, and the drafts and entries its cards point at. */
 const turnResultValidator = v.object({
@@ -73,8 +133,21 @@ const turnResultValidator = v.object({
 });
 type TurnResult = Infer<typeof turnResultValidator>;
 
-/** A claimed turn: its user message, whether an earlier attempt ran, and the text saved so far. */
-const claimValidator = v.object({ messageId: v.id("messages"), retry: v.boolean(), text: v.string(), audioPending: v.boolean() });
+const regenerateResultValidator = v.object({ assistantMessageId: v.id("messages"), reply: v.string() });
+type RegenerateResult = Infer<typeof regenerateResultValidator>;
+
+/**
+ * A claimed turn: its user message, the reply row it streams into, the claim time that fences the reply's writes,
+ * whether an earlier attempt ran, and the text saved so far.
+ */
+const claimValidator = v.object({
+  messageId: v.id("messages"),
+  replyId: v.id("messages"),
+  claimedAt: v.number(),
+  retry: v.boolean(),
+  text: v.string(),
+  audioPending: v.boolean(),
+});
 type Claim = Infer<typeof claimValidator>;
 
 /** Loads one of the user's chats or throws. */
@@ -96,10 +169,12 @@ export const createChat = mutation({
   },
 });
 
-/** The caller's chats, most recently active first. */
+/** The caller's chats, most recently active first, each with a preview of its newest message. */
 export const listChats = query({
   args: {},
-  returns: v.array(v.object({ _id: v.id("chats"), title: v.string(), updatedAt: v.number() })),
+  returns: v.array(
+    v.object({ _id: v.id("chats"), title: v.string(), updatedAt: v.number(), lastMessage: v.union(v.string(), v.null()) }),
+  ),
   handler: async (ctx) => {
     const userId = await requireUserId(ctx);
     const rows = await ctx.db
@@ -107,7 +182,52 @@ export const listChats = query({
       .withIndex("by_userId_and_updatedAt", (q) => q.eq("userId", userId))
       .order("desc")
       .take(MAX_CHATS_LISTED);
-    return rows.map((row) => ({ _id: row._id, title: row.title, updatedAt: row.updatedAt }));
+    return await Promise.all(
+      rows.map(async (row) => ({
+        _id: row._id,
+        title: row.title,
+        updatedAt: row.updatedAt,
+        lastMessage: await previewOf(ctx, row._id),
+      })),
+    );
+  },
+});
+
+/** The text of a chat's newest visible message, cut to the preview length. Null when there is none yet. */
+async function previewOf(ctx: QueryCtx, chatId: Id<"chats">): Promise<string | null> {
+  const recent = await ctx.db
+    .query("messages")
+    .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+    .order("desc")
+    .take(PREVIEW_SCAN);
+  // Empty text is a voice note still waiting for its transcript, or a reply not written yet.
+  const newest = recent.find((m) => m.role !== "tool" && m.deletedAt === undefined && m.text !== "");
+  return newest === undefined ? null : newest.text.slice(0, PREVIEW_CHARS);
+}
+
+/** One of the caller's chats by id, or null if it is gone or not theirs. The thread screen opens chats past the list's cap. */
+export const getChat = query({
+  args: { chatId: v.id("chats") },
+  returns: v.union(v.null(), v.object({ _id: v.id("chats"), title: v.string(), updatedAt: v.number() })),
+  handler: async (ctx, { chatId }) => {
+    const userId = await requireUserId(ctx);
+    const chat = await ctx.db.get("chats", chatId);
+    if (chat === null || chat.userId !== userId) return null;
+    return { _id: chat._id, title: chat.title, updatedAt: chat.updatedAt };
+  },
+});
+
+/** Renames one of the caller's chats. Other chat fields, including the update time, stay as they are. */
+export const renameChat = mutation({
+  args: { chatId: v.id("chats"), title: v.string() },
+  returns: v.null(),
+  handler: async (ctx, { chatId, title }) => {
+    const userId = await requireUserId(ctx);
+    await ownChat(ctx, userId, chatId);
+    const clean = title.trim();
+    if (clean === "" || clean.length > MAX_TITLE_CHARS) throw new Error(`Title must be 1-${MAX_TITLE_CHARS} characters`);
+    await ctx.db.patch("chats", chatId, { title: clean });
+    return null;
   },
 });
 
@@ -157,19 +277,28 @@ export const listMessages = query({
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .order("desc")
       .paginate(paginationOpts);
-    return {
-      ...result,
-      page: result.page.map((m) => ({
-        _id: m._id,
-        _creationTime: m._creationTime,
-        chatId: m.chatId,
-        role: m.role,
-        text: m.text,
-        attachments: m.attachments,
-        draftIds: m.draftIds,
-        entryIds: m.entryIds ?? [],
-      })),
-    };
+    const live = result.page.filter((m) => m.deletedAt === undefined);
+    const page = await Promise.all(
+      live.map(async (m) => {
+        const image = m.attachments.find((a) => a.kind === "image");
+        return {
+          _id: m._id,
+          _creationTime: m._creationTime,
+          chatId: m.chatId,
+          role: m.role,
+          text: m.text,
+          attachments: m.attachments,
+          draftIds: m.draftIds,
+          entryIds: m.entryIds ?? [],
+          status: m.status ?? "done",
+          logAction: m.logAction,
+          imageUrl: image === undefined ? null : await ctx.storage.getUrl(image.storageId),
+          // Reply keys are `${submissionId}:reply` (or `:reply:<time>` after a regenerate); client ids have no ':'.
+          retrySubmissionId: m.role === "assistant" && m.status === "failed" ? (m.submissionId?.split(":")[0] ?? null) : null,
+        };
+      }),
+    );
+    return { ...result, page };
   },
 });
 
@@ -185,14 +314,27 @@ async function messageBySubmission(
     .first();
 }
 
-/** The finished turn for a submission id, so a retried send returns it without calling the model. */
+/** Most replies to one user message a lookup reads. Regenerate hides the old one, so the live reply is the newest. */
+const MAX_REPLIES_READ = 5;
+
+/** The live (not regenerated away) assistant replies to one user message, oldest first. */
+async function liveReplies(ctx: QueryCtx | MutationCtx, userMessageId: Id<"messages">): Promise<Doc<"messages">[]> {
+  const rows = await ctx.db
+    .query("messages")
+    .withIndex("by_answersMessageId", (q) => q.eq("answersMessageId", userMessageId))
+    .order("desc")
+    .take(MAX_REPLIES_READ);
+  return rows.filter((row) => row.deletedAt === undefined).reverse();
+}
+
+/** The finished (or stopped) turn for a submission id, so a retried send returns it without calling the model. */
 export const findTurn = internalQuery({
   args: { userId: v.string(), submissionId: v.string() },
   returns: v.union(turnResultValidator, v.null()),
   handler: async (ctx, { userId, submissionId }): Promise<TurnResult | null> => {
     const user = await messageBySubmission(ctx, userId, submissionId);
     const reply = await messageBySubmission(ctx, userId, `${submissionId}:reply`);
-    if (user === null || reply === null) return null;
+    if (user === null || reply === null || reply.deletedAt !== undefined || !isFinished(reply)) return null;
     return {
       userMessageId: user._id,
       assistantMessageId: reply._id,
@@ -205,7 +347,8 @@ export const findTurn = internalQuery({
 
 /**
  * Claims a turn before any model work: stores the user's message once per submission id, names an untitled chat
- * after it, and bumps the chat. A second send while the first still runs is refused; `retry` marks a failed turn.
+ * after it, bumps the chat, and opens the reply row the turn streams into. A second send while the first still runs
+ * is refused; `retry` marks a failed turn, whose reply row is reset and reused.
  */
 export const claimTurn = internalMutation({
   args: {
@@ -221,28 +364,162 @@ export const claimTurn = internalMutation({
     await assertLedgerWritable(ctx, args.userId);
     const chat = await ownChat(ctx, args.userId, args.chatId);
     const existing = await messageBySubmission(ctx, args.userId, args.submissionId);
+    const replyKey = `${args.submissionId}:reply`;
     const now = Date.now();
+    let claim: Omit<Claim, "replyId">;
+    let reply: Doc<"messages"> | null = null;
     if (existing !== null) {
-      const reply = await messageBySubmission(ctx, args.userId, `${args.submissionId}:reply`);
+      const replies = await liveReplies(ctx, existing._id);
       const running = existing.claimedAt !== undefined && now - existing.claimedAt < TURN_LEASE_MS;
-      if (reply !== null || running) throw new Error("This message is already being handled. Try again in a moment.");
+      if (running || replies.some(isFinished)) {
+        throw new Error("This message is already being handled. Try again in a moment.");
+      }
       await ctx.db.patch("messages", existing._id, { claimedAt: now });
-      return { messageId: existing._id, retry: true, text: existing.text, audioPending: existing.audioPending === true };
+      // The newest live reply is the failed attempt to reuse, if there is one.
+      reply = replies.at(-1) ?? null;
+      claim = { messageId: existing._id, claimedAt: now, retry: true, text: existing.text, audioPending: existing.audioPending === true };
+    } else {
+      const id = await ctx.db.insert("messages", {
+        userId: args.userId,
+        chatId: args.chatId,
+        role: "user",
+        text: args.text,
+        attachments: args.attachments,
+        toolCalls: [],
+        draftIds: [],
+        submissionId: args.submissionId,
+        claimedAt: now,
+        ...(args.audioPending ? { audioPending: true } : {}),
+      });
+      await ctx.db.patch("chats", chat._id, { title: titleFor(chat, args.text), updatedAt: now });
+      claim = { messageId: id, claimedAt: now, retry: false, text: args.text, audioPending: args.audioPending };
     }
-    const id = await ctx.db.insert("messages", {
+
+    // The reply row exists from the start so the client can show it filling in (A12).
+    const fresh = { text: "", toolCalls: [], draftIds: [], entryIds: [], status: "streaming" as const, stopRequested: undefined, claimedAt: now };
+    let replyId: Id<"messages">;
+    if (reply === null) {
+      replyId = await ctx.db.insert("messages", {
+        userId: args.userId,
+        chatId: args.chatId,
+        role: "assistant",
+        attachments: [],
+        // A reply after a regenerate needs its own key, because the first reply keeps `${submissionId}:reply`.
+        submissionId: existing === null ? replyKey : `${replyKey}:${now}`,
+        answersMessageId: claim.messageId,
+        ...fresh,
+      });
+    } else {
+      replyId = reply._id;
+      await ctx.db.patch("messages", replyId, fresh);
+    }
+    // A turn that dies without reaching its catch block (a crash or the action time limit) must not stream forever.
+    await ctx.scheduler.runAfter(TURN_LEASE_MS, internal.chats.expireReply, { messageId: replyId, claimedAt: now });
+    return { ...claim, replyId };
+  },
+});
+
+/**
+ * Starts a regenerate: hides the reply being replaced and opens a new streaming reply to the same user message.
+ * The hidden reply keeps its text rows and entry links, so its undo cards still work.
+ */
+export const claimRegenerate = internalMutation({
+  args: {
+    userId: v.string(),
+    chatId: v.id("chats"),
+    userMessageId: v.id("messages"),
+    userSubmissionId: v.string(),
+    replyId: v.id("messages"),
+  },
+  returns: v.object({ replyId: v.id("messages"), claimedAt: v.number() }),
+  handler: async (ctx, args): Promise<{ replyId: Id<"messages">; claimedAt: number }> => {
+    await assertLedgerWritable(ctx, args.userId);
+    await ownChat(ctx, args.userId, args.chatId);
+    const old = await ctx.db.get("messages", args.replyId);
+    if (old === null || old.userId !== args.userId || old.chatId !== args.chatId || old.deletedAt !== undefined || old.status === "streaming") {
+      throw new Error("This reply can't be regenerated right now.");
+    }
+    const now = Date.now();
+    await ctx.db.patch("messages", args.replyId, { deletedAt: now });
+    await ctx.db.patch("messages", args.userMessageId, { claimedAt: now });
+    const replyId = await ctx.db.insert("messages", {
       userId: args.userId,
       chatId: args.chatId,
-      role: "user",
-      text: args.text,
-      attachments: args.attachments,
+      role: "assistant",
+      text: "",
+      attachments: [],
       toolCalls: [],
-      draftIds: [],
-      submissionId: args.submissionId,
+      // The hidden reply's cards move here now, so they survive even if this attempt fails.
+      draftIds: old.draftIds,
+      entryIds: old.entryIds ?? [],
+      answersMessageId: args.userMessageId,
+      submissionId: `${args.userSubmissionId}:reply:${now}`,
+      status: "streaming",
       claimedAt: now,
-      ...(args.audioPending ? { audioPending: true } : {}),
     });
-    await ctx.db.patch("chats", chat._id, { title: titleFor(chat, args.text), updatedAt: now });
-    return { messageId: id, retry: false, text: args.text, audioPending: args.audioPending };
+    await ctx.scheduler.runAfter(TURN_LEASE_MS, internal.chats.expireReply, { messageId: replyId, claimedAt: now });
+    return { replyId, claimedAt: now };
+  },
+});
+
+/** Loads a reply row only while the attempt that claimed it at `claimedAt` still owns it and it is streaming. */
+async function ownedStream(ctx: MutationCtx, messageId: Id<"messages">, claimedAt: number): Promise<Doc<"messages"> | null> {
+  const row = await ctx.db.get("messages", messageId);
+  return row !== null && row.claimedAt === claimedAt && row.status === "streaming" ? row : null;
+}
+
+/**
+ * Writes the reply text streamed so far. Returns true when the turn should stop: the user pressed stop, the chat was
+ * deleted, or a newer attempt owns the row. Text that arrived after a stop is not written, so the reply ends where
+ * the user saw it end.
+ */
+export const appendReply = internalMutation({
+  args: { messageId: v.id("messages"), claimedAt: v.number(), text: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, { messageId, claimedAt, text }) => {
+    const row = await ownedStream(ctx, messageId, claimedAt);
+    if (row === null || row.stopRequested === true) return true;
+    if (row.text !== text) await ctx.db.patch("messages", messageId, { text });
+    return false;
+  },
+});
+
+/** Records the cards a streaming reply has produced so far, while the claiming attempt still owns the row. */
+export const saveReplyCards = internalMutation({
+  args: { messageId: v.id("messages"), claimedAt: v.number(), entryIds: v.array(v.id("entries")), draftIds: v.array(v.id("drafts")) },
+  returns: v.null(),
+  handler: async (ctx, { messageId, claimedAt, entryIds, draftIds }) => {
+    const row = await ownedStream(ctx, messageId, claimedAt);
+    if (row === null) return null;
+    // Regenerate seeds the row with the hidden reply's cards; keep them alongside this attempt's.
+    await ctx.db.patch("messages", messageId, {
+      entryIds: [...new Set([...(row.entryIds ?? []), ...entryIds])],
+      draftIds: [...new Set([...row.draftIds, ...draftIds])],
+    });
+    return null;
+  },
+});
+
+/** Asks a streaming reply to stop. The turn keeps the text written so far and ends as `stopped`. */
+export const stopMessage = mutation({
+  args: { messageId: v.id("messages") },
+  returns: v.null(),
+  handler: async (ctx, { messageId }) => {
+    const userId = await requireUserId(ctx);
+    const row = await ctx.db.get("messages", messageId);
+    if (row === null || row.userId !== userId || row.role !== "assistant") throw new Error("Message not found");
+    if (row.status === "streaming") await ctx.db.patch("messages", messageId, { stopRequested: true });
+    return null;
+  },
+});
+
+/** Marks a reply failed if the attempt that claimed it at `claimedAt` never finished it. */
+export const expireReply = internalMutation({
+  args: { messageId: v.id("messages"), claimedAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { messageId, claimedAt }) => {
+    if ((await ownedStream(ctx, messageId, claimedAt)) !== null) await ctx.db.patch("messages", messageId, { status: "failed" });
+    return null;
   },
 });
 
@@ -265,16 +542,25 @@ export const saveTranscript = internalMutation({
   },
 });
 
-/** Frees a failed turn's claim so the client can retry it right away. A voice message with no transcript yet is removed. */
+/**
+ * Frees a failed turn's claim so the client can retry it right away, and marks its reply failed with the text it
+ * reached. A voice message with no transcript yet is removed together with its empty reply.
+ */
 export const releaseTurn = internalMutation({
-  args: { userId: v.string(), messageId: v.id("messages") },
+  args: { userId: v.string(), messageId: v.id("messages"), replyId: v.id("messages"), claimedAt: v.number() },
   returns: v.null(),
-  handler: async (ctx, { userId, messageId }) => {
+  handler: async (ctx, { userId, messageId, replyId, claimedAt }) => {
     const message = await ctx.db.get("messages", messageId);
     if (message === null || message.userId !== userId) return null;
+    const reply = await ownedStream(ctx, replyId, claimedAt);
     // Nothing ran yet for a message still waiting on its transcript, so it leaves no empty bubble behind.
-    if (message.audioPending === true) await ctx.db.delete("messages", messageId);
-    else await ctx.db.patch("messages", messageId, { claimedAt: undefined });
+    if (message.audioPending === true) {
+      await ctx.db.delete("messages", messageId);
+      if (reply !== null) await ctx.db.delete("messages", replyId);
+      return null;
+    }
+    if (message.claimedAt === claimedAt) await ctx.db.patch("messages", messageId, { claimedAt: undefined });
+    if (reply !== null) await ctx.db.patch("messages", replyId, { status: "failed", stopRequested: undefined });
     return null;
   },
 });
@@ -309,41 +595,68 @@ export const priorTurnWrites = internalQuery({
   },
 });
 
-/** Stores the assistant's reply with its tool calls and card links, once per turn. */
-export const insertAssistantMessage = internalMutation({
+/**
+ * Ends a turn: writes the reply's final text, tool calls and card links, and marks it done or stopped. A stop that
+ * landed after the last streamed write still wins, keeping the text the user saw. Only the attempt that claimed the
+ * row writes; a stale one changes nothing and gets null. Returns the reply as stored.
+ */
+export const finishReply = internalMutation({
   args: {
     userId: v.string(),
-    chatId: v.id("chats"),
-    submissionId: v.string(),
+    messageId: v.id("messages"),
+    claimedAt: v.number(),
+    status: v.union(v.literal("done"), v.literal("stopped")),
     text: v.string(),
     toolCalls: v.array(toolCallRecordValidator),
     draftIds: v.array(v.id("drafts")),
     entryIds: v.array(v.id("entries")),
+    logAction: v.optional(logActionValidator),
   },
-  returns: v.id("messages"),
-  handler: async (ctx, args): Promise<Id<"messages">> => {
+  returns: v.union(v.null(), v.object({ text: v.string(), status: v.union(v.literal("done"), v.literal("stopped")) })),
+  handler: async (ctx, args) => {
     await assertLedgerWritable(ctx, args.userId);
-    const chat = await ctx.db.get("chats", args.chatId);
-    const replyKey = `${args.submissionId}:reply`;
-    const existing = await messageBySubmission(ctx, args.userId, replyKey);
-    if (existing !== null) return existing._id;
-    const id = await ctx.db.insert("messages", {
-      userId: args.userId,
-      chatId: args.chatId,
-      role: "assistant",
-      text: args.text,
-      attachments: [],
+    const row = await ownedStream(ctx, args.messageId, args.claimedAt);
+    if (row === null || row.userId !== args.userId) return null;
+    const final = row.stopRequested === true ? { text: row.text, status: "stopped" as const } : { text: args.text, status: args.status };
+    await ctx.db.patch("messages", args.messageId, {
+      ...final,
       toolCalls: args.toolCalls,
       draftIds: args.draftIds,
       entryIds: args.entryIds,
-      submissionId: replyKey,
+      logAction: args.logAction,
+      stopRequested: undefined,
     });
     // The chat may have been deleted mid-turn; then the purge job removes this message too.
+    const chat = await ctx.db.get("chats", row.chatId);
     if (chat !== null) await ctx.db.patch("chats", chat._id, { updatedAt: Date.now() });
-    else await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId: args.chatId });
-    return id;
+    else await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId: row.chatId });
+    return final;
   },
 });
+
+/** The app's daily macro reference at the default calorie target. Mirrors DEFAULT_TARGETS in apps/mobile/src/lib/log.ts. */
+const DEFAULT_TARGETS: DailyTargets = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 };
+const DIET_LABELS = { veg: "vegetarian", eggetarian: "eggetarian", non_veg: "non-vegetarian", vegan: "vegan", jain: "jain" } as const;
+
+const coachProfileValidator = v.union(
+  v.null(),
+  v.object({
+    goal: v.optional(v.union(v.literal("lose"), v.literal("maintain"), v.literal("gain"))),
+    pace: v.optional(v.union(v.literal("relaxed"), v.literal("steady"), v.literal("fast"))),
+    dietType: v.optional(
+      v.union(v.literal("veg"), v.literal("eggetarian"), v.literal("non_veg"), v.literal("vegan"), v.literal("jain")),
+    ),
+    trainingDaysPerWeek: v.optional(v.number()),
+    targetWeightKg: v.optional(v.number()),
+    targetKcal: v.union(v.number(), v.null()),
+    proteinG: v.union(v.number(), v.null()),
+    carbsG: v.union(v.number(), v.null()),
+    fatG: v.union(v.number(), v.null()),
+    latestTrendKg: v.union(v.number(), v.null()),
+    weeklyRateKg: v.union(v.number(), v.null()),
+  }),
+);
+type CoachProfile = NonNullable<Infer<typeof coachProfileValidator>>;
 
 const contextValidator = v.object({
   localDate: v.string(),
@@ -353,26 +666,74 @@ const contextValidator = v.object({
     v.object({ entryId: v.id("entries"), slot: mealSlotValidator, foodName: v.string(), grams: v.number(), kcal: v.number() }),
   ),
   userFoods: v.array(v.string()),
+  profile: coachProfileValidator,
 });
 type TurnContext = Infer<typeof contextValidator>;
 
-/** D12 context for one turn: recent chat history, today's live entries (current revisions) and the user's foods. */
+/** The profile, targets and weight trend the coach sees: the numbers Today and Progress show. Null without a settings row. */
+async function coachProfileOf(ctx: QueryCtx, userId: string, localDate: string): Promise<CoachProfile | null> {
+  const input = await tdeeInput(ctx, userId, localDate);
+  const settings = input.settings;
+  if (settings === null) return null;
+  const from = addDays(localDate, 1 - MAX_PROGRESS_RANGE_DAYS);
+  const [rows, snapshot] = await Promise.all([
+    ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", from).lte("localDate", localDate)).take(MAX_PROGRESS_RANGE_DAYS),
+    ctx.db.query("tdee_snapshots").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first(),
+  ]);
+  // The trend warms up over the same range Progress uses, so these numbers match its chart.
+  const trend = weightTrend(rows.map((row) => ({ date: row.localDate, weightKg: row.kg, intakeKcal: null })));
+  const last = rows.at(-1);
+  const recent = rows.filter((row) => row.localDate >= addDays(localDate, -7));
+  const first = recent[0];
+  const weeklyRateKg =
+    first === undefined || recent.length < 2
+      ? null
+      : 7 * leastSquaresSlope(recent.map((row) => ({ x: daysBetween(first.localDate, row.localDate), y: trend.get(row.localDate) ?? row.kg })));
+  const kcal = calorieTarget(settings, input.baseline, snapshot, localDate, input.latestWeightKg)?.kcal ?? null;
+  const macros = kcal === null ? null : scaleMacroTargets(kcal, DEFAULT_TARGETS);
+  return {
+    goal: settings.goal,
+    pace: settings.pace,
+    dietType: settings.dietType,
+    trainingDaysPerWeek: settings.trainingDaysPerWeek,
+    targetWeightKg: settings.targetWeightKg,
+    targetKcal: kcal,
+    proteinG: macros?.proteinG ?? null,
+    carbsG: macros?.carbsG ?? null,
+    fatG: macros?.fatG ?? null,
+    latestTrendKg: last === undefined ? null : (trend.get(last.localDate) ?? last.kg),
+    weeklyRateKg,
+  };
+}
+
+/** D12 context for one turn: recent chat history, today's live entries (current revisions), the user's foods and profile. */
 export const turnContext = internalQuery({
-  args: { userId: v.string(), chatId: v.id("chats") },
+  args: { userId: v.string(), chatId: v.id("chats"), replyId: v.id("messages") },
   returns: contextValidator,
-  handler: async (ctx, { userId, chatId }): Promise<TurnContext> => {
+  handler: async (ctx, { userId, chatId, replyId }): Promise<TurnContext> => {
     await ownChat(ctx, userId, chatId);
     const day = await resolveLocalDay(ctx, userId, Date.now());
+    // History ends at the message this reply answers, so retrying an older question doesn't see later turns.
+    const reply = await ctx.db.get("messages", replyId);
+    const answers = reply?.answersMessageId === undefined ? null : await ctx.db.get("messages", reply.answersMessageId);
+    const cutoff = answers?._creationTime;
     const recent = await ctx.db
       .query("messages")
-      .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+      .withIndex("by_chatId", (q) => (cutoff === undefined ? q.eq("chatId", chatId) : q.eq("chatId", chatId).lte("_creationTime", cutoff)))
       .order("desc")
-      .take(HISTORY_WINDOW);
+      .take(HISTORY_WINDOW * HISTORY_READ_FACTOR);
+    // Hidden (regenerated) replies are dropped before the window is cut, so they can't push the question out.
     const history = recent
+      .filter((m) => m.deletedAt === undefined)
+      .slice(0, HISTORY_WINDOW)
       .reverse()
-      .flatMap((m) =>
-        m.role === "tool" || m.text === "" ? [] : [{ role: m.role, text: m.text.slice(0, AI_INPUT_LIMITS.historyEntryChars) }],
-      );
+      // A reply still streaming (this turn's own) or one that failed was never a finished answer.
+      .flatMap((m) => {
+        if (m.role === "tool" || !isFinished(m)) return [];
+        // A photo sent without words still shows in history, so the model knows this turn's image came with it.
+        const text = m.text === "" ? (m.attachments.length > 0 ? PHOTO_HISTORY_TEXT : "") : m.text;
+        return text === "" ? [] : [{ role: m.role, text: text.slice(0, AI_INPUT_LIMITS.historyEntryChars) }];
+      });
     const live = await ctx.db
       .query("entries")
       .withIndex("by_userId_and_localDate_and_status", (q) =>
@@ -389,7 +750,8 @@ export const turnContext = internalQuery({
         kcal: roundTo(row.nutrients.kcal, 0),
       }));
     const userFoods = (await userFoodsOf(ctx, userId)).slice(0, MAX_CONTEXT_USER_FOODS).map((food) => food.name);
-    return { localDate: day.localDate, slot: day.slot, history, entries, userFoods };
+    const profile = await coachProfileOf(ctx, userId, day.localDate);
+    return { localDate: day.localDate, slot: day.slot, history, entries, userFoods, profile };
   },
 });
 
@@ -484,16 +846,8 @@ export const applyDelete = internalMutation({
   },
 });
 
-/** D8 correction tools plus logging. `add_entry` takes the same item fields as extraction, so it runs the same pipeline. */
+/** D8 correction tools and the Log this offer. The chat cannot log food; Compose does that. */
 const CHAT_TOOLS: ToolDefinition[] = [
-  {
-    type: "function",
-    function: {
-      name: "add_entry",
-      description: "Log one food the user ate. Call once per food. Amounts as the user said them; never grams you guessed.",
-      parameters: ITEM_JSON_SCHEMA,
-    },
-  },
   {
     type: "function",
     function: {
@@ -522,41 +876,75 @@ const CHAT_TOOLS: ToolDefinition[] = [
       parameters: { type: "object", additionalProperties: false, required: ["entry_id"], properties: { entry_id: { type: "string" } } },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "offer_log",
+      description: "Call when the user wants to log food. Shows a Log this button that opens Compose with this text. You cannot log food yourself.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        required: ["text"],
+        properties: { text: { type: "string", description: "What to log, in the user's words" } },
+      },
+    },
+  },
   ...LOOKUP_TOOLS,
 ];
+
+/** Tools for a regenerated reply: the earlier reply already made its log changes, so they can't run twice. */
+const REGENERATE_TOOLS: ToolDefinition[] = CHAT_TOOLS.filter(
+  (tool) => tool.function.name !== "edit_entry" && tool.function.name !== "delete_entry",
+);
+/** Told to the model when it rewrites a reply, so it doesn't promise changes it can no longer make. */
+const REGENERATE_NOTE =
+  "You are rewriting your last reply. Any log changes it made are already saved and can't be repeated; only answer again.";
+
+/** Lines about the user's goal, diet, targets and weight trend. Only lines that have data. */
+function aboutUser(profile: CoachProfile | null): string[] {
+  if (profile === null) return [];
+  const lines: string[] = [];
+  const rate =
+    profile.goal === undefined || profile.goal === "maintain" || profile.pace === undefined ? undefined : PACE_KG_PER_WEEK[profile.goal][profile.pace];
+  const paceText = rate === undefined ? "" : `, ${profile.pace} pace (${rate} kg a week)`;
+  const goal = profile.goal === undefined ? "" : `Goal: ${profile.goal}${paceText}.`;
+  const target = profile.targetWeightKg === undefined ? "" : `Target weight ${profile.targetWeightKg} kg.`;
+  const goalLine = [goal, target].filter((part) => part !== "").join(" ");
+  if (goalLine !== "") lines.push(goalLine);
+  if (profile.dietType !== undefined) {
+    lines.push(`Diet: ${DIET_LABELS[profile.dietType]}.`);
+    lines.push("Respect the user's diet in every suggestion (no meat for veg, no egg for veg or vegan, no onion or garlic for jain).");
+  }
+  if (profile.trainingDaysPerWeek !== undefined) {
+    lines.push(`Trains ${profile.trainingDaysPerWeek} ${profile.trainingDaysPerWeek === 1 ? "day" : "days"} a week.`);
+  }
+  if (profile.targetKcal !== null) {
+    lines.push(`Daily target: ${profile.targetKcal} kcal, protein ${profile.proteinG} g, carbs ${profile.carbsG} g, fat ${profile.fatG} g.`);
+  }
+  if (profile.latestTrendKg !== null) {
+    const weekly = profile.weeklyRateKg === null ? "" : `, ${roundTo(profile.weeklyRateKg, 1)} kg a week`;
+    lines.push(`Weight trend: ${roundTo(profile.latestTrendKg, 1)} kg${weekly}.`);
+  }
+  return lines;
+}
 
 /** System prompt for one turn, carrying the D12 context. */
 function systemPrompt(context: TurnContext): string {
   const entries = context.entries.length === 0
     ? "(none yet)"
     : context.entries.map((e) => `- ${e.entryId} | ${e.slot} | ${e.foodName} | ${e.grams} g | ${e.kcal} kcal`).join("\n");
+  const about = aboutUser(context.profile);
   return [
     "You are Polo, the coach in Stride, a nutrition tracker. Replies are short and plain.",
-    "Log foods with add_entry. Fix or remove logged foods with edit_entry or delete_entry, using the entry ids below.",
-    PARSE_RULES,
+    "Fix or remove logged foods with edit_entry or delete_entry, using the entry ids below.",
+    "You cannot log food. If the user wants to log something, call offer_log and tell them to tap Log this.",
+    "When the user sends a photo, describe what you see and its rough nutrition if asked. You cannot log it; the app shows a Log this button.",
     "Only quote calorie numbers that tool results or the entry list give. Never work out nutrients yourself.",
-    "If an add_entry result needs confirmation, tell the user to check the card.",
     `Today is ${context.localDate}. The current meal slot is ${context.slot}.`,
     `Today's entries (id | slot | food | grams | kcal):\n${entries}`,
     `The user's own foods: ${context.userFoods.length === 0 ? "(none)" : context.userFoods.join(", ")}.`,
+    ...(about.length === 0 ? [] : [`About the user:\n${about.join("\n")}`]),
   ].join("\n");
-}
-
-/** Tool-result JSON for a pipeline run, so the model can describe it. */
-function logSummary(result: LogResult): JsonValue {
-  const lines = result.lines.map((line) => ({ food: line.foodName ?? line.text, grams: line.grams, kcal: line.kcal, needs: line.reasons }));
-  if (result.kind === "committed") return { status: "logged", entry_ids: result.entryIds, items: lines };
-  if (result.kind === "draft") return { status: "needs_confirmation", draft_id: result.draftId, items: lines };
-  return { status: "nothing_to_log" };
-}
-
-/** A plain reply for results the model did not describe (photo turns, or a turn that ran out of iterations). */
-function describeResult(result: LogResult): string {
-  if (result.kind === "empty") return "I couldn't find any food in that.";
-  const list = result.lines
-    .map((line) => `${line.foodName ?? line.text}${line.kcal === null ? "" : ` (${line.kcal} kcal)`}`)
-    .join(", ");
-  return result.kind === "committed" ? `Logged ${list}.` : `Please check the card before I log: ${list}.`;
 }
 
 /** Caps a tool result for storage on the message. */
@@ -565,63 +953,132 @@ function capJson(value: JsonValue): string {
   return json.length > MAX_TOOL_RESULT_CHARS ? `${json.slice(0, MAX_TOOL_RESULT_CHARS)}…` : json;
 }
 
-/** Ids of entries a pipeline result committed, or of the draft it opened. */
-function collect(result: LogResult, draftIds: Id<"drafts">[], entryIds: Id<"entries">[]): void {
-  if (result.kind === "committed") entryIds.push(...result.entryIds);
-  if (result.kind === "draft") draftIds.push(result.draftId);
+/** The reply row a turn streams into, and the claim time that proves this attempt still owns it. */
+type ReplyTarget = { messageId: Id<"messages">; claimedAt: number };
+
+/** Writes a streaming reply to its row in batches (A12) and reports when the user asked it to stop. */
+class ReplyStream {
+  /** Everything streamed so far, across model steps. */
+  text = "";
+  /** The text last written to the row: what the user has seen. A stopped reply ends here. */
+  shown = "";
+  /** When text was last written; only a real write moves it, so the first text after a quiet start shows at once. */
+  private lastFlush = 0;
+  /** When the row was last read for a stop, written or not. Paces the empty callbacks. */
+  private lastCheck = 0;
+  private paragraph = false;
+  private stopped = false;
+
+  constructor(
+    private readonly ctx: ActionCtx,
+    private readonly target: ReplyTarget,
+  ) {}
+
+  /** Adds streamed text and writes it once enough has built up. True means stop the stream. */
+  async push(text: string): Promise<boolean> {
+    // An empty push is the stream's idle tick: it writes buffered text that is due and checks for a stop.
+    if (text === "") {
+      const now = Date.now();
+      const due = (this.text !== this.shown && now - this.lastFlush >= STREAM_FLUSH_MS) || now - this.lastCheck >= STREAM_FLUSH_MS;
+      return due ? await this.flush() : false;
+    }
+    if (this.paragraph && this.text !== "") this.text += "\n\n";
+    this.paragraph = false;
+    this.text += text;
+    const due = this.text.length - this.shown.length >= STREAM_FLUSH_CHARS || Date.now() - this.lastFlush >= STREAM_FLUSH_MS;
+    return due ? await this.flush() : false;
+  }
+
+  /** Writes the text so far and checks for a stop. True means stop. */
+  async flush(): Promise<boolean> {
+    if (this.stopped) return true;
+    this.lastCheck = Date.now();
+    if (this.text !== this.shown) this.lastFlush = this.lastCheck;
+    this.stopped = await this.ctx.runMutation(internal.chats.appendReply, { ...this.target, text: this.text });
+    if (!this.stopped) this.shown = this.text;
+    return this.stopped;
+  }
+
+  /** Starts the next model step's text on a new paragraph. */
+  nextStep(): void {
+    this.paragraph = true;
+  }
 }
 
-/** Runs one text turn: luna with the chat tools, in a bounded loop, executing ledger tools as it goes. */
+/** A photo sent in a chat turn: its storage id, a URL the model can fetch, and the words sent with it ("" for none). */
+type PhotoInput = { storageId: Id<"_storage">; url: string; text: string };
+
+/** The photo turn's user message: the words sent with the image, or a question when there are none. */
+function photoMessage(photo: PhotoInput): ChatMessage {
+  const parts: ContentPart[] = [
+    { type: "text", text: photo.text === "" ? PHOTO_QUESTION : photo.text },
+    { type: "image_url", image_url: { url: photo.url } },
+  ];
+  return { role: "user", content: parts };
+}
+
+/**
+ * Runs one chat turn: luna with the chat tools, in a bounded loop, streaming text and executing ledger tools as it
+ * goes. A photo turn uses the photo model instead and only discusses the image; the reply offers Log this for it.
+ */
 async function runChatTurn(
   ctx: ActionCtx,
   userId: string,
   chatId: Id<"chats">,
-  messageId: Id<"messages">,
   submissionId: string,
+  target: ReplyTarget,
+  photo?: PhotoInput,
+  regenerating = false,
 ): Promise<Turn> {
-  const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId });
+  const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId, replyId: target.messageId });
+  const system = systemPrompt(context);
+  const tools = regenerating ? REGENERATE_TOOLS : CHAT_TOOLS;
   const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt(context) },
+    { role: "system", content: regenerating ? `${system}\n${REGENERATE_NOTE}` : system },
     ...context.history.map((m): ChatMessage => ({ role: m.role, content: m.text })),
   ];
+  // The newest history entry is this turn's own user message; the photo takes its place.
+  if (photo !== undefined) {
+    if (messages.at(-1)?.role !== "user") throw new Error("Photo message is missing");
+    messages[messages.length - 1] = photoMessage(photo);
+  }
+  const model = photo === undefined ? PIPELINE_MODEL : PHOTO_MODEL;
   const toolCalls: ToolCallRecord[] = [];
   const draftIds: Id<"drafts">[] = [];
   const entryIds: Id<"entries">[] = [];
   const seen: SeenFoods = new Map();
   const notes: string[] = [];
+  let offered: LogAction | undefined;
+  // A photo's Log this always opens Compose with that photo; a text turn's Log this carries the food the model named.
+  const logAction = (): LogAction | undefined =>
+    photo === undefined ? offered : { storageId: photo.storageId, ...(photo.text === "" ? {} : { text: photo.text }) };
+  const stream = new ReplyStream(ctx, target);
+  const stopped = (): Turn => ({ reply: stream.shown, toolCalls, draftIds, entryIds, stopped: true, logAction: logAction() });
 
   for (let i = 0; i < MAX_CHAT_ITERATIONS; i++) {
-    const reply = await callOpenRouter(ctx, userId, { model: PIPELINE_MODEL, maxTokens: CHAT_MAX_TOKENS, messages, tools: CHAT_TOOLS });
-    if (reply.toolCalls.length === 0) return { reply: reply.content ?? "", toolCalls, draftIds, entryIds };
+    // A stop pressed while tools ran ends the turn before the next model call.
+    if (i > 0 && (await stream.flush())) return stopped();
+    stream.nextStep();
+    const reply = await streamOpenRouter(
+      ctx,
+      userId,
+      { model, maxTokens: CHAT_MAX_TOKENS, messages, tools },
+      (text) => stream.push(text),
+    );
+    if (reply.stopped) return stopped();
+    if (reply.toolCalls.length === 0) {
+      return { reply: stream.text, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
+    }
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
 
-    // Every add_entry in one model step becomes one pipeline submission, so a meal lands as one card.
-    const adds = reply.toolCalls.filter((call) => call.function.name === "add_entry");
-    let addResult: JsonValue = { status: "nothing_to_log" };
-    if (adds.length > 0) {
-      const items = adds.flatMap((call) => {
-        const item = parseItem({ ...parseToolArgs(call.function.arguments), fromPhoto: false });
-        return item === null ? [] : [item];
-      });
-      const result = await runPipeline(ctx, userId, {
-        submissionId: `${submissionId}:add:${i}`,
-        inputKind: "chat",
-        items,
-        chatId,
-        messageId,
-      });
-      collect(result, draftIds, entryIds);
-      notes.push(describeResult(result));
-      addResult = logSummary(result);
-    }
-
     for (const [k, call] of reply.toolCalls.entries()) {
+      // A tool-only stream never calls back with text, so a stop must be checked before each ledger write.
+      if (await stream.flush()) return stopped();
       const args = parseToolArgs(call.function.arguments);
       const subId = `${submissionId}:${call.function.name}:${i}:${k}`;
       let result: JsonValue;
       try {
-        if (call.function.name === "add_entry") result = addResult;
-        else if (call.function.name === "edit_entry" || call.function.name === "delete_entry") {
+        if (call.function.name === "edit_entry" || call.function.name === "delete_entry") {
           if (typeof args.entry_id !== "string") throw new Error("entry_id must be a string");
           const changed = call.function.name === "delete_entry"
             ? await ctx.runMutation(internal.chats.applyDelete, { userId, submissionId: subId, entryId: args.entry_id })
@@ -636,8 +1093,14 @@ async function runChatTurn(
                 ...(typeof args.date === "string" ? { localDate: args.date } : {}),
               });
           entryIds.push(changed.entry_id);
+          // Saved on the reply now, so a later model failure still leaves this change's Undo card.
+          await ctx.runMutation(internal.chats.saveReplyCards, { ...target, entryIds, draftIds });
           notes.push(`${call.function.name === "delete_entry" ? "Removed" : "Updated"} ${changed.food}.`);
           result = { status: "ok", ...changed };
+        } else if (call.function.name === "offer_log") {
+          if (typeof args.text !== "string" || args.text.trim() === "") throw new Error("text must be the food to log");
+          offered = { text: args.text.trim().slice(0, MAX_LOG_TEXT_CHARS) };
+          result = { status: "button_shown" };
         } else {
           result = (await runLookupTool(ctx, userId, call.function.name, args, seen)) ?? { error: `Unknown tool ${call.function.name}` };
         }
@@ -648,7 +1111,15 @@ async function runChatTurn(
       toolCalls.push({ name: call.function.name, argsJson: call.function.arguments.slice(0, MAX_TOOL_RESULT_CHARS), resultJson: capJson(result) });
     }
   }
-  return { reply: notes.length === 0 ? "Sorry, I couldn't finish that. Try again?" : notes.join(" "), toolCalls, draftIds, entryIds };
+  const fallback = notes.length === 0 ? "Sorry, I couldn't finish that. Try again?" : notes.join(" ");
+  return {
+    reply: [stream.text, fallback].filter((part) => part !== "").join("\n\n"),
+    toolCalls,
+    draftIds,
+    entryIds,
+    stopped: false,
+    logAction: logAction(),
+  };
 }
 
 /** Refuses an empty or oversized message before any model work. */
@@ -666,7 +1137,7 @@ function isSlot(value: unknown): value is MealSlot {
 
 /**
  * Sends one message to a chat and returns the reply. Text and voice (Groq Whisper) run a luna turn with the
- * ledger tools; a photo runs the extraction pipeline on the image. Same submissionId twice returns the first turn.
+ * ledger tools; a photo is discussed by the photo model and never logged. Same submissionId twice returns the first turn.
  */
 export const sendMessage = action({
   args: {
@@ -701,6 +1172,7 @@ export const sendMessage = action({
       audioPending: args.audio !== undefined,
     });
     const userMessageId = claim.messageId;
+    const target: ReplyTarget = { messageId: claim.replyId, claimedAt: claim.claimedAt };
     try {
       let text = claim.text;
       if (claim.audioPending) {
@@ -709,21 +1181,150 @@ export const sendMessage = action({
         checkMessage(text, args.imageStorageId);
         await ctx.runMutation(internal.chats.saveTranscript, { userId, messageId: userMessageId, text });
       }
-      const turn = await runTurn(ctx, userId, args, text, userMessageId, claim.retry);
-      const assistantMessageId: Id<"messages"> = await ctx.runMutation(internal.chats.insertAssistantMessage, {
+      const turn = await runTurn(ctx, userId, args, text, claim.retry, target);
+      const stored: { text: string } | null = await ctx.runMutation(internal.chats.finishReply, {
         userId,
-        chatId: args.chatId,
-        submissionId: args.submissionId,
+        ...target,
+        status: turn.stopped ? "stopped" : "done",
         text: turn.reply,
         toolCalls: turn.toolCalls,
         draftIds: turn.draftIds,
         entryIds: turn.entryIds,
+        logAction: turn.logAction,
       });
-      return { userMessageId, assistantMessageId, reply: turn.reply, draftIds: turn.draftIds, entryIds: turn.entryIds };
+      return {
+        userMessageId,
+        assistantMessageId: claim.replyId,
+        reply: stored?.text ?? turn.reply,
+        draftIds: turn.draftIds,
+        entryIds: turn.entryIds,
+      };
     } catch (err) {
-      await ctx.runMutation(internal.chats.releaseTurn, { userId, messageId: userMessageId });
+      await ctx.runMutation(internal.chats.releaseTurn, { userId, messageId: userMessageId, replyId: target.messageId, claimedAt: target.claimedAt });
       throw err;
     }
+  },
+});
+
+/** The newest visible reply of a chat and the user message it answers. Refuses a photo turn or a reply still streaming. */
+export const regenerateTarget = internalQuery({
+  args: { userId: v.string(), chatId: v.id("chats") },
+  returns: v.object({
+    userMessageId: v.id("messages"),
+    userSubmissionId: v.string(),
+    replyId: v.id("messages"),
+    draftIds: v.array(v.id("drafts")),
+    entryIds: v.array(v.id("entries")),
+  }),
+  handler: async (ctx, { userId, chatId }) => {
+    await ownChat(ctx, userId, chatId);
+    const recent = await ctx.db
+      .query("messages")
+      .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
+      .order("desc")
+      .take(HISTORY_WINDOW);
+    const reply = recent.find((m) => m.role === "assistant" && m.deletedAt === undefined);
+    if (reply === undefined) throw new Error("Nothing to regenerate yet.");
+    if (reply.status === "streaming") throw new Error("Wait for the reply to finish, then regenerate it.");
+    const user = reply.answersMessageId === undefined ? null : await ctx.db.get("messages", reply.answersMessageId);
+    if (user === null || user.userId !== userId || user.submissionId === undefined) throw new Error("Nothing to regenerate yet.");
+    if (user.attachments.some((a) => a.kind === "image")) throw new Error("Photo replies can't be regenerated yet.");
+    return { userMessageId: user._id, userSubmissionId: user.submissionId, replyId: reply._id, draftIds: reply.draftIds, entryIds: reply.entryIds ?? [] };
+  },
+});
+
+/** Writes a new reply to the newest answer in a chat. The old reply is hidden; the entries it logged or edited stay. */
+export const regenerate = action({
+  args: { chatId: v.id("chats") },
+  returns: regenerateResultValidator,
+  handler: async (ctx, { chatId }): Promise<RegenerateResult> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (identity === null) throw new Error("Unauthenticated");
+    const userId = identity.subject;
+    const old: {
+      userMessageId: Id<"messages">;
+      userSubmissionId: string;
+      replyId: Id<"messages">;
+      draftIds: Id<"drafts">[];
+      entryIds: Id<"entries">[];
+    } = await ctx.runQuery(
+      internal.chats.regenerateTarget,
+      { userId, chatId },
+    );
+    const claim: { replyId: Id<"messages">; claimedAt: number } = await ctx.runMutation(internal.chats.claimRegenerate, {
+      userId,
+      chatId,
+      userMessageId: old.userMessageId,
+      userSubmissionId: old.userSubmissionId,
+      replyId: old.replyId,
+    });
+    const target: ReplyTarget = { messageId: claim.replyId, claimedAt: claim.claimedAt };
+    try {
+      // The claim time keeps this attempt's tool writes apart from the replaced reply's.
+      const turn = await runChatTurn(ctx, userId, chatId, `${old.userSubmissionId}:regen:${claim.claimedAt}`, target, undefined, true);
+      const stored: { text: string } | null = await ctx.runMutation(internal.chats.finishReply, {
+        userId,
+        ...target,
+        status: turn.stopped ? "stopped" : "done",
+        text: turn.reply,
+        toolCalls: turn.toolCalls,
+        // The hidden reply's cards move to its replacement, so the entries it changed stay undoable from the chat.
+        draftIds: [...new Set([...old.draftIds, ...turn.draftIds])],
+        entryIds: [...new Set([...old.entryIds, ...turn.entryIds])],
+        logAction: turn.logAction,
+      });
+      return { assistantMessageId: claim.replyId, reply: stored?.text ?? turn.reply };
+    } catch (err) {
+      await ctx.runMutation(internal.chats.releaseTurn, {
+        userId,
+        messageId: old.userMessageId,
+        replyId: claim.replyId,
+        claimedAt: claim.claimedAt,
+      });
+      throw err;
+    }
+  },
+});
+
+const searchHitValidator = v.object({
+  chatId: v.id("chats"),
+  title: v.string(),
+  snippet: v.string(),
+  messageId: v.id("messages"),
+});
+type SearchHit = Infer<typeof searchHitValidator>;
+
+/** About SNIPPET_CHARS of a message, starting a little before the first place the search term appears. */
+function snippetOf(text: string, term: string): string {
+  const at = term === "" ? -1 : text.toLowerCase().indexOf(term);
+  const start = at === -1 ? 0 : Math.max(0, at - SNIPPET_LEAD_CHARS);
+  return text.slice(start, start + SNIPPET_CHARS);
+}
+
+/** The caller's chats whose messages match a search: one hit per chat, best match first. */
+export const searchChats = query({
+  args: { query: v.string() },
+  returns: v.array(searchHitValidator),
+  handler: async (ctx, args): Promise<SearchHit[]> => {
+    const userId = await requireUserId(ctx);
+    const phrase = args.query.trim();
+    if (phrase === "") return [];
+    const hits = await ctx.db
+      .query("messages")
+      .withSearchIndex("search_text", (q) => q.search("text", phrase).eq("userId", userId))
+      .take(SEARCH_HITS);
+    const term = (phrase.split(/\s+/)[0] ?? "").toLowerCase();
+    const seen = new Set<Id<"chats">>();
+    const results: SearchHit[] = [];
+    for (const hit of hits) {
+      if (hit.deletedAt !== undefined || hit.role === "tool" || seen.has(hit.chatId)) continue;
+      const chat = await ctx.db.get("chats", hit.chatId);
+      if (chat === null || chat.userId !== userId) continue;
+      seen.add(hit.chatId);
+      results.push({ chatId: chat._id, title: chat.title, snippet: snippetOf(hit.text, term), messageId: hit._id });
+      if (results.length === MAX_SEARCH_CHATS) break;
+    }
+    return results;
   },
 });
 
@@ -736,33 +1337,21 @@ async function runTurn(
   userId: string,
   args: { chatId: Id<"chats">; submissionId: string; imageStorageId?: Id<"_storage"> },
   text: string,
-  userMessageId: Id<"messages">,
   retry: boolean,
+  target: ReplyTarget,
 ): Promise<Turn> {
   if (retry) {
     const prior: { reply: string; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] } = await ctx.runQuery(
       internal.chats.priorTurnWrites,
       { userId, submissionId: args.submissionId },
     );
-    if (prior.reply !== "") return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, entryIds: prior.entryIds };
+    if (prior.reply !== "") {
+      return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, entryIds: prior.entryIds, stopped: false, logAction: undefined };
+    }
   }
-  if (args.imageStorageId === undefined) return await runChatTurn(ctx, userId, args.chatId, userMessageId, args.submissionId);
-  const today = await ctx.runQuery(internal.pipeline.resolve.logContext, { userId });
-  const items = await extractItems(ctx, userId, {
-    text,
-    today: today.localDate,
-    slot: today.slot,
-    imageUrl: await imageUrl(ctx, args.imageStorageId),
-  });
-  const result = await runPipeline(ctx, userId, {
-    submissionId: `${args.submissionId}:photo`,
-    inputKind: "photo",
-    items,
-    chatId: args.chatId,
-    messageId: userMessageId,
-  });
-  const draftIds: Id<"drafts">[] = [];
-  const entryIds: Id<"entries">[] = [];
-  collect(result, draftIds, entryIds);
-  return { reply: describeResult(result), toolCalls: [], draftIds, entryIds };
+  const photo: PhotoInput | undefined =
+    args.imageStorageId === undefined
+      ? undefined
+      : { storageId: args.imageStorageId, url: await imageUrl(ctx, args.imageStorageId), text };
+  return await runChatTurn(ctx, userId, args.chatId, args.submissionId, target, photo);
 }

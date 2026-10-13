@@ -93,6 +93,7 @@ function AuthGate() {
             <Stack.Screen name="workout" options={{ animation: 'slide_from_bottom' }} />
             <Stack.Screen name="profile" options={{ animation: 'slide_from_right' }} />
             <Stack.Screen name="settings" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right' }} />
           </Stack.Protected>
           <Stack.Protected guard={signedIn && !holdApp && (!complete || holdOnboarding)}>
             <Stack.Screen name="onboarding" />

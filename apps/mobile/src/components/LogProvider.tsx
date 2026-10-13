@@ -3,13 +3,13 @@ import { useMutation } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { newSubmissionId, plainError, type DraftId, type EntryId, type MealSlot } from '@/lib/log'
 import { BurnSheet } from './BurnSheet'
-import { Compose, type ComposeMode } from './Compose'
+import { Compose, type ComposeMode, type ComposePrefill } from './Compose'
 import { MealSheet } from './MealSheet'
 import { Sheet } from './Sheet'
 import { Toast, type ToastMessage } from './Toast'
 
 type SheetContent =
-  | { kind: 'compose'; mode: ComposeMode; defaultSlot?: MealSlot; draftId?: DraftId }
+  | { kind: 'compose'; mode: ComposeMode; defaultSlot?: MealSlot; draftId?: DraftId; prefill?: ComposePrefill }
   | { kind: 'meal'; localDate: string; slot: MealSlot }
   | { kind: 'burn'; milestone: boolean }
 
@@ -17,14 +17,15 @@ type SheetContent =
 type Opening = SheetContent & { session: number }
 
 type LogApi = {
-  compose: (mode?: ComposeMode, defaultSlot?: MealSlot) => void
+  // Prefill fills the box with text, or logs an already uploaded photo.
+  compose: (mode?: ComposeMode, defaultSlot?: MealSlot, prefill?: ComposePrefill) => void
   openDraft: (draftId: DraftId) => void
   openMeal: (localDate: string, slot: MealSlot) => void
   // The daily-burn explainer, or the one-time milestone version of it.
   openBurn: (milestone: boolean) => void
   toast: (message: Omit<ToastMessage, 'id'>) => void
-  // Builds an undo that reverts the latest revision of each entry, with its own toast on success or failure.
-  undoFor: (entryIds: EntryId[]) => () => void
+  // Builds an undo that reverts the latest revision of each entry, with its own toast on success or failure. Resolves true only if it worked.
+  undoFor: (entryIds: EntryId[]) => () => Promise<boolean>
   sheetOpen: boolean
 }
 
@@ -91,9 +92,15 @@ export function LogProvider({ children }: { children: ReactNode }) {
     (entryIds: EntryId[]) => () => {
       const base = newSubmissionId()
       // Each undo writes one revision per entry, so each needs its own submission id.
-      Promise.all(entryIds.map((entryId, i) => undoRevision({ submissionId: `${base}-${i}`, entryId }))).then(
-        () => toast({ title: 'Undone. Nothing lost.', sub: "It's back the way it was." }),
-        (err: unknown) => toast({ title: "Couldn't undo that.", sub: plainError(err) }),
+      return Promise.all(entryIds.map((entryId, i) => undoRevision({ submissionId: `${base}-${i}`, entryId }))).then(
+        () => {
+          toast({ title: 'Undone. Nothing lost.', sub: "It's back the way it was." })
+          return true
+        },
+        (err: unknown) => {
+          toast({ title: "Couldn't undo that.", sub: plainError(err) })
+          return false
+        },
       )
     },
     [undoRevision, toast],
@@ -101,7 +108,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<LogApi>(
     () => ({
-      compose: (mode = 'text', defaultSlot) => show({ kind: 'compose', mode, defaultSlot }),
+      compose: (mode = 'text', defaultSlot, prefill) => show({ kind: 'compose', mode, defaultSlot, prefill }),
       openDraft: (draftId) => show({ kind: 'compose', mode: 'text', draftId }),
       openMeal: (localDate, slot) => show({ kind: 'meal', localDate, slot }),
       openBurn: (milestone) => show({ kind: 'burn', milestone }),
@@ -117,7 +124,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
       {children}
       <Sheet open={open} onClose={close} onClosed={closed}>
         {content?.kind === 'compose' ? (
-          <Compose key={content.session} initialMode={content.mode} defaultSlot={content.defaultSlot} initialDraftId={content.draftId} onClose={closeOpening(content.session)} />
+          <Compose key={content.session} initialMode={content.mode} defaultSlot={content.defaultSlot} initialDraftId={content.draftId} prefill={content.prefill} onClose={closeOpening(content.session)} />
         ) : null}
         {content?.kind === 'meal' ? (
           <MealSheet key={content.session} localDate={content.localDate} slot={content.slot} onClose={closeOpening(content.session)} />

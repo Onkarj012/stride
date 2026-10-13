@@ -1,10 +1,10 @@
-import { roundNutrients, type Nutrients } from "@stride/core";
+import type { Nutrients } from "@stride/core";
 import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { MAX_CHAT_ITERATIONS } from "./chats";
-import { isRecord, OPENROUTER_CHAT_URL } from "./pipeline/openrouter";
+import { MAX_CHAT_ITERATIONS, STREAM_FLUSH_CHARS } from "./chats";
+import { isRecord, OPENROUTER_CHAT_URL, PHOTO_MODEL } from "./pipeline/openrouter";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.*s");
@@ -12,11 +12,16 @@ const modules = import.meta.glob("./**/*.*s");
 const CHAPATI: Nutrients = { kcal: 297, protein: 11.25, carbs: 46.36, fat: 7.45, fiber: 4.9, sugar: 2.72, sodiumMg: 409 };
 const DAL: Nutrients = { kcal: 116.3, protein: 9.02, carbs: 20.13, fat: 0.38, fiber: 7.9, sugar: 1.8, sodiumMg: 2 };
 
-/** One mocked model reply. */
+/** One mocked model reply. A streamed reply sends `chunks` (or `content` whole) as separate text deltas. */
 interface LlmReply {
   content?: string | null;
+  chunks?: string[];
   toolCalls?: { name: string; args: Record<string, unknown> }[];
   noUsage?: boolean;
+  /** Runs before the stream sends event `index`, while the turn is mid-stream. */
+  beforeEvent?: (index: number) => Promise<void>;
+  /** The stream breaks instead of sending event `failAt`. */
+  failAt?: number;
 }
 type RequestBody = Record<string, unknown>;
 
@@ -46,10 +51,52 @@ async function fakeFetch(input: string | URL | Request, init?: RequestInit): Pro
     type: "function",
     function: { name: call.name, arguments: JSON.stringify(call.args) },
   }));
-  return json({
-    choices: [{ message: { content: reply.content ?? null, tool_calls: toolCalls }, finish_reason: "stop" }],
-    ...(reply.noUsage === true ? {} : { usage: { prompt_tokens: 300, completion_tokens: 30 } }),
+  const usage = reply.noUsage === true ? {} : { usage: { prompt_tokens: 300, completion_tokens: 30 } };
+  if (body.stream === true) return sse(reply, toolCalls, usage);
+  return json({ choices: [{ message: { content: reply.content ?? null, tool_calls: toolCalls }, finish_reason: "stop" }], ...usage });
+}
+
+/** An OpenRouter SSE stream: text deltas, then each tool call split across two events, then finish and usage. */
+function sse(
+  reply: LlmReply,
+  toolCalls: { id: string; function: { name: string; arguments: string } }[],
+  usage: Record<string, unknown>,
+): Response {
+  const pieces = reply.chunks ?? (typeof reply.content === "string" ? [reply.content] : []);
+  const events: unknown[] = [
+    ...pieces.map((text) => ({ choices: [{ delta: { content: text } }] })),
+    ...toolCalls.flatMap((call, index) => {
+      const half = Math.floor(call.function.arguments.length / 2);
+      return [
+        { choices: [{ delta: { tool_calls: [{ index, id: call.id, type: "function", function: { name: call.function.name, arguments: call.function.arguments.slice(0, half) } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index, function: { arguments: call.function.arguments.slice(half) } }] } }] },
+      ];
+    }),
+    { choices: [{ delta: {}, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" }] },
+    ...(Object.keys(usage).length === 0 ? [] : [{ choices: [], ...usage }]),
+  ];
+  const encoder = new TextEncoder();
+  let next = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(": OPENROUTER PROCESSING\n\n"));
+    },
+    async pull(controller) {
+      if (next === events.length) {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+        return;
+      }
+      await reply.beforeEvent?.(next);
+      if (reply.failAt === next) {
+        controller.error(new Error("connection reset"));
+        return;
+      }
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(events[next])}\n\n`));
+      next++;
+    },
   });
+  return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
 /** The system prompt of a request, where the turn context lives. */
@@ -163,20 +210,19 @@ describe("multi-chat (D12)", () => {
     expect(bodies).toHaveLength(1);
   });
 
-  test("a retry after a failed turn reports its saved meal instead of logging it again", async () => {
+  test("a retry after a failed turn reports its saved entries instead of asking the model again", async () => {
     const { t, user, chatId, foods } = await setup();
-    // Attempt 1 logs 2 rotis, then the next model call fails (an empty reply throws).
-    llm = (_body, n) => (n === 1 ? { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95 } }] } : {});
+    // Attempt 1 fails at its first model call (an empty reply throws) after a write under its key was saved.
+    llm = () => ({});
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" })).rejects.toThrow();
-    expect(await entryRows(t)).toHaveLength(1);
+    await user.mutation(api.entries.addEntries, {
+      submissionId: "m1:edit_entry:0:0",
+      items: [{ foodId: foods.chapati, grams: 80, source: "db" }],
+    });
     const calls = bodies.length;
 
-    // A fresh model run would look something up first and add the same meal under a new key.
-    llm = (_body, n) => {
-      if (n === calls + 1) return { toolCalls: [{ name: "get_user_foods", args: {} }] };
-      if (n === calls + 2) return { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95 } }] };
-      return { content: "Logged." };
-    };
+    // A fresh model run would add the same meal again under a new key.
+    llm = () => ({ content: "Logged." });
     const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" });
 
     const rows = await entryRows(t);
@@ -258,38 +304,63 @@ describe("chat photo ownership", () => {
   });
 });
 
-describe("chat logging runs the same pipeline", () => {
-  test("add_entry items commit through the gate, linked to the chat message, with nutrients from foods", async () => {
-    const { t, user, chatId, foods } = await setup();
+describe("chat cannot log food", () => {
+  test("add_entry is not offered, and a call to it gets an unknown-tool error and logs nothing", async () => {
+    const { t, user, chatId } = await setup();
     llm = (body) =>
       afterToolResult(body)
-        ? { content: "Logged 2 rotis." }
-        : { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95, kcal: 5000 } }] };
-    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" });
+        ? { content: "Use Compose to log that." }
+        : { toolCalls: [{ name: "add_entry", args: { food: "roti", quantity: 2, unit: null, confidence: 0.95 } }] };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" });
 
-    expect(turn.reply).toBe("Logged 2 rotis.");
-    const [row] = await entryRows(t);
-    expect(row).toMatchObject({ foodId: foods.chapati, grams: 80, createdBy: "ai", chatId, messageId: turn.userMessageId });
-    expect(roundNutrients(row?.nutrients ?? CHAPATI).kcal).toBe(238);
-    expect(turn.entryIds).toEqual([row?._id]);
-    const reply = await t.run((ctx) => ctx.db.get("messages", turn.assistantMessageId));
-    expect(reply?.entryIds).toEqual([row?._id]);
-    expect(reply?.toolCalls[0]?.name).toBe("add_entry");
-  });
-
-  test("an unmatched add_entry becomes a draft card on the message", async () => {
-    const { t, user, chatId } = await setup();
-    llm = (body) => {
-      if (afterToolResult(body)) return { content: "Please check the card." };
-      const tools = Array.isArray(body.tools) ? JSON.stringify(body.tools) : "";
-      if (tools.includes("choose_food")) return { content: "no idea" };
-      return { toolCalls: [{ name: "add_entry", args: { food: "mystery sabzi", quantity: 1, unit: "katori", confidence: 0.9 } }] };
-    };
-    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "mystery sabzi" });
-    expect(turn.draftIds).toHaveLength(1);
+    expect(JSON.stringify(bodies[0]?.tools)).not.toContain("add_entry");
+    expect(JSON.stringify(bodies[1]?.messages)).toContain("Unknown tool add_entry");
     expect(await entryRows(t)).toHaveLength(0);
   });
 });
+
+describe("Log this (A11)", () => {
+  test("a photo is discussed, not logged: the photo model gets the image and the reply offers Log this with it", async () => {
+    const { t, user, chatId } = await setup();
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+    await user.mutation(internal.uploads.registerStoredUpload, { storageId });
+    llm = () => ({ content: "Looks like dal and rice." });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "img", text: "what is this", imageStorageId: storageId });
+
+    const first = bodies[0] ?? {};
+    expect(first.model).toBe(PHOTO_MODEL);
+    expect(JSON.stringify(lastMessage(first))).toContain("image_url");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("drafts").take(10))).toHaveLength(0);
+    expect(await replyRow(t)).toMatchObject({ status: "done", logAction: { storageId, text: "what is this" } });
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } });
+    expect(page.page[0]).toMatchObject({ role: "assistant", logAction: { storageId, text: "what is this" } });
+    expect(page.page[1]).toMatchObject({ role: "user", imageUrl: expect.any(String) });
+  });
+
+  test("asking to log food offers Log this with the food text and creates no entry", async () => {
+    const { t, user, chatId } = await setup();
+    llm = (body) =>
+      afterToolResult(body)
+        ? { content: "Tap Log this." }
+        : { toolCalls: [{ name: "offer_log", args: { text: "2 roti and dal" } }] };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "log 2 roti and dal" });
+
+    expect(await entryRows(t)).toHaveLength(0);
+    expect((await replyRow(t)).logAction).toEqual({ text: "2 roti and dal" });
+  });
+
+  test("a plain text reply has no Log this action", async () => {
+    const { t, user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect((await replyRow(t)).logAction).toBeUndefined();
+  });
+});
+
+/** The last message of a request body, or undefined. */
+function lastMessage(body: RequestBody): unknown {
+  return Array.isArray(body.messages) ? body.messages.at(-1) : undefined;
+}
 
 describe("chat corrections (D8)", () => {
   test("edit_entry writes a revision row by the AI and undo restores the prior revision", async () => {
@@ -363,5 +434,457 @@ describe("chat corrections (D8)", () => {
     const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "loop" });
     expect(bodies).toHaveLength(MAX_CHAT_ITERATIONS);
     expect(turn.reply).not.toBe("");
+  });
+});
+
+/** The chat's assistant reply row. */
+async function replyRow(t: TestConvex<typeof schema>): Promise<Doc<"messages">> {
+  const rows = await t.run((ctx) => ctx.db.query("messages").take(20));
+  const reply = rows.find((row) => row.role === "assistant");
+  if (reply === undefined) throw new Error("no reply row");
+  return reply;
+}
+
+/** Waits until the reply row shows `text`; the stream reads ahead of the turn, so event order alone proves nothing. */
+async function waitForText(t: TestConvex<typeof schema>, text: string): Promise<Doc<"messages">> {
+  for (let i = 0; i < 200; i++) {
+    const row = await replyRow(t).catch(() => null);
+    if (row?.text === text) return row;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error(`reply never showed ${JSON.stringify(text.slice(0, 40))}`);
+}
+
+describe("streaming replies (A12)", () => {
+  test("text lands on the reply row while it streams, and the row ends done", async () => {
+    const { t, user, chatId } = await setup();
+    const long = "x".repeat(STREAM_FLUSH_CHARS + 50);
+    const seen: Doc<"messages">[] = [];
+    llm = () => ({ chunks: ["Hello ", long, " end"], beforeEvent: async (i) => void (i === 2 && seen.push(await waitForText(t, `Hello ${long}`))) });
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+
+    expect(seen[0]).toMatchObject({ status: "streaming", text: `Hello ${long}` });
+    expect(turn.reply).toBe(`Hello ${long} end`);
+    expect(await replyRow(t)).toMatchObject({ _id: turn.assistantMessageId, status: "done", text: `Hello ${long} end` });
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } });
+    expect(page.page[0]).toMatchObject({ role: "assistant", status: "done" });
+    expect(bodies[0]?.stream).toBe(true);
+  });
+
+  test("stop keeps the partial reply, marks it stopped, and a resend returns it without a model call", async () => {
+    const { t, user, chatId } = await setup();
+    const long = "x".repeat(STREAM_FLUSH_CHARS + 50);
+    llm = () => ({
+      chunks: ["Hello ", long, "y".repeat(STREAM_FLUSH_CHARS + 50), " tail"],
+      beforeEvent: async (i) => {
+        if (i === 2) await user.mutation(api.chats.stopMessage, { messageId: (await waitForText(t, `Hello ${long}`))._id });
+      },
+    });
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+
+    expect(turn.reply).toBe(`Hello ${long}`);
+    expect(await replyRow(t)).toMatchObject({ status: "stopped", text: `Hello ${long}` });
+    expect((await replyRow(t)).stopRequested).toBeUndefined();
+    const again = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(again).toEqual(turn);
+    expect(bodies).toHaveLength(1);
+  });
+
+  test("a stop after the last streamed write still ends the reply stopped at the text the user saw", async () => {
+    const { t, user, chatId } = await setup();
+    llm = () => ({
+      chunks: ["Hello", " tail"],
+      beforeEvent: async (i) => {
+        if (i === 1) await user.mutation(api.chats.stopMessage, { messageId: (await waitForText(t, "Hello"))._id });
+      },
+    });
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(turn.reply).toBe("Hello");
+    expect(await replyRow(t)).toMatchObject({ status: "stopped", text: "Hello" });
+  });
+
+  test("a stop pressed while tools run ends the turn before the next model call", async () => {
+    const { t, user, chatId } = await setup();
+    llm = (_body, n) =>
+      n === 1
+        ? {
+            chunks: ["Checking."],
+            toolCalls: [{ name: "get_user_foods", args: {} }],
+            beforeEvent: async (i) => {
+              if (i === 1) await user.mutation(api.chats.stopMessage, { messageId: (await waitForText(t, "Checking."))._id });
+            },
+          }
+        : { content: "Never sent." };
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "foods?" });
+    expect(bodies).toHaveLength(1);
+    expect(await replyRow(t)).toMatchObject({ status: "stopped", text: "Checking." });
+    expect(turn.reply).toBe("Checking.");
+  });
+
+  test("a broken stream marks the reply failed; the retry streams into the same row", async () => {
+    const { t, user, chatId } = await setup();
+    llm = () => ({ chunks: ["Partial", " more"], failAt: 1 });
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(/connection reset/);
+    const failed = await replyRow(t);
+    expect(failed).toMatchObject({ status: "failed", text: "Partial" });
+    const view = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } });
+    expect(view.page.find((m) => m._id === failed._id)?.retrySubmissionId).toBe("m1");
+
+    // A failed reply is not history: the retry's model call sees only the user's message.
+    llm = () => ({ content: "Full answer." });
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(turn.assistantMessageId).toBe(failed._id);
+    expect(await replyRow(t)).toMatchObject({ status: "done", text: "Full answer." });
+    const roles = Array.isArray(bodies.at(-1)?.messages) ? (bodies.at(-1)?.messages as unknown[]).map((m) => (isRecord(m) ? m.role : "")) : [];
+    expect(roles).toEqual(["system", "user"]);
+    expect(await t.run((ctx) => ctx.db.query("messages").take(10))).toHaveLength(2);
+  });
+
+  test("a reply left streaming by a crashed turn expires as failed", async () => {
+    const { t, chatId } = await setup();
+    vi.useFakeTimers();
+    const claim = await t.mutation(internal.chats.claimTurn, {
+      userId: "user_a",
+      chatId,
+      submissionId: "m1",
+      text: "hi",
+      attachments: [],
+      audioPending: false,
+    });
+    expect(await replyRow(t)).toMatchObject({ _id: claim.replyId, status: "streaming" });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    expect(await replyRow(t)).toMatchObject({ status: "failed" });
+    expect(bodies).toHaveLength(0);
+  });
+
+  test("only the owner can stop a reply", async () => {
+    const { t, user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    const other = t.withIdentity({ subject: "user_b" });
+    await expect(other.mutation(api.chats.stopMessage, { messageId: (await replyRow(t))._id })).rejects.toThrow(/Message not found/);
+  });
+});
+
+describe("regenerate", () => {
+  test("hides the last reply, streams a new one, and keeps the hidden reply's entry links", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [original] = await user.mutation(api.entries.addEntries, {
+      submissionId: "e1",
+      items: [{ foodId: foods.chapati, grams: 80, source: "db" }],
+    });
+    llm = (body) =>
+      afterToolResult(body)
+        ? { content: "Updated to 3 rotis." }
+        : { toolCalls: [{ name: "edit_entry", args: { entry_id: original, quantity: 3, unit: null } }] };
+    const first = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "it was 3 rotis" });
+    const oldReply = await replyRow(t);
+
+    llm = () => ({ content: "Try again: 3 rotis." });
+    const calls = bodies.length;
+    const result = await user.action(api.chats.regenerate, { chatId });
+
+    expect(bodies).toHaveLength(calls + 1);
+    expect(result.reply).toBe("Try again: 3 rotis.");
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
+    expect(page.page.map((m) => m._id)).toEqual([result.assistantMessageId, first.userMessageId]);
+    expect(page.page[0]).toMatchObject({ _id: result.assistantMessageId, text: "Try again: 3 rotis.", status: "done" });
+    expect(await t.run((ctx) => ctx.db.get("messages", oldReply._id))).toMatchObject({
+      deletedAt: expect.any(Number),
+      entryIds: first.entryIds,
+    });
+    expect(first.entryIds).toHaveLength(1);
+    // The hidden reply is not history: the new attempt sees only the user's message.
+    const roles = Array.isArray(bodies.at(-1)?.messages) ? (bodies.at(-1)?.messages as unknown[]).map((m) => (isRecord(m) ? m.role : "")) : [];
+    expect(roles).toEqual(["system", "user"]);
+  });
+
+  test("refuses while the last reply is still streaming", async () => {
+    const { t, user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    const reply = await replyRow(t);
+    await t.run((ctx) =>
+      ctx.db.insert("messages", {
+        userId: "user_a",
+        chatId,
+        role: "assistant",
+        text: "",
+        attachments: [],
+        toolCalls: [],
+        draftIds: [],
+        entryIds: [],
+        submissionId: "m1:reply:live",
+        answersMessageId: reply.answersMessageId,
+        status: "streaming",
+        claimedAt: Date.now(),
+      }),
+    );
+    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toThrow(/Wait for the reply/);
+    expect(bodies).toHaveLength(1);
+  });
+
+  test("a resend of the original message after regenerate is refused without a model call", async () => {
+    const { user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    await user.action(api.chats.regenerate, { chatId });
+    const calls = bodies.length;
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(/already being handled/);
+    expect(bodies).toHaveLength(calls);
+  });
+});
+
+describe("rename, preview and search", () => {
+  test("renameChat: the owner renames the chat; others get Chat not found; bad titles throw", async () => {
+    const { t, user, chatId } = await setup();
+    await user.mutation(api.chats.renameChat, { chatId, title: "  Dinner ideas  " });
+    expect((await user.query(api.chats.listChats, {}))[0]?.title).toBe("Dinner ideas");
+
+    const other = t.withIdentity({ subject: "user_b" });
+    await expect(other.mutation(api.chats.renameChat, { chatId, title: "Mine" })).rejects.toThrow(/Chat not found/);
+    await expect(user.mutation(api.chats.renameChat, { chatId, title: "   " })).rejects.toThrow(/1-60 characters/);
+    await expect(user.mutation(api.chats.renameChat, { chatId, title: "x".repeat(61) })).rejects.toThrow(/1-60 characters/);
+    expect((await user.query(api.chats.listChats, {}))[0]?.title).toBe("Dinner ideas");
+  });
+
+  test("listChats previews each chat's newest message", async () => {
+    const { user, chatId } = await setup();
+    expect((await user.query(api.chats.listChats, {}))[0]?.lastMessage).toBeNull();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect((await user.query(api.chats.listChats, {}))[0]?.lastMessage).toBe("Hi!");
+  });
+
+  test("searchChats finds a message by word and hides other users' and deleted messages", async () => {
+    const { t, user, chatId } = await setup();
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "I had paneer tikka for lunch" });
+    expect(await user.query(api.chats.searchChats, { query: "paneer" })).toEqual([
+      { chatId, title: "I had paneer tikka for lunch", snippet: "I had paneer tikka for lunch", messageId: turn.userMessageId },
+    ]);
+    expect(await user.query(api.chats.searchChats, { query: "   " })).toEqual([]);
+
+    const other = t.withIdentity({ subject: "user_b" });
+    expect(await other.query(api.chats.searchChats, { query: "paneer" })).toEqual([]);
+
+    await t.run((ctx) => ctx.db.patch("messages", turn.userMessageId, { deletedAt: Date.now() }));
+    expect(await user.query(api.chats.searchChats, { query: "paneer" })).toEqual([]);
+  });
+
+  test("searchChats returns at most 20 chats", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 25; i++) {
+        const chat = await ctx.db.insert("chats", { userId: "user_a", title: `Chat ${i}`, updatedAt: Date.now() });
+        await ctx.db.insert("messages", {
+          userId: "user_a",
+          chatId: chat,
+          role: "user",
+          text: `garlic naan ${i}`,
+          attachments: [],
+          toolCalls: [],
+          draftIds: [],
+          submissionId: `s${i}`,
+        });
+      }
+    });
+    expect(await user.query(api.chats.searchChats, { query: "naan" })).toHaveLength(20);
+  });
+});
+
+describe("review fixes", () => {
+  test("a stop pressed during a tool-only reply runs no ledger tool", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.dal, grams: 100, source: "db" }] });
+    llm = (_body, n) =>
+      n === 1
+        ? {
+            toolCalls: [{ name: "delete_entry", args: { entry_id: entry } }],
+            beforeEvent: async (i) => {
+              if (i === 0) await user.mutation(api.chats.stopMessage, { messageId: (await replyRow(t))._id });
+            },
+          }
+        : { content: "Never sent." };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "delete the dal" });
+    expect((await entryRows(t)).every((row) => row.status === "live")).toBe(true);
+    expect(await replyRow(t)).toMatchObject({ status: "stopped" });
+  });
+
+  test("a stream that closes before a finish event fails instead of saving a cut-off reply", async () => {
+    const { t, user, chatId } = await setup();
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "Half an ans" } }] })}\n\n`));
+          controller.close();
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }));
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(/ended before/);
+    expect(await replyRow(t)).toMatchObject({ status: "failed" });
+  });
+
+  test("regenerating a reply that edited an entry keeps its undo card on the replacement", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.chapati, grams: 80, source: "db" }] });
+    llm = (body) =>
+      afterToolResult(body) ? { content: "Updated." } : { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] };
+    const first = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "3 rotis" });
+    llm = () => ({ content: "Here's another take." });
+    const again = await user.action(api.chats.regenerate, { chatId });
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
+    const visible = page.page.find((m) => m._id === again.assistantMessageId);
+    expect(visible?.entryIds).toEqual(first.entryIds);
+  });
+
+  test("many regenerations don't push the question out of the model's history", async () => {
+    const { t, user, chatId } = await setup();
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "the question" });
+    // 25 earlier regenerations: hidden replies newer than the question, then the live reply newest of all.
+    await t.run(async (ctx) => {
+      await ctx.db.patch("messages", turn.assistantMessageId, { deletedAt: 1 });
+      for (let i = 0; i < 25; i++) {
+        await ctx.db.insert("messages", {
+          userId: "user_a", chatId, role: "assistant", text: `old ${i}`, attachments: [], toolCalls: [], draftIds: [],
+          answersMessageId: turn.userMessageId, deletedAt: 1, status: "done",
+        });
+      }
+      await ctx.db.insert("messages", {
+        userId: "user_a", chatId, role: "assistant", text: "live", attachments: [], toolCalls: [], draftIds: [],
+        answersMessageId: turn.userMessageId, status: "done",
+      });
+    });
+    await user.action(api.chats.regenerate, { chatId });
+    const roles = Array.isArray(bodies.at(-1)?.messages) ? (bodies.at(-1)?.messages as unknown[]).map((m) => (isRecord(m) ? m.role : "")) : [];
+    expect(roles).toEqual(["system", "user"]);
+  });
+
+  test("getChat returns the caller's chat and null for anyone else", async () => {
+    const { t, user, chatId } = await setup();
+    expect(await user.query(api.chats.getChat, { chatId })).toMatchObject({ _id: chatId });
+    expect(await t.withIdentity({ subject: "user_b" }).query(api.chats.getChat, { chatId })).toBeNull();
+  });
+
+  test("stop is noticed while the stream is silent, without waiting for more text", async () => {
+    const { t, user, chatId } = await setup();
+    llm = () => ({
+      chunks: ["Hello", " later"],
+      beforeEvent: async (i) => {
+        if (i !== 1) return;
+        await user.mutation(api.chats.stopMessage, { messageId: (await waitForText(t, "Hello"))._id });
+        // The provider goes quiet (keep-alives only) for longer than the turn should take to stop.
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      },
+    });
+    const started = Date.now();
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(turn.reply).toBe("Hello");
+    expect(await replyRow(t)).toMatchObject({ status: "stopped" });
+  });
+
+  test("a regenerate that fails keeps the old reply's undo cards on its row", async () => {
+    const { user, chatId, foods } = await setup();
+    const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.chapati, grams: 80, source: "db" }] });
+    llm = (body) =>
+      afterToolResult(body) ? { content: "Updated." } : { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] };
+    const first = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "3 rotis" });
+    llm = () => ({});
+    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toThrow();
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
+    const failed = page.page.find((m) => m.role === "assistant");
+    expect(failed).toMatchObject({ status: "failed", entryIds: first.entryIds });
+  });
+
+  test("a regenerated reply can't run log changes again", async () => {
+    const { user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    llm = () => ({ content: "Again." });
+    await user.action(api.chats.regenerate, { chatId });
+    const names = JSON.stringify(bodies.at(-1)?.tools ?? []);
+    expect(names).not.toContain("edit_entry");
+    expect(names).not.toContain("delete_entry");
+    expect(names).toContain("offer_log");
+  });
+
+  test("stop is noticed while keep-alives arrive faster than the idle tick", async () => {
+    const { t, user, chatId } = await setup();
+    const encoder = new TextEncoder();
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      let timer: ReturnType<typeof setInterval> | undefined;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" } }] })}\n\n`));
+          timer = setInterval(() => controller.enqueue(encoder.encode(": OPENROUTER PROCESSING\n\n")), 100);
+        },
+        cancel() {
+          clearInterval(timer);
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }));
+    const sending = user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    await user.mutation(api.chats.stopMessage, { messageId: (await waitForText(t, "Hello"))._id });
+    const started = Date.now();
+    const turn = await sending;
+    expect(Date.now() - started).toBeLessThan(1500);
+    expect(turn.reply).toBe("Hello");
+    expect(await replyRow(t)).toMatchObject({ status: "stopped" });
+  });
+});
+
+describe("coach sees the profile (10f)", () => {
+  test("a saved profile reaches the system prompt with diet, training, targets and weight trend", async () => {
+    const { user, chatId } = await setup();
+    await user.mutation(api.weights.logWeight, { kg: 72.4 });
+    await user.mutation(api.progress_v2.saveProfile, {
+      goal: "lose",
+      sex: "male",
+      heightCm: 175,
+      dob: "1990-01-01",
+      activity: "moderate",
+      dietType: "jain",
+      targetWeightKg: 68,
+      pace: "steady",
+      trainingDaysPerWeek: 4,
+    });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "what should I eat?" });
+
+    const system = systemText(bodies[0] ?? {});
+    expect(system).toContain("About the user:");
+    expect(system).toContain("Goal: lose, steady pace (0.5 kg a week). Target weight 68 kg.");
+    expect(system).toContain("Diet: jain.");
+    expect(system).toContain("no onion or garlic for jain");
+    expect(system).toContain("Trains 4 days a week.");
+    expect(system).toMatch(/Daily target: \d+ kcal, protein \d+ g, carbs \d+ g, fat \d+ g\./);
+    expect(system).toContain("Weight trend: 72.4 kg.");
+  });
+
+  test("a user with no profile gets no About block and no crash", async () => {
+    const { user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(systemText(bodies[0] ?? {})).not.toContain("About the user");
+  });
+
+  test("retrying an older failed question sends history that ends at that question", async () => {
+    const { user, chatId } = await setup();
+    llm = () => ({});
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "a", text: "question A" })).rejects.toThrow();
+    llm = () => ({ content: "Answer B." });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "b", text: "question B" });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "a", text: "question A" });
+    const sent = Array.isArray(bodies.at(-1)?.messages) ? (bodies.at(-1)?.messages as unknown[]) : [];
+    const texts = sent.map((m) => (isRecord(m) && typeof m.content === "string" ? m.content : ""));
+    expect(texts.at(-1)).toBe("question A");
+    expect(texts).not.toContain("question B");
+  });
+
+  test("a turn that fails after a correction keeps its Undo card on the failed reply", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.chapati, grams: 80, source: "db" }] });
+    llm = (_body, n) => (n === 1 ? { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] } : {});
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "3 rotis" })).rejects.toThrow();
+    const failed = await replyRow(t);
+    const revision = (await entryRows(t)).at(-1);
+    expect(failed.status).toBe("failed");
+    expect(failed.entryIds).toEqual([revision?._id]);
   });
 });

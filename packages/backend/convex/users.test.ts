@@ -177,11 +177,25 @@ describe("clearAllData", () => {
         audioPending: false,
       }),
     ).rejects.toThrow(cleared);
-    await expect(
-      t.mutation(internal.chats.insertAssistantMessage, {
+    const replyId = await t.run((ctx) =>
+      ctx.db.insert("messages", {
         userId: "user_a",
         chatId: a.chatId,
-        submissionId: "m0",
+        role: "assistant",
+        text: "",
+        attachments: [],
+        toolCalls: [],
+        draftIds: [],
+        status: "streaming",
+        claimedAt: 1,
+      }),
+    );
+    await expect(
+      t.mutation(internal.chats.finishReply, {
+        userId: "user_a",
+        messageId: replyId,
+        claimedAt: 1,
+        status: "done",
         text: "Logged.",
         toolCalls: [],
         draftIds: [],

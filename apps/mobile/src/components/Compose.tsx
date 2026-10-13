@@ -22,6 +22,7 @@ import {
   type LogLine,
   type LogResult,
   type MealSlot,
+  type StorageId,
 } from '@/lib/log'
 import { font, themedStyles, useTheme } from '@/theme'
 import { BarcodeScanner, PhotoCapture, ScanningPhoto, VoiceCapture } from './Capture'
@@ -32,6 +33,9 @@ import { Polo, type PoloMood } from './Polo'
 import { Tap } from './Tap'
 
 export type ComposeMode = 'text' | 'voice' | 'photo' | 'barcode'
+
+/** Text to type into the box, or an already uploaded photo to log at once (from a chat "Log this"). */
+export type ComposePrefill = { text?: string; storageId?: StorageId }
 
 type LogInput = FunctionArgs<typeof api.pipeline.log.logInput>['input']
 
@@ -63,7 +67,19 @@ function namesOf(lines: LogLine[]): string {
 }
 
 // The compose sheet (mock #/compose): type, talk, snap or scan; then auto-log with undo, or a draft that asks.
-export function Compose({ initialMode, defaultSlot, initialDraftId, onClose }: { initialMode: ComposeMode; defaultSlot?: MealSlot; initialDraftId?: DraftId; onClose: () => void }) {
+export function Compose({
+  initialMode,
+  defaultSlot,
+  initialDraftId,
+  prefill,
+  onClose,
+}: {
+  initialMode: ComposeMode
+  defaultSlot?: MealSlot
+  initialDraftId?: DraftId
+  prefill?: ComposePrefill
+  onClose: () => void
+}) {
   const t = useTheme()
   const s = useStyles()
   const { toast, undoFor } = useLog()
@@ -71,8 +87,13 @@ export function Compose({ initialMode, defaultSlot, initialDraftId, onClose }: {
   const logInput = useAction(api.pipeline.log.logInput)
   const lookupBarcode = useAction(api.pipeline.barcode.lookupBarcode)
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl)
-  const [phase, setPhase] = useState<Phase>(() => initialDraftId ? { kind: 'draft', draftId: initialDraftId } : (initialMode === 'text' ? { kind: 'input' } : { kind: initialMode }))
-  const [text, setText] = useState('')
+  const [phase, setPhase] = useState<Phase>(() => {
+    if (initialDraftId) return { kind: 'draft', draftId: initialDraftId }
+    if (prefill?.storageId) return { kind: 'working', label: 'Looking at your plate…' }
+    return initialMode === 'text' ? { kind: 'input' } : { kind: initialMode }
+  })
+  const [text, setText] = useState(prefill?.text ?? '')
+  const startedPrefill = useRef(false)
   const [hops, setHops] = useState(1)
   const alive = useRef(true)
   const now = new Date()
@@ -84,6 +105,13 @@ export function Compose({ initialMode, defaultSlot, initialDraftId, onClose }: {
     return () => {
       alive.current = false
     }
+  }, [])
+
+  // Logs a prefilled photo once; the ref stops a second run when effects replay.
+  useEffect(() => {
+    if (!prefill?.storageId || startedPrefill.current) return
+    startedPrefill.current = true
+    void run({ kind: 'photo', storageId: prefill.storageId, text: prefill.text }, 'Looking at your plate…')
   }, [])
 
   // Sets the phase only while the sheet is still showing.
