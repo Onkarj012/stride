@@ -216,6 +216,7 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
   const [draft, setDraft] = useState(() => draftFrom(saved, user?.fullName ?? ''))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [dobValid, setDobValid] = useState(true)
   const patch = (next: Partial<Draft>) => setDraft((d) => ({ ...d, ...next }))
 
   // Saves this field. Weight is a weigh-in, then an empty update so the target re-freezes.
@@ -285,7 +286,7 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
       case 'sex':
         return <SexInput value={draft.sex} onChange={(sex) => patch({ sex })} />
       case 'dob':
-        return <DobInput value={draft.dob} onChange={(dob) => patch({ dob })} />
+        return <DobInput value={draft.dob} onChange={(dob) => patch({ dob })} onValidChange={setDobValid} />
       case 'height':
         return <HeightInput value={draft.heightCm} units={units} onChange={(heightCm) => patch({ heightCm })} />
       case 'weight':
@@ -311,7 +312,7 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
         label="Save"
         size="block"
         busy={busy}
-        disabled={field === 'name' && draft.name.trim() === ''}
+        disabled={(field === 'name' && draft.name.trim() === '') || (field === 'dob' && !dobValid)}
         onPress={() => void save()}
         style={s.save}
       />

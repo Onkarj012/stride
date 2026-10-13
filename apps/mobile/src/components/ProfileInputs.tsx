@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode, type Ref } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react'
 import { Keyboard, Text, TextInput, View, type StyleProp, type TextStyle } from 'react-native'
 import { PACE_KG_PER_WEEK } from '@stride/core'
 import { motion, radii } from '@stride/ui-tokens'
@@ -203,13 +203,25 @@ export function SexInput({ value, onChange }: { value: Sex | null; onChange: (v:
 }
 
 // Day, month and year boxes for a YYYY-MM-DD date. Moves on when a box is full, and passes the date on only when it is real and the age is 13 to 120.
-export function DobInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function DobInput({
+  value,
+  onChange,
+  onValidChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+  onValidChange?: (valid: boolean) => void
+}) {
   const s = useStyles()
   const start = dateParts(value)
   const [parts, setParts] = useState<DobParts>({ day: pad(start.day), month: pad(start.month), year: String(start.year) })
   const monthRef = useRef<TextInput>(null)
   const yearRef = useRef<TextInput>(null)
   const valid = dobFromTyped(parts.day, parts.month, parts.year) !== null
+  // Reports whether the typed date is real, on mount and after each change.
+  useEffect(() => {
+    onValidChange?.(valid)
+  }, [valid, onValidChange])
   // Keeps each typed part, and passes the date on when all three make a valid one.
   function typePart(next: DobParts) {
     setParts(next)

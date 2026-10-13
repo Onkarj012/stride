@@ -116,6 +116,7 @@ function Onboarding() {
   const [index, setIndex] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [dobValid, setDobValid] = useState(true)
 
   const steps: readonly StepId[] = form.goal === 'maintain' ? STEPS.filter((id) => id !== 'target') : STEPS
   const current: StepId = steps[index] ?? 'goal'
@@ -180,7 +181,7 @@ function Onboarding() {
       case 'dob':
         return (
           <Question title="When were you born?">
-            <DobInput value={form.dob} onChange={(dob) => patch({ dob })} />
+            <DobInput value={form.dob} onChange={(dob) => patch({ dob })} onValidChange={setDobValid} />
           </Question>
         )
       case 'height':
@@ -267,7 +268,7 @@ function Onboarding() {
             label={isLast ? 'Finish' : 'Next'}
             size="block"
             busy={busy}
-            disabled={!answered(current, form)}
+            disabled={!answered(current, form) || (current === 'dob' && !dobValid)}
             onPress={isLast ? () => void finish() : advance}
           />
         )}
