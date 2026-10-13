@@ -335,6 +335,7 @@ describe("Log this (A11)", () => {
     expect(await replyRow(t)).toMatchObject({ status: "done", logAction: { storageId, text: "what is this" } });
     const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } });
     expect(page.page[0]).toMatchObject({ role: "assistant", logAction: { storageId, text: "what is this" } });
+    expect(page.page[1]).toMatchObject({ role: "user", imageUrl: expect.any(String) });
   });
 
   test("asking to log food offers Log this with the food text and creates no entry", async () => {

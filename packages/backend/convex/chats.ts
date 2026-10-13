@@ -92,6 +92,7 @@ const messageViewValidator = v.object({
   entryIds: v.array(v.id("entries")),
   status: replyStatusValidator,
   logAction: v.optional(logActionValidator),
+  imageUrl: v.union(v.string(), v.null()),
 });
 
 const toolCallRecordValidator = v.object({ name: v.string(), argsJson: v.string(), resultJson: v.optional(v.string()) });
@@ -248,21 +249,26 @@ export const listMessages = query({
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .order("desc")
       .paginate(paginationOpts);
-    return {
-      ...result,
-      page: result.page.filter((m) => m.deletedAt === undefined).map((m) => ({
-        _id: m._id,
-        _creationTime: m._creationTime,
-        chatId: m.chatId,
-        role: m.role,
-        text: m.text,
-        attachments: m.attachments,
-        draftIds: m.draftIds,
-        entryIds: m.entryIds ?? [],
-        status: m.status ?? "done",
-        logAction: m.logAction,
-      })),
-    };
+    const live = result.page.filter((m) => m.deletedAt === undefined);
+    const page = await Promise.all(
+      live.map(async (m) => {
+        const image = m.attachments.find((a) => a.kind === "image");
+        return {
+          _id: m._id,
+          _creationTime: m._creationTime,
+          chatId: m.chatId,
+          role: m.role,
+          text: m.text,
+          attachments: m.attachments,
+          draftIds: m.draftIds,
+          entryIds: m.entryIds ?? [],
+          status: m.status ?? "done",
+          logAction: m.logAction,
+          imageUrl: image === undefined ? null : await ctx.storage.getUrl(image.storageId),
+        };
+      }),
+    );
+    return { ...result, page };
   },
 });
 

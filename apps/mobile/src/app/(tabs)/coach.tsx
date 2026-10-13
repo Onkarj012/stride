@@ -5,8 +5,9 @@ import { useMutation, useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { api } from 'stride-backend/convex/_generated/api'
 import { ChatRow } from '@/components/ChatRow'
-import { Button } from '@/components/Controls'
-import { Placeholder, Screen, ScreenTitle } from '@/components/Screen'
+import { Button, RoundButton } from '@/components/Controls'
+import { Polo } from '@/components/Polo'
+import { Screen, ScreenTitle } from '@/components/Screen'
 import { Sheet } from '@/components/Sheet'
 import { plainError } from '@/lib/log'
 import { font, themedStyles, useTheme } from '@/theme'
@@ -107,19 +108,32 @@ export default function CoachScreen() {
   function renderBody(): ReactNode {
     if (trimmed !== '') {
       if (hits === undefined) return <Text style={s.note}>Searching…</Text>
-      if (hits.length === 0) return <Text style={s.note}>No chats match "{trimmed}".</Text>
+      if (hits.length === 0)
+        return (
+          <View style={s.quiet}>
+            <Polo size={44} mood="sleep" />
+            <Text style={s.note}>Nothing matches "{trimmed}".</Text>
+          </View>
+        )
       return hits.map((hit) => (
         <ChatRow key={hit.messageId} title={hit.title} preview={hit.snippet} onPress={() => router.push(`/chat/${hit.chatId}`)} />
       ))
     }
-    if (chats === undefined) return <Text style={s.note}>Loading chats…</Text>
+    if (chats === undefined)
+      return (
+        <View style={s.quiet}>
+          <Polo size={56} />
+          <Text style={s.note}>Finding your chats…</Text>
+        </View>
+      )
     if (chats.length === 0)
       return (
-        <>
-          <Text style={s.intro}>Polo reads your logs and can fix them when you ask. Every change shows up with an undo.</Text>
-          <Placeholder title="No chats yet." body="Ask about protein, your burn, or tonight's dinner. Chats open here soon." />
-          <Button label="New chat" icon="plus" busy={busy} onPress={() => void newChat()} style={s.cta} />
-        </>
+        <View style={s.empty}>
+          <Polo size={64} hop={1} />
+          <Text style={s.emptyTitle}>No chats yet.</Text>
+          <Text style={s.emptyBody}>Ask about protein, your burn, or what fits for dinner tonight.</Text>
+          <Button label="Start a chat" size="sm" icon="plus" busy={busy} onPress={() => void newChat()} style={s.emptyButton} />
+        </View>
       )
     const now = Date.now()
     return chats.map((chat) => (
@@ -141,21 +155,30 @@ export default function CoachScreen() {
         title="Chats"
         aside={<Button label="New chat" size="sm" icon="plus" busy={busy} onPress={() => void newChat()} />}
       />
-      <TextInput
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Search chats"
-        placeholderTextColor={t.c.ink3}
-        style={s.search}
-        autoCorrect={false}
-        returnKeyType="search"
-        accessibilityLabel="Search chats"
-      />
+      <Text style={s.intro}>Polo reads your logs and can fix them when you ask. Every change shows up with an undo.</Text>
+      {chats && chats.length > 0 ? (
+        <View style={s.search}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search chats"
+            placeholderTextColor={t.c.ink3}
+            style={s.searchInput}
+            autoCorrect={false}
+            returnKeyType="search"
+            accessibilityLabel="Search chats"
+          />
+          {query !== '' ? <RoundButton icon="x" label="Clear search" tone="plain" size={32} onPress={() => setQuery('')} /> : null}
+        </View>
+      ) : null}
       <View style={s.list}>{renderBody()}</View>
 
       <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
         {target ? (
           <>
+            <Text style={s.sheetTitle} numberOfLines={1}>
+              {target.title}
+            </Text>
             <Text style={s.sheetLabel}>Rename</Text>
             <TextInput
               value={draft}
@@ -177,7 +200,7 @@ export default function CoachScreen() {
             <View style={s.divider} />
             {confirming ? (
               <>
-                <Text style={s.confirmText}>Delete this chat? Entries it changed stay in your log.</Text>
+                <Text style={s.confirmText}>Delete this chat? Changes it made to your log stay.</Text>
                 <View style={s.row}>
                   <Button label="Cancel" variant="ghost" size="block" onPress={() => setConfirming(false)} style={s.flex} />
                   <Button label="Delete" variant="coral" size="block" busy={busy} onPress={() => void remove(target)} style={s.flex} />
@@ -194,24 +217,41 @@ export default function CoachScreen() {
 }
 
 const useStyles = themedStyles((t) => ({
+  intro: { ...font('callout'), color: t.c.ink2, marginTop: 12 },
   search: {
-    ...font('input'),
-    color: t.c.ink,
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: t.c.card2,
     borderRadius: radii.field,
-    height: 48,
-    paddingHorizontal: 16,
+    height: 46,
+    paddingLeft: 16,
+    paddingRight: 7,
     marginTop: 16,
   },
-  list: { marginTop: 8 },
-  intro: { ...font('callout'), color: t.c.ink2, marginTop: 12 },
-  note: { ...font('callout'), color: t.c.ink3, marginTop: 24, textAlign: 'center' },
-  cta: { marginTop: 14, alignSelf: 'center' },
+  searchInput: { ...font('input'), flex: 1, color: t.c.ink, padding: 0, height: '100%' },
+  list: { marginTop: 6 },
+  quiet: { alignItems: 'center', marginTop: 48, gap: 12 },
+  note: { ...font('callout'), color: t.c.ink3, textAlign: 'center' },
+  empty: {
+    marginTop: 18,
+    alignItems: 'center',
+    paddingTop: 26,
+    paddingBottom: 22,
+    paddingHorizontal: 18,
+    backgroundColor: t.c.card,
+    borderRadius: radii.card,
+    boxShadow: t.shadow.card,
+  },
+  emptyTitle: { ...font('emptyTitle'), color: t.c.ink, marginTop: 12 },
+  emptyBody: { ...font('callout'), color: t.c.ink2, marginTop: 6, textAlign: 'center' },
+  emptyButton: { marginTop: 14 },
+  sheetTitle: { ...font('section'), color: t.c.ink, marginBottom: 16 },
   sheetLabel: { ...font('eyebrow'), color: t.c.ink3, marginBottom: 8 },
   field: {
     ...font('input'),
     color: t.c.ink,
-    backgroundColor: t.c.card2,
+    backgroundColor: t.c.card,
+    boxShadow: t.shadow.card,
     borderRadius: radii.md,
     height: 48,
     paddingHorizontal: 16,
