@@ -150,6 +150,12 @@ function Onboarding() {
     }
   }
 
+  // Moves to the next step. Leaving the weight step drops a target that is no longer on the goal's side.
+  function advance() {
+    if (current === 'weight') patch({ targetWeightKg: keepTarget(form.goal, form.targetWeightKg, form.weightKg) })
+    setIndex(index + 1)
+  }
+
   // Leaves onboarding for the tabs. The hold is released after the route change, so the reveal stays up until then.
   function start() {
     router.replace('/(tabs)')
@@ -189,7 +195,7 @@ function Onboarding() {
             <WeightInput
               value={form.weightKg}
               units={units}
-              onChange={(weightKg) => patch({ weightKg, targetWeightKg: keepTarget(form.goal, form.targetWeightKg, weightKg) })}
+              onChange={(weightKg) => patch({ weightKg })}
             />
           </Question>
         )
@@ -262,7 +268,7 @@ function Onboarding() {
             size="block"
             busy={busy}
             disabled={!answered(current, form)}
-            onPress={isLast ? () => void finish() : () => setIndex(index + 1)}
+            onPress={isLast ? () => void finish() : advance}
           />
         )}
       </View>
