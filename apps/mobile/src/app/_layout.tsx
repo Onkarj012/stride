@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 import { Stack, ThemeProvider, DarkTheme, DefaultTheme, type Theme as NavTheme } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
@@ -8,11 +8,13 @@ import { useFonts } from 'expo-font'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { ClerkProvider, useAuth } from '@clerk/expo'
 import { tokenCache } from '@clerk/expo/token-cache'
-import { ConvexReactClient } from 'convex/react'
+import { ConvexReactClient, useConvexAuth, useQuery } from 'convex/react'
 import { ConvexProviderWithClerk } from 'convex/react-clerk'
+import { api } from 'stride-backend/convex/_generated/api'
 import { layout } from '@stride/ui-tokens'
 import { Polo } from '@/components/Polo'
 import { readConfig } from '@/lib/config'
+import { HoldOnboardingContext } from '@/lib/profile'
 import { font, fontAssets, themedStyles, useTheme } from '@/theme'
 
 void SplashScreen.preventAutoHideAsync()
@@ -61,28 +63,40 @@ export default function RootLayout() {
   )
 }
 
-// Shows the tabs when signed in and the sign-in screen otherwise; Polo waits while Clerk loads.
+// Tabs once signed in with a complete profile, onboarding until then, sign-in when signed out. Polo waits while Clerk and the profile load.
 function AuthGate() {
   const s = useStyles()
   const { isLoaded, isSignedIn } = useAuth()
+  const { isAuthenticated, isLoading } = useConvexAuth()
+  const status = useQuery(api.progress_v2.profileStatus, isAuthenticated ? {} : 'skip')
+  // Set by onboarding while it saves, so the reveal stays mounted after the profile turns complete.
+  const [holdOnboarding, setHoldOnboarding] = useState(false)
 
-  if (!isLoaded)
+  const signedIn = isSignedIn === true
+  const waiting = !isLoaded || (signedIn && (isLoading || (isAuthenticated && status === undefined)))
+  if (waiting)
     return (
       <View style={s.center}>
         <Polo size={64} />
       </View>
     )
 
+  const complete = status?.complete === true
   return (
-    <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-      <Stack.Protected guard={isSignedIn === true}>
-        <Stack.Screen name="(tabs)" />
-        <Stack.Screen name="workout" options={{ animation: 'slide_from_bottom' }} />
-      </Stack.Protected>
-      <Stack.Protected guard={isSignedIn !== true}>
-        <Stack.Screen name="sign-in" />
-      </Stack.Protected>
-    </Stack>
+    <HoldOnboardingContext.Provider value={setHoldOnboarding}>
+      <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
+        <Stack.Protected guard={signedIn && complete}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="workout" options={{ animation: 'slide_from_bottom' }} />
+        </Stack.Protected>
+        <Stack.Protected guard={signedIn && (!complete || holdOnboarding)}>
+          <Stack.Screen name="onboarding" />
+        </Stack.Protected>
+        <Stack.Protected guard={!signedIn}>
+          <Stack.Screen name="sign-in" />
+        </Stack.Protected>
+      </Stack>
+    </HoldOnboardingContext.Provider>
   )
 }
 
