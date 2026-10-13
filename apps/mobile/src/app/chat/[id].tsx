@@ -8,6 +8,7 @@ import { useAuth } from '@clerk/expo'
 import type { FunctionReturnType } from 'convex/server'
 import { useAction, useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
+import type { Id } from 'stride-backend/convex/_generated/dataModel'
 import { layout, motion, radii } from '@stride/ui-tokens'
 import { Button, RoundButton, Tag } from '@/components/Controls'
 import { ChatMessage, type ChatMessageView } from '@/components/ChatMessage'
@@ -20,7 +21,7 @@ import { SUMMARY_DAYS, newSubmissionId, plainError, PlainError, targetsFor, uplo
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
-type ChatSummary = FunctionReturnType<typeof api.chats.listChats>[number]
+type ChatSummary = NonNullable<FunctionReturnType<typeof api.chats.getChat>>
 
 // One send: the text and photo, with the submission id that keeps a retry from running twice.
 type Attempt = { submissionId: string; text: string; photoUri?: string }
@@ -60,16 +61,11 @@ function leave() {
 
 // Chat thread route (mock v5 #/thread, v7 #/thread-stream): streamed replies, stop, regenerate, photos and Log this.
 export default function ChatScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>()
-  const chats = useQuery(api.chats.listChats, {})
-  const chat = chats?.find((c) => c._id === id)
+  const { id } = useLocalSearchParams<{ id: Id<'chats'> }>()
+  const chat = useQuery(api.chats.getChat, { chatId: id })
 
   // Logs from a reply open their own sheet, so the thread mounts its own LogProvider.
-  return (
-    <LogProvider>
-      {chats === undefined ? <Waiting /> : chat ? <Thread chat={chat} /> : <Gone />}
-    </LogProvider>
-  )
+  return <LogProvider>{chat === undefined ? <Waiting /> : chat ? <Thread chat={chat} /> : <Gone />}</LogProvider>
 }
 
 // Header row (mock v5 .chat-head): back, the chat title and a "Sees logs" tag.

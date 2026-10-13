@@ -24,8 +24,8 @@ type LogApi = {
   // The daily-burn explainer, or the one-time milestone version of it.
   openBurn: (milestone: boolean) => void
   toast: (message: Omit<ToastMessage, 'id'>) => void
-  // Builds an undo that reverts the latest revision of each entry, with its own toast on success or failure.
-  undoFor: (entryIds: EntryId[]) => () => void
+  // Builds an undo that reverts the latest revision of each entry, with its own toast on success or failure. Resolves true only if it worked.
+  undoFor: (entryIds: EntryId[]) => () => Promise<boolean>
   sheetOpen: boolean
 }
 
@@ -92,9 +92,15 @@ export function LogProvider({ children }: { children: ReactNode }) {
     (entryIds: EntryId[]) => () => {
       const base = newSubmissionId()
       // Each undo writes one revision per entry, so each needs its own submission id.
-      Promise.all(entryIds.map((entryId, i) => undoRevision({ submissionId: `${base}-${i}`, entryId }))).then(
-        () => toast({ title: 'Undone. Nothing lost.', sub: "It's back the way it was." }),
-        (err: unknown) => toast({ title: "Couldn't undo that.", sub: plainError(err) }),
+      return Promise.all(entryIds.map((entryId, i) => undoRevision({ submissionId: `${base}-${i}`, entryId }))).then(
+        () => {
+          toast({ title: 'Undone. Nothing lost.', sub: "It's back the way it was." })
+          return true
+        },
+        (err: unknown) => {
+          toast({ title: "Couldn't undo that.", sub: plainError(err) })
+          return false
+        },
       )
     },
     [undoRevision, toast],

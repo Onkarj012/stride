@@ -176,16 +176,19 @@ function TypingDots() {
   )
 }
 
-// Undo for one entry the reply changed (mock v5 .acard). Once pressed it stays undone, so a second press can't undo an older revision.
+// Undo for one entry the reply changed (mock v5 .acard). Once an undo works it stays undone, so a later press can't undo an older revision.
 function UndoCard({ entryId }: { entryId: EntryId }) {
   const s = useStyles()
   const { undoFor } = useLog()
   const [undone, setUndone] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  // Runs the undo and disables the card.
-  function undo() {
-    setUndone(true)
-    undoFor([entryId])()
+  // Runs the undo. The card is marked undone only if it worked; otherwise it can be pressed again.
+  async function undo() {
+    setBusy(true)
+    const ok = await undoFor([entryId])()
+    setBusy(false)
+    if (ok) setUndone(true)
   }
 
   return (
@@ -194,7 +197,14 @@ function UndoCard({ entryId }: { entryId: EntryId }) {
         <Text style={s.eyebrow}>{undone ? 'Undone' : 'Log changed'}</Text>
         <Text style={s.cardTitle}>{undone ? 'Back the way it was.' : 'Undo puts back the version from before.'}</Text>
       </View>
-      <Button label={undone ? 'Undone' : 'Undo'} size="sm" variant={undone ? 'ghost' : 'ink'} disabled={undone} onPress={undo} />
+      <Button
+        label={undone ? 'Undone' : 'Undo'}
+        size="sm"
+        variant={undone ? 'ghost' : 'ink'}
+        disabled={undone || busy}
+        busy={busy}
+        onPress={() => void undo()}
+      />
     </View>
   )
 }

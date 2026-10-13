@@ -111,7 +111,7 @@ export function Compose({
   useEffect(() => {
     if (!prefill?.storageId || startedPrefill.current) return
     startedPrefill.current = true
-    void run({ kind: 'photo', storageId: prefill.storageId }, 'Looking at your plate…')
+    void run({ kind: 'photo', storageId: prefill.storageId, text: prefill.text }, 'Looking at your plate…')
   }, [])
 
   // Sets the phase only while the sheet is still showing.
