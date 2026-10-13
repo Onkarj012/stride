@@ -35,6 +35,8 @@ export default defineSchema({
     settledInputTokens: v.optional(v.number()),
     settledOutputTokens: v.optional(v.number()),
     settledCostUsd: v.optional(v.number()),
+    // Set on calls made with the user's own key. Their cost is recorded but never counts toward a cap.
+    ownKey: v.optional(v.boolean()),
   }),
 
   users: defineTable({

@@ -15,12 +15,13 @@ const ENV_KEY = "env-key";
 let calls: { url: string; auth: string | null }[];
 let keyCheckStatus: number;
 let chatStatus: number;
+let promptTokens: number;
 
-/** A streamed reply with one text delta and usage. */
+/** A streamed reply with one text delta and the reported usage. */
 function streamedReply(): Response {
   const events = [
     { choices: [{ delta: { content: "Hi!" } }] },
-    { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 300, completion_tokens: 30 } },
+    { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: promptTokens, completion_tokens: 30 } },
   ];
   const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n";
   return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -40,6 +41,7 @@ beforeEach(() => {
   calls = [];
   keyCheckStatus = 200;
   chatStatus = 200;
+  promptTokens = 300;
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
   vi.stubEnv("OPENROUTER_API_KEY", ENV_KEY);
 });
@@ -124,6 +126,30 @@ describe("own OpenRouter key on chat turns", () => {
 
     const chatAuths = calls.filter((call) => call.url === OPENROUTER_CHAT_URL).map((call) => call.auth);
     expect(chatAuths).toEqual([`Bearer ${FAKE_KEY}`]);
+  });
+
+  test("own-key spend counts toward no cap, so the deployment key still works after the key is removed", async () => {
+    const t = convexTest(schema, modules);
+    const user = t.withIdentity({ subject: "user_a" });
+    await user.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
+    const chatId = await user.mutation(api.chats.createChat, {});
+    await user.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY });
+
+    // 20M prompt tokens at the pipeline model's input price is about $4, far over the $0.25 daily cap.
+    promptTokens = 20_000_000;
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "heavy turn" });
+
+    const buckets = await t.run((ctx) => ctx.db.query("ai_usage_buckets").take(50));
+    expect(buckets.map((b) => b.scope).sort()).toEqual(["global", "user"]);
+    // Usage is still recorded, but no cost lands in any bucket.
+    expect(buckets.every((b) => b.costUsd === 0 && b.reservedCostUsd === 0)).toBe(true);
+    expect(buckets.every((b) => b.inputTokens > 0)).toBe(true);
+
+    await user.mutation(api.api_keys.removeOpenRouterKey, {});
+    promptTokens = 300;
+    const sent = await user.action(api.chats.sendMessage, { chatId, submissionId: "m2", text: "after removing the key" });
+    expect(sent.reply).toBe("Hi!");
+    expect(calls.filter((call) => call.url === OPENROUTER_CHAT_URL).at(-1)?.auth).toBe(`Bearer ${ENV_KEY}`);
   });
 
   test("OpenRouter rejecting the user's key fails the turn with OWN_KEY_INVALID, without a retry", async () => {

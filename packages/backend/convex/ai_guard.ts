@@ -310,6 +310,8 @@ export const checkAndReserve = internalMutation({
     const day = dateBucket(now);
     const yesterday = previousDateBucket(now);
     const estimatedCostUsd = Math.max(0, args.estimatedCostUsd);
+    // Own-key calls are recorded for bookkeeping but add no cost to any bucket, so no cap sees them.
+    const chargedCostUsd = args.ownKey === true ? 0 : estimatedCostUsd;
     const [userDay, userYesterday, userMonth, globalDay, globalMonth] = await Promise.all([
       getBucket(ctx, "user", args.userId, day),
       getBucket(ctx, "user", args.userId, yesterday),
@@ -353,7 +355,7 @@ export const checkAndReserve = internalMutation({
       args.userId,
       day,
       userDay,
-      reservationPatch(userDay, estimatedCostUsd, timestamps),
+      reservationPatch(userDay, chargedCostUsd, timestamps),
     );
     await upsertReservation(
       ctx,
@@ -361,21 +363,22 @@ export const checkAndReserve = internalMutation({
       "global",
       day,
       globalDay,
-      reservationPatch(globalDay, estimatedCostUsd, globalDay?.rateLimitTimestamps ?? []),
+      reservationPatch(globalDay, chargedCostUsd, globalDay?.rateLimitTimestamps ?? []),
     );
 
     const reservationId = await ctx.db.insert("ai_usage_reservations", {
       ownerKey: args.userId,
       bucketKey: day,
       model: args.model,
-      reservedCostUsd: estimatedCostUsd,
+      reservedCostUsd: chargedCostUsd,
       state: "reserved",
       createdAt: now,
+      ...(args.ownKey === true ? { ownKey: true } : {}),
     });
 
     return {
       reservationId,
-      reservedCostUsd: estimatedCostUsd,
+      reservedCostUsd: chargedCostUsd,
       bucketKey: day,
       inputTokens: Math.max(0, Math.round(args.estimatedInputTokens)),
       outputTokens: Math.max(0, Math.round(args.estimatedOutputTokens)),
@@ -405,13 +408,14 @@ export const settleUsage = internalMutation({
     const inputTokens = Math.max(0, Math.round(args.inputTokens));
     const outputTokens = Math.max(0, Math.round(args.outputTokens));
     const actualCostUsd = Math.max(0, args.actualCostUsd);
+    const chargedCostUsd = reservation.ownKey === true ? 0 : actualCostUsd;
     const rows = await rowsForReservation(ctx, reservation.ownerKey, reservation.bucketKey);
     for (const row of rows) {
       if (!row) continue;
       await ctx.db.patch(row._id, {
         inputTokens: row.inputTokens + inputTokens,
         outputTokens: row.outputTokens + outputTokens,
-        costUsd: row.costUsd + actualCostUsd,
+        costUsd: row.costUsd + chargedCostUsd,
         reservedCostUsd: Math.max(0, row.reservedCostUsd - reservation.reservedCostUsd),
       });
     }
