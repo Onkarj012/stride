@@ -53,6 +53,13 @@ function startersFor(day: DayContext): string[] {
   return prompts
 }
 
+// Returns a copy of the attempt map without one submission.
+function withoutAttempt(attempts: Map<string, Attempt>, submissionId: string): Map<string, Attempt> {
+  const next = new Map(attempts)
+  next.delete(submissionId)
+  return next
+}
+
 // Leaves the thread, falling back to Coach when it was opened directly.
 function leave() {
   if (router.canGoBack()) router.back()
@@ -127,9 +134,9 @@ function Thread({ chat }: { chat: ChatSummary }) {
   const [text, setText] = useState('')
   const [photoUri, setPhotoUri] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
-  // The last send, kept until one succeeds, so a failed reply can resend it with the same submission id.
-  const [pending, setPending] = useState<Attempt | null>(null)
-  const [problem, setProblem] = useState<{ text: string; retry: boolean } | null>(null)
+  // Sends that threw, by submission id, so each failed reply can resend its own message with the same id.
+  const [attempts, setAttempts] = useState<Map<string, Attempt>>(new Map())
+  const [problem, setProblem] = useState<{ text: string; retry?: Attempt } | null>(null)
   const [regenerating, setRegenerating] = useState(false)
 
   const messages = page.results.filter((m) => m.role !== 'tool')
@@ -139,6 +146,17 @@ function Thread({ chat }: { chat: ChatSummary }) {
   const askedWithPhoto = messages.slice(latestIndex + 1).find((m) => m.role === 'user')?.attachments.some((a) => a.kind === 'image') ?? false
   const streaming = latestReply?.status === 'streaming'
   const canSend = (text.trim() !== '' || photoUri !== null) && !sending
+  const failedAttempt = problem?.retry
+
+  // Maps each failed reply to the attempt its user message came from. The message just older than the reply is its question.
+  const retries = new Map<string, Attempt>()
+  messages.forEach((m, i) => {
+    const asked = messages[i + 1]
+    if (m.role !== 'assistant' || m.status !== 'failed' || asked?.role !== 'user') return
+    const hasPhoto = asked.attachments.some((a) => a.kind === 'image')
+    const attempt = [...attempts.values()].find((a) => a.text === asked.text && (a.photoUri !== undefined) === hasPhoto)
+    if (attempt) retries.set(m._id, attempt)
+  })
 
   // Lifts the whole thread above the keyboard so the list shrinks and the composer stays in view.
   const lift = useAnimatedStyle(() => ({ paddingBottom: Math.max(insets.bottom, keyboard.height.value) }))
@@ -152,15 +170,15 @@ function Thread({ chat }: { chat: ChatSummary }) {
 
   // Sends one attempt. Its submission id is reused on retry, so the server runs the turn once.
   async function send(attempt: Attempt) {
-    setPending(attempt)
     setProblem(null)
     setSending(true)
     try {
       const imageStorageId = attempt.photoUri ? await uploadAttachment(attempt.photoUri) : undefined
       await sendMessage({ chatId: chat._id, submissionId: attempt.submissionId, text: attempt.text || undefined, imageStorageId })
-      setPending(null)
+      setAttempts((prev) => withoutAttempt(prev, attempt.submissionId))
     } catch (err) {
-      setProblem({ text: plainError(err), retry: true })
+      setAttempts((prev) => new Map(prev).set(attempt.submissionId, attempt))
+      setProblem({ text: plainError(err), retry: attempt })
     } finally {
       setSending(false)
     }
@@ -182,7 +200,7 @@ function Thread({ chat }: { chat: ChatSummary }) {
       const asset = picked.canceled ? undefined : picked.assets[0]
       if (asset) setPhotoUri(asset.uri)
     } catch {
-      setProblem({ text: "Couldn't open the gallery. Try again.", retry: false })
+      setProblem({ text: "Couldn't open the gallery. Try again." })
     }
   }
 
@@ -192,7 +210,7 @@ function Thread({ chat }: { chat: ChatSummary }) {
     try {
       await stopMessage({ messageId: latestReply._id })
     } catch (err) {
-      setProblem({ text: plainError(err), retry: false })
+      setProblem({ text: plainError(err) })
     }
   }
 
@@ -203,7 +221,7 @@ function Thread({ chat }: { chat: ChatSummary }) {
     try {
       await regenerate({ chatId: chat._id })
     } catch (err) {
-      setProblem({ text: plainError(err), retry: false })
+      setProblem({ text: plainError(err) })
     } finally {
       setRegenerating(false)
     }
@@ -212,12 +230,13 @@ function Thread({ chat }: { chat: ChatSummary }) {
   // One row of the inverted list: a message, with regenerate only on the newest reply.
   function renderMessage({ item }: ListRenderItemInfo<ChatMessageView>) {
     const isLatest = item._id === latestReply?._id
+    const retry = retries.get(item._id)
     return (
       <ChatMessage
         message={item}
         onRegenerate={isLatest && !askedWithPhoto ? () => void regenerateReply() : undefined}
         regenerating={isLatest && regenerating}
-        onRetry={pending ? () => void send(pending) : undefined}
+        onRetry={retry ? () => void send(retry) : undefined}
       />
     )
   }
@@ -254,7 +273,7 @@ function Thread({ chat }: { chat: ChatSummary }) {
       {problem ? (
         <Animated.View entering={FadeIn} style={s.problemRow}>
           <Text style={s.problem}>{problem.text}</Text>
-          {problem.retry && pending ? <Button label="Try again" size="sm" variant="ghost" onPress={() => void send(pending)} /> : null}
+          {failedAttempt ? <Button label="Try again" size="sm" variant="ghost" onPress={() => void send(failedAttempt)} /> : null}
         </Animated.View>
       ) : null}
 
