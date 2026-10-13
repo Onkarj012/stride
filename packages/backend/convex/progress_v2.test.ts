@@ -175,14 +175,18 @@ test.each([{ goal: "lose", offset: -550 }, { goal: "maintain", offset: 0 }, { go
   expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target?.kcal).toBe(2600 + offset);
 });
 
-test.each([{ goal: "lose", intake: 100, multiplier: 0.75 }, { goal: "gain", intake: 10000, multiplier: 1.3 }] as const)("$goal target obeys the $multiplier baseline clamp", async ({ goal, intake, multiplier }) => {
+// The bound applies to the burn estimate; the steady pace then moves the target from there (male floor 1500).
+test.each([
+  { goal: "lose", intake: 100, multiplier: 0.75, offset: -550 },
+  { goal: "gain", intake: 10000, multiplier: 1.3, offset: 275 },
+] as const)("$goal target applies its pace to the $multiplier-bounded estimate", async ({ goal, intake, multiplier, offset }) => {
   const { t, user } = await setup();
   await seedDays(t, { kcal: intake });
   await updateSettings(t, { goal });
   await t.mutation(internal.tdee_recompute.recomputeUser, { userId: "user_a" });
   const result = await user.query(api.progress_v2.summary, { rangeDays: 14 });
   expect(result.snapshot?.estimate).toBe(Math.round(BASELINE * multiplier));
-  expect(result.target?.kcal).toBe(Math.round(BASELINE * multiplier));
+  expect(result.target?.kcal).toBe(Math.max(1500, Math.round(BASELINE * multiplier + offset)));
 });
 
 test("logging the first measured weight freezes the formula target until seven local days pass", async () => {

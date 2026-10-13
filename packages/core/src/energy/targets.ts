@@ -56,7 +56,7 @@ export function formulaBaseline(profile: EnergyProfile | null, weightKg: number 
   return bmr * ACTIVITY_FACTORS[profile.activity];
 }
 
-/** Pace-based goal target, capped by body weight and the sex floor, rounded once at the end. */
+/** Pace-based goal target from the bounded burn estimate, capped by body weight and the sex floor, rounded once at the end. */
 export function goalTargetKcal(input: GoalTargetInput): GoalTarget {
   const pace = input.pace ?? "steady";
   let weeklyKg = 0;
@@ -71,9 +71,10 @@ export function goalTargetKcal(input: GoalTargetInput): GoalTarget {
   }
   const direction = input.goal === "lose" ? -1 : 1;
   const offset = (direction * weeklyKg * KCAL_PER_KG) / 7;
-  const low = input.baseline * TDEE_CLAMP.min;
-  const high = input.baseline * TDEE_CLAMP.max;
-  let kcal = Math.max(low, Math.min(high, input.maintenance + offset));
+  // The bound applies to the burn estimate, not the result, so a stale estimate can't widen the capped pace and the
+  // bound can't silently slow it. Only the floor can still move the result, and it says so.
+  const maintenance = Math.max(input.baseline * TDEE_CLAMP.min, Math.min(input.baseline * TDEE_CLAMP.max, input.maintenance));
+  let kcal = maintenance + offset;
   const floor = KCAL_FLOOR[input.sex];
   if (kcal < floor) {
     kcal = floor;

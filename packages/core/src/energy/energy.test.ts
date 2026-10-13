@@ -103,13 +103,15 @@ describe("daily targets", () => {
   const baselineArb = fc.integer({ min: 1200, max: 4000 });
   const maintenanceArb = fc.integer({ min: 500, max: 6000 });
   const weightArb = fc.double({ min: 40, max: 150, noNaN: true });
+  /** The burn estimate after the baseline bound, which the pace offset applies to. */
+  const bounded = (baseline: number, maintenance: number) =>
+    Math.max(baseline * TDEE_CLAMP.min, Math.min(baseline * TDEE_CLAMP.max, maintenance));
 
   it("property: weight loss never exceeds the 1% weekly cap", () => {
     fc.assert(fc.property(baselineArb, maintenanceArb, weightArb, paceArb, sexArb, (baseline, maintenance, weightKg, pace, sex) => {
-      if (maintenance > baseline * TDEE_CLAMP.max) return;
       const target = goalTargetKcal({ baseline, maintenance, goal: "lose", pace, weightKg, sex });
       const maxDailyLoss = (weightKg * MAX_LOSS_FRACTION_PER_WEEK * KCAL_PER_KG) / 7;
-      expect(maintenance - target.kcal).toBeLessThanOrEqual(maxDailyLoss + 1);
+      expect(bounded(baseline, maintenance) - target.kcal).toBeLessThanOrEqual(maxDailyLoss + 1);
     }));
   });
 
@@ -133,10 +135,25 @@ describe("daily targets", () => {
       const target = goalTargetKcal({ baseline, maintenance, goal, pace, weightKg, sex });
       const direction = goal === "lose" ? -1 : 1;
       const presetKg = goal === "maintain" ? 0 : PACE_KG_PER_WEEK[goal][pace ?? "steady"];
-      const raw = maintenance + (direction * presetKg * KCAL_PER_KG) / 7;
-      const inBounds = raw >= baseline * TDEE_CLAMP.min && raw <= baseline * TDEE_CLAMP.max;
-      if (inBounds && target.kcal !== Math.round(raw)) expect(target.clamped).not.toBeNull();
+      const raw = bounded(baseline, maintenance) + (direction * presetKg * KCAL_PER_KG) / 7;
+      if (target.kcal !== Math.round(raw)) expect(target.clamped).not.toBeNull();
     }));
+  });
+
+  it("a stale burn estimate above the bound can't widen the capped deficit", () => {
+    // Bounded estimate 1800 × 1.3 = 2340; a 50 kg cap of 0.5 kg/week is a 550 kcal deficit.
+    expect(goalTargetKcal({ baseline: 1800, maintenance: 3000, goal: "lose", pace: "fast", weightKg: 50, sex: "male" })).toEqual({
+      kcal: 1790,
+      clamped: "pace_cap",
+    });
+  });
+
+  it("the baseline bound never slows a pace without a reason", () => {
+    // 80 kg fast loss: 0.75 kg/week is under the 0.8 kg cap, so the full 825 kcal deficit applies.
+    expect(goalTargetKcal({ baseline: 2400, maintenance: 2400, goal: "lose", pace: "fast", weightKg: 80, sex: "male" })).toEqual({
+      kcal: 1575,
+      clamped: null,
+    });
   });
 
   it("scales the reference macro split and retains it when there is no target", () => {
