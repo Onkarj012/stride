@@ -95,7 +95,7 @@ expo-router tabs per D17. Screens: Today, Log, Progress, Coach (chat list + chat
 
 ### 3.5 apps/web
 
-Frozen until slice 10. Then retargeted to new entries API: log + day view + Progress charts on desktop layout.
+Frozen until slice 12. Then retargeted to new entries API: log + day view + Progress charts on desktop layout.
 
 ## 4. Slices
 
@@ -111,8 +111,10 @@ Each slice: one branch, one PR, agent-implemented, owner reviews. Two weeks nomi
 | 6 | Mobile log flow: InputBar (text, voice, photo, barcode), draft card, undo toast, Today screen, Log calendar. | 4, 5 | Codex luna, Opus UI review |
 | 7 | Weight prompt, adaptive TDEE cron, Progress tab (trend, expenditure, targets). | 3, 6 | Codex luna |
 | 8 | Strength: exercise picker, set logging, e1RM, weekly volume charts. | 6 | Codex luna |
-| 9 | Polish: motion pass, empty/loading/error states, onboarding, Sentry + PostHog, EAS internal APK. | 6-8 | Opus UI, Codex luna |
-| 10 | Web retarget: minimal desktop log + day view + Progress. | 7 | Codex luna |
+| 9 | Onboarding, Profile, Settings. Spec in `plans/009-account-and-coach.md`. | 6-8 | Codex luna, Opus UI |
+| 10 | Coach chat: chat list, search, streaming, stop, regenerate, photos. Spec in `plans/009-account-and-coach.md`. | 6 (context task needs 9) | Codex luna, Opus UI |
+| 11 | Polish: motion pass, empty/loading/error states, Sentry + PostHog, EAS internal APK. | 9-10 | Opus UI, Codex luna |
+| 12 | Web retarget: minimal desktop log + day view + Progress. No account or chat screens. | 7 | Codex luna |
 
 v1.5 backlog: saved meals (recipes), Health Connect steps + sleep, program templates + progressive overload, on-device SQLite offline, iOS build.
 
