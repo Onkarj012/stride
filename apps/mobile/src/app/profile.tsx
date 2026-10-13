@@ -13,7 +13,6 @@ import { ListCard, ListRow } from '@/components/ListRow'
 import {
   ActivityInput,
   ACTIVITY_OPTIONS,
-  DIET_OPTIONS,
   DietInput,
   DobInput,
   GOAL_OPTIONS,
@@ -37,6 +36,7 @@ import {
   clampNote,
   dateParts,
   daysLabel,
+  dietsLabel,
   heightLabel,
   kgLabel,
   savedUnits,
@@ -65,7 +65,7 @@ type Draft = {
   heightCm: number
   weightKg: number
   activity: Activity
-  dietType: DietType
+  dietTypes: DietType[]
   targetWeightKg: number
   pace: Pace
   trainingDays: number
@@ -194,7 +194,7 @@ function Profile() {
           <ListRow label="Date of birth" value={dobLabel(profile.dob)} onPress={() => edit('dob')} />
           <ListRow label="Sex" value={labelOf(SEX_OPTIONS, profile.sex)} onPress={() => edit('sex')} />
           <ListRow label="Activity" value={labelOf(ACTIVITY_OPTIONS, profile.activity)} onPress={() => edit('activity')} />
-          <ListRow label="Diet" value={labelOf(DIET_OPTIONS, profile.dietType)} onPress={() => edit('diet')} />
+          <ListRow label="Diet" value={dietsLabel(profile.dietTypes)} onPress={() => edit('diet')} />
           <ListRow label="Training" value={trainingValue} onPress={() => edit('training')} last />
         </ListCard>
         <Text style={s.caption}>Changes update your daily targets.</Text>
@@ -293,7 +293,7 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
       case 'activity':
         return <ActivityInput value={draft.activity} onChange={(activity) => patch({ activity })} />
       case 'diet':
-        return <DietInput value={draft.dietType} onChange={(dietType) => patch({ dietType })} />
+        return <DietInput value={draft.dietTypes} onChange={(dietTypes) => patch({ dietTypes })} />
       case 'target':
         return target
       case 'training':
@@ -336,7 +336,7 @@ function draftFrom(saved: Saved, name: string): Draft {
     heightCm: saved.heightCm ?? 170,
     weightKg,
     activity: saved.activity ?? 'moderate',
-    dietType: saved.dietType ?? 'veg',
+    dietTypes: saved.dietTypes.length > 0 ? saved.dietTypes : ['veg'],
     targetWeightKg: startTargetKg(targetSide(goal), saved.targetWeightKg, weightKg),
     pace: saved.pace ?? 'steady',
     trainingDays: saved.trainingDaysPerWeek ?? 3,
@@ -357,7 +357,7 @@ function patchFor(field: Exclude<EditableField, 'name' | 'weight'>, d: Draft): U
     case 'activity':
       return { activity: d.activity }
     case 'diet':
-      return { dietType: d.dietType }
+      return { dietTypes: d.dietTypes }
     case 'target':
       return { targetWeightKg: d.targetWeightKg, pace: d.pace }
     case 'training':

@@ -3,6 +3,7 @@ import { Keyboard, Text, TextInput, View, type StyleProp, type TextStyle } from 
 import { PACE_KG_PER_WEEK } from '@stride/core'
 import { motion, radii } from '@stride/ui-tokens'
 import {
+  DIET_LABELS,
   HEIGHT_CM,
   WEIGHT_KG,
   clamp,
@@ -58,21 +59,31 @@ function pad(n: number): string {
   return String(n).padStart(2, '0')
 }
 
-// Full-width tappable rows, as in the mock's goal step. The chosen row turns ink with a Polo radio.
-function ChoiceRows<T extends string>({ options, value, onChange }: { options: Choice<T>[]; value: T | null; onChange: (v: T) => void }) {
+// Full-width tappable rows, as in the mock's goal step. The chosen row turns ink with a Polo check.
+function ChoiceRows<T extends string>({
+  options,
+  isOn,
+  onPick,
+  role = 'radio',
+}: {
+  options: Choice<T>[]
+  isOn: (v: T) => boolean
+  onPick: (v: T) => void
+  role?: 'radio' | 'checkbox'
+}) {
   const t = useTheme()
   const s = useStyles()
   return (
     <View style={s.list}>
       {options.map((o) => {
-        const on = o.value === value
+        const on = isOn(o.value)
         return (
           <Tap
             key={o.value}
-            onPress={() => onChange(o.value)}
+            onPress={() => onPick(o.value)}
             scale={motion.press.rowScale}
             style={[s.row, on && s.rowOn]}
-            accessibilityRole="radio"
+            accessibilityRole={role}
             accessibilityLabel={o.label}
             accessibilityState={{ checked: on }}
           >
@@ -178,7 +189,7 @@ export const GOAL_OPTIONS: Choice<Goal>[] = [
 
 // Lose, maintain or gain.
 export function GoalInput({ value, onChange }: { value: Goal | null; onChange: (v: Goal) => void }) {
-  return <ChoiceRows options={GOAL_OPTIONS} value={value} onChange={onChange} />
+  return <ChoiceRows options={GOAL_OPTIONS} isOn={(v) => v === value} onPick={onChange} />
 }
 
 export const SEX_OPTIONS: Choice<Sex>[] = [
@@ -188,7 +199,7 @@ export const SEX_OPTIONS: Choice<Sex>[] = [
 
 // Sex for the starting formula.
 export function SexInput({ value, onChange }: { value: Sex | null; onChange: (v: Sex) => void }) {
-  return <ChoiceRows options={SEX_OPTIONS} value={value} onChange={onChange} />
+  return <ChoiceRows options={SEX_OPTIONS} isOn={(v) => v === value} onPick={onChange} />
 }
 
 // Day, month and year boxes for a YYYY-MM-DD date. Moves on when a box is full, and passes the date on only when it is real and the age is 13 to 120.
@@ -339,20 +350,31 @@ export const ACTIVITY_OPTIONS: Choice<Activity>[] = [
 
 // How active a usual week is.
 export function ActivityInput({ value, onChange }: { value: Activity | null; onChange: (v: Activity) => void }) {
-  return <ChoiceRows options={ACTIVITY_OPTIONS} value={value} onChange={onChange} />
+  return <ChoiceRows options={ACTIVITY_OPTIONS} isOn={(v) => v === value} onPick={onChange} />
 }
 
 export const DIET_OPTIONS: Choice<DietType>[] = [
-  { value: 'veg', label: 'Veg' },
-  { value: 'eggetarian', label: 'Eggetarian' },
-  { value: 'non_veg', label: 'Non-veg' },
-  { value: 'vegan', label: 'Vegan' },
-  { value: 'jain', label: 'Jain' },
+  { value: 'veg', label: DIET_LABELS.veg },
+  { value: 'eggetarian', label: DIET_LABELS.eggetarian },
+  { value: 'non_veg', label: DIET_LABELS.non_veg },
+  { value: 'vegan', label: DIET_LABELS.vegan },
+  { value: 'jain', label: DIET_LABELS.jain },
 ]
 
-// Diet type from the five options.
-export function DietInput({ value, onChange }: { value: DietType | null; onChange: (v: DietType) => void }) {
-  return <ChoiceRows options={DIET_OPTIONS} value={value} onChange={onChange} />
+// Diets as toggle rows. Tapping a chosen diet clears it, but the last one stays picked.
+export function DietInput({ value, onChange }: { value: DietType[]; onChange: (v: DietType[]) => void }) {
+  const s = useStyles()
+  // Adds or removes one diet, and never empties the list.
+  function toggle(diet: DietType) {
+    if (!value.includes(diet)) onChange([...value, diet])
+    else if (value.length > 1) onChange(value.filter((d) => d !== diet))
+  }
+  return (
+    <View>
+      <Text style={s.note}>Pick all that apply.</Text>
+      <ChoiceRows options={DIET_OPTIONS} isOn={(v) => value.includes(v)} onPick={toggle} role="checkbox" />
+    </View>
+  )
 }
 
 export const PACES: Choice<Pace>[] = [
@@ -402,7 +424,7 @@ export function TargetPaceInput({
         </Nudged>
       </FieldCard>
       <Text style={s.caption}>Pace</Text>
-      <ChoiceRows options={options} value={value.pace} onChange={(pace) => onChange({ ...value, pace })} />
+      <ChoiceRows options={options} isOn={(p) => p === value.pace} onPick={(pace) => onChange({ ...value, pace })} />
     </View>
   )
 }
@@ -499,4 +521,5 @@ const useStyles = themedStyles((t) => ({
   chipText: { ...font('calloutStrong'), color: t.c.ink },
   chipTextOn: { color: t.c.bg },
   caption: { ...font('eyebrow'), color: t.c.ink3, marginTop: 24, marginBottom: 10, marginHorizontal: 2 },
+  note: { ...font('secondary'), color: t.c.ink3, marginBottom: 12, marginHorizontal: 2 },
 }))

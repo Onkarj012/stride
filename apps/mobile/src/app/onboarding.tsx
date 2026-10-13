@@ -43,7 +43,7 @@ type Form = {
   heightCm: number
   weightKg: number
   activity: Activity | null
-  dietType: DietType | null
+  dietTypes: DietType[]
   targetWeightKg: number | null
   pace: Pace
   trainingDays: number
@@ -60,7 +60,7 @@ const START: Form = {
   heightCm: 170,
   weightKg: 70,
   activity: null,
-  dietType: null,
+  dietTypes: [],
   targetWeightKg: null,
   pace: 'steady',
   trainingDays: 3,
@@ -87,7 +87,7 @@ function answered(step: StepId, form: Form): boolean {
   if (step === 'goal') return form.goal !== null
   if (step === 'sex') return form.sex !== null
   if (step === 'activity') return form.activity !== null
-  if (step === 'diet') return form.dietType !== null
+  if (step === 'diet') return form.dietTypes.length > 0
   if (step === 'target') {
     if (form.goal === null || form.goal === 'maintain') return true
     return targetOnSide(form.goal, form.targetWeightKg ?? defaultTargetKg(form.goal, form.weightKg), form.weightKg)
@@ -123,8 +123,8 @@ function Onboarding() {
 
   // Logs the weigh-in, saves the profile, then moves to the reveal. The hold keeps this screen mounted once the profile is complete.
   async function finish() {
-    const { goal, sex, activity, dietType } = form
-    if (goal === null || sex === null || activity === null || dietType === null) return
+    const { goal, sex, activity, dietTypes } = form
+    if (goal === null || sex === null || activity === null || dietTypes.length === 0) return
     setBusy(true)
     setError(null)
     holdOnboarding(true)
@@ -134,7 +134,7 @@ function Onboarding() {
         goal,
         sex,
         activity,
-        dietType,
+        dietTypes,
         heightCm: form.heightCm,
         dob: form.dob,
         trainingDaysPerWeek: form.trainingDays,
@@ -208,7 +208,7 @@ function Onboarding() {
       case 'diet':
         return (
           <Question title="What do you eat?">
-            <DietInput value={form.dietType} onChange={(dietType) => patch({ dietType })} />
+            <DietInput value={form.dietTypes} onChange={(dietTypes) => patch({ dietTypes })} />
           </Question>
         )
       case 'target': {

@@ -8,7 +8,7 @@ type SaveProfileArgs = FunctionArgs<typeof api.progress_v2.saveProfile>
 export type Goal = SaveProfileArgs['goal']
 export type Sex = SaveProfileArgs['sex']
 export type Activity = SaveProfileArgs['activity']
-export type DietType = SaveProfileArgs['dietType']
+export type DietType = SaveProfileArgs['dietTypes'][number]
 export type Pace = NonNullable<SaveProfileArgs['pace']>
 export type Units = 'metric' | 'imperial'
 export type DatePart = 'day' | 'month' | 'year'
@@ -139,6 +139,19 @@ export function savedUnits(saved: string | undefined): Units {
 // Training days as "1 day" or "4 days".
 export function daysLabel(days: number): string {
   return days === 1 ? '1 day' : `${days} days`
+}
+
+export const DIET_LABELS: Record<DietType, string> = {
+  veg: 'Vegetarian',
+  eggetarian: 'Eggetarian',
+  non_veg: 'Non-vegetarian',
+  vegan: 'Vegan',
+  jain: 'Jain',
+}
+
+// The chosen diets joined with commas, e.g. "Vegetarian, Non-vegetarian", or "Not set" when none.
+export function dietsLabel(list: DietType[]): string {
+  return list.length === 0 ? 'Not set' : list.map((d) => DIET_LABELS[d]).join(', ')
 }
 
 // One line on why the target moved off the formula, or null when it did not.
