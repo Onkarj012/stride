@@ -157,6 +157,18 @@ describe("clearAllData", () => {
     });
   });
 
+  test("removes the caller's saved OpenRouter key and keeps another user's", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("user_api_keys", { userId: "user_a", provider: "openrouter", key: "sk-or-v1-test-000000000000000000", last4: "0000", updatedAt: 1 });
+      await ctx.db.insert("user_api_keys", { userId: "user_b", provider: "openrouter", key: "sk-or-v1-test-111111111111111111", last4: "1111", updatedAt: 1 });
+    });
+    await user.mutation(api.users.clearAllData, {});
+    expect(await t.run((ctx) => ctx.db.query("user_api_keys").take(10))).toEqual([
+      expect.objectContaining({ userId: "user_b", last4: "1111" }),
+    ]);
+  });
+
   test("refuses chat, draft confirm and discard, food link and personal food writes until the clear finishes", async () => {
     vi.useFakeTimers();
     const { t, sharedFood, a, user } = await setup();

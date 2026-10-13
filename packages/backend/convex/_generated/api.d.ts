@@ -19,6 +19,7 @@ import type * as ai_intent from "../ai/intent.js";
 import type * as ai_llm from "../ai/llm.js";
 import type * as ai_parse from "../ai/parse.js";
 import type * as ai_guard from "../ai_guard.js";
+import type * as api_keys from "../api_keys.js";
 import type * as behavior from "../behavior.js";
 import type * as calibration from "../calibration.js";
 import type * as calorie_engine from "../calorie_engine.js";
@@ -98,6 +99,7 @@ declare const fullApi: ApiFromModules<{
   "ai/llm": typeof ai_llm;
   "ai/parse": typeof ai_parse;
   ai_guard: typeof ai_guard;
+  api_keys: typeof api_keys;
   behavior: typeof behavior;
   calibration: typeof calibration;
   calorie_engine: typeof calorie_engine;

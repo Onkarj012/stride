@@ -191,6 +191,12 @@ async function clearUserData(ctx: MutationCtx, userId: string): Promise<void> {
     .collect();
   await Promise.all(weeklies.map((r) => ctx.db.delete(r._id)));
 
+  // user_api_keys has only by_userId_and_provider, whose userId prefix covers every provider.
+  const apiKeys = await ctx.db.query("user_api_keys")
+    .withIndex("by_userId_and_provider", (q) => q.eq("userId", userId))
+    .collect();
+  await Promise.all(apiKeys.map((r) => ctx.db.delete(r._id)));
+
   // user_gamification
   const gam = await ctx.db.query("user_gamification").withIndex("by_user", (q) => q.eq("userId", userId)).first();
   if (gam) await ctx.db.delete(gam._id);

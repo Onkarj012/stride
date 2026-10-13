@@ -35,6 +35,8 @@ export default defineSchema({
     settledInputTokens: v.optional(v.number()),
     settledOutputTokens: v.optional(v.number()),
     settledCostUsd: v.optional(v.number()),
+    // Set on calls made with the user's own key. Their cost is recorded but never counts toward a cap.
+    ownKey: v.optional(v.boolean()),
   }),
 
   users: defineTable({
@@ -931,4 +933,13 @@ export default defineSchema({
     uses: v.number(),
     updatedAt: v.number(),
   }).index("by_userId_and_status_and_key", ["userId", "status", "key"]),
+
+  // A user's own OpenRouter key. Never returned to the client; the app only sees whether one is set and its last 4 characters.
+  user_api_keys: defineTable({
+    userId: v.string(),
+    provider: v.literal("openrouter"),
+    key: v.string(),
+    last4: v.string(),
+    updatedAt: v.number(),
+  }).index("by_userId_and_provider", ["userId", "provider"]),
 });

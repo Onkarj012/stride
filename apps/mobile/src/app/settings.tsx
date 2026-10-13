@@ -16,7 +16,7 @@ import { plainError } from '@/lib/log'
 import { HoldAppContext, savedUnits, type Units } from '@/lib/profile'
 import { font, setThemePref, themedStyles, useThemePref, type ThemePref } from '@/theme'
 
-type SheetKind = 'clear' | 'delete'
+type SheetKind = 'clear' | 'delete' | 'key'
 
 const UNIT_OPTIONS: { value: Units; label: string }[] = [
   { value: 'metric', label: 'Metric' },
@@ -43,6 +43,7 @@ export default function SettingsScreen() {
 function Settings() {
   const s = useStyles()
   const profile = useQuery(api.progress_v2.profile, {})
+  const ownKey = useQuery(api.api_keys.openRouterKeyStatus, {})
   const pref = useThemePref()
   const convex = useConvex()
   const setUnits = useMutation(api.progress_v2.setUnits)
@@ -53,9 +54,11 @@ function Settings() {
   const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState(false)
   const [sheet, setSheet] = useState<SheetKind | null>(null)
-  // True while the delete runs. The sheet ignores every close path until it finishes.
-  const [deleting, setDeleting] = useState(false)
+  // True while a sheet action runs. The sheet ignores every close path until it finishes.
+  const [sheetBusy, setSheetBusy] = useState(false)
   const units = savedUnits(profile?.units)
+  const ownLast4 = ownKey?.set ? ownKey.last4 : null
+  const keyValue = ownKey === undefined ? '…' : ownLast4 ? `Yours ••••${ownLast4}` : "Stride's key"
 
   // Saves the units choice on the server.
   async function chooseUnits(next: Units) {
@@ -113,6 +116,17 @@ function Settings() {
         </ListCard>
         {unitsError ? <Text style={s.error}>{unitsError}</Text> : null}
 
+        <Section title="AI" />
+        <ListCard>
+          <ListRow
+            label="OpenRouter key"
+            detail="Use your own key. Your AI use then doesn't count against the daily allowance."
+            value={keyValue}
+            onPress={ownKey === undefined ? undefined : () => openSheet('key')}
+            last
+          />
+        </ListCard>
+
         <Section title="Data" />
         <ListCard>
           <ListRow
@@ -141,7 +155,7 @@ function Settings() {
       <Sheet
         open={open}
         onClose={() => {
-          if (!deleting) setOpen(false)
+          if (!sheetBusy) setOpen(false)
         }}
         onClosed={() => {
           setSheet(null)
@@ -149,7 +163,8 @@ function Settings() {
         }}
       >
         {sheet === 'clear' ? <ClearForm onDone={() => setOpen(false)} /> : null}
-        {sheet === 'delete' ? <DeleteForm onDone={() => setOpen(false)} onBusy={setDeleting} /> : null}
+        {sheet === 'key' ? <KeyForm last4={ownLast4} onDone={() => setOpen(false)} onBusy={setSheetBusy} /> : null}
+        {sheet === 'delete' ? <DeleteForm onDone={() => setOpen(false)} onBusy={setSheetBusy} /> : null}
       </Sheet>
     </>
   )
@@ -306,6 +321,93 @@ function DeleteForm({ onDone, onBusy }: { onDone: () => void; onBusy: (busy: boo
         style={s.danger}
       />
       <Button label="Cancel" variant="ghost" size="block" disabled={busy} onPress={onDone} style={s.gap} />
+    </View>
+  )
+}
+
+// Sheet for the user's own OpenRouter key. The server checks a saved key with OpenRouter. Once set, the key can be replaced or removed.
+function KeyForm({ last4, onDone, onBusy }: { last4: string | null; onDone: () => void; onBusy: (busy: boolean) => void }) {
+  const s = useStyles()
+  const saveKey = useAction(api.api_keys.saveOpenRouterKey)
+  const removeKey = useMutation(api.api_keys.removeOpenRouterKey)
+  const [draft, setDraft] = useState('')
+  const [replacing, setReplacing] = useState(false)
+  const [pending, setPending] = useState<'save' | 'remove' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const editing = last4 === null || replacing
+
+  // Saves the typed key. The field is cleared on success before the sheet closes.
+  async function save() {
+    setPending('save')
+    onBusy(true)
+    setError(null)
+    try {
+      await saveKey({ key: draft.trim() })
+      setDraft('')
+      onDone()
+    } catch (err) {
+      setError(plainError(err))
+    } finally {
+      setPending(null)
+      onBusy(false)
+    }
+  }
+
+  // Removes the saved key, so Stride's key is used again.
+  async function remove() {
+    setPending('remove')
+    onBusy(true)
+    setError(null)
+    try {
+      await removeKey({})
+      onDone()
+    } catch (err) {
+      setError(plainError(err))
+    } finally {
+      setPending(null)
+      onBusy(false)
+    }
+  }
+
+  return (
+    <View>
+      <Text style={s.sheetEyebrow}>AI</Text>
+      <Text style={s.sheetTitle}>OpenRouter key</Text>
+      {editing ? (
+        <>
+          <Text style={s.body}>Stride stores it on the server and never shows it again.</Text>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="sk-or-…"
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={pending === null}
+            style={s.input}
+            accessibilityLabel="OpenRouter key"
+          />
+          {error ? <Text style={s.error}>{error}</Text> : null}
+          <Button label="Save key" size="block" disabled={draft.trim() === ''} busy={pending === 'save'} onPress={() => void save()} />
+        </>
+      ) : (
+        <>
+          <Text style={s.body}>Using your key ending ••••{last4}.</Text>
+          {error ? <Text style={s.error}>{error}</Text> : null}
+          <Button label="Replace key" variant="ghost" size="block" disabled={pending !== null} onPress={() => setReplacing(true)} style={s.gap} />
+          <Button
+            label="Remove key"
+            variant="coral"
+            icon="trash"
+            size="block"
+            disabled={pending !== null}
+            busy={pending === 'remove'}
+            onPress={() => void remove()}
+            style={[s.danger, s.gap]}
+          />
+        </>
+      )}
+      <Button label="Cancel" variant="ghost" size="block" disabled={pending !== null} onPress={onDone} style={s.gap} />
     </View>
   )
 }
