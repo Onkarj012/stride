@@ -78,6 +78,7 @@ function AuthGate() {
       <Stack.Protected guard={isSignedIn === true}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="workout" options={{ animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="chat/[id]" options={{ animation: 'slide_from_right' }} />
       </Stack.Protected>
       <Stack.Protected guard={isSignedIn !== true}>
         <Stack.Screen name="sign-in" />
