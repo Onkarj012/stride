@@ -34,6 +34,12 @@ const dietTypeValidator = v.union(
 );
 const paceValidator = v.union(v.literal("relaxed"), v.literal("steady"), v.literal("fast"));
 const clampedValidator = v.union(v.literal("pace_cap"), v.literal("floor"));
+const calorieTargetValidator = v.object({
+  kcal: v.number(),
+  source: v.union(v.literal("formula"), v.literal("adaptive")),
+  appliedLocalDate: v.string(),
+  clamped: v.optional(clampedValidator),
+});
 const dietTypesValidator = v.array(dietTypeValidator);
 
 /** The diets a settings row holds. Rows saved before the multi-select have only the legacy single dietType. */
@@ -48,16 +54,25 @@ function pickedDiets(dietTypes: DietType[]): DietType[] {
   return unique;
 }
 
+/** The calorie target inputs: settings, the latest weight on or before localDate, and the formula baseline. */
+export async function targetInput(ctx: QueryCtx | MutationCtx, userId: string, localDate: string) {
+  const [settings, latestWeight] = await Promise.all([
+    ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
+    ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first(),
+  ]);
+  const latestWeightKg = latestWeight?.kg ?? null;
+  return { settings, latestWeightKg, baseline: formulaBaseline(settings, latestWeightKg, localDate) };
+}
+
 /** Builds the D11 input from the last 28 complete local days; older weigh-ins over the chart's range only warm up the EMA so it matches the chart. */
 export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, localDate: string) {
   const end = addDays(localDate, -1);
   const from = addDays(end, 1 - TDEE_MAX_WINDOW_DAYS);
   const warmFrom = addDays(localDate, 1 - MAX_PROGRESS_RANGE_DAYS);
-  const [settings, weights, totals, latestWeight] = await Promise.all([
-    ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
+  const [inputs, weights, totals] = await Promise.all([
+    targetInput(ctx, userId, localDate),
     ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", warmFrom).lte("localDate", end)).take(MAX_PROGRESS_RANGE_DAYS),
     ctx.db.query("day_totals").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).gte("localDate", from).lte("localDate", end)).take(TDEE_MAX_WINDOW_DAYS),
-    ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first(),
   ]);
   const weightByDate = new Map(weights.filter((row) => row.localDate >= from).map((row) => [row.localDate, row.kg]));
   const warmupWeights = weights.filter((row) => row.localDate < from).map((row) => ({ date: row.localDate, weightKg: row.kg }));
@@ -69,8 +84,7 @@ export async function tdeeInput(ctx: QueryCtx | MutationCtx, userId: string, loc
       days.push({ date, weightKg: weightByDate.get(date) ?? null, intakeKcal: intakeByDate.get(date) ?? null });
     }
   }
-  const baseline = formulaBaseline(settings, latestWeight?.kg ?? null, localDate);
-  return { settings, baseline, latestWeightKg: latestWeight?.kg ?? null, result: adaptiveTdee({ days, baselineTdeeKcal: baseline, warmupWeights }) };
+  return { ...inputs, result: adaptiveTdee({ days, baselineTdeeKcal: inputs.baseline, warmupWeights }) };
 }
 
 /** The goal-adjusted target, or null until the profile and measured weight supply a formula baseline. */
@@ -146,12 +160,7 @@ export const summary = query({
       windowDays: v.number(), weighIns: v.number(), loggedFraction: v.number(), loggedDays: v.number(),
       minDays: v.number(), minWeighIns: v.number(), minLoggedFraction: v.number(),
     }),
-    target: v.union(v.null(), v.object({
-      kcal: v.number(),
-      source: v.union(v.literal("formula"), v.literal("adaptive")),
-      appliedLocalDate: v.string(),
-      clamped: v.optional(clampedValidator),
-    })),
+    target: v.union(v.null(), calorieTargetValidator),
   }),
   handler: async (ctx, { rangeDays, localDate: requestedDate }) => {
     const userId = await requireUserId(ctx);
@@ -183,6 +192,21 @@ export const summary = query({
       gate: { status: result.status, reasons, windowDays: result.windowDays, weighIns: result.weighIns, loggedFraction: result.loggedFraction, loggedDays: Math.round(result.loggedFraction * result.windowDays), minDays: TDEE_MIN_WINDOW_DAYS, minWeighIns: TDEE_MIN_WEIGH_INS, minLoggedFraction: TDEE_MIN_LOGGED_FRACTION },
       target: calorieTarget(input.settings, input.baseline, latestSnapshot, localDate, input.latestWeightKg),
     };
+  },
+});
+
+/** The weekly calorie target alone, for screens that do not need the trend or the gate. */
+export const target = query({
+  args: { localDate: v.optional(v.string()) },
+  returns: v.union(v.null(), calorieTargetValidator),
+  handler: async (ctx, { localDate: requestedDate }) => {
+    const userId = await requireUserId(ctx);
+    const localDate = await localDateOrToday(ctx, userId, requestedDate);
+    const [inputs, latestSnapshot] = await Promise.all([
+      targetInput(ctx, userId, localDate),
+      ctx.db.query("tdee_snapshots").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first(),
+    ]);
+    return calorieTarget(inputs.settings, inputs.baseline, latestSnapshot, localDate, inputs.latestWeightKg);
   },
 });
 

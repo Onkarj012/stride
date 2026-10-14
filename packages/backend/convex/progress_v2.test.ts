@@ -326,6 +326,18 @@ test("saving a profile then logging a weight gives a formula target", async () =
   expect((await user.query(api.progress_v2.summary, { rangeDays: 14 })).target).toEqual({ kcal: Math.round(BASELINE), source: "formula", appliedLocalDate: TODAY });
 });
 
+test("target query returns the same target as summary, with and without a profile", async () => {
+  const { t, user } = await setup();
+  const stranger = t.withIdentity({ subject: "user_b" });
+  expect(await stranger.query(api.progress_v2.target, { localDate: TODAY })).toEqual((await stranger.query(api.progress_v2.summary, { rangeDays: 14, localDate: TODAY })).target);
+  expect(await stranger.query(api.progress_v2.target, { localDate: TODAY })).toBeNull();
+  await user.mutation(api.progress_v2.saveProfile, PROFILE);
+  await user.mutation(api.weights.logWeight, { kg: 70 });
+  const summary = await user.query(api.progress_v2.summary, { rangeDays: 14, localDate: TODAY });
+  expect(summary.target).not.toBeNull();
+  expect(await user.query(api.progress_v2.target, { localDate: TODAY })).toEqual(summary.target);
+});
+
 test("changing the goal re-freezes the calorie target at once", async () => {
   const { user } = await setup();
   await user.mutation(api.weights.logWeight, { kg: 70 });
