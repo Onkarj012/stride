@@ -8,8 +8,7 @@
     "dev:mobile": "pnpm --filter @stride/mobile start",
     "build": "pnpm --filter @stride/web build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
-    "build:tokens": "pnpm --filter @stride/shared build:tokens"
+    "test": "pnpm -r test"
   },
   "engines": {
     "node": ">=20"

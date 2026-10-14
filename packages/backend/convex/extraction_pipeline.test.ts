@@ -413,27 +413,12 @@ describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", (
 });
 
 describe("HANDOFF #7: rejected or deleted memories are never used", () => {
-  test("only active food memories steer the matcher; old macro memories are ignored", async () => {
+  test("only active food links steer the matcher", async () => {
     const { t, user, foods } = await setup();
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert("food_links", { userId: "user_a", key: "dal", foodId: foods.paneer, status: "rejected", uses: 5, updatedAt: now });
       await ctx.db.insert("food_links", { userId: "user_a", key: "dal", foodId: foods.biryani, status: "deleted", uses: 9, updatedAt: now });
-      // Pre-restart meal memory with AI-estimated macros. The new pipeline must not read it.
-      await ctx.db.insert("food_memory", {
-        userId: "user_a",
-        normalizedName: "dal",
-        displayName: "Dal",
-        aliases: [],
-        kcal: 600,
-        protein: 1,
-        carbs: 1,
-        fat: 1,
-        timesLogged: 9,
-        source: "learned",
-        lastUsedDate: "2026-10-01",
-        approvalStatus: "approved",
-      });
     });
     llm = () => extraction([{ food: "dal", quantity: 100, unit: "g" }]);
     await logText(user, "100 g dal");

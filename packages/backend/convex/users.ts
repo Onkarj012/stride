@@ -128,36 +128,10 @@ export const ledgerClearPending = query({
   },
 });
 
-export const ensureUser = mutation({
-  args: {
-    name: v.string(),
-    email: v.string(),
-  },
-  handler: async (ctx, { name, email }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
-    const clerkId = identity.subject;
-
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_clerk_id", (q) => q.eq("clerkId", clerkId))
-      .first();
-
-    if (existing) {
-      if (existing.name !== name) await ctx.db.patch(existing._id, { name });
-      return existing._id;
-    }
-
-    return ctx.db.insert("users", { clerkId, name, email });
-  },
-});
-
 /** Deletes every row the user owns in the legacy tables, and schedules the restart-table clear. */
 async function clearUserData(ctx: MutationCtx, userId: string): Promise<void> {
   const byUserDate = [
-    "meals", "workouts", "daily_goals", "insights",
-    "water_logs", "sleep_logs", "mood_logs", "steps_logs",
-    "weight_logs", "check_in_answers", "check_in_llm_questions",
+    "daily_goals", "check_in_answers", "check_in_llm_questions",
   ] as const;
   for (const table of byUserDate) {
     const rows = await (ctx.db.query(table as any) as any)
@@ -167,10 +141,8 @@ async function clearUserData(ctx: MutationCtx, userId: string): Promise<void> {
   }
 
   const byUser = [
-    "chat_messages", "chat_sessions", "user_behavior",
-    "recipes", "food_memory", "workout_memory", "user_ingredients",
-    "user_profiles", "user_settings", "user_metabolic_profiles", "calorie_feedback",
-    "check_in_template_settings",
+    "user_behavior", "recipes", "workout_memory", "user_ingredients",
+    "user_profiles", "user_settings", "user_metabolic_profiles",
   ] as const;
   for (const table of byUser) {
     const rows = await (ctx.db.query(table as any) as any)
@@ -184,12 +156,6 @@ async function clearUserData(ctx: MutationCtx, userId: string): Promise<void> {
     .withIndex("by_user_status", (q) => q.eq("userId", userId))
     .collect();
   await Promise.all(nudges.map((r) => ctx.db.delete(r._id)));
-
-  // weekly_summaries uses by_user_week index
-  const weeklies = await ctx.db.query("weekly_summaries")
-    .withIndex("by_user_week", (q) => q.eq("userId", userId))
-    .collect();
-  await Promise.all(weeklies.map((r) => ctx.db.delete(r._id)));
 
   // user_api_keys has only by_userId_and_provider, whose userId prefix covers every provider.
   const apiKeys = await ctx.db.query("user_api_keys")
@@ -264,47 +230,27 @@ export const exportAllData = query({
     if (!identity) throw new Error("Unauthenticated");
     const userId = identity.subject;
 
-    const [
-      meals, workouts, daily_goals, insights,
-      water_logs, sleep_logs, mood_logs, steps_logs,
-      weight_logs, check_in_answers, check_in_llm_questions,
-    ] = await Promise.all([
-      ctx.db.query("meals").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("workouts").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
+    const [daily_goals, check_in_answers, check_in_llm_questions] = await Promise.all([
       ctx.db.query("daily_goals").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("insights").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("water_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("sleep_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("mood_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("steps_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("weight_logs").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("check_in_answers").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("check_in_llm_questions").withIndex("by_user_date", (q) => q.eq("userId", userId)).collect(),
     ]);
 
     const [
-      weekly_summaries, chat_sessions, recipes,
-      food_memory, workout_memory, user_ingredients,
+      recipes, workout_memory, user_ingredients,
       user_profiles, user_gamification,
-      chat_messages, user_behavior, nudges,
-      user_settings, user_metabolic_profiles, calorie_feedback,
-      check_in_template_settings,
+      user_behavior, nudges,
+      user_settings, user_metabolic_profiles,
     ] = await Promise.all([
-      ctx.db.query("weekly_summaries").withIndex("by_user_week", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("chat_sessions").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("recipes").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("food_memory").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("workout_memory").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("user_ingredients").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("user_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("user_gamification").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
-      ctx.db.query("chat_messages").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("user_behavior").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("nudges").withIndex("by_user_status", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
       ctx.db.query("user_metabolic_profiles").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("calorie_feedback").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
-      ctx.db.query("check_in_template_settings").withIndex("by_user", (q) => q.eq("userId", userId)).collect(),
     ]);
 
     const [entries, day_totals, weights] = await Promise.all([
@@ -340,13 +286,10 @@ export const exportAllData = query({
 
     return {
       exportedAt: Date.now(),
-      meals, workouts, daily_goals, insights,
-      water_logs, sleep_logs, mood_logs, steps_logs,
-      weight_logs, check_in_answers, check_in_llm_questions, check_in_template_settings,
-      weekly_summaries, chat_sessions, chat_messages, recipes,
-      food_memory, workout_memory, user_ingredients,
+      daily_goals, check_in_answers, check_in_llm_questions,
+      recipes, workout_memory, user_ingredients,
       user_profiles, user_behavior, nudges,
-      user_settings, user_metabolic_profiles, calorie_feedback,
+      user_settings, user_metabolic_profiles,
       gamification: user_gamification ?? null,
       entries, day_totals, weights,
       chats: restart.chats.rows,
