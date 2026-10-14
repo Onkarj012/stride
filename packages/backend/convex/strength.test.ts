@@ -302,6 +302,24 @@ test("history fits Convex read limits when every set has a different session and
   expect((await user.query(api.strength.exerciseHints, { sessionId, exerciseId })).historyLimited).toBe(false);
 });
 
+test("a workout with several long-history lifts shares one read budget and still loads", async () => {
+  const { t, user, sessionId } = await withSet(true);
+  for (let lift = 0; lift < 5; lift++) {
+    const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: `long-${lift}`, name: `Long lift ${lift}`, category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 900; index++) {
+        const startedAt = START - 172_800_000 - index * 1_000;
+        const session = await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-04", timeZone: "Asia/Kolkata", startedAt, endedAt: startedAt + 60_000, submissionId: `long-${lift}-session-${index}` });
+        await ctx.db.insert("sets", { userId: "user_a", sessionId: session, exerciseId, setIndex: 1, weightKg: 50, reps: 8, revision: 1, status: "live", submissionId: `long-${lift}-set-${index}` });
+      }
+    });
+    await user.mutation(api.strength.addSet, { submissionId: `long-${lift}-add`, sessionId, exerciseId, weightKg: 60, reps: 8 });
+  }
+  const detail = await user.query(api.strength.sessionDetail, { sessionId });
+  expect(detail.historyLimited).toBe(true);
+  expect(detail.summary.setCount).toBe(6);
+});
+
 test("hints still find the previous bench session behind hundreds of newer sets of another lift", async () => {
   const { t, user, sessionId, exerciseId, setId } = await withSet();
   await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });

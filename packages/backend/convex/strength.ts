@@ -8,7 +8,7 @@ import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
 import { assertLedgerWritable } from "./users";
 
 const MAX_SESSION_SETS = 200;
-// Each retained set can require a separate session and exercise read; leave room below 4,096 ranges.
+// Shared by all exercises in one sessionDetail query. Each set read can also cost a session read, so this stays under Convex's 4,096 range limit.
 const MAX_HISTORY_SETS = 1000;
 const RECENT_SET_SCAN = 200;
 const RECENT_EXERCISE_LIMIT = 6;
@@ -76,17 +76,17 @@ async function history(ctx: ReadCtx, userId: string) {
   return { sets: sets.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap, historyLimited: rows.length > MAX_HISTORY_SETS };
 }
 
-/** Reads one exercise's recent live sets and their sessions, reporting when older history is omitted. */
-async function exerciseHistory(ctx: ReadCtx, userId: string, exerciseId: Id<"exercises">, cache: SessionCache) {
-  const rows = await ctx.db.query("sets").withIndex("by_userId_and_exerciseId_and_status", (q) => q.eq("userId", userId).eq("exerciseId", exerciseId).eq("status", "live")).order("desc").take(MAX_HISTORY_SETS + 1);
-  const sets = rows.slice(0, MAX_HISTORY_SETS);
+/** Reads up to `limit` of one exercise's recent live sets and their sessions, reporting when older history is omitted. */
+async function exerciseHistory(ctx: ReadCtx, userId: string, exerciseId: Id<"exercises">, cache: SessionCache, limit: number) {
+  const rows = await ctx.db.query("sets").withIndex("by_userId_and_exerciseId_and_status", (q) => q.eq("userId", userId).eq("exerciseId", exerciseId).eq("status", "live")).order("desc").take(limit + 1);
+  const kept = rows.slice(0, limit);
   const sessionMap = new Map<Id<"workout_sessions">, Doc<"workout_sessions">>();
-  for (const sessionId of new Set(sets.map((set) => set.sessionId))) {
+  for (const sessionId of new Set(kept.map((set) => set.sessionId))) {
     if (!cache.has(sessionId)) cache.set(sessionId, await ctx.db.get("workout_sessions", sessionId));
     const session = cache.get(sessionId);
     if (session && session.userId === userId && session.deletedAt === undefined) sessionMap.set(session._id, session);
   }
-  return { sets: sets.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap, historyLimited: rows.length > MAX_HISTORY_SETS };
+  return { sets: kept.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap, read: kept.length, historyLimited: rows.length > limit };
 }
 
 /** Returns a set with a deterministic Epley estimate, or null outside its valid rep range. */
@@ -284,7 +284,7 @@ export const exerciseHints = query({
     const userId = await requireUserId(ctx);
     const session = await requireSession(ctx, userId, args.sessionId);
     await requireExercise(ctx, args.exerciseId);
-    const past = await exerciseHistory(ctx, userId, args.exerciseId, new Map());
+    const past = await exerciseHistory(ctx, userId, args.exerciseId, new Map(), MAX_HISTORY_SETS);
     return { previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, args.exerciseId, session), historyLimited: past.historyLimited };
   },
 });
@@ -297,12 +297,14 @@ export const sessionDetail = query({
     const session = await requireSession(ctx, userId, args.sessionId);
     const sets = await sessionSets(ctx, session._id, userId);
     const cache: SessionCache = new Map();
+    let budget = MAX_HISTORY_SETS;
     let historyLimited = false;
     const exercises = [];
     const newBests = [];
     for (const exerciseId of new Set(sets.map((set) => set.exerciseId))) {
       const exercise = await requireExercise(ctx, exerciseId);
-      const past = await exerciseHistory(ctx, userId, exerciseId, cache);
+      const past = await exerciseHistory(ctx, userId, exerciseId, cache, budget);
+      budget -= past.read;
       historyLimited ||= past.historyLimited;
       const currentSets = sets.filter((set) => set.exerciseId === exerciseId);
       exercises.push({ exercise, sets: currentSets.map(setView), previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId, session) });
