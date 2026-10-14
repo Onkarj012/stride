@@ -82,7 +82,7 @@ docs/archived-plans-prds.md
 docs/
 apps/web/docs/
 
-# Generated design tokens (run `pnpm build:tokens`)
+# Generated design tokens (written by apps/web/vite.config.ts)
 apps/web/src/styles/tokens.generated.css
 
 # Local agent scratch and reports
