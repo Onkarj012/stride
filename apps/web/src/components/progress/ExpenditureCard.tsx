@@ -8,7 +8,7 @@ export function ExpenditureCard({ summary }: { summary: Summary | undefined }) {
   if (summary === undefined) return <CardSkeleton lines={4} />;
   const { gate, snapshot } = summary;
 
-  if (gate.status === "ok" && snapshot)
+  if (snapshot)
     return (
       <Card title="Daily burn">
         <p className="-mt-2 font-display text-[44px] leading-none font-bold tracking-[-0.045em] tabular-nums">
