@@ -6,7 +6,7 @@ import { LogPanel } from "@/components/log/LogPanel";
 import { DayHeader } from "@/components/day/DayHeader";
 import { MealsList, groupBySlot } from "@/components/day/MealsList";
 import { TotalsCard } from "@/components/day/TotalsCard";
-import { SUMMARY_DAYS, targetsFor } from "@/lib/log";
+import { targetsFor } from "@/lib/log";
 import { useLocalToday } from "@/lib/useLocalToday";
 
 // The Day screen. /day shows today; /day/:date shows a past day. Future or malformed dates go to today.
@@ -21,9 +21,9 @@ export function DayPage() {
 // Totals, meals and editing for one already-validated day. Wide screens keep the totals in a sticky right column.
 function DayView({ localDate, today }: { localDate: string; today: string }) {
   const totals = useQuery(api.day_totals.dayTotals, { localDate });
-  const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS });
+  const target = useQuery(api.progress_v2.target, { localDate });
   const entries = useQuery(api.entries.entriesForDay, { localDate });
-  const targets = targetsFor(summary?.target?.kcal ?? null);
+  const targets = targetsFor(target?.kcal ?? null);
   const meals = entries === undefined ? undefined : groupBySlot(entries);
 
   return (
