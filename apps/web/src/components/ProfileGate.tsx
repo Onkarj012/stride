@@ -5,7 +5,7 @@ import { api } from "@convex/_generated/api";
 
 // Holds the app until the profile exists. Onboarding happens in the mobile app, not on the web.
 export function ProfileGate({ children }: { children: ReactNode }) {
-  const status: { complete: boolean } | undefined = useQuery(api.progress_v2.profileStatus);
+  const status = useQuery(api.progress_v2.profileStatus);
   const { signOut } = useClerk();
 
   if (status === undefined) return <div className="flex min-h-dvh items-center justify-center bg-bg text-ink2">Loading…</div>;
