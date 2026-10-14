@@ -841,6 +841,8 @@ export default defineSchema({
     title: v.string(),
     updatedAt: v.number(),
     deletedAt: v.optional(v.number()),
+    // The newest visible message, cut for the chat list; null when there is none. Missing on rows from before it was stored.
+    lastMessage: v.optional(v.union(v.string(), v.null())),
   }).index("by_userId_and_updatedAt", ["userId", "updatedAt"]),
 
   messages: defineTable({
@@ -879,6 +881,14 @@ export default defineSchema({
     .index("by_userId_and_submissionId", ["userId", "submissionId"])
     .index("by_answersMessageId", ["answersMessageId"])
     .searchIndex("search_text", { searchField: "text", filterFields: ["userId"] }),
+
+  // The text of a reply while it streams, kept off `messages` so each write doesn't rerun the paged message query.
+  // Deleted when the reply ends; the final text is written to the message then.
+  reply_streams: defineTable({
+    messageId: v.id("messages"),
+    userId: v.string(),
+    text: v.string(),
+  }).index("by_messageId", ["messageId"]),
 
   // Extracted items awaiting confirmation (D7). Matcher output only; nutrients are computed on commit.
   drafts: defineTable({
