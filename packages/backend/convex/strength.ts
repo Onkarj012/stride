@@ -10,7 +10,10 @@ import { assertLedgerWritable } from "./users";
 const MAX_SESSION_SETS = 200;
 // Each retained set can require a separate session and exercise read; leave room below 4,096 ranges.
 const MAX_HISTORY_SETS = 1000;
+const RECENT_SET_SCAN = 200;
+const RECENT_EXERCISE_LIMIT = 6;
 type RevisionOp = Infer<typeof revisionOpValidator>;
+type SessionCache = Map<Id<"workout_sessions">, Doc<"workout_sessions"> | null>;
 type SetContent = Pick<Doc<"sets">, "sessionId" | "exerciseId" | "setIndex" | "weightKg" | "reps" | "rpe" | "deletedAt">;
 type ReadCtx = QueryCtx | MutationCtx;
 
@@ -69,6 +72,19 @@ async function history(ctx: ReadCtx, userId: string) {
   for (const sessionId of new Set(sets.map((set) => set.sessionId))) {
     const session = await ctx.db.get("workout_sessions", sessionId);
     if (session !== null && session.userId === userId && session.deletedAt === undefined) sessionMap.set(session._id, session);
+  }
+  return { sets: sets.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap, historyLimited: rows.length > MAX_HISTORY_SETS };
+}
+
+/** Reads one exercise's recent live sets and their sessions, reporting when older history is omitted. */
+async function exerciseHistory(ctx: ReadCtx, userId: string, exerciseId: Id<"exercises">, cache: SessionCache) {
+  const rows = await ctx.db.query("sets").withIndex("by_userId_and_exerciseId_and_status", (q) => q.eq("userId", userId).eq("exerciseId", exerciseId).eq("status", "live")).order("desc").take(MAX_HISTORY_SETS + 1);
+  const sets = rows.slice(0, MAX_HISTORY_SETS);
+  const sessionMap = new Map<Id<"workout_sessions">, Doc<"workout_sessions">>();
+  for (const sessionId of new Set(sets.map((set) => set.sessionId))) {
+    if (!cache.has(sessionId)) cache.set(sessionId, await ctx.db.get("workout_sessions", sessionId));
+    const session = cache.get(sessionId);
+    if (session && session.userId === userId && session.deletedAt === undefined) sessionMap.set(session._id, session);
   }
   return { sets: sets.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap, historyLimited: rows.length > MAX_HISTORY_SETS };
 }
@@ -268,7 +284,7 @@ export const exerciseHints = query({
     const userId = await requireUserId(ctx);
     const session = await requireSession(ctx, userId, args.sessionId);
     await requireExercise(ctx, args.exerciseId);
-    const past = await history(ctx, userId);
+    const past = await exerciseHistory(ctx, userId, args.exerciseId, new Map());
     return { previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, args.exerciseId, session), historyLimited: past.historyLimited };
   },
 });
@@ -280,19 +296,43 @@ export const sessionDetail = query({
     const userId = await requireUserId(ctx);
     const session = await requireSession(ctx, userId, args.sessionId);
     const sets = await sessionSets(ctx, session._id, userId);
-    const past = await history(ctx, userId);
+    const cache: SessionCache = new Map();
+    let historyLimited = false;
     const exercises = [];
     const newBests = [];
     for (const exerciseId of new Set(sets.map((set) => set.exerciseId))) {
       const exercise = await requireExercise(ctx, exerciseId);
+      const past = await exerciseHistory(ctx, userId, exerciseId, cache);
+      historyLimited ||= past.historyLimited;
       const currentSets = sets.filter((set) => set.exerciseId === exerciseId);
       exercises.push({ exercise, sets: currentSets.map(setView), previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId, session) });
       const best = Math.max(0, ...currentSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
-      const olderSets = past.sets.filter((set) => set.exerciseId === exerciseId && (past.sessions.get(set.sessionId)?.startedAt ?? Infinity) < session.startedAt);
+      const olderSets = past.sets.filter((set) => (past.sessions.get(set.sessionId)?.startedAt ?? Infinity) < session.startedAt);
       const previous = Math.max(0, ...olderSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
       if (!past.historyLimited && best > previous) newBests.push({ exerciseId, name: exercise.name, e1rmKg: best, previousBestKg: previous === 0 ? null : previous });
     }
-    return { session, exercises, historyLimited: past.historyLimited, historySetLimit: MAX_HISTORY_SETS, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
+    return { session, exercises, historyLimited, historySetLimit: MAX_HISTORY_SETS, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
+  },
+});
+
+/** Lists the caller's most recently trained exercises, newest first. */
+export const recentExercises = query({
+  args: {},
+  returns: v.array(v.id("exercises")),
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const rows = await ctx.db.query("sets").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "live")).order("desc").take(RECENT_SET_SCAN);
+    const cache: SessionCache = new Map();
+    const exerciseIds: Id<"exercises">[] = [];
+    for (const set of rows) {
+      if (exerciseIds.includes(set.exerciseId)) continue;
+      if (!cache.has(set.sessionId)) cache.set(set.sessionId, await ctx.db.get("workout_sessions", set.sessionId));
+      const session = cache.get(set.sessionId);
+      if (!session || session.userId !== userId || session.deletedAt !== undefined) continue;
+      exerciseIds.push(set.exerciseId);
+      if (exerciseIds.length === RECENT_EXERCISE_LIMIT) break;
+    }
+    return exerciseIds;
   },
 });
 

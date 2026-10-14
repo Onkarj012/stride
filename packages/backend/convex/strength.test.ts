@@ -297,8 +297,45 @@ test("history fits Convex read limits when every set has a different session and
   expect(stats.exercises).toHaveLength(stats.historySetLimit);
   const detail = await user.query(api.strength.sessionDetail, { sessionId });
   expect(detail.summary).toMatchObject({ setCount: 1, volumeKg: 480 });
-  expect(detail.historyLimited).toBe(true);
-  expect((await user.query(api.strength.exerciseHints, { sessionId, exerciseId })).historyLimited).toBe(true);
+  // Hints read only this exercise's history, so thousands of other lifts no longer cut it short.
+  expect(detail.historyLimited).toBe(false);
+  expect((await user.query(api.strength.exerciseHints, { sessionId, exerciseId })).historyLimited).toBe(false);
+});
+
+test("hints still find the previous bench session behind hundreds of newer sets of another lift", async () => {
+  const { t, user, sessionId, exerciseId, setId } = await withSet();
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });
+  await t.run(async (ctx) => {
+    const squat = await ctx.db.insert("exercises", { sourceId: "squat", name: "Squat", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["quadriceps"], secondaryMuscles: [] });
+    for (let index = 0; index < 5; index++) {
+      const id = await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-06", timeZone: "Asia/Kolkata", startedAt: START + 1_000 + index, endedAt: START + 2_000 + index, submissionId: `squat-${index}` });
+      for (let slot = 0; slot < 200; slot++) await ctx.db.insert("sets", { userId: "user_a", sessionId: id, exerciseId: squat, setIndex: slot + 1, weightKg: 80, reps: 5, revision: 1, status: "live", submissionId: `squat-${index}-${slot}` });
+    }
+  });
+  const next = await user.mutation(api.strength.startSession, { submissionId: "next", startedAt: START + 86_400_000 });
+  await user.mutation(api.strength.addSet, { submissionId: "next-add", sessionId: next, exerciseId, weightKg: 70, reps: 6 });
+  const detail = await user.query(api.strength.sessionDetail, { sessionId: next });
+  expect(detail.historyLimited).toBe(false);
+  expect(detail.exercises[0]?.previousSets.map((set) => set._id)).toEqual([setId]);
+  expect(detail.summary.newBests).toEqual([{ exerciseId, name: "Bench press", e1rmKg: 84, previousBestKg: 76 }]);
+  expect((await user.query(api.strength.exerciseHints, { sessionId: next, exerciseId })).previousSets.map((set) => set._id)).toEqual([setId]);
+});
+
+test("recentExercises lists distinct lifts newest first, at most six, skipping deleted sessions", async () => {
+  const { t, user, sessionId, exerciseId } = await setup();
+  expect(await user.query(api.strength.recentExercises, {})).toEqual([]);
+  const lifts = await t.run(async (ctx) => {
+    const ids = [];
+    for (let index = 0; index < 8; index++) ids.push(await ctx.db.insert("exercises", { sourceId: `lift-${index}`, name: `Lift ${index}`, category: "strength", equipment: null, mechanic: null, level: null, primaryMuscles: ["chest"], secondaryMuscles: [] }));
+    return ids;
+  });
+  await user.mutation(api.strength.addSet, { submissionId: "bench-1", sessionId, exerciseId, weightKg: 60, reps: 8 });
+  for (const [index, lift] of lifts.entries()) await user.mutation(api.strength.addSet, { submissionId: `lift-${index}`, sessionId, exerciseId: lift, weightKg: 40, reps: 8 });
+  await user.mutation(api.strength.addSet, { submissionId: "bench-2", sessionId, exerciseId, weightKg: 62, reps: 8 });
+  expect(await user.query(api.strength.recentExercises, {})).toEqual([exerciseId, lifts[7], lifts[6], lifts[5], lifts[4], lifts[3]]);
+  await t.run((ctx) => ctx.db.patch("workout_sessions", sessionId, { deletedAt: Date.now() }));
+  expect(await user.query(api.strength.recentExercises, {})).toEqual([]);
+  expect(await t.withIdentity({ subject: "user_b" }).query(api.strength.recentExercises, {})).toEqual([]);
 });
 
 test("saved workouts page through older sessions and reopen finished sets for edits", async () => {
