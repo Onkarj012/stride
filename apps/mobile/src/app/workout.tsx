@@ -224,6 +224,7 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
   ]
   const current = list.find((e) => e.exercise._id === currentId) ?? list.at(-1)
   const currentIndex = current ? list.indexOf(current) : -1
+  const currentDetail = detail.exercises.find((e) => e.exercise._id === current?.exercise._id)
 
   // Ends the session (a no-op when already finished), then leaves edit mode so the summary returns.
   async function finish() {
@@ -273,8 +274,8 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
           sessionId={detail.session._id}
           exercise={current.exercise}
           sets={current.sets}
-          previousSets={detail.exercises.find((e) => e.exercise._id === current.exercise._id)?.previousSets}
-          historyLimited={detail.historyLimited}
+          previousSets={currentDetail?.previousSets}
+          historyLimited={currentDetail?.historyLimited ?? false}
           position={`${currentIndex + 1} of ${list.length}`}
           finished={ended}
           actions={actions}
@@ -362,7 +363,7 @@ function Summary({ detail, onEdit }: { detail: SessionDetail; onEdit: () => void
                     {best.previousBestKg === null ? `e1RM ${formatKg(best.e1rmKg)}` : `e1RM ${formatKg(best.previousBestKg)} → ${formatKg(best.e1rmKg)}`}
                   </Text>
                 ) : (
-                  <Text style={s.holding}>{detail.historyLimited ? 'comparison unavailable' : 'holding'}</Text>
+                  <Text style={s.holding}>{e.historyLimited ? 'comparison unavailable' : 'holding'}</Text>
                 )}
               </View>
             )

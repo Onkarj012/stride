@@ -157,6 +157,23 @@ describe("clearAllData", () => {
     });
   });
 
+  test("removes the live text row of a reply streaming while the clear runs, and keeps another user's", async () => {
+    vi.useFakeTimers();
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      for (const userId of ["user_a", "user_b"]) {
+        const chatId = await ctx.db.insert("chats", { userId, title: "Live", updatedAt: 1 });
+        const messageId = await ctx.db.insert("messages", {
+          userId, chatId, role: "assistant", text: "", attachments: [], toolCalls: [], draftIds: [], submissionId: `${userId}-live:reply`, status: "streaming", claimedAt: 1,
+        });
+        await ctx.db.insert("reply_streams", { messageId, userId, text: "half a reply" });
+      }
+    });
+    await user.mutation(api.users.clearAllData, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run((ctx) => ctx.db.query("reply_streams").take(10))).map((row) => row.userId)).toEqual(["user_b"]);
+  });
+
   test("removes the caller's saved OpenRouter key and keeps another user's", async () => {
     const { t, user } = await setup();
     await t.run(async (ctx) => {

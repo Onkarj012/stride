@@ -165,11 +165,11 @@ export const createChat = mutation({
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
     const clean = (title ?? "").trim().slice(0, MAX_TITLE_CHARS);
-    return await ctx.db.insert("chats", { userId, title: clean === "" ? DEFAULT_CHAT_TITLE : clean, updatedAt: Date.now() });
+    return await ctx.db.insert("chats", { userId, title: clean === "" ? DEFAULT_CHAT_TITLE : clean, updatedAt: Date.now(), lastMessage: null });
   },
 });
 
-/** The caller's chats, most recently active first, each with a preview of its newest message. */
+/** The caller's chats, most recently active first, each with the preview stored on the chat row. */
 export const listChats = query({
   args: {},
   returns: v.array(
@@ -187,14 +187,15 @@ export const listChats = query({
         _id: row._id,
         title: row.title,
         updatedAt: row.updatedAt,
-        lastMessage: await previewOf(ctx, row._id),
+        // Chats from before the preview was stored read their messages until their next turn writes it.
+        lastMessage: row.lastMessage === undefined ? await previewOf(ctx, row._id) : row.lastMessage,
       })),
     );
   },
 });
 
 /** The text of a chat's newest visible message, cut to the preview length. Null when there is none yet. */
-async function previewOf(ctx: QueryCtx, chatId: Id<"chats">): Promise<string | null> {
+async function previewOf(ctx: QueryCtx | MutationCtx, chatId: Id<"chats">): Promise<string | null> {
   const recent = await ctx.db
     .query("messages")
     .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
@@ -204,6 +205,41 @@ async function previewOf(ctx: QueryCtx, chatId: Id<"chats">): Promise<string | n
   const newest = recent.find((m) => m.role !== "tool" && m.deletedAt === undefined && m.text !== "");
   return newest === undefined ? null : newest.text.slice(0, PREVIEW_CHARS);
 }
+
+/** Stores a chat's preview on its row, writing only when it changed so `listChats` doesn't rerun for nothing. */
+async function syncPreview(ctx: MutationCtx, chatId: Id<"chats">): Promise<void> {
+  const chat = await ctx.db.get("chats", chatId);
+  if (chat === null) return;
+  const lastMessage = await previewOf(ctx, chatId);
+  if (chat.lastMessage !== lastMessage) await ctx.db.patch("chats", chatId, { lastMessage });
+}
+
+/** The live text row of a streaming reply, if it has written any text yet. */
+async function streamOf(ctx: QueryCtx | MutationCtx, messageId: Id<"messages">): Promise<Doc<"reply_streams"> | null> {
+  return await ctx.db
+    .query("reply_streams")
+    .withIndex("by_messageId", (q) => q.eq("messageId", messageId))
+    .unique();
+}
+
+/** Deletes a reply's live text row and returns the text it held: what the user saw. Null when it never wrote any. */
+async function endStream(ctx: MutationCtx, messageId: Id<"messages">): Promise<string | null> {
+  const stream = await streamOf(ctx, messageId);
+  if (stream === null) return null;
+  await ctx.db.delete("reply_streams", stream._id);
+  return stream.text;
+}
+
+/** The text a reply has streamed so far. The thread reads it only while the reply streams, so the paged query stays still. */
+export const liveReply = query({
+  args: { messageId: v.id("messages") },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { messageId }) => {
+    const userId = await requireUserId(ctx);
+    const stream = await streamOf(ctx, messageId);
+    return stream === null || stream.userId !== userId ? null : stream.text;
+  },
+});
 
 /** One of the caller's chats by id, or null if it is gone or not theirs. The thread screen opens chats past the list's cap. */
 export const getChat = query({
@@ -253,7 +289,11 @@ export const purgeMessages = internalMutation({
       .query("messages")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .take(PURGE_BATCH);
-    for (const row of rows) await ctx.db.delete("messages", row._id);
+    for (const row of rows) {
+      // A reply cut off mid-stream by the delete may still hold a live text row.
+      if (row.status === "streaming") await endStream(ctx, row._id);
+      await ctx.db.delete("messages", row._id);
+    }
     if (rows.length === PURGE_BATCH) await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId });
     return null;
   },
@@ -412,7 +452,10 @@ export const claimTurn = internalMutation({
     } else {
       replyId = reply._id;
       await ctx.db.patch("messages", replyId, fresh);
+      // Endings delete the live row; this only clears one an earlier attempt left behind.
+      await endStream(ctx, replyId);
     }
+    await syncPreview(ctx, chat._id);
     // A turn that dies without reaching its catch block (a crash or the action time limit) must not stream forever.
     await ctx.scheduler.runAfter(TURN_LEASE_MS, internal.chats.expireReply, { messageId: replyId, claimedAt: now });
     return { ...claim, replyId };
@@ -457,6 +500,7 @@ export const claimRegenerate = internalMutation({
       status: "streaming",
       claimedAt: now,
     });
+    await syncPreview(ctx, args.chatId);
     await ctx.scheduler.runAfter(TURN_LEASE_MS, internal.chats.expireReply, { messageId: replyId, claimedAt: now });
     return { replyId, claimedAt: now };
   },
@@ -469,7 +513,8 @@ async function ownedStream(ctx: MutationCtx, messageId: Id<"messages">, claimedA
 }
 
 /**
- * Writes the reply text streamed so far. Returns true when the turn should stop: the user pressed stop, the chat was
+ * Writes the reply text streamed so far to its live row, never to the message, so the paged message query and the
+ * chat list don't rerun on every write. Returns true when the turn should stop: the user pressed stop, the chat was
  * deleted, or a newer attempt owns the row. Text that arrived after a stop is not written, so the reply ends where
  * the user saw it end.
  */
@@ -479,7 +524,9 @@ export const appendReply = internalMutation({
   handler: async (ctx, { messageId, claimedAt, text }) => {
     const row = await ownedStream(ctx, messageId, claimedAt);
     if (row === null || row.stopRequested === true) return true;
-    if (row.text !== text) await ctx.db.patch("messages", messageId, { text });
+    const stream = await streamOf(ctx, messageId);
+    if (stream === null) await ctx.db.insert("reply_streams", { messageId, userId: row.userId, text });
+    else if (stream.text !== text) await ctx.db.patch("reply_streams", stream._id, { text });
     return false;
   },
 });
@@ -513,12 +560,16 @@ export const stopMessage = mutation({
   },
 });
 
-/** Marks a reply failed if the attempt that claimed it at `claimedAt` never finished it. */
+/** Marks a reply failed with the text it reached if the attempt that claimed it at `claimedAt` never finished it. */
 export const expireReply = internalMutation({
   args: { messageId: v.id("messages"), claimedAt: v.number() },
   returns: v.null(),
   handler: async (ctx, { messageId, claimedAt }) => {
-    if ((await ownedStream(ctx, messageId, claimedAt)) !== null) await ctx.db.patch("messages", messageId, { status: "failed" });
+    const row = await ownedStream(ctx, messageId, claimedAt);
+    if (row === null) return null;
+    const text = (await endStream(ctx, messageId)) ?? row.text;
+    await ctx.db.patch("messages", messageId, { status: "failed", text });
+    await syncPreview(ctx, row.chatId);
     return null;
   },
 });
@@ -538,6 +589,7 @@ export const saveTranscript = internalMutation({
     await ctx.db.patch("messages", messageId, { text, audioPending: undefined });
     const chat = await ctx.db.get("chats", message.chatId);
     if (chat !== null) await ctx.db.patch("chats", chat._id, { title: titleFor(chat, text) });
+    await syncPreview(ctx, message.chatId);
     return null;
   },
 });
@@ -556,11 +608,19 @@ export const releaseTurn = internalMutation({
     // Nothing ran yet for a message still waiting on its transcript, so it leaves no empty bubble behind.
     if (message.audioPending === true) {
       await ctx.db.delete("messages", messageId);
-      if (reply !== null) await ctx.db.delete("messages", replyId);
+      if (reply !== null) {
+        await endStream(ctx, replyId);
+        await ctx.db.delete("messages", replyId);
+      }
+      await syncPreview(ctx, message.chatId);
       return null;
     }
     if (message.claimedAt === claimedAt) await ctx.db.patch("messages", messageId, { claimedAt: undefined });
-    if (reply !== null) await ctx.db.patch("messages", replyId, { status: "failed", stopRequested: undefined });
+    if (reply !== null) {
+      const text = (await endStream(ctx, replyId)) ?? reply.text;
+      await ctx.db.patch("messages", replyId, { status: "failed", text, stopRequested: undefined });
+      await syncPreview(ctx, reply.chatId);
+    }
     return null;
   },
 });
@@ -617,7 +677,9 @@ export const finishReply = internalMutation({
     await assertLedgerWritable(ctx, args.userId);
     const row = await ownedStream(ctx, args.messageId, args.claimedAt);
     if (row === null || row.userId !== args.userId) return null;
-    const final = row.stopRequested === true ? { text: row.text, status: "stopped" as const } : { text: args.text, status: args.status };
+    // The live row holds the text the user saw, which a late stop keeps.
+    const seen = (await endStream(ctx, args.messageId)) ?? row.text;
+    const final = row.stopRequested === true ? { text: seen, status: "stopped" as const } : { text: args.text, status: args.status };
     await ctx.db.patch("messages", args.messageId, {
       ...final,
       toolCalls: args.toolCalls,
@@ -628,8 +690,10 @@ export const finishReply = internalMutation({
     });
     // The chat may have been deleted mid-turn; then the purge job removes this message too.
     const chat = await ctx.db.get("chats", row.chatId);
-    if (chat !== null) await ctx.db.patch("chats", chat._id, { updatedAt: Date.now() });
-    else await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId: row.chatId });
+    if (chat !== null) {
+      await ctx.db.patch("chats", chat._id, { updatedAt: Date.now() });
+      await syncPreview(ctx, chat._id);
+    } else await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId: row.chatId });
     return final;
   },
 });

@@ -297,8 +297,94 @@ test("history fits Convex read limits when every set has a different session and
   expect(stats.exercises).toHaveLength(stats.historySetLimit);
   const detail = await user.query(api.strength.sessionDetail, { sessionId });
   expect(detail.summary).toMatchObject({ setCount: 1, volumeKg: 480 });
+  // Hints read only this exercise's history, so thousands of other lifts no longer cut it short.
+  expect(detail.historyLimited).toBe(false);
+  expect((await user.query(api.strength.exerciseHints, { sessionId, exerciseId })).historyLimited).toBe(false);
+});
+
+test("a workout with several long-history lifts shares one read budget and still loads", async () => {
+  const { t, user, sessionId } = await withSet(true);
+  for (let lift = 0; lift < 5; lift++) {
+    const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: `long-${lift}`, name: `Long lift ${lift}`, category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 900; index++) {
+        const startedAt = START - 172_800_000 - index * 1_000;
+        const session = await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-04", timeZone: "Asia/Kolkata", startedAt, endedAt: startedAt + 60_000, submissionId: `long-${lift}-session-${index}` });
+        await ctx.db.insert("sets", { userId: "user_a", sessionId: session, exerciseId, setIndex: 1, weightKg: 50, reps: 8, revision: 1, status: "live", submissionId: `long-${lift}-set-${index}` });
+      }
+    });
+    await user.mutation(api.strength.addSet, { submissionId: `long-${lift}-add`, sessionId, exerciseId, weightKg: 60, reps: 8 });
+  }
+  const detail = await user.query(api.strength.sessionDetail, { sessionId });
   expect(detail.historyLimited).toBe(true);
-  expect((await user.query(api.strength.exerciseHints, { sessionId, exerciseId })).historyLimited).toBe(true);
+  expect(detail.summary.setCount).toBe(6);
+});
+
+test("a lift that runs out of history budget does not hide hints for a complete lift", async () => {
+  const { t, user, sessionId, exerciseId: liftA } = await setup(true);
+  const liftB = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "row", name: "Row", category: "strength", equipment: null, mechanic: null, level: null, primaryMuscles: ["back"], secondaryMuscles: [] }));
+  // Lift B is added first so it is read first and keeps its budget.
+  await user.mutation(api.strength.addSet, { submissionId: "b-add", sessionId, exerciseId: liftB, weightKg: 50, reps: 8 });
+  await user.mutation(api.strength.addSet, { submissionId: "a-add", sessionId, exerciseId: liftA, weightKg: 60, reps: 8 });
+  await t.run(async (ctx) => {
+    const oldB = await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-05", timeZone: "Asia/Kolkata", startedAt: START - 86_400_000, endedAt: START - 86_340_000, submissionId: "old-b" });
+    await ctx.db.insert("sets", { userId: "user_a", sessionId: oldB, exerciseId: liftB, setIndex: 1, weightKg: 50, reps: 8, revision: 1, status: "live", submissionId: "old-b-set" });
+    const oldA = await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-04", timeZone: "Asia/Kolkata", startedAt: START - 172_800_000, endedAt: START - 172_740_000, submissionId: "old-a" });
+    for (let index = 0; index < 1000; index++) await ctx.db.insert("sets", { userId: "user_a", sessionId: oldA, exerciseId: liftA, setIndex: index + 1, weightKg: 40, reps: 8, revision: 1, status: "live", submissionId: `old-a-set-${index}` });
+  });
+  const detail = await user.query(api.strength.sessionDetail, { sessionId });
+  expect(detail.historyLimited).toBe(true);
+  const a = detail.exercises.find((e) => e.exercise._id === liftA);
+  const b = detail.exercises.find((e) => e.exercise._id === liftB);
+  expect(a?.historyLimited).toBe(true);
+  expect(a?.previousSets).toEqual([]);
+  expect(b?.historyLimited).toBe(false);
+  expect(b?.previousSets.map((set) => set.weightKg)).toEqual([50]);
+});
+
+test("hints still find the previous bench session behind hundreds of newer sets of another lift", async () => {
+  const { t, user, sessionId, exerciseId, setId } = await withSet();
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });
+  await t.run(async (ctx) => {
+    const squat = await ctx.db.insert("exercises", { sourceId: "squat", name: "Squat", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["quadriceps"], secondaryMuscles: [] });
+    for (let index = 0; index < 5; index++) {
+      const id = await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-06", timeZone: "Asia/Kolkata", startedAt: START + 1_000 + index, endedAt: START + 2_000 + index, submissionId: `squat-${index}` });
+      for (let slot = 0; slot < 200; slot++) await ctx.db.insert("sets", { userId: "user_a", sessionId: id, exerciseId: squat, setIndex: slot + 1, weightKg: 80, reps: 5, revision: 1, status: "live", submissionId: `squat-${index}-${slot}` });
+    }
+  });
+  const next = await user.mutation(api.strength.startSession, { submissionId: "next", startedAt: START + 86_400_000 });
+  await user.mutation(api.strength.addSet, { submissionId: "next-add", sessionId: next, exerciseId, weightKg: 70, reps: 6 });
+  const detail = await user.query(api.strength.sessionDetail, { sessionId: next });
+  expect(detail.historyLimited).toBe(false);
+  expect(detail.exercises[0]?.previousSets.map((set) => set._id)).toEqual([setId]);
+  expect(detail.summary.newBests).toEqual([{ exerciseId, name: "Bench press", e1rmKg: 84, previousBestKg: 76 }]);
+  expect((await user.query(api.strength.exerciseHints, { sessionId: next, exerciseId })).previousSets.map((set) => set._id)).toEqual([setId]);
+});
+
+test("recentExercises lists distinct lifts newest first, at most six, skipping deleted sessions", async () => {
+  const { t, user, sessionId, exerciseId } = await setup();
+  expect(await user.query(api.strength.recentExercises, {})).toEqual([]);
+  const lifts = await t.run(async (ctx) => {
+    const ids = [];
+    for (let index = 0; index < 8; index++) ids.push(await ctx.db.insert("exercises", { sourceId: `lift-${index}`, name: `Lift ${index}`, category: "strength", equipment: null, mechanic: null, level: null, primaryMuscles: ["chest"], secondaryMuscles: [] }));
+    return ids;
+  });
+  await user.mutation(api.strength.addSet, { submissionId: "bench-1", sessionId, exerciseId, weightKg: 60, reps: 8 });
+  for (const [index, lift] of lifts.entries()) await user.mutation(api.strength.addSet, { submissionId: `lift-${index}`, sessionId, exerciseId: lift, weightKg: 40, reps: 8 });
+  await user.mutation(api.strength.addSet, { submissionId: "bench-2", sessionId, exerciseId, weightKg: 62, reps: 8 });
+  expect(await user.query(api.strength.recentExercises, {})).toEqual([exerciseId, lifts[7], lifts[6], lifts[5], lifts[4], lifts[3]]);
+  await t.run((ctx) => ctx.db.patch("workout_sessions", sessionId, { deletedAt: Date.now() }));
+  expect(await user.query(api.strength.recentExercises, {})).toEqual([]);
+  expect(await t.withIdentity({ subject: "user_b" }).query(api.strength.recentExercises, {})).toEqual([]);
+});
+
+test("recentExercises ranks by workout time, so editing an old set does not move its lift up", async () => {
+  const { t, user, setId, exerciseId } = await withSet();
+  const row = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "row", name: "Row", category: "strength", equipment: null, mechanic: null, level: null, primaryMuscles: ["back"], secondaryMuscles: [] }));
+  const newer = await user.mutation(api.strength.startSession, { submissionId: "newer", startedAt: START + 86_400_000 });
+  await user.mutation(api.strength.addSet, { submissionId: "row-add", sessionId: newer, exerciseId: row, weightKg: 50, reps: 8 });
+  await user.mutation(api.strength.editSet, { submissionId: "old-edit", setId, reps: 9 });
+  expect(await user.query(api.strength.recentExercises, {})).toEqual([row, exerciseId]);
 });
 
 test("saved workouts page through older sessions and reopen finished sets for edits", async () => {

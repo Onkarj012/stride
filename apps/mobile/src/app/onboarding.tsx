@@ -28,7 +28,7 @@ import {
 } from '@/components/ProfileInputs'
 import { TimeZoneGate } from '@/components/TimeZoneGate'
 import { formatNumber } from '@/lib/format'
-import { SUMMARY_DAYS, plainError, targetsFor } from '@/lib/log'
+import { plainError, targetsFor } from '@/lib/log'
 import {
   HoldOnboardingContext,
   clamp,
@@ -329,16 +329,16 @@ function Reveal({ sex }: { sex: Sex }) {
   const s = useStyles()
   const t = useTheme()
   const today = useLocalToday()
-  const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS, localDate: today })
-  if (summary === undefined)
+  const target = useQuery(api.progress_v2.target, { localDate: today })
+  if (target === undefined)
     return (
       <View style={s.loading}>
         <Polo size={56} />
         <Text style={s.loadingText}>Working out your numbers…</Text>
       </View>
     )
-  const targets = targetsFor(summary.target?.kcal ?? null)
-  const note = clampNote(summary.target?.clamped, sex)
+  const targets = targetsFor(target?.kcal ?? null)
+  const note = clampNote(target?.clamped, sex)
   return (
     <View style={s.reveal}>
       <Polo size={88} mood="happy" hop={1} />
