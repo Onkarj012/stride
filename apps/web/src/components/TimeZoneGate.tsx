@@ -4,6 +4,7 @@ import { useClerk } from "@clerk/react";
 import { api } from "@convex/_generated/api";
 import { browserTimeZone } from "@/lib/date";
 import { plainError } from "@/lib/log";
+import { Button, FullScreen, Polo, Thinking } from "@/components/ui";
 
 type ZoneState = { kind: "pending" } | { kind: "ready" } | { kind: "failed"; message: string };
 
@@ -44,23 +45,23 @@ export function TimeZoneGate({ children }: { children: ReactNode }) {
 
   if (state.kind === "failed")
     return (
-      <CenteredMessage>
-        <p className="text-ink">{state.message}</p>
-        <div className="flex gap-3">
-          <button type="button" onClick={retry} className="rounded-full bg-polo px-4 py-2 text-sm font-semibold text-on-polo">
-            Retry
-          </button>
-          <button type="button" onClick={() => void signOut()} className="rounded-full border border-line2 px-4 py-2 text-sm font-semibold text-ink">
+      <FullScreen>
+        <Polo size={56} mood="sleep" />
+        <p className="type-empty-title text-ink">Couldn't get Stride ready.</p>
+        <p className="max-w-sm type-secondary text-ink2">{state.message}</p>
+        <div className="mt-2 flex gap-2">
+          <Button onClick={retry}>Try again</Button>
+          <Button variant="ghost" onClick={() => void signOut()}>
             Sign out
-          </button>
+          </Button>
         </div>
-      </CenteredMessage>
+      </FullScreen>
     );
 
-  return <CenteredMessage>Loading…</CenteredMessage>;
-}
-
-// Full-height centered block for loading and error states.
-function CenteredMessage({ children }: { children: ReactNode }) {
-  return <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-bg p-6 text-center text-ink2">{children}</div>;
+  return (
+    <FullScreen>
+      <Polo size={48} />
+      <Thinking label="Getting your day ready…" />
+    </FullScreen>
+  );
 }

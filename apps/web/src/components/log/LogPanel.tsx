@@ -1,4 +1,5 @@
 import { useQuery } from "convex/react";
+import { Info } from "lucide-react";
 import { api } from "@convex/_generated/api";
 import { AddFood } from "./AddFood";
 import { DraftCard } from "./DraftCard";
@@ -13,7 +14,10 @@ export function LogPanel({ localDate, today }: { localDate: string; today: strin
       {localDate === today ? (
         <TextLog />
       ) : (
-        <p className="text-sm text-ink2">Typed logs go to today. Use Add food to log on this day.</p>
+        <p className="flex items-center gap-2.5 rounded-sm border border-dashed border-line2 px-4 py-3 type-secondary text-ink2">
+          <Info className="size-4 shrink-0 text-ink3" strokeWidth={1.9} />
+          Typed logs go to today. Use Add food to log on this day.
+        </p>
       )}
       {drafts?.map((draft) => (
         <DraftCard key={draft._id} draftId={draft._id} today={today} />

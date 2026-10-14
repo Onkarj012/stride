@@ -1,18 +1,23 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { MotionConfig } from "motion/react";
 import { AuthenticateWithRedirectCallback, ClerkLoaded, ClerkLoading, Show } from "@clerk/react";
 import { Layout } from "@/components/Layout";
 import { ProfileGate } from "@/components/ProfileGate";
 import { TimeZoneGate } from "@/components/TimeZoneGate";
 import { ToastProvider } from "@/components/Toast";
+import { FullScreen, Polo } from "@/components/ui";
 import { DayPage } from "@/pages/DayPage";
 import { ProgressPage } from "@/pages/ProgressPage";
 import { SignInPage, SignUpPage } from "@/pages/AuthPages";
 
+// Signed-out auth routes, or the signed-in app behind its time zone and profile gates.
 export default function App() {
   return (
-    <>
+    <MotionConfig reducedMotion="user">
       <ClerkLoading>
-        <div className="flex min-h-dvh items-center justify-center bg-bg text-ink2">Loading…</div>
+        <FullScreen>
+          <Polo size={48} />
+        </FullScreen>
       </ClerkLoading>
       <ClerkLoaded>
         <Show when="signed-out">
@@ -41,6 +46,6 @@ export default function App() {
           </TimeZoneGate>
         </Show>
       </ClerkLoaded>
-    </>
+    </MotionConfig>
   );
 }

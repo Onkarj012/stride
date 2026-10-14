@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { Check } from "lucide-react";
 import { api } from "@convex/_generated/api";
+import { Button, Card, Skeleton, fieldClass } from "@/components/ui";
 import { plainError } from "@/lib/log";
 import { weightNumber, weightToKg, weightUnit, type Units } from "@/lib/units";
-import { Card } from "./Card";
+import { cn } from "@/lib/utils";
 
 // Log-weight card: saves today's weigh-in and shows the one already logged today.
 export function LogWeightCard({ units }: { units: Units }) {
@@ -36,33 +38,50 @@ export function LogWeightCard({ units }: { units: Units }) {
   }
 
   return (
-    <Card title="Log weight">
-      <p className="text-sm text-ink2">
-        {today === undefined ? " " : todayKg === null ? "Not logged today yet." : `Today: ${weightNumber(todayKg, units)} ${unit}`}
-      </p>
-      <form onSubmit={save} className="flex flex-col gap-3">
+    <Card title="Morning weight">
+      <div className="-mt-2">
+        {today === undefined ? (
+          <Skeleton className="h-5 w-40" />
+        ) : todayKg === null ? (
+          <p className="type-secondary text-ink2">Not logged today yet. Optional, and it feeds your burn estimate.</p>
+        ) : (
+          <p className="flex items-center gap-2 type-secondary text-ink2">
+            <span className="grid size-5 place-items-center rounded-pill bg-fat text-card">
+              <Check className="size-3" strokeWidth={3} />
+            </span>
+            Today
+            <span className="type-value text-ink tabular-nums">
+              {weightNumber(todayKg, units)} {unit}
+            </span>
+          </p>
+        )}
+      </div>
+      <form onSubmit={save} className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
-          <input
-            type="number"
-            inputMode="decimal"
-            step="0.1"
-            min="0"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            aria-label={`Weight in ${unit}`}
-            placeholder={units === "metric" ? "78.4" : "173"}
-            className="w-32 rounded-field border border-line2 bg-card px-4 py-2 text-ink"
-          />
-          <span className="text-sm text-ink3">{unit}</span>
-          <button
-            type="submit"
-            disabled={saving || value.trim() === ""}
-            className="ml-auto rounded-field bg-polo px-4 py-2 text-sm font-semibold text-on-polo disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
+          <span className="relative flex-1">
+            <input
+              type="number"
+              inputMode="decimal"
+              step="0.1"
+              min="0"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              aria-label={`Weight in ${unit}`}
+              aria-invalid={error !== null}
+              placeholder={units === "metric" ? "78.4" : "173"}
+              className={cn(fieldClass, "h-11 w-full pr-11 font-display text-lg font-semibold tabular-nums", error && "border-polo-ink")}
+            />
+            <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 type-unit text-ink3">{unit}</span>
+          </span>
+          <Button type="submit" disabled={saving || value.trim() === ""}>
+            {saving ? "Saving…" : todayKg === null ? "Save" : "Replace"}
+          </Button>
         </div>
-        {error ? <p role="alert" className="text-sm text-polo-ink">{error}</p> : null}
+        {error ? (
+          <p role="alert" className="type-caption text-polo-ink">
+            {error}
+          </p>
+        ) : null}
       </form>
     </Card>
   );

@@ -4,6 +4,7 @@ import { reportException } from "@/lib/observability";
 type Props = { children: ReactNode };
 type State = { hasError: boolean };
 
+// Catches render errors anywhere in the app, reports them, and offers a reload.
 export class AppErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false };
 
@@ -19,14 +20,14 @@ export class AppErrorBoundary extends Component<Props, State> {
     if (!this.state.hasError) return this.props.children;
 
     return (
-      <main className="min-h-dvh flex items-center justify-center bg-bg px-6 text-text">
-        <section role="alert" className="w-full max-w-md rounded-3xl border border-border bg-card p-8 text-center shadow-[var(--shadow-elev)]">
-          <p className="text-h2">Something went wrong — reload</p>
-          <p className="mt-2 text-body-default text-text-muted">Stry hit an unexpected problem. Reload the page to try again.</p>
+      <main className="flex min-h-dvh items-center justify-center bg-bg px-6 text-ink">
+        <section role="alert" className="w-full max-w-md rounded-card bg-card p-8 text-center shadow-card">
+          <p className="type-card-title">Something went wrong — reload</p>
+          <p className="mt-2 type-callout text-ink2">Stride hit an unexpected problem. Reload the page to try again.</p>
           <button
             type="button"
             onClick={() => window.location.reload()}
-            className="mt-6 inline-flex items-center justify-center rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-text-on-ink transition-opacity hover:opacity-90"
+            className="mt-6 inline-flex h-11 items-center justify-center rounded-pill bg-polo px-5 type-button text-on-polo transition hover:brightness-105"
           >
             Reload
           </button>

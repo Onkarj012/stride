@@ -1,12 +1,14 @@
 import { useRef, useState } from "react";
 import { useMutation } from "convex/react";
+import { Plus, X } from "lucide-react";
 import { api } from "@convex/_generated/api";
 import { inferSlot } from "@stride/core";
+import { Button, Select, fieldClass } from "@/components/ui";
 import { SLOTS, SLOT_NAMES, plainError, type FoodId, type MealSlot } from "@/lib/log";
+import { cn } from "@/lib/utils";
 import { FoodPicker } from "./FoodPicker";
 import { submissionIdFor, type Submission } from "./submission";
 import { useLogToast } from "./toasts";
-import { field, outlineButton, primaryButton, quietButton } from "./ui";
 
 // Manual add for the day shown. Works on past days too, unlike typed logging.
 export function AddFood({ localDate }: { localDate: string }) {
@@ -51,18 +53,33 @@ export function AddFood({ localDate }: { localDate: string }) {
 
   if (!open) {
     return (
-      <button type="button" onClick={() => setOpen(true)} className={`${outlineButton} self-start`}>
-        Add food
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center gap-3.5 rounded-md border-[1.5px] border-dashed border-line2 px-4 py-3.5 text-left transition-[background-color,transform] hover:bg-card/60 active:scale-[0.99]"
+      >
+        <span className="grid size-9 place-items-center rounded-[12px] bg-card2 text-ink">
+          <Plus className="size-[18px]" strokeWidth={1.9} />
+        </span>
+        <span>
+          <span className="block type-body-strong">Add food</span>
+          <span className="type-caption text-ink3">Search the food database and pick grams</span>
+        </span>
       </button>
     );
   }
 
   return (
-    <section className="flex flex-col gap-3 rounded-card bg-card p-5 shadow-card">
+    <section className="flex flex-col gap-5 rounded-card bg-card p-6 shadow-card">
       <div className="flex items-center justify-between gap-4">
-        <h2 className="font-display text-lg font-bold">Add food</h2>
-        <button type="button" onClick={() => setOpen(false)} className={quietButton}>
-          Cancel
+        <h2 className="type-card-title">Add food</h2>
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={() => setOpen(false)}
+          className="grid size-9 place-items-center rounded-pill text-ink3 transition-colors hover:bg-card2 hover:text-ink"
+        >
+          <X className="size-[18px]" strokeWidth={1.9} />
         </button>
       </div>
 
@@ -73,8 +90,8 @@ export function AddFood({ localDate }: { localDate: string }) {
         onPick={(foodId, foodName) => setFood({ _id: foodId, name: foodName })}
       />
 
-      <div className="flex flex-wrap gap-4">
-        <label className="flex flex-col gap-1 text-sm font-semibold text-ink2">
+      <div className="flex flex-wrap items-end gap-3 border-t border-line pt-5">
+        <label className="flex flex-col gap-1.5 type-label text-ink2">
           Grams
           <input
             type="number"
@@ -82,33 +99,37 @@ export function AddFood({ localDate }: { localDate: string }) {
             step="any"
             value={gramsText}
             onChange={(e) => setGramsText(e.target.value)}
-            className={`${field} w-28 font-normal`}
+            className={cn(fieldClass, "w-28 tabular-nums")}
           />
         </label>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-ink2">
+        <label className="flex flex-col gap-1.5 type-label text-ink2">
           Meal
-          <select
+          <Select
             value={slot}
             onChange={(e) => {
               const next = SLOTS.find((option) => option === e.target.value);
               if (next) setSlot(next);
             }}
-            className={`${field} font-normal`}
+            className="w-36"
           >
             {SLOTS.map((option) => (
               <option key={option} value={option}>
                 {SLOT_NAMES[option]}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
+        <Button className="ml-auto" disabled={!valid || busy} onClick={() => void add()}>
+          {busy ? "Adding…" : "Add"}
+        </Button>
       </div>
 
-      {food && !valid ? <p className="text-sm text-polo-ink">Enter an amount above 0 g.</p> : null}
-      {problem ? <p className="text-sm text-polo-ink">{problem}</p> : null}
-      <button type="button" disabled={!valid || busy} onClick={() => void add()} className={`${primaryButton} self-start`}>
-        {busy ? "Adding…" : "Add"}
-      </button>
+      {food && !valid ? <p className="-mt-2 type-caption text-polo-ink">Enter an amount above 0 g.</p> : null}
+      {problem ? (
+        <p role="alert" className="-mt-2 type-secondary text-polo-ink">
+          {problem}
+        </p>
+      ) : null}
     </section>
   );
 }
