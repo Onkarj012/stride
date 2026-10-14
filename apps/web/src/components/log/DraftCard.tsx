@@ -1,12 +1,14 @@
 import { useState } from "react";
+import { motion } from "motion/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { useToast } from "@/components/Toast";
 import { formatDayLabel } from "@/lib/date";
 import { plainError, type DraftId, type DraftItem, type FoodId } from "@/lib/log";
 import { FoodPicker } from "./FoodPicker";
-import { loggedTitle, namesOf, useLogToast } from "./toasts";
-import { field, outlineButton, primaryButton, quietButton } from "./ui";
+import { loggedTitle, useLogToast } from "./toasts";
+import { Button, CardSkeleton, Polo, Tag, fieldClass, pressSpring } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 /** One change the user made to a draft item before confirming. */
 type Fix = { remove?: boolean; foodId?: FoodId; foodName?: string; grams?: number; localDate?: string };
@@ -51,7 +53,7 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
   const [busy, setBusy] = useState<"confirm" | "discard" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
-  if (draft === undefined) return <p className="text-sm text-ink3">Opening the draft…</p>;
+  if (draft === undefined) return <CardSkeleton lines={2} />;
   // A draft that is no longer pending leaves the list on its own, so there is nothing to show.
   if (draft === null || draft.status !== "pending") return null;
 
@@ -111,121 +113,148 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
   }
 
   return (
-    <section className="flex flex-col gap-3 rounded-card bg-card p-5 shadow-card">
-      <div className="flex items-baseline justify-between gap-4">
-        <h2 className="font-display text-lg font-bold">{photo ? "From your photo" : missingFood ? "A quick check" : "Got these"}</h2>
-        {total !== null && kept.length > 0 ? <span className="font-semibold">{Math.round(total).toLocaleString()} kcal</span> : null}
+    <motion.section
+      initial={{ opacity: 0, y: 12, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={pressSpring}
+      className="flex flex-col gap-4 rounded-card bg-card p-6 shadow-card ring-1 ring-polo-soft"
+    >
+      <div className="flex items-center gap-3">
+        <Polo size={36} mood={missingFood ? "idle" : "happy"} />
+        <div className="min-w-0 flex-1">
+          <h2 className="type-card-title">{photo ? "From your photo" : missingFood ? "A quick check" : "Got these"}</h2>
+          <p className="type-caption text-ink3">Not logged yet. Check it, then log.</p>
+        </div>
+        {total !== null && kept.length > 0 ? (
+          <span className="type-metric tabular-nums">
+            {Math.round(total).toLocaleString()}
+            <span className="ml-1 type-unit text-ink3">kcal</span>
+          </span>
+        ) : null}
       </div>
 
-      {draft.items.map((item, i) => {
-        const fix = fixes[i] ?? {};
-        const view = views[i];
-        if (!view) return null;
-        const name = view.foodName ?? `"${item.text}"`;
+      <ul className="flex flex-col gap-2">
+        {draft.items.map((item, i) => {
+          const fix = fixes[i] ?? {};
+          const view = views[i];
+          if (!view) return null;
+          const name = view.foodName ?? `"${item.text}"`;
 
-        if (fix.remove) {
+          if (fix.remove) {
+            return (
+              <li key={i} className="flex items-center justify-between gap-3 rounded-sm border border-dashed border-line2 px-4 py-2.5">
+                <span className="truncate type-callout text-ink3 line-through">{name}</span>
+                <Button variant="quiet" size="sm" onClick={() => patch(i, { remove: false })}>
+                  Put back
+                </Button>
+              </li>
+            );
+          }
+
+          const asking = view.foodName === null || editing === i;
           return (
-            <div key={i} className="flex items-center justify-between gap-3 rounded-field bg-card2 p-3">
-              <span className="truncate text-ink3 line-through">{name}</span>
-              <button type="button" onClick={() => patch(i, { remove: false })} className={quietButton}>
-                Put back
-              </button>
-            </div>
-          );
-        }
-
-        const asking = view.foodName === null || editing === i;
-        return (
-          <div key={i} className="flex flex-col gap-3 rounded-field bg-card2 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="truncate font-semibold">{name}</div>
-                <div className="text-sm text-ink2">
-                  {amountText(item, fix, view)}
-                  {view.protein !== null ? ` · ${Math.round(view.protein)} g protein` : ""}
-                  {item.estimated ? " · estimated" : ""}
+            <li key={i} className={cn("flex flex-col gap-3 rounded-sm px-4 py-3.5", view.foodName === null ? "bg-polo-soft/50" : "bg-card2")}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate type-body-strong">{name}</div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 type-caption text-ink3">
+                    <span>
+                      {amountText(item, fix, view)}
+                      {view.protein !== null ? ` · ${Math.round(view.protein)} g protein` : ""}
+                    </span>
+                    {item.estimated ? <Tag tone="est">est.</Tag> : null}
+                  </div>
                 </div>
+                <span className="shrink-0 type-value tabular-nums">{view.kcal === null ? "–" : Math.round(view.kcal).toLocaleString()}</span>
               </div>
-              <span className="shrink-0 font-semibold">{view.kcal === null ? "–" : Math.round(view.kcal).toLocaleString()}</span>
-            </div>
 
-            {view.foodName !== null ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  aria-label={`Grams for ${view.foodName}`}
-                  value={view.grams === null ? "" : Math.round(view.grams * 10) / 10}
-                  placeholder="grams"
-                  onChange={(e) => {
-                    const grams = Number(e.target.value);
-                    patch(i, { grams: e.target.value !== "" && grams > 0 ? grams : undefined });
-                  }}
-                  className={`${field} w-28`}
-                />
-                <button type="button" onClick={() => setEditing(editing === i ? null : i)} className={quietButton}>
-                  Change food
-                </button>
-              </div>
-            ) : null}
+              {view.foodName !== null ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      aria-label={`Grams for ${view.foodName}`}
+                      value={view.grams === null ? "" : Math.round(view.grams * 10) / 10}
+                      placeholder="grams"
+                      onChange={(e) => {
+                        const grams = Number(e.target.value);
+                        patch(i, { grams: e.target.value !== "" && grams > 0 ? grams : undefined });
+                      }}
+                      className={cn(fieldClass, "h-[34px] w-28 py-1 pr-8 tabular-nums")}
+                    />
+                    <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 type-caption text-ink3">g</span>
+                  </span>
+                  <Button variant="quiet" size="sm" onClick={() => setEditing(editing === i ? null : i)}>
+                    {editing === i ? "Keep this food" : "Change food"}
+                  </Button>
+                  <Button variant="quiet" size="sm" className="ml-auto" onClick={() => patch(i, { remove: true })}>
+                    Remove
+                  </Button>
+                </div>
+              ) : null}
 
-            {item.requestedDate !== null && !fix.localDate ? (
-              <div className="flex flex-col items-start gap-2 text-sm text-ink2">
-                <p>This says {item.requestedDate}, which can't be logged. Pick today, or remove it.</p>
-                <button type="button" onClick={() => patch(i, { localDate: today })} className={outlineButton}>
-                  Log for today, {formatDayLabel(today)}
-                </button>
-              </div>
-            ) : null}
+              {item.requestedDate !== null && !fix.localDate ? (
+                <div className="flex flex-col items-start gap-2 rounded-sm bg-card px-3.5 py-3 type-secondary text-ink2">
+                  <p>This says {item.requestedDate}, which can't be logged. Pick today, or remove it.</p>
+                  <Button variant="ghost" size="sm" onClick={() => patch(i, { localDate: today })}>
+                    Log for today, {formatDayLabel(today)}
+                  </Button>
+                </div>
+              ) : null}
 
-            {asking ? (
-              <FoodPicker
-                candidates={item.candidates}
-                chosen={fix.foodId ?? item.food?._id ?? null}
-                heading={view.foodName === null ? `What's "${item.text}" closest to?` : "Not right? Pick another."}
-                hint={view.foodName === null ? "No solid match in IFCT, USDA or Open Food Facts. Pick one and I'll remember it." : undefined}
-                onPick={(foodId, foodName) => {
-                  patch(i, foodId === item.food?._id ? { foodId: undefined, foodName: undefined } : { foodId, foodName });
-                  setEditing(null);
-                }}
-              />
-            ) : null}
+              {asking ? (
+                <div className="rounded-sm bg-card p-4">
+                  <FoodPicker
+                    candidates={item.candidates}
+                    chosen={fix.foodId ?? item.food?._id ?? null}
+                    heading={view.foodName === null ? `What's "${item.text}" closest to?` : "Not right? Pick another."}
+                    hint={view.foodName === null ? "No solid match in IFCT, USDA or Open Food Facts. Pick one and I'll remember it." : undefined}
+                    onPick={(foodId, foodName) => {
+                      patch(i, foodId === item.food?._id ? { foodId: undefined, foodName: undefined } : { foodId, foodName });
+                      setEditing(null);
+                    }}
+                  />
+                </div>
+              ) : null}
 
-            <div>
-              <button type="button" onClick={() => patch(i, { remove: true })} className={quietButton}>
-                Remove
-              </button>
-            </div>
-          </div>
-        );
-      })}
+              {view.foodName === null ? (
+                <div>
+                  <Button variant="quiet" size="sm" onClick={() => patch(i, { remove: true })}>
+                    Remove
+                  </Button>
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
 
-      <p className="text-sm text-ink2">
+      <p className="type-caption text-ink3">
         {photo
           ? "Photos are estimates, so I always check first. Use Change food to fix a match."
           : "Use Change food to swap a match. Your picks are remembered next time."}
+        {missingFood && kept.length > 0 ? " Pick a food for each item, or remove it." : ""}
       </p>
-      {missingFood && kept.length > 0 ? <p className="text-sm text-ink2">Pick a food for each item, or remove it.</p> : null}
-      {problem ? <p className="text-sm text-polo-ink">{problem}</p> : null}
+      {problem ? (
+        <p role="alert" className="type-secondary text-polo-ink">
+          {problem}
+        </p>
+      ) : null}
 
       <div className="flex gap-2">
-        <button type="button" disabled={busy !== null} onClick={() => void discard()} className={outlineButton}>
+        <Button variant="ghost" disabled={busy !== null} onClick={() => void discard()}>
           {busy === "discard" ? "Discarding…" : "Discard"}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null || kept.length === 0 || missingFood}
-          onClick={() => void confirm()}
-          className={`${primaryButton} flex-1`}
-        >
+        </Button>
+        <Button disabled={busy !== null || kept.length === 0 || missingFood} onClick={() => void confirm()} className="flex-1">
           {busy === "confirm"
             ? "Logging…"
             : kept.length === 0
               ? "Nothing to log"
               : `Log ${kept.length} item${kept.length === 1 ? "" : "s"}${total !== null ? ` · ${Math.round(total).toLocaleString()} kcal` : ""}`}
-        </button>
+        </Button>
       </div>
-    </section>
+    </motion.section>
   );
 }

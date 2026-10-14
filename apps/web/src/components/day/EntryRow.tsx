@@ -1,8 +1,11 @@
 import { useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { useToast } from "@/components/Toast";
+import { Button, Select, Tag, fieldClass, smoothSpring } from "@/components/ui";
 import { SLOTS, SLOT_NAMES, newSubmissionId, plainError, type EntryId, type EntryView, type MealSlot } from "@/lib/log";
+import { cn } from "@/lib/utils";
 
 // One logged food. Click it to open an inline editor for grams, meal slot and delete.
 export function EntryRow({ entry }: { entry: EntryView }) {
@@ -11,31 +14,52 @@ export function EntryRow({ entry }: { entry: EntryView }) {
   const { protein, carbs, fat, kcal } = entry.nutrients;
 
   return (
-    <div className="rounded-field bg-card shadow-card">
+    <li className={cn("rounded-sm transition-colors", editing ? "bg-card2" : "hover:bg-card2/60")}>
       <button
         type="button"
         aria-expanded={editing}
         onClick={() => setEditing((open) => !open)}
-        className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left"
+        className="flex w-full items-center justify-between gap-4 rounded-sm px-3 py-2.5 text-left"
       >
         <span className="min-w-0">
-          <span className="block truncate font-semibold">
-            {entry.foodName}
-            {entry.flags.includes("estimated") ? (
-              <span className="ml-2 rounded-tag bg-card2 px-1.5 py-0.5 align-middle text-xs font-normal text-ink2">estimated</span>
-            ) : null}
+          <span className="flex items-center gap-2">
+            <span className="truncate type-body-strong">{entry.foodName}</span>
+            {entry.flags.includes("estimated") ? <Tag tone="est">est.</Tag> : null}
           </span>
-          <span className="block text-sm text-ink2">{amount} g</span>
-        </span>
-        <span className="shrink-0 text-right">
-          <span className="block font-semibold">{Math.round(kcal)} kcal</span>
-          <span className="block text-xs text-ink2">
-            P {Math.round(protein)} · C {Math.round(carbs)} · F {Math.round(fat)}
+          <span className="mt-0.5 flex items-center gap-3 type-caption text-ink3 tabular-nums">
+            <span>{amount} g</span>
+            <MacroDot className="bg-protein" value={protein} label="protein" />
+            <MacroDot className="bg-carbs" value={carbs} label="carbs" />
+            <MacroDot className="bg-fat" value={fat} label="fat" />
           </span>
         </span>
+        <span className="shrink-0 type-value tabular-nums">{Math.round(kcal).toLocaleString("en-IN")}</span>
       </button>
-      {editing ? <EntryEditor entry={entry} onDone={() => setEditing(false)} /> : null}
-    </div>
+      <AnimatePresence initial={false}>
+        {editing ? (
+          <motion.div
+            key="editor"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={smoothSpring}
+            className="overflow-hidden"
+          >
+            <EntryEditor entry={entry} onDone={() => setEditing(false)} />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </li>
+  );
+}
+
+// A coloured dot and grams for one macro.
+function MacroDot({ className, value, label }: { className: string; value: number; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1" title={`${Math.round(value)} g ${label}`}>
+      <i className={cn("size-1.5 rounded-pill", className)} />
+      {Math.round(value)}
+    </span>
   );
 }
 
@@ -104,9 +128,15 @@ function EntryEditor({ entry, onDone }: { entry: EntryView; onDone: () => void }
   }
 
   return (
-    <div className="flex flex-col gap-4 border-t border-line px-4 py-4">
-      <div className="flex flex-wrap gap-4">
-        <label className="flex flex-col gap-1 text-sm font-semibold text-ink2">
+    <form
+      className="flex flex-col gap-3 px-3 pt-1 pb-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col gap-1.5 type-label text-ink2">
           Grams
           <input
             type="number"
@@ -114,49 +144,40 @@ function EntryEditor({ entry, onDone }: { entry: EntryView; onDone: () => void }
             step="any"
             value={grams}
             onChange={(e) => setGrams(e.target.value)}
-            className="w-32 rounded-field border border-line2 bg-card px-3 py-2 font-normal text-ink"
+            aria-invalid={!gramsValid}
+            className={cn(fieldClass, "w-28 bg-card tabular-nums", !gramsValid && "border-polo-ink")}
           />
         </label>
-        <label className="flex flex-col gap-1 text-sm font-semibold text-ink2">
+        <label className="flex flex-col gap-1.5 type-label text-ink2">
           Meal
-          <select
+          <Select
             value={slot}
             onChange={(e) => {
               const next = SLOTS.find((option) => option === e.target.value);
               if (next) setSlot(next);
             }}
-            className="rounded-field border border-line2 bg-card px-3 py-2 font-normal text-ink"
+            className="w-36"
           >
             {SLOTS.map((option) => (
               <option key={option} value={option}>
                 {SLOT_NAMES[option]}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
+        <div className="ml-auto flex items-center gap-1">
+          <Button variant="danger" size="sm" disabled={busy} onClick={() => void remove()}>
+            Delete
+          </Button>
+          <Button variant="quiet" size="sm" onClick={onDone}>
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={busy || !gramsValid}>
+            Save
+          </Button>
+        </div>
       </div>
-      {gramsValid ? null : <p className="text-sm text-polo-ink">Enter an amount above 0 g.</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={busy || !gramsValid}
-          onClick={() => void save()}
-          className="rounded-pill bg-polo px-4 py-2 text-sm font-semibold text-on-polo disabled:opacity-40"
-        >
-          Save
-        </button>
-        <button type="button" onClick={onDone} className="rounded-pill px-4 py-2 text-sm font-semibold text-ink2 hover:bg-card2">
-          Cancel
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void remove()}
-          className="ml-auto rounded-pill px-4 py-2 text-sm font-semibold text-polo-ink hover:bg-polo-soft disabled:opacity-40"
-        >
-          Delete
-        </button>
-      </div>
-    </div>
+      {gramsValid ? null : <p className="type-caption text-polo-ink">Enter an amount above 0 g.</p>}
+    </form>
   );
 }

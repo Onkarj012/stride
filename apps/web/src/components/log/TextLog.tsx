@@ -1,10 +1,11 @@
 import { useRef, useState } from "react";
 import { useAction } from "convex/react";
+import { ArrowUp } from "lucide-react";
 import { api } from "@convex/_generated/api";
+import { Button, Polo, Select, Thinking } from "@/components/ui";
 import { SLOTS, SLOT_NAMES, plainError, type MealSlot } from "@/lib/log";
 import { submissionIdFor, type Submission } from "./submission";
 import { loggedTitle, namesOf, useLogToast } from "./toasts";
-import { field, primaryButton } from "./ui";
 
 const WORKING_TEXT = "Matching to IFCT and your usuals…";
 
@@ -56,9 +57,12 @@ export function TextLog() {
   }
 
   return (
-    <section className="flex flex-col gap-3 rounded-card bg-card p-5 shadow-card">
-      <label className="flex flex-col gap-2">
-        <span className="font-display text-lg font-bold">What did you eat?</span>
+    <section className="rounded-card bg-card p-6 shadow-card transition-shadow focus-within:shadow-[var(--shadow-card),0_0_0_2px_var(--color-polo-soft)]">
+      <label className="flex flex-col">
+        <span className="flex items-center gap-3">
+          <Polo size={36} mood={busy ? "happy" : "idle"} />
+          <span className="type-card-title">What did you eat?</span>
+        </span>
         <textarea
           value={text}
           rows={2}
@@ -75,32 +79,38 @@ export function TextLog() {
               void submit();
             }
           }}
-          className={`${field} resize-none`}
+          className="mt-4 min-h-16 w-full resize-none bg-transparent font-display text-[24px] leading-[1.2] font-[560] tracking-[-0.02em] text-ink placeholder:text-ink3/70 focus:outline-none focus-visible:outline-none read-only:text-ink2"
         />
       </label>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <select
-          aria-label="Meal"
-          value={slot}
-          onChange={(e) => chooseSlot(e.target.value)}
-          className={field}
-        >
-          <option value="auto">Auto</option>
+      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-4">
+        <Select aria-label="Meal" value={slot} onChange={(e) => chooseSlot(e.target.value)} className="w-36">
+          <option value="auto">Auto meal</option>
           {SLOTS.map((option) => (
             <option key={option} value={option}>
               {SLOT_NAMES[option]}
             </option>
           ))}
-        </select>
-        <button type="button" disabled={busy || !text.trim()} onClick={() => void submit()} className={primaryButton}>
+        </Select>
+        {busy ? (
+          <Thinking label={WORKING_TEXT} />
+        ) : (
+          <span className="type-caption text-ink3">
+            <kbd className="font-body font-semibold text-ink2">Enter</kbd> to log · <kbd className="font-body font-semibold text-ink2">Shift Enter</kbd> for a new line
+          </span>
+        )}
+        <Button className="ml-auto" disabled={busy || !text.trim()} onClick={() => void submit()}>
           {busy ? "Logging…" : "Log"}
-        </button>
-        {busy ? <span className="text-sm text-ink2">{WORKING_TEXT}</span> : null}
+          {busy ? null : <ArrowUp className="size-4" strokeWidth={2.2} />}
+        </Button>
       </div>
 
-      {empty ? <p className="text-sm text-ink2">I didn't catch any food there. Try "2 roti and dal".</p> : null}
-      {problem ? <p className="text-sm text-polo-ink">{problem}</p> : null}
+      {empty ? <p className="mt-3 type-secondary text-ink2">I didn't catch any food there. Try "2 roti and dal".</p> : null}
+      {problem ? (
+        <p role="alert" className="mt-3 type-secondary text-polo-ink">
+          {problem}
+        </p>
+      ) : null}
     </section>
   );
 }

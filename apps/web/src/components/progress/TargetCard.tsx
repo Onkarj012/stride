@@ -1,8 +1,9 @@
 import { KCAL_FLOOR } from "@stride/core";
-import { Card, Skeleton } from "./Card";
+import { Card, CardSkeleton } from "@/components/ui";
 import type { Sex, Summary } from "./types";
 import { formatDayLabel } from "@/lib/date";
 import { targetsFor } from "@/lib/log";
+import { cn } from "@/lib/utils";
 
 const SOURCE_TEXT = { formula: "From your profile", adaptive: "Adapted to your data" } as const;
 
@@ -15,7 +16,7 @@ function clampNote(clamped: "pace_cap" | "floor" | undefined, sex: Sex | undefin
 
 // Target card: today's calorie target, where it came from, and the macro split.
 export function TargetCard({ summary, sex }: { summary: Summary | undefined; sex: Sex | undefined }) {
-  if (summary === undefined) return <Skeleton className="h-72" />;
+  if (summary === undefined) return <CardSkeleton lines={2} />;
   const target = summary.target;
   const macros = targetsFor(target?.kcal ?? null);
   const note = target === null ? null : clampNote(target.clamped, sex);
@@ -23,33 +24,40 @@ export function TargetCard({ summary, sex }: { summary: Summary | undefined; sex
   return (
     <Card title="Daily target">
       {target === null ? (
-        <p className="text-sm text-ink2">Log a weigh-in to get your target.</p>
+        <p className="-mt-2 type-secondary text-ink2">Log a weigh-in to get your target. Until then the split below uses the default.</p>
       ) : (
-        <div className="flex flex-col gap-1">
-          <p className="font-display text-4xl font-bold">
-            {target.kcal.toLocaleString("en-IN")} <span className="text-lg font-semibold text-ink3">kcal / day</span>
+        <div className="-mt-2 flex flex-col gap-1.5">
+          <p className="font-display text-[44px] leading-none font-bold tracking-[-0.045em] tabular-nums">
+            {target.kcal.toLocaleString("en-IN")}
+            <span className="ml-1.5 font-body text-sm font-medium tracking-normal text-ink3">kcal / day</span>
           </p>
-          <p className="text-sm text-ink2">
+          <p className="type-caption text-ink2">
             {SOURCE_TEXT[target.source]} · set {formatDayLabel(target.appliedLocalDate)}
           </p>
-          {note ? <p className="text-sm text-ink3">{note}</p> : null}
+          {note ? <p className="type-caption text-ink3">{note}</p> : null}
         </div>
       )}
-      <dl className="grid grid-cols-3 gap-3">
-        <Macro label="Protein" grams={macros.proteinG} tone="text-protein" />
-        <Macro label="Carbs" grams={macros.carbsG} tone="text-carbs" />
-        <Macro label="Fat" grams={macros.fatG} tone="text-fat" />
+      <dl className="grid grid-cols-3 gap-2">
+        <Macro label="Protein" grams={macros.proteinG} dot="bg-protein" />
+        <Macro label="Carbs" grams={macros.carbsG} dot="bg-carbs" />
+        <Macro label="Fat" grams={macros.fatG} dot="bg-fat" />
       </dl>
     </Card>
   );
 }
 
-// One macro target in grams, coloured by its macro.
-function Macro({ label, grams, tone }: { label: string; grams: number; tone: string }) {
+// One macro target in grams, keyed by its macro colour.
+function Macro({ label, grams, dot }: { label: string; grams: number; dot: string }) {
   return (
-    <div className="rounded-field bg-card2 p-3">
-      <dt className="text-xs font-semibold text-ink3">{label}</dt>
-      <dd className={`font-display text-xl font-bold ${tone}`}>{Math.round(grams)} g</dd>
+    <div className="rounded-sm bg-card2 px-3 py-2.5">
+      <dt className="flex items-center gap-1.5 type-label text-ink2">
+        <i className={cn("size-[7px] rounded-pill", dot)} />
+        {label}
+      </dt>
+      <dd className="mt-0.5 type-metric tabular-nums">
+        {Math.round(grams)}
+        <span className="ml-0.5 type-label text-ink3">g</span>
+      </dd>
     </div>
   );
 }

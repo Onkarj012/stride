@@ -1,10 +1,21 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { daysBetween } from "@stride/core";
+import { Button, Eyebrow } from "@/components/ui";
 import { addDays, formatDayLabel } from "@/lib/date";
 
-const CONTROL = "rounded-pill border border-line2 px-3 py-2 text-sm font-semibold text-ink hover:bg-card2 disabled:opacity-40";
+const ARROW =
+  "grid size-9 place-items-center rounded-pill text-ink2 transition-colors hover:bg-card hover:text-ink disabled:pointer-events-none disabled:opacity-30";
 
-// Day title with a Today tag, and controls to move between days.
+// "Today", "Yesterday" or "5 days ago" above the date.
+function relativeLabel(localDate: string, today: string): string {
+  const ago = daysBetween(localDate, today);
+  if (ago === 0) return "Today";
+  if (ago === 1) return "Yesterday";
+  return `${ago} days ago`;
+}
+
+// Day title with how long ago it was, and controls to move between days.
 export function DayHeader({ localDate, today }: { localDate: string; today: string }) {
   const navigate = useNavigate();
   const isToday = localDate === today;
@@ -15,21 +26,25 @@ export function DayHeader({ localDate, today }: { localDate: string; today: stri
   }
 
   return (
-    <header className="flex flex-wrap items-center justify-between gap-4">
-      <div className="flex items-center gap-3">
-        <h1 className="font-display text-3xl font-bold tracking-tight">{formatDayLabel(localDate)}</h1>
-        {isToday ? <span className="rounded-tag bg-polo-soft px-2 py-0.5 text-xs font-semibold text-polo-ink">Today</span> : null}
+    <header className="flex flex-wrap items-end justify-between gap-4">
+      <div>
+        <Eyebrow className={isToday ? "text-polo-ink" : undefined}>{relativeLabel(localDate, today)}</Eyebrow>
+        <h1 className="mt-2 type-screen-title">{formatDayLabel(localDate)}</h1>
       </div>
       <div className="flex items-center gap-2">
-        <button type="button" aria-label="Previous day" onClick={() => go(addDays(localDate, -1))} className={CONTROL}>
-          <ChevronLeft className="size-4" />
-        </button>
-        <button type="button" aria-label="Next day" disabled={isToday} onClick={() => go(addDays(localDate, 1))} className={CONTROL}>
-          <ChevronRight className="size-4" />
-        </button>
-        <button type="button" disabled={isToday} onClick={() => go(today)} className={CONTROL}>
-          Today
-        </button>
+        <div className="flex items-center rounded-pill bg-card2 p-[3px]">
+          <button type="button" aria-label="Previous day" onClick={() => go(addDays(localDate, -1))} className={ARROW}>
+            <ChevronLeft className="size-[18px]" strokeWidth={1.9} />
+          </button>
+          <button type="button" aria-label="Next day" disabled={isToday} onClick={() => go(addDays(localDate, 1))} className={ARROW}>
+            <ChevronRight className="size-[18px]" strokeWidth={1.9} />
+          </button>
+        </div>
+        {isToday ? null : (
+          <Button variant="ink" size="sm" onClick={() => go(today)}>
+            Back to today
+          </Button>
+        )}
       </div>
     </header>
   );

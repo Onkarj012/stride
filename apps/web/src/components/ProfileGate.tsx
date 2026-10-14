@@ -2,22 +2,33 @@ import type { ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { useClerk } from "@clerk/react";
 import { api } from "@convex/_generated/api";
+import { Button, FullScreen, Polo, Thinking } from "@/components/ui";
 
 // Holds the app until the profile exists. Onboarding happens in the mobile app, not on the web.
 export function ProfileGate({ children }: { children: ReactNode }) {
   const status = useQuery(api.progress_v2.profileStatus);
   const { signOut } = useClerk();
 
-  if (status === undefined) return <div className="flex min-h-dvh items-center justify-center bg-bg text-ink2">Loading…</div>;
+  if (status === undefined)
+    return (
+      <FullScreen>
+        <Polo size={48} />
+        <Thinking label="Getting your day ready…" />
+      </FullScreen>
+    );
 
   if (!status.complete)
     return (
-      <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-bg p-6 text-center text-ink2">
-        <p className="text-ink">Finish setting up Stride in the mobile app first.</p>
-        <button type="button" onClick={() => void signOut()} className="rounded-full border border-line2 px-4 py-2 text-sm font-semibold text-ink">
+      <FullScreen>
+        <Polo size={64} mood="happy" />
+        <p className="type-greeting text-ink">Set up Stride on your phone first.</p>
+        <p className="max-w-sm type-callout text-ink2">
+          Your goal and targets come from the mobile app. Finish setup there, then come back here.
+        </p>
+        <Button variant="ghost" className="mt-2" onClick={() => void signOut()}>
           Sign out
-        </button>
-      </div>
+        </Button>
+      </FullScreen>
     );
 
   return <>{children}</>;
