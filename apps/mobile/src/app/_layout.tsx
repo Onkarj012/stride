@@ -5,6 +5,7 @@ import * as SplashScreen from 'expo-splash-screen'
 import * as SystemUI from 'expo-system-ui'
 import { StatusBar } from 'expo-status-bar'
 import { useFonts } from 'expo-font'
+import * as Sentry from '@sentry/react-native'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { ClerkProvider, useAuth } from '@clerk/expo'
 import { tokenCache } from '@clerk/expo/token-cache'
@@ -14,9 +15,11 @@ import { api } from 'stride-backend/convex/_generated/api'
 import { layout } from '@stride/ui-tokens'
 import { Polo } from '@/components/Polo'
 import { readConfig } from '@/lib/config'
+import { initSentry } from '@/lib/sentry'
 import { HoldAppContext, HoldOnboardingContext } from '@/lib/profile'
 import { font, fontAssets, themedStyles, useTheme } from '@/theme'
 
+initSentry()
 void SplashScreen.preventAutoHideAsync()
 
 const config = readConfig()
@@ -24,7 +27,7 @@ const config = readConfig()
 const convex = config.ok ? new ConvexReactClient(config.convexUrl) : null
 
 // Root: holds the splash until fonts load, then wires theme, Clerk and Convex.
-export default function RootLayout() {
+function RootLayout() {
   const t = useTheme()
   const [fontsLoaded, fontError] = useFonts(fontAssets)
   const ready = fontsLoaded || fontError !== null
@@ -62,6 +65,8 @@ export default function RootLayout() {
     </SafeAreaProvider>
   )
 }
+
+export default Sentry.wrap(RootLayout)
 
 // Tabs once signed in with a complete profile, onboarding until then, sign-in when signed out. Polo waits while Clerk and the profile load.
 function AuthGate() {
