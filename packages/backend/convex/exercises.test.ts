@@ -68,7 +68,7 @@ test.each([0, -1, 31, 1.5, Number.NaN, Number.POSITIVE_INFINITY])("search reject
 
 test("search rejects oversized text and blank or oversized category", async () => {
   const { user } = await setup();
-  await expect(user.query(api.exercises.search, { query: "x".repeat(201) })).rejects.toThrow(/query/);
+  await expect(user.query(api.exercises.search, { query: "x".repeat(201) })).rejects.toMatchObject({ data: { code: "INVALID_TEXT" } });
   await expect(user.query(api.exercises.search, { query: "", category: " " })).rejects.toThrow(/category/);
   await expect(user.query(api.exercises.search, { query: "", category: "x".repeat(81) })).rejects.toThrow(/category/);
 });

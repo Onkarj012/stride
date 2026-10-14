@@ -1,5 +1,5 @@
 import { daysBetween, isLocalDate, roundNutrients, type Nutrients } from "@stride/core";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { query, type MutationCtx } from "./_generated/server";
 import { nutrientsValidator } from "./ledger_validators";
@@ -46,7 +46,7 @@ export async function applyToDayTotals(
     else next[key] = base[key] + sign * value;
   }
   if (next.entryCount < 0) throw new Error(`day_totals underflow for ${localDate}`);
-  if (next.entryCount > MAX_DAY_ENTRIES) throw new Error(`A day holds at most ${MAX_DAY_ENTRIES} entries`);
+  if (next.entryCount > MAX_DAY_ENTRIES) throw new ConvexError({ code: "LIMIT_REACHED", message: `A day holds at most ${MAX_DAY_ENTRIES} entries` });
   // Floating-point add then subtract can leave dust like 1e-13; an empty day is exactly zero.
   const row = next.entryCount === 0 ? emptyTotals(userId, localDate) : next;
   if (existing === null) await ctx.db.insert("day_totals", row);
@@ -113,10 +113,10 @@ export const dayTotalsInRange = query({
   returns: v.array(v.object({ localDate: v.string(), entryCount: v.number(), nutrients: nutrientsValidator })),
   handler: async (ctx, { from, to }) => {
     const userId = await requireUserId(ctx);
-    if (!isLocalDate(from) || !isLocalDate(to)) throw new Error("from and to must be YYYY-MM-DD dates");
+    if (!isLocalDate(from) || !isLocalDate(to)) throw new ConvexError({ code: "INVALID_DATE", message: "from and to must be YYYY-MM-DD dates" });
     const span = daysBetween(from, to) + 1;
     if (span < 1 || span > MAX_TOTALS_RANGE_DAYS) {
-      throw new Error(`Range must cover 1-${MAX_TOTALS_RANGE_DAYS} days, got ${span}`);
+      throw new ConvexError({ code: "INVALID_DATE", message: `Range must cover 1-${MAX_TOTALS_RANGE_DAYS} days, got ${span}` });
     }
     const rows = await ctx.db
       .query("day_totals")

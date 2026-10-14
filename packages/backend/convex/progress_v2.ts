@@ -3,7 +3,7 @@ import {
   TDEE_MAX_WINDOW_DAYS, TDEE_MIN_LOGGED_FRACTION, TDEE_MIN_WEIGH_INS,
   TDEE_MIN_WINDOW_DAYS, weightTrend, type TdeeDay,
 } from "@stride/core";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
@@ -44,7 +44,7 @@ export function dietsOf(settings: Pick<Doc<"user_settings">, "dietType" | "dietT
 /** Deduplicates the picked diets and rejects an empty pick. */
 function pickedDiets(dietTypes: DietType[]): DietType[] {
   const unique = [...new Set(dietTypes)];
-  if (unique.length === 0) throw new Error("Pick at least one diet");
+  if (unique.length === 0) throw new ConvexError({ code: "DIET_REQUIRED", message: "Pick at least one diet" });
   return unique;
 }
 
@@ -106,28 +106,28 @@ export async function initializeCalorieTarget(ctx: MutationCtx, userId: string):
 async function validateProfile(ctx: MutationCtx, userId: string, profile: ProfileInput, checkTargetSide: boolean): Promise<void> {
   const { goal, heightCm, dob, targetWeightKg, trainingDaysPerWeek } = profile;
   if (heightCm === undefined || !Number.isFinite(heightCm) || heightCm < 100 || heightCm > 250) {
-    throw new Error(`heightCm must be within 100-250, got ${heightCm}`);
+    throw new ConvexError({ code: "INVALID_HEIGHT", message: `heightCm must be within 100-250, got ${heightCm}` });
   }
   const localDate = await localDateOrToday(ctx, userId, undefined);
   const age = dob === undefined ? null : ageOnDate(dob, localDate);
   if (age === null || age < 13 || age > 120) {
-    throw new Error(`dob must be a valid date giving an age of 13-120, got ${dob}`);
+    throw new ConvexError({ code: "INVALID_DOB", message: `dob must be a valid date giving an age of 13-120, got ${dob}` });
   }
   if (trainingDaysPerWeek !== undefined && (!Number.isInteger(trainingDaysPerWeek) || trainingDaysPerWeek < 0 || trainingDaysPerWeek > 7)) {
-    throw new Error(`trainingDaysPerWeek must be an integer from 0 to 7, got ${trainingDaysPerWeek}`);
+    throw new ConvexError({ code: "INVALID_TRAINING_DAYS", message: `trainingDaysPerWeek must be an integer from 0 to 7, got ${trainingDaysPerWeek}` });
   }
   if (targetWeightKg === undefined) return;
   if (!Number.isFinite(targetWeightKg) || targetWeightKg < 30 || targetWeightKg > 300) {
-    throw new Error(`targetWeightKg must be within 30-300, got ${targetWeightKg}`);
+    throw new ConvexError({ code: "INVALID_TARGET_WEIGHT", message: `targetWeightKg must be within 30-300, got ${targetWeightKg}` });
   }
   if (!checkTargetSide) return;
   const latest = await ctx.db.query("weights").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).lte("localDate", localDate)).order("desc").first();
   if (latest === null) return;
   if (goal === "lose" && targetWeightKg >= latest.kg) {
-    throw new Error(`targetWeightKg must be below your current weight of ${latest.kg} kg to lose weight, got ${targetWeightKg}`);
+    throw new ConvexError({ code: "TARGET_NOT_BELOW", message: `targetWeightKg must be below your current weight of ${latest.kg} kg to lose weight, got ${targetWeightKg}` });
   }
   if (goal === "gain" && targetWeightKg <= latest.kg) {
-    throw new Error(`targetWeightKg must be above your current weight of ${latest.kg} kg to gain weight, got ${targetWeightKg}`);
+    throw new ConvexError({ code: "TARGET_NOT_ABOVE", message: `targetWeightKg must be above your current weight of ${latest.kg} kg to gain weight, got ${targetWeightKg}` });
   }
 }
 
@@ -290,7 +290,7 @@ export const updateProfile = mutation({
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
-    if (settings === null) throw new Error("Finish onboarding first");
+    if (settings === null) throw new ConvexError({ code: "ONBOARDING_REQUIRED", message: "Finish onboarding first" });
     const dietPatch = args.dietTypes === undefined ? {} : { dietTypes: pickedDiets(args.dietTypes), dietType: undefined };
     await validateProfile(ctx, userId, { ...settings, ...args }, args.targetWeightKg !== undefined || args.goal !== undefined);
     await assertLedgerWritable(ctx, userId);
