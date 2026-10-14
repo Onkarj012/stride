@@ -54,7 +54,7 @@ async function updateSettings(t: TestConvex<typeof schema>, update: Partial<Doc<
 
 test("summary requires authentication and validates the bounded range", async () => {
   const { t, user } = await setup();
-  await expect(t.query(api.progress_v2.summary, { rangeDays: 14 })).rejects.toThrow(/Unauthenticated/);
+  await expect(t.query(api.progress_v2.summary, { rangeDays: 14 })).rejects.toMatchObject({ data: { code: "UNAUTHENTICATED" } });
   for (const rangeDays of [0, -1, 181, 1.5, Infinity]) {
     await expect(user.query(api.progress_v2.summary, { rangeDays })).rejects.toThrow(/rangeDays/);
   }
@@ -136,7 +136,7 @@ test("recomputeUser upserts one ready snapshot per local date and uses the last 
 test("recomputeUser guards clearing users and skips missing or invalid time zones", async () => {
   const { t } = await setup();
   await t.run((ctx) => ctx.db.insert("ledger_clears", { userId: "user_a" }));
-  await expect(t.mutation(internal.tdee_recompute.recomputeUser, { userId: "user_a" })).rejects.toThrow(/being cleared/);
+  await expect(t.mutation(internal.tdee_recompute.recomputeUser, { userId: "user_a" })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
   await expect(t.mutation(internal.tdee_recompute.recomputeUser, { userId: "missing" })).resolves.toBeNull();
   await t.run((ctx) => ctx.db.insert("user_settings", { userId: "invalid", timeZone: "Not/AZone" }));
   await expect(t.mutation(internal.tdee_recompute.recomputeUser, { userId: "invalid" })).resolves.toBeNull();
@@ -310,12 +310,12 @@ test("one old weigh-in warms the trend without stretching the gate window to 28 
 
 test("saveProfile requires authentication and validates height and birth date", async () => {
   const { t, user } = await setup();
-  await expect(t.mutation(api.progress_v2.saveProfile, PROFILE)).rejects.toThrow(/Unauthenticated/);
+  await expect(t.mutation(api.progress_v2.saveProfile, PROFILE)).rejects.toMatchObject({ data: { code: "UNAUTHENTICATED" } });
   for (const heightCm of [99, 251, Infinity]) {
-    await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, heightCm })).rejects.toThrow(/heightCm/);
+    await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, heightCm })).rejects.toMatchObject({ data: { code: "INVALID_HEIGHT" } });
   }
   for (const dob of ["2026-13-01", "2026-10-15", "1900-01-01"]) {
-    await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, dob })).rejects.toThrow(/dob/);
+    await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, dob })).rejects.toMatchObject({ data: { code: "INVALID_DOB" } });
   }
 });
 
@@ -351,7 +351,7 @@ test("saveProfile keeps every picked diet once", async () => {
 
 test("saveProfile rejects an empty diet pick", async () => {
   const { user } = await setup();
-  await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, dietTypes: [] })).rejects.toThrow("Pick at least one diet");
+  await expect(user.mutation(api.progress_v2.saveProfile, { ...PROFILE, dietTypes: [] })).rejects.toMatchObject({ data: { code: "DIET_REQUIRED" } });
 });
 
 test("a row saved with the old single dietType reads back as a one-item list", async () => {
@@ -379,7 +379,7 @@ test("updateProfile rejects a target weight on the wrong side of the current wei
   const { user } = await setup();
   await user.mutation(api.progress_v2.saveProfile, { ...PROFILE, goal: "lose" });
   await user.mutation(api.weights.logWeight, { kg: 70 });
-  await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 75 })).rejects.toThrow(/targetWeightKg/);
+  await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 75 })).rejects.toMatchObject({ data: { code: "TARGET_NOT_BELOW" } });
   await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 65 })).resolves.toBeNull();
 });
 
@@ -389,7 +389,7 @@ test("updateProfile on unrelated fields still works once the target weight is re
   await user.mutation(api.weights.logWeight, { kg: 64 });
   await expect(user.mutation(api.progress_v2.updateProfile, { dietTypes: ["vegan"] })).resolves.toBeNull();
   await expect(user.mutation(api.progress_v2.updateProfile, {})).resolves.toBeNull();
-  await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 70 })).rejects.toThrow(/targetWeightKg/);
+  await expect(user.mutation(api.progress_v2.updateProfile, { targetWeightKg: 70 })).rejects.toMatchObject({ data: { code: "TARGET_NOT_BELOW" } });
 });
 
 test("profile ignores a weigh-in dated after today", async () => {
@@ -402,7 +402,7 @@ test("profile ignores a weigh-in dated after today", async () => {
 
 test("updateProfile rejects trainingDaysPerWeek outside 0-7", async () => {
   const { user } = await setup();
-  await expect(user.mutation(api.progress_v2.updateProfile, { trainingDaysPerWeek: 8 })).rejects.toThrow(/trainingDaysPerWeek/);
+  await expect(user.mutation(api.progress_v2.updateProfile, { trainingDaysPerWeek: 8 })).rejects.toMatchObject({ data: { code: "INVALID_TRAINING_DAYS" } });
 });
 
 test("a low-maintenance female target is lifted to the sex floor and reports why", async () => {

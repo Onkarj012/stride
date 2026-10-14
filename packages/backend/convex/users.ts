@@ -1,6 +1,6 @@
 import { action, internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 
 /** Per-user restart tables that clearAllData empties in scheduled batches. Owned foods go last, after the rows that point at them. */
 const LEDGER_TABLES = [
@@ -96,7 +96,7 @@ async function pendingLedgerClear(ctx: QueryCtx | MutationCtx, userId: string) {
 
 /** Throws while clearAllData is still deleting the user's rows, so no new ledger, chat, draft or food write survives it half-done. */
 export async function assertLedgerWritable(ctx: MutationCtx, userId: string): Promise<void> {
-  if ((await pendingLedgerClear(ctx, userId)) !== null) throw new Error("Your data is being cleared. Try again in a moment.");
+  if ((await pendingLedgerClear(ctx, userId)) !== null) throw new ConvexError({ code: "LEDGER_CLEARING", message: "Your data is being cleared. Try again in a moment." });
 }
 
 /** Deletes one batch of a user's rows and schedules itself until every listed table is empty, then drops the marker. */
@@ -123,7 +123,7 @@ export const ledgerClearPending = query({
   returns: v.boolean(),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     return (await pendingLedgerClear(ctx, identity.subject)) !== null;
   },
 });
@@ -135,7 +135,7 @@ export const ensureUser = mutation({
   },
   handler: async (ctx, { name, email }) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const clerkId = identity.subject;
 
     const existing = await ctx.db
@@ -214,7 +214,7 @@ export const clearAllData = mutation({
   returns: v.null(),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     await clearUserData(ctx, identity.subject);
     return null;
   },
@@ -238,10 +238,10 @@ export const deleteAccount = action({
   returns: v.null(),
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const userId = identity.subject;
     const key = process.env.CLERK_SECRET_KEY;
-    if (!key) throw new Error("CLERK_SECRET_KEY is not set");
+    if (!key) throw new ConvexError({ code: "ACCOUNT_DELETE_FAILED", message: "CLERK_SECRET_KEY is not set" });
 
     await ctx.runMutation(internal.users.clearUserDataInternal, { userId });
 
@@ -250,7 +250,7 @@ export const deleteAccount = action({
       headers: { Authorization: `Bearer ${key}` },
     });
     // 404 means Clerk already removed the user.
-    if (res.status !== 200 && res.status !== 404) throw new Error(`Clerk delete failed (${res.status})`);
+    if (res.status !== 200 && res.status !== 404) throw new ConvexError({ code: "ACCOUNT_DELETE_FAILED", message: `Clerk delete failed (${res.status})` });
     // A second sweep catches rows another signed-in device wrote after the first clear finished but before Clerk answered.
     await ctx.runMutation(internal.users.clearUserDataInternal, { userId });
     return null;
@@ -261,7 +261,7 @@ export const exportAllData = query({
   args: {},
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const userId = identity.subject;
 
     const [

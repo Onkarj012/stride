@@ -54,7 +54,7 @@ test("calorie feedback requires auth and workout ownership", async () => {
   await expect(t.mutation(api.calibration.submitCalorieFeedback, {
     workoutId,
     feedback: "accurate",
-  })).rejects.toThrow("Unauthenticated");
+  })).rejects.toMatchObject({ data: { code: "UNAUTHENTICATED" } });
 
   await expect(t.withIdentity({ subject: "intruder" }).mutation(api.calibration.submitCalorieFeedback, {
     workoutId,
