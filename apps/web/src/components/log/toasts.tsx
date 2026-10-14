@@ -10,18 +10,18 @@ export function useLogToast(): (input: LoggedToast) => void {
   const toast = useToast();
   const undoRevision = useMutation(api.entries.undoRevision);
 
-  // Reverts the latest revision of each entry and says how many worked.
+  // Reverts the latest revision of each entry. Failed entries get a Retry that runs this again for them only.
   async function undo(entryIds: EntryId[]) {
     const base = newSubmissionId();
     const results = await Promise.allSettled(entryIds.map((entryId, i) => undoRevision({ submissionId: `${base}-${i}`, entryId })));
+    const failed = entryIds.filter((_, i) => results[i].status === "rejected");
     const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
     if (errors.length === 0) {
       toast.show({ title: "Undone. Nothing lost.", sub: "It's back the way it was." });
-    } else if (errors.length === results.length) {
-      toast.show({ title: "Couldn't undo that.", sub: plainError(errors[0]) });
-    } else {
-      toast.show({ title: `Undid ${results.length - errors.length} of ${results.length}.`, sub: plainError(errors[0]) });
+      return;
     }
+    const title = failed.length === entryIds.length ? "Couldn't undo that." : `Undid ${entryIds.length - failed.length} of ${entryIds.length}.`;
+    toast.show({ title, sub: plainError(errors[0]), action: { label: "Retry", run: () => undo(failed) } });
   }
 
   return ({ title, sub, entryIds }) => toast.show({ title, sub, action: { label: "Undo", run: () => undo(entryIds) } });
