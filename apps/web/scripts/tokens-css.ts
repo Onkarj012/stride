@@ -1,4 +1,4 @@
-// Writes src/styles/tokens.generated.css from the shared design tokens. Run by predev and prebuild.
+// Writes src/styles/tokens.generated.css from the shared design tokens. Called by vite.config.ts on load.
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { colors, fonts, shadows, radii, type, type TextStyleToken } from "../../../packages/ui-tokens/src/tokens.ts";
@@ -56,5 +56,8 @@ ${indent(schemeVars("dark"), "    ")}
 }
 `;
 
-writeFileSync(outFile, css);
-console.log(`wrote ${outFile}`);
+// Writes the generated stylesheet and reports where it went.
+export function writeTokensCss(): void {
+  writeFileSync(outFile, css);
+  console.log(`wrote ${outFile}`);
+}

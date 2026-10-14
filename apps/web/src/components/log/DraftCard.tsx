@@ -13,6 +13,12 @@ import { cn } from "@/lib/utils";
 /** One change the user made to a draft item before confirming. */
 type Fix = { remove?: boolean; foodId?: FoodId; foodName?: string; grams?: number; localDate?: string };
 
+// A grams amount that can be logged, or undefined for empty, zero, negative or non-numeric text.
+function parseGrams(raw: string): number | undefined {
+  const grams = Number(raw);
+  return Number.isFinite(grams) && grams > 0 ? grams : undefined;
+}
+
 // What an item will log as. The server's preview is scaled to the grams the user chose.
 function viewOf(item: DraftItem, fix: Fix) {
   const foodName = fix.foodName ?? item.food?.name ?? null;
@@ -34,7 +40,7 @@ function formatQuantity(q: number): string {
 
 // The amount line under an item: its quantity as typed, its grams, or why it has none.
 function amountText(item: DraftItem, fix: Fix, view: ReturnType<typeof viewOf>): string {
-  if (view.grams === null) return view.foodName === null ? "not matched yet" : "amount on save";
+  if (view.grams === null) return view.foodName === null ? "not matched yet" : "";
   if (!view.changedFood && fix.grams === undefined && item.quantity !== null && item.unit !== null) {
     return `${formatQuantity(item.quantity)} ${item.unit}`;
   }
@@ -49,6 +55,8 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
   const showLogged = useLogToast();
   const toast = useToast();
   const [fixes, setFixes] = useState<Record<number, Fix>>({});
+  // The grams text as typed, so a cleared or invalid field stays as the user left it.
+  const [gramsText, setGramsText] = useState<Record<number, string>>({});
   const [editing, setEditing] = useState<number | null>(null);
   const [busy, setBusy] = useState<"confirm" | "discard" | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -68,6 +76,15 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
     return sum === null || kcal === null || kcal === undefined ? null : sum + kcal;
   }, 0);
   const photo = draft.inputKind === "photo";
+  // True when an item's grams text was typed but does not parse to a usable amount.
+  const badGrams = (i: number) => gramsText[i] !== undefined && parseGrams(gramsText[i]) === undefined;
+  // True when no grams are known and the save cannot resolve them. A changed food resolves from its quantity.
+  const needsAmount = (i: number) => {
+    const view = views[i];
+    if (!view || view.foodName === null || view.grams !== null) return false;
+    return !(view.changedFood && draft.items[i]?.quantity !== null);
+  };
+  const gramsBlocked = kept.some((i) => badGrams(i) || needsAmount(i));
 
   // Only the changes that differ from the draft. The server resolves amounts and computes every nutrient.
   function corrections() {
@@ -176,11 +193,11 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
                       min="0"
                       step="any"
                       aria-label={`Grams for ${view.foodName}`}
-                      value={view.grams === null ? "" : Math.round(view.grams * 10) / 10}
+                      value={gramsText[i] ?? (view.grams === null ? "" : Math.round(view.grams * 10) / 10)}
                       placeholder="grams"
                       onChange={(e) => {
-                        const grams = Number(e.target.value);
-                        patch(i, { grams: e.target.value !== "" && grams > 0 ? grams : undefined });
+                        setGramsText((all) => ({ ...all, [i]: e.target.value }));
+                        patch(i, { grams: parseGrams(e.target.value) });
                       }}
                       className={cn(fieldClass, "h-[34px] w-28 py-1 pr-8 tabular-nums")}
                     />
@@ -192,6 +209,7 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
                   <Button variant="quiet" size="sm" className="ml-auto" onClick={() => patch(i, { remove: true })}>
                     Remove
                   </Button>
+                  {badGrams(i) || needsAmount(i) ? <p className="w-full type-caption text-polo-ink">Enter an amount in grams.</p> : null}
                 </div>
               ) : null}
 
@@ -247,7 +265,7 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
         <Button variant="ghost" disabled={busy !== null} onClick={() => void discard()}>
           {busy === "discard" ? "Discarding…" : "Discard"}
         </Button>
-        <Button disabled={busy !== null || kept.length === 0 || missingFood} onClick={() => void confirm()} className="flex-1">
+        <Button disabled={busy !== null || kept.length === 0 || missingFood || gramsBlocked} onClick={() => void confirm()} className="flex-1">
           {busy === "confirm"
             ? "Logging…"
             : kept.length === 0

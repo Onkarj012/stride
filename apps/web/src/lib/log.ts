@@ -46,22 +46,76 @@ function convexCode(err: unknown): string | null {
   return null;
 }
 
-// Server error text mapped to one plain line. The first match wins, so specific patterns come first.
+// The `message` field of a ConvexError payload, if it has one.
+function convexMessage(err: unknown): string | null {
+  if (!(err instanceof ConvexError)) return null;
+  const data: unknown = err.data;
+  if (typeof data === "object" && data !== null && "message" in data && typeof data.message === "string") return data.message;
+  return null;
+}
+
+// Plain line for each server error code. null means the server message is already written for users.
+const CODE_MESSAGES: Readonly<Record<string, string | null>> = {
+  UNAUTHENTICATED: "You are signed out. Sign in again.",
+  NOT_FOUND: "That's no longer there.",
+  UPLOAD_NOT_FOUND: "That photo didn't upload. Try again.",
+  PHOTO_TOO_LARGE: "That photo is too large. Try again from a little further away.",
+  NOT_AN_IMAGE: "That file isn't a photo. Pick a photo and try again.",
+  STALE_REVISION: "This changed somewhere else. Reload and try again.",
+  ALREADY_DELETED: "That's already deleted.",
+  LEDGER_CLEARING: "Your data is being cleared. Try again in a moment.",
+  ONBOARDING_REQUIRED: "Finish setting up your profile first.",
+  MESSAGE_BUSY: "Still working on your last message.",
+  REPLY_STREAMING: "Wait for the reply to finish, then regenerate it.",
+  NOTHING_TO_REGENERATE: "Nothing to regenerate yet.",
+  PHOTO_REGENERATE: "Photo replies can't be regenerated yet.",
+  REGENERATE_UNAVAILABLE: "This reply can't be regenerated right now.",
+  VOICE_RESEND: "Send the voice note again.",
+  MESSAGE_EMPTY: "Type a message or add a photo first.",
+  DRAFT_ITEM: null,
+  DRAFT_EMPTY: "Nothing left to log. Discard the draft instead.",
+  DRAFT_CLOSED: "That draft was already saved or discarded.",
+  DIET_REQUIRED: "Pick at least one diet.",
+  INVALID_HEIGHT: "Height should be between 100 and 250 cm.",
+  INVALID_DOB: "Check your date of birth.",
+  INVALID_TRAINING_DAYS: "Training days should be a whole number from 0 to 7.",
+  INVALID_TARGET_WEIGHT: "Target weight should be between 30 and 300 kg.",
+  TARGET_NOT_BELOW: "For losing weight, pick a target below your current weight.",
+  TARGET_NOT_ABOVE: "For gaining weight, pick a target above your current weight.",
+  INVALID_WEIGHT: "That weight doesn't look right. Check it and try again.",
+  INVALID_SET: "That weight, rep, or effort value isn't allowed.",
+  INVALID_GRAMS: "That amount doesn't look right. Enter the grams.",
+  INVALID_BARCODE: "That barcode doesn't look right. Try scanning again.",
+  FOOD_DB_UNAVAILABLE: "The food database isn't responding. Try again later.",
+  INVALID_FOOD: "Check the food's name and nutrition numbers.",
+  FOOD_LIMIT: "You've reached the limit for personal foods.",
+  LIMIT_REACHED: "That's too much for one day or workout.",
+  END_BEFORE_START: "That end time is before the start time.",
+  SESSION_FINISHED: "This workout is already finished.",
+  INVALID_TEXT: "That's empty or too long. Shorten it and try again.",
+  INVALID_DATE: "That date or time doesn't look right.",
+  ACCOUNT_DELETE_FAILED: "Couldn't delete your account right now. Try again later.",
+  BUDGET_EXCEEDED: "Today's AI allowance is used up. Barcode scans still work, and it resets tomorrow.",
+  RATE_LIMITED: "That's a lot at once. Give it a minute, then try again.",
+  INPUT_TOO_LARGE: "That's too long for me. Try something shorter.",
+  OWN_KEY_INVALID: "Your OpenRouter key was rejected. Check it in Settings.",
+  KEY_FORMAT: "That doesn't look like an OpenRouter key.",
+  KEY_REJECTED: "OpenRouter rejected that key.",
+  KEY_CHECK_FAILED: "Couldn't reach OpenRouter to check the key. Try again.",
+  KEY_SAVE_CANCELLED: "Your data was cleared. Add the key again.",
+};
+
+// Fallback text patterns for errors with no known code, such as plain Errors in dev. The first match wins.
 export const PLAIN_MESSAGES: ReadonlyArray<readonly [RegExp, string]> = [
   // Draft item lines are already written for users; '$&' keeps the matched text as is.
   [/Item \d+[^\n]*/, "$&"],
-  [/BUDGET_EXCEEDED/, "Today's AI allowance is used up. Barcode scans still work, and it resets tomorrow."],
-  [/RATE_LIMITED/, "That's a lot at once. Give it a minute, then try again."],
-  [/INPUT_TOO_LARGE/, "That's too long for me. Try something shorter."],
   [/Groq|transcription/i, "I couldn't make out that recording. Try again, or type it."],
   [/Connection lost|Network request failed|network|WebSocket|offline/i, "No connection. Check your internet and try again."],
   [/Unauthenticated/, "You are signed out. Sign in again."],
   [/CLERK_SECRET_KEY|Clerk delete failed/, "Couldn't delete your account right now. Try again later."],
-  [/OWN_KEY_INVALID/, "Your OpenRouter key was rejected. Check it in Settings."],
-  [/KEY_FORMAT|doesn't look like an OpenRouter key/, "That doesn't look like an OpenRouter key."],
-  [/KEY_REJECTED|OpenRouter rejected that key/, "OpenRouter rejected that key."],
-  [/KEY_CHECK_FAILED|Couldn't reach OpenRouter/, "Couldn't reach OpenRouter to check the key. Try again."],
-  [/KEY_SAVE_CANCELLED/, "Your data was cleared. Add the key again."],
+  [/doesn't look like an OpenRouter key/, "That doesn't look like an OpenRouter key."],
+  [/OpenRouter rejected that key/, "OpenRouter rejected that key."],
+  [/Couldn't reach OpenRouter/, "Couldn't reach OpenRouter to check the key. Try again."],
   [/Your data is being cleared/, "Your data is being cleared. Try again in a moment."],
   [/Finish onboarding first/, "Finish setting up your profile first."],
   [/already being handled/, "Still working on your last message."],
@@ -108,6 +162,13 @@ export function plainError(err: unknown): string {
   // Checked by name: transpiled Error subclasses do not always keep instanceof.
   if (err instanceof Error && err.name === "PlainError") return err.message;
   const code = convexCode(err);
+  if (code !== null && Object.hasOwn(CODE_MESSAGES, code)) {
+    const line = CODE_MESSAGES[code];
+    // null means the server message is already user-facing. Fall through to the patterns if it is missing.
+    if (line !== null) return line;
+    const message = convexMessage(err);
+    if (message) return message;
+  }
   const raw = err instanceof Error ? err.message : String(err);
   // Stack frames are dropped so their file names cannot match a pattern.
   const text = `${code ?? ""} ${raw.split(/\n\s+at /)[0]}`;

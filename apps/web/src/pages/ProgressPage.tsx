@@ -55,7 +55,7 @@ export function ProgressPage() {
           <WeightCard summary={summary} range={range} units={units} />
         </div>
         <div className="flex flex-col gap-6">
-          <LogWeightCard units={units} />
+          <LogWeightCard units={profile === undefined ? undefined : units} />
           <TargetCard summary={summary} sex={profile?.sex} />
         </div>
         <ExpenditureCard summary={summary} />
