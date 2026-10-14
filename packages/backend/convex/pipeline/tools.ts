@@ -1,5 +1,5 @@
 import { addDays, rankCandidates, type MealSlot } from "@stride/core";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalQuery, type ActionCtx } from "../_generated/server";
@@ -194,7 +194,7 @@ export async function runLookupTool(
         return undefined;
     }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
+    return { error: err instanceof ConvexError && typeof err.data?.message === "string" ? err.data.message : err instanceof Error ? err.message : String(err) };
   }
 }
 

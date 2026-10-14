@@ -31,7 +31,7 @@ import { Sheet } from '@/components/Sheet'
 import { Tap } from '@/components/Tap'
 import { TimeZoneGate } from '@/components/TimeZoneGate'
 import { MONTHS_LONG, formatNumber } from '@/lib/format'
-import { SUMMARY_DAYS, plainError, targetsFor } from '@/lib/log'
+import { plainError, targetsFor } from '@/lib/log'
 import {
   clampNote,
   dateParts,
@@ -100,7 +100,7 @@ function Profile() {
   const { user } = useUser()
   const profile = useQuery(api.progress_v2.profile, {})
   const today = useLocalToday()
-  const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS, localDate: today })
+  const dailyTarget = useQuery(api.progress_v2.target, { localDate: today })
   const [field, setField] = useState<EditableField | null>(null)
   const [open, setOpen] = useState(false)
 
@@ -132,9 +132,9 @@ function Profile() {
 
   const units = savedUnits(profile.units)
   const goal = profile.goal ?? 'maintain'
-  const targets = targetsFor(summary?.target?.kcal ?? null)
-  const source = summary?.target?.source === 'adaptive' ? 'Learned from your logs' : 'Set from your profile'
-  const note = clampNote(summary?.target?.clamped, profile.sex ?? 'male')
+  const targets = targetsFor(dailyTarget?.kcal ?? null)
+  const source = dailyTarget?.source === 'adaptive' ? 'Learned from your logs' : 'Set from your profile'
+  const note = clampNote(dailyTarget?.clamped, profile.sex ?? 'male')
   const weightValue = profile.latestWeightKg === null ? 'Not set' : kgLabel(profile.latestWeightKg, units)
   const heightValue = profile.heightCm === undefined ? 'Not set' : heightLabel(profile.heightCm, units)
   const targetValue =
@@ -171,7 +171,7 @@ function Profile() {
         </Tap>
 
         <Section title="Daily targets" />
-        {summary === undefined ? (
+        {dailyTarget === undefined ? (
           <View style={s.targetsLoading}>
             <Polo size={40} />
           </View>

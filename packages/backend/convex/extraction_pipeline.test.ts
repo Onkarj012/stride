@@ -676,7 +676,7 @@ describe("photo and voice input", () => {
     for (const storageId of [theirs, unregistered]) {
       await expect(
         user.action(api.pipeline.log.logInput, { submissionId: `p-${storageId}`, input: { kind: "photo", storageId } }),
-      ).rejects.toThrow(/Photo not found/);
+      ).rejects.toMatchObject({ data: { code: "UPLOAD_NOT_FOUND" } });
     }
     expect(openRouterBodies).toHaveLength(0);
   });

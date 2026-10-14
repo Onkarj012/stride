@@ -145,17 +145,17 @@ describe("addEntries", () => {
     const { user, rice } = await setup();
     await expect(
       user.mutation(api.entries.addEntries, { submissionId: "s1", items: [{ foodId: rice, grams: 0, source: "db" }] }),
-    ).rejects.toThrow(/grams/);
+    ).rejects.toMatchObject({ data: { code: "INVALID_GRAMS" } });
     await expect(
       user.mutation(api.entries.addEntries, { submissionId: "s2", items: [{ foodId: rice, grams: 9000, source: "db" }] }),
-    ).rejects.toThrow(/grams/);
+    ).rejects.toMatchObject({ data: { code: "INVALID_GRAMS" } });
     await expect(user.mutation(api.entries.addEntries, { submissionId: "s3", items: [] })).rejects.toThrow(/1-50 items/);
     await expect(
       user.mutation(api.entries.addEntries, {
         submissionId: "s4",
         items: [{ foodId: rice, grams: 100, source: "db", localDate: "2026-02-30" }],
       }),
-    ).rejects.toThrow(/YYYY-MM-DD/);
+    ).rejects.toMatchObject({ data: { code: "INVALID_DATE" } });
   });
 
   test("explicit date and slot override the inferred ones", async () => {
@@ -239,13 +239,13 @@ describe("revisions", () => {
       items: [{ foodId: rice, grams: 100, source: "db", loggedAt: IST_LUNCH }],
     });
     const rev2 = await user.mutation(api.entries.editEntry, { submissionId: "e1", entryId: rev1, grams: 120 });
-    await expect(user.mutation(api.entries.editEntry, { submissionId: "e2", entryId: rev1, grams: 130 })).rejects.toThrow(
-      /newer revision/,
-    );
+    await expect(user.mutation(api.entries.editEntry, { submissionId: "e2", entryId: rev1, grams: 130 })).rejects.toMatchObject({
+      data: { code: "STALE_REVISION" },
+    });
     const other = t.withIdentity({ subject: "user_b" });
-    await expect(other.mutation(api.entries.deleteEntry, { submissionId: "d1", entryId: rev2 })).rejects.toThrow(
-      /not found/,
-    );
+    await expect(other.mutation(api.entries.deleteEntry, { submissionId: "d1", entryId: rev2 })).rejects.toMatchObject({
+      data: { code: "NOT_FOUND" },
+    });
     await expect(user.mutation(api.entries.deleteEntry, { submissionId: "add", entryId: rev2 })).rejects.toThrow(
       /different change/,
     );

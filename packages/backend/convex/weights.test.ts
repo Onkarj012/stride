@@ -58,23 +58,19 @@ test("weightsInRange is inclusive, ordered, per user and bounded", async () => {
     { localDate: "2026-10-02", kg: 73.5 },
     { localDate: "2026-10-03", kg: 73 },
   ]);
-  await expect(user.query(api.weights.weightsInRange, { from: "2026-10-03", to: "2026-10-01" })).rejects.toThrow(
-    /Range/,
-  );
-  await expect(user.query(api.weights.weightsInRange, { from: "2025-01-01", to: "2026-10-01" })).rejects.toThrow(
-    /Range/,
-  );
+  await expect(user.query(api.weights.weightsInRange, { from: "2026-10-03", to: "2026-10-01" })).rejects.toMatchObject({ data: { code: "INVALID_DATE" } });
+  await expect(user.query(api.weights.weightsInRange, { from: "2025-01-01", to: "2026-10-01" })).rejects.toMatchObject({ data: { code: "INVALID_DATE" } });
 });
 
 test("logWeight rejects implausible weights and bad dates", async () => {
   const { user } = await setup();
-  await expect(user.mutation(api.weights.logWeight, { kg: 7, localDate: "2026-10-05" })).rejects.toThrow(/kg/);
-  await expect(user.mutation(api.weights.logWeight, { kg: 70, localDate: "2026-13-01" })).rejects.toThrow(/YYYY-MM-DD/);
+  await expect(user.mutation(api.weights.logWeight, { kg: 7, localDate: "2026-10-05" })).rejects.toMatchObject({ data: { code: "INVALID_WEIGHT" } });
+  await expect(user.mutation(api.weights.logWeight, { kg: 70, localDate: "2026-13-01" })).rejects.toMatchObject({ data: { code: "INVALID_DATE" } });
 });
 
 test("todayWeight requires authentication and a stored time zone", async () => {
   const t = convexTest(schema, modules);
-  await expect(t.query(api.weights.todayWeight, {})).rejects.toThrow(/Unauthenticated/);
+  await expect(t.query(api.weights.todayWeight, {})).rejects.toMatchObject({ data: { code: "UNAUTHENTICATED" } });
   await expect(t.withIdentity({ subject: "unset" }).query(api.weights.todayWeight, {})).rejects.toThrow(/Time zone/);
 });
 

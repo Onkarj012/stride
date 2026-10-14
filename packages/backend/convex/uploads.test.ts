@@ -12,7 +12,7 @@ test("generateUploadUrl returns the authenticated upload endpoint and rejects si
   vi.stubEnv("CONVEX_SITE_URL", "https://test.convex.site");
   const t = convexTest(schema, modules);
   expect(await t.withIdentity({ subject: "user_a" }).mutation(api.uploads.generateUploadUrl, {})).toBe("https://test.convex.site/upload");
-  await expect(t.mutation(api.uploads.generateUploadUrl, {})).rejects.toThrow("Unauthenticated");
+  await expect(t.mutation(api.uploads.generateUploadUrl, {})).rejects.toMatchObject({ data: { code: "UNAUTHENTICATED" } });
 });
 
 test("HTTP upload binds the authenticated creator, and another user cannot claim or use their file", async () => {
@@ -27,7 +27,7 @@ test("HTTP upload binds the authenticated creator, and another user cannot claim
   expect(await t.query(internal.uploads.ownsUpload, { userId: "user_a", storageId: row.storageId })).toBe(true);
   expect(await t.query(internal.uploads.ownsUpload, { userId: "user_b", storageId: row.storageId })).toBe(false);
   await a.mutation(api.uploads.registerUpload, { storageId: row.storageId });
-  await expect(t.withIdentity({ subject: "user_b" }).mutation(api.uploads.registerUpload, { storageId: row.storageId })).rejects.toThrow(/Upload not found/);
+  await expect(t.withIdentity({ subject: "user_b" }).mutation(api.uploads.registerUpload, { storageId: row.storageId })).rejects.toMatchObject({ data: { code: "UPLOAD_NOT_FOUND" } });
   expect(await t.run((ctx) => ctx.db.query("uploads").take(10))).toHaveLength(1);
 });
 
@@ -41,9 +41,9 @@ test("public registration refuses existing unregistered files, including legacy 
   });
   const fresh = await t.run((ctx) => ctx.storage.store(new Blob(["fresh unregistered foreign file"])));
   for (const id of [storageId, fresh]) {
-    await expect(t.withIdentity({ subject: "user_a" }).mutation(api.uploads.registerUpload, { storageId: id })).rejects.toThrow(/Upload not found/);
+    await expect(t.withIdentity({ subject: "user_a" }).mutation(api.uploads.registerUpload, { storageId: id })).rejects.toMatchObject({ data: { code: "UPLOAD_NOT_FOUND" } });
   }
-  await expect(t.mutation(api.uploads.registerUpload, { storageId })).rejects.toThrow("Unauthenticated");
+  await expect(t.mutation(api.uploads.registerUpload, { storageId })).rejects.toMatchObject({ data: { code: "UNAUTHENTICATED" } });
   expect(await t.run((ctx) => ctx.db.query("uploads").take(10))).toEqual([]);
 });
 
@@ -63,7 +63,7 @@ test("an upload during account clearing is refused and the newly stored file is 
   const response = await user.fetch("/upload", { method: "POST", body: new Blob(["jpeg"], { type: "image/jpeg" }) });
   expect(response.status).toBe(409);
   expect(await response.text()).toMatch(/being cleared/);
-  await expect(user.mutation(api.uploads.generateUploadUrl, {})).rejects.toThrow(/being cleared/);
+  await expect(user.mutation(api.uploads.generateUploadUrl, {})).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
   expect(await t.run((ctx) => ctx.db.query("uploads").take(10))).toEqual([]);
   expect(await t.run((ctx) => ctx.db.system.query("_storage").take(10))).toEqual([]);
 });

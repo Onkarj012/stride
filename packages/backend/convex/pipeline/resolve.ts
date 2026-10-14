@@ -16,7 +16,7 @@ import {
   type RankedCandidate,
   type UserMeasure,
 } from "@stride/core";
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { insertEntries, MAX_BATCH, type NewEntry } from "../entries";
@@ -437,9 +437,9 @@ export const commitLog = internalMutation({
     const existing = await existingLog(ctx, userId, submissionId);
     if (existing !== null) return existing;
     // A chat turn can outlive its chat (deleted, or cleared with the account). Its late writes must not reappear.
-    if (args.chatId !== undefined && (await ctx.db.get("chats", args.chatId))?.userId !== userId) throw new Error("Chat not found");
+    if (args.chatId !== undefined && (await ctx.db.get("chats", args.chatId))?.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Chat not found" });
     if (args.messageId !== undefined && (await ctx.db.get("messages", args.messageId))?.userId !== userId) {
-      throw new Error("Message not found");
+      throw new ConvexError({ code: "NOT_FOUND", message: "Message not found" });
     }
     if (items.length === 0) return { kind: "empty", submissionId, lines: [] };
     const links = {

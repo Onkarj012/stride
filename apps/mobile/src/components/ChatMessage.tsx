@@ -10,9 +10,10 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated'
 import Markdown from 'react-native-markdown-display'
+import { useQuery } from 'convex/react'
 import type { FunctionReturnType } from 'convex/server'
 import { radii } from '@stride/ui-tokens'
-import type { api } from 'stride-backend/convex/_generated/api'
+import { api } from 'stride-backend/convex/_generated/api'
 import type { EntryId } from '@/lib/log'
 import { font, themedStyles } from '@/theme'
 import { Button } from './Controls'
@@ -92,11 +93,17 @@ function ReplyPolo({ streaming, failed }: { streaming: boolean; failed: boolean 
   )
 }
 
-// The reply's words: plain text while streaming, so each update is cheap; markdown once it settles.
-function ReplyText({ text, streaming, failed }: { text: string; streaming: boolean; failed: boolean }) {
+// A streaming reply's words as plain text, so each update is cheap. Mounted only while it streams, so the live subscription ends with it.
+function LiveText({ messageId }: { messageId: ChatMessageView['_id'] }) {
   const s = useStyles()
+  const text = useQuery(api.chats.liveReply, { messageId })
+  return text ? <Text style={s.streamText}>{text}</Text> : <TypingDots />
+}
+
+// A settled reply's words as markdown.
+function ReplyText({ text, failed }: { text: string; failed: boolean }) {
   const md = useMarkdownStyles()
-  if (streaming) return <Text style={s.streamText}>{text}</Text>
+  const s = useStyles()
   return (
     <View style={failed ? s.dim : undefined}>
       <Markdown style={md}>{text}</Markdown>
@@ -118,11 +125,7 @@ function Reply({ message, canRegenerate, regenerating, canRetry, onRegenerate, o
     <Animated.View entering={FadeIn.duration(220)} style={s.reply}>
       <ReplyPolo streaming={streaming} failed={failed} />
       <View style={s.replyBody}>
-        {message.text ? (
-          <ReplyText text={message.text} streaming={streaming} failed={failed} />
-        ) : streaming ? (
-          <TypingDots />
-        ) : null}
+        {streaming ? <LiveText messageId={message._id} /> : message.text ? <ReplyText text={message.text} failed={failed} /> : null}
 
         {failed ? (
           <View style={s.row}>

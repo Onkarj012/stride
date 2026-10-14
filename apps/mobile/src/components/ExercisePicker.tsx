@@ -20,8 +20,8 @@ export function ExercisePicker({ taken, onPick }: { taken: ExerciseId[]; onPick:
   // Empty search browses the strength category instead of the alphabet's first cardio drills.
   const results = useQuery(api.exercises.search, query === '' ? { query, category: 'strength' } : { query })
   const library = useQuery(api.exercises.search, { query: '', limit: 1 })
-  const stats = useQuery(api.strength.stats, { weeks: 1 })
-  const mine = query === '' ? (stats?.exercises ?? []).slice(0, 6).map((e) => e.exerciseId) : []
+  const recent = useQuery(api.strength.recentExercises, query === '' ? {} : 'skip')
+  const mine = query === '' ? (recent ?? []) : []
 
   return (
     <View>

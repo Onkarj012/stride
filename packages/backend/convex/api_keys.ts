@@ -36,7 +36,7 @@ async function verifyOpenRouterKey(key: string): Promise<void> {
 /** The caller's subject, the userId used across the ledger tables. Throws when signed out. */
 async function callerUserId(ctx: QueryCtx): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error("Unauthenticated");
+  if (!identity) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
   return identity.subject;
 }
 
@@ -46,7 +46,7 @@ export const saveOpenRouterKey = action({
   returns: v.object({ last4: v.string() }),
   handler: async (ctx, { key }) => {
     const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Unauthenticated");
+    if (!identity) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const trimmed = key.trim();
     if (!OPENROUTER_KEY_SHAPE.test(trimmed)) throw keyError("KEY_FORMAT", "That doesn't look like an OpenRouter key.");
     // Pinned before the check, so a clear during the check leaves this id stale.

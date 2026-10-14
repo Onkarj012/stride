@@ -11,7 +11,7 @@ import {
   type MealSlot,
 } from "@stride/core";
 import { paginationOptsValidator } from "convex/server";
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -153,7 +153,7 @@ type Claim = Infer<typeof claimValidator>;
 /** Loads one of the user's chats or throws. */
 async function ownChat(ctx: QueryCtx | MutationCtx, userId: string, chatId: Id<"chats">): Promise<Doc<"chats">> {
   const chat = await ctx.db.get("chats", chatId);
-  if (chat === null || chat.userId !== userId) throw new Error("Chat not found");
+  if (chat === null || chat.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Chat not found" });
   return chat;
 }
 
@@ -165,11 +165,11 @@ export const createChat = mutation({
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
     const clean = (title ?? "").trim().slice(0, MAX_TITLE_CHARS);
-    return await ctx.db.insert("chats", { userId, title: clean === "" ? DEFAULT_CHAT_TITLE : clean, updatedAt: Date.now() });
+    return await ctx.db.insert("chats", { userId, title: clean === "" ? DEFAULT_CHAT_TITLE : clean, updatedAt: Date.now(), lastMessage: null });
   },
 });
 
-/** The caller's chats, most recently active first, each with a preview of its newest message. */
+/** The caller's chats, most recently active first, each with the preview stored on the chat row. */
 export const listChats = query({
   args: {},
   returns: v.array(
@@ -187,14 +187,15 @@ export const listChats = query({
         _id: row._id,
         title: row.title,
         updatedAt: row.updatedAt,
-        lastMessage: await previewOf(ctx, row._id),
+        // Chats from before the preview was stored read their messages until their next turn writes it.
+        lastMessage: row.lastMessage === undefined ? await previewOf(ctx, row._id) : row.lastMessage,
       })),
     );
   },
 });
 
 /** The text of a chat's newest visible message, cut to the preview length. Null when there is none yet. */
-async function previewOf(ctx: QueryCtx, chatId: Id<"chats">): Promise<string | null> {
+async function previewOf(ctx: QueryCtx | MutationCtx, chatId: Id<"chats">): Promise<string | null> {
   const recent = await ctx.db
     .query("messages")
     .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
@@ -204,6 +205,41 @@ async function previewOf(ctx: QueryCtx, chatId: Id<"chats">): Promise<string | n
   const newest = recent.find((m) => m.role !== "tool" && m.deletedAt === undefined && m.text !== "");
   return newest === undefined ? null : newest.text.slice(0, PREVIEW_CHARS);
 }
+
+/** Stores a chat's preview on its row, writing only when it changed so `listChats` doesn't rerun for nothing. */
+async function syncPreview(ctx: MutationCtx, chatId: Id<"chats">): Promise<void> {
+  const chat = await ctx.db.get("chats", chatId);
+  if (chat === null) return;
+  const lastMessage = await previewOf(ctx, chatId);
+  if (chat.lastMessage !== lastMessage) await ctx.db.patch("chats", chatId, { lastMessage });
+}
+
+/** The live text row of a streaming reply, if it has written any text yet. */
+async function streamOf(ctx: QueryCtx | MutationCtx, messageId: Id<"messages">): Promise<Doc<"reply_streams"> | null> {
+  return await ctx.db
+    .query("reply_streams")
+    .withIndex("by_messageId", (q) => q.eq("messageId", messageId))
+    .unique();
+}
+
+/** Deletes a reply's live text row and returns the text it held: what the user saw. Null when it never wrote any. */
+async function endStream(ctx: MutationCtx, messageId: Id<"messages">): Promise<string | null> {
+  const stream = await streamOf(ctx, messageId);
+  if (stream === null) return null;
+  await ctx.db.delete("reply_streams", stream._id);
+  return stream.text;
+}
+
+/** The text a reply has streamed so far. The thread reads it only while the reply streams, so the paged query stays still. */
+export const liveReply = query({
+  args: { messageId: v.id("messages") },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, { messageId }) => {
+    const userId = await requireUserId(ctx);
+    const stream = await streamOf(ctx, messageId);
+    return stream === null || stream.userId !== userId ? null : stream.text;
+  },
+});
 
 /** One of the caller's chats by id, or null if it is gone or not theirs. The thread screen opens chats past the list's cap. */
 export const getChat = query({
@@ -225,7 +261,7 @@ export const renameChat = mutation({
     const userId = await requireUserId(ctx);
     await ownChat(ctx, userId, chatId);
     const clean = title.trim();
-    if (clean === "" || clean.length > MAX_TITLE_CHARS) throw new Error(`Title must be 1-${MAX_TITLE_CHARS} characters`);
+    if (clean === "" || clean.length > MAX_TITLE_CHARS) throw new ConvexError({ code: "INVALID_TEXT", message: `Title must be 1-${MAX_TITLE_CHARS} characters` });
     await ctx.db.patch("chats", chatId, { title: clean });
     return null;
   },
@@ -253,7 +289,11 @@ export const purgeMessages = internalMutation({
       .query("messages")
       .withIndex("by_chatId", (q) => q.eq("chatId", chatId))
       .take(PURGE_BATCH);
-    for (const row of rows) await ctx.db.delete("messages", row._id);
+    for (const row of rows) {
+      // A reply cut off mid-stream by the delete may still hold a live text row.
+      if (row.status === "streaming") await endStream(ctx, row._id);
+      await ctx.db.delete("messages", row._id);
+    }
     if (rows.length === PURGE_BATCH) await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId });
     return null;
   },
@@ -372,7 +412,7 @@ export const claimTurn = internalMutation({
       const replies = await liveReplies(ctx, existing._id);
       const running = existing.claimedAt !== undefined && now - existing.claimedAt < TURN_LEASE_MS;
       if (running || replies.some(isFinished)) {
-        throw new Error("This message is already being handled. Try again in a moment.");
+        throw new ConvexError({ code: "MESSAGE_BUSY", message: "This message is already being handled. Try again in a moment." });
       }
       await ctx.db.patch("messages", existing._id, { claimedAt: now });
       // The newest live reply is the failed attempt to reuse, if there is one.
@@ -412,7 +452,10 @@ export const claimTurn = internalMutation({
     } else {
       replyId = reply._id;
       await ctx.db.patch("messages", replyId, fresh);
+      // Endings delete the live row; this only clears one an earlier attempt left behind.
+      await endStream(ctx, replyId);
     }
+    await syncPreview(ctx, chat._id);
     // A turn that dies without reaching its catch block (a crash or the action time limit) must not stream forever.
     await ctx.scheduler.runAfter(TURN_LEASE_MS, internal.chats.expireReply, { messageId: replyId, claimedAt: now });
     return { ...claim, replyId };
@@ -437,7 +480,7 @@ export const claimRegenerate = internalMutation({
     await ownChat(ctx, args.userId, args.chatId);
     const old = await ctx.db.get("messages", args.replyId);
     if (old === null || old.userId !== args.userId || old.chatId !== args.chatId || old.deletedAt !== undefined || old.status === "streaming") {
-      throw new Error("This reply can't be regenerated right now.");
+      throw new ConvexError({ code: "REGENERATE_UNAVAILABLE", message: "This reply can't be regenerated right now." });
     }
     const now = Date.now();
     await ctx.db.patch("messages", args.replyId, { deletedAt: now });
@@ -457,6 +500,7 @@ export const claimRegenerate = internalMutation({
       status: "streaming",
       claimedAt: now,
     });
+    await syncPreview(ctx, args.chatId);
     await ctx.scheduler.runAfter(TURN_LEASE_MS, internal.chats.expireReply, { messageId: replyId, claimedAt: now });
     return { replyId, claimedAt: now };
   },
@@ -469,7 +513,8 @@ async function ownedStream(ctx: MutationCtx, messageId: Id<"messages">, claimedA
 }
 
 /**
- * Writes the reply text streamed so far. Returns true when the turn should stop: the user pressed stop, the chat was
+ * Writes the reply text streamed so far to its live row, never to the message, so the paged message query and the
+ * chat list don't rerun on every write. Returns true when the turn should stop: the user pressed stop, the chat was
  * deleted, or a newer attempt owns the row. Text that arrived after a stop is not written, so the reply ends where
  * the user saw it end.
  */
@@ -479,7 +524,9 @@ export const appendReply = internalMutation({
   handler: async (ctx, { messageId, claimedAt, text }) => {
     const row = await ownedStream(ctx, messageId, claimedAt);
     if (row === null || row.stopRequested === true) return true;
-    if (row.text !== text) await ctx.db.patch("messages", messageId, { text });
+    const stream = await streamOf(ctx, messageId);
+    if (stream === null) await ctx.db.insert("reply_streams", { messageId, userId: row.userId, text });
+    else if (stream.text !== text) await ctx.db.patch("reply_streams", stream._id, { text });
     return false;
   },
 });
@@ -507,18 +554,22 @@ export const stopMessage = mutation({
   handler: async (ctx, { messageId }) => {
     const userId = await requireUserId(ctx);
     const row = await ctx.db.get("messages", messageId);
-    if (row === null || row.userId !== userId || row.role !== "assistant") throw new Error("Message not found");
+    if (row === null || row.userId !== userId || row.role !== "assistant") throw new ConvexError({ code: "NOT_FOUND", message: "Message not found" });
     if (row.status === "streaming") await ctx.db.patch("messages", messageId, { stopRequested: true });
     return null;
   },
 });
 
-/** Marks a reply failed if the attempt that claimed it at `claimedAt` never finished it. */
+/** Marks a reply failed with the text it reached if the attempt that claimed it at `claimedAt` never finished it. */
 export const expireReply = internalMutation({
   args: { messageId: v.id("messages"), claimedAt: v.number() },
   returns: v.null(),
   handler: async (ctx, { messageId, claimedAt }) => {
-    if ((await ownedStream(ctx, messageId, claimedAt)) !== null) await ctx.db.patch("messages", messageId, { status: "failed" });
+    const row = await ownedStream(ctx, messageId, claimedAt);
+    if (row === null) return null;
+    const text = (await endStream(ctx, messageId)) ?? row.text;
+    await ctx.db.patch("messages", messageId, { status: "failed", text });
+    await syncPreview(ctx, row.chatId);
     return null;
   },
 });
@@ -534,10 +585,11 @@ export const saveTranscript = internalMutation({
   returns: v.null(),
   handler: async (ctx, { userId, messageId, text }) => {
     const message = await ctx.db.get("messages", messageId);
-    if (message === null || message.userId !== userId) throw new Error("Message not found");
+    if (message === null || message.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Message not found" });
     await ctx.db.patch("messages", messageId, { text, audioPending: undefined });
     const chat = await ctx.db.get("chats", message.chatId);
     if (chat !== null) await ctx.db.patch("chats", chat._id, { title: titleFor(chat, text) });
+    await syncPreview(ctx, message.chatId);
     return null;
   },
 });
@@ -556,11 +608,19 @@ export const releaseTurn = internalMutation({
     // Nothing ran yet for a message still waiting on its transcript, so it leaves no empty bubble behind.
     if (message.audioPending === true) {
       await ctx.db.delete("messages", messageId);
-      if (reply !== null) await ctx.db.delete("messages", replyId);
+      if (reply !== null) {
+        await endStream(ctx, replyId);
+        await ctx.db.delete("messages", replyId);
+      }
+      await syncPreview(ctx, message.chatId);
       return null;
     }
     if (message.claimedAt === claimedAt) await ctx.db.patch("messages", messageId, { claimedAt: undefined });
-    if (reply !== null) await ctx.db.patch("messages", replyId, { status: "failed", stopRequested: undefined });
+    if (reply !== null) {
+      const text = (await endStream(ctx, replyId)) ?? reply.text;
+      await ctx.db.patch("messages", replyId, { status: "failed", text, stopRequested: undefined });
+      await syncPreview(ctx, reply.chatId);
+    }
     return null;
   },
 });
@@ -617,7 +677,9 @@ export const finishReply = internalMutation({
     await assertLedgerWritable(ctx, args.userId);
     const row = await ownedStream(ctx, args.messageId, args.claimedAt);
     if (row === null || row.userId !== args.userId) return null;
-    const final = row.stopRequested === true ? { text: row.text, status: "stopped" as const } : { text: args.text, status: args.status };
+    // The live row holds the text the user saw, which a late stop keeps.
+    const seen = (await endStream(ctx, args.messageId)) ?? row.text;
+    const final = row.stopRequested === true ? { text: seen, status: "stopped" as const } : { text: args.text, status: args.status };
     await ctx.db.patch("messages", args.messageId, {
       ...final,
       toolCalls: args.toolCalls,
@@ -628,8 +690,10 @@ export const finishReply = internalMutation({
     });
     // The chat may have been deleted mid-turn; then the purge job removes this message too.
     const chat = await ctx.db.get("chats", row.chatId);
-    if (chat !== null) await ctx.db.patch("chats", chat._id, { updatedAt: Date.now() });
-    else await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId: row.chatId });
+    if (chat !== null) {
+      await ctx.db.patch("chats", chat._id, { updatedAt: Date.now() });
+      await syncPreview(ctx, chat._id);
+    } else await ctx.scheduler.runAfter(0, internal.chats.purgeMessages, { chatId: row.chatId });
     return final;
   },
 });
@@ -1105,7 +1169,8 @@ async function runChatTurn(
           result = (await runLookupTool(ctx, userId, call.function.name, args, seen)) ?? { error: `Unknown tool ${call.function.name}` };
         }
       } catch (err) {
-        result = { error: err instanceof Error ? err.message : String(err) };
+        // ConvexError.message is JSON, so the model gets the plain text from its data.
+        result = { error: err instanceof ConvexError && typeof err.data?.message === "string" ? err.data.message : err instanceof Error ? err.message : String(err) };
       }
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       toolCalls.push({ name: call.function.name, argsJson: call.function.arguments.slice(0, MAX_TOOL_RESULT_CHARS), resultJson: capJson(result) });
@@ -1125,7 +1190,7 @@ async function runChatTurn(
 /** Refuses an empty or oversized message before any model work. */
 function checkMessage(text: string, imageStorageId: Id<"_storage"> | undefined): void {
   assertMaxChars(text, AI_INPUT_LIMITS.messageChars, "message");
-  if (text === "" && imageStorageId === undefined) throw new Error("Message is empty");
+  if (text === "" && imageStorageId === undefined) throw new ConvexError({ code: "MESSAGE_EMPTY", message: "Message is empty" });
 }
 
 const SLOTS: readonly MealSlot[] = ["breakfast", "lunch", "snack", "dinner"];
@@ -1150,7 +1215,7 @@ export const sendMessage = action({
   returns: turnResultValidator,
   handler: async (ctx, args): Promise<TurnResult> => {
     const identity = await ctx.auth.getUserIdentity();
-    if (identity === null) throw new Error("Unauthenticated");
+    if (identity === null) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const userId = identity.subject;
     // Turn writes use `${submissionId}:...` keys, so a ':' in a client id could collide with another turn's keys.
     if (args.submissionId.length === 0 || args.submissionId.length > MAX_SUBMISSION_ID_CHARS || args.submissionId.includes(":")) {
@@ -1176,7 +1241,7 @@ export const sendMessage = action({
     try {
       let text = claim.text;
       if (claim.audioPending) {
-        if (args.audio === undefined) throw new Error("Send the voice note again.");
+        if (args.audio === undefined) throw new ConvexError({ code: "VOICE_RESEND", message: "Send the voice note again." });
         text = [text, await transcribeAudio(ctx, userId, args.audio.data, args.audio.mimeType)].join(" ").trim();
         checkMessage(text, args.imageStorageId);
         await ctx.runMutation(internal.chats.saveTranscript, { userId, messageId: userMessageId, text });
@@ -1224,11 +1289,11 @@ export const regenerateTarget = internalQuery({
       .order("desc")
       .take(HISTORY_WINDOW);
     const reply = recent.find((m) => m.role === "assistant" && m.deletedAt === undefined);
-    if (reply === undefined) throw new Error("Nothing to regenerate yet.");
-    if (reply.status === "streaming") throw new Error("Wait for the reply to finish, then regenerate it.");
+    if (reply === undefined) throw new ConvexError({ code: "NOTHING_TO_REGENERATE", message: "Nothing to regenerate yet." });
+    if (reply.status === "streaming") throw new ConvexError({ code: "REPLY_STREAMING", message: "Wait for the reply to finish, then regenerate it." });
     const user = reply.answersMessageId === undefined ? null : await ctx.db.get("messages", reply.answersMessageId);
-    if (user === null || user.userId !== userId || user.submissionId === undefined) throw new Error("Nothing to regenerate yet.");
-    if (user.attachments.some((a) => a.kind === "image")) throw new Error("Photo replies can't be regenerated yet.");
+    if (user === null || user.userId !== userId || user.submissionId === undefined) throw new ConvexError({ code: "NOTHING_TO_REGENERATE", message: "Nothing to regenerate yet." });
+    if (user.attachments.some((a) => a.kind === "image")) throw new ConvexError({ code: "PHOTO_REGENERATE", message: "Photo replies can't be regenerated yet." });
     return { userMessageId: user._id, userSubmissionId: user.submissionId, replyId: reply._id, draftIds: reply.draftIds, entryIds: reply.entryIds ?? [] };
   },
 });
@@ -1239,7 +1304,7 @@ export const regenerate = action({
   returns: regenerateResultValidator,
   handler: async (ctx, { chatId }): Promise<RegenerateResult> => {
     const identity = await ctx.auth.getUserIdentity();
-    if (identity === null) throw new Error("Unauthenticated");
+    if (identity === null) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const userId = identity.subject;
     const old: {
       userMessageId: Id<"messages">;

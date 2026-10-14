@@ -1,5 +1,5 @@
 import { daysBetween, isLocalDate, scaleNutrients } from "@stride/core";
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx } from "../_generated/server";
 import { insertEntries, type NewEntry } from "../entries";
@@ -67,14 +67,16 @@ const draftViewValidator = v.object({
 /** Loads one of the caller's drafts or throws. */
 async function ownDraft(ctx: MutationCtx, userId: string, draftId: Id<"drafts">): Promise<Doc<"drafts">> {
   const draft = await ctx.db.get("drafts", draftId);
-  if (draft === null || draft.userId !== userId) throw new Error("Draft not found");
+  if (draft === null || draft.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Draft not found" });
   return draft;
 }
 
 /** Loads a food the user may log, or throws with the item number for the card. */
 async function requireVisibleFood(ctx: MutationCtx, userId: string, foodId: Id<"foods">, n: number): Promise<Doc<"foods">> {
   const food = await ctx.db.get("foods", foodId);
-  if (food === null || !isVisibleFood(food, userId)) throw new Error(`Item ${n}: unknown food`);
+  if (food === null || !isVisibleFood(food, userId)) {
+    throw new ConvexError({ code: "DRAFT_ITEM", message: `Item ${n}: unknown food` });
+  }
   return food;
 }
 
@@ -171,7 +173,7 @@ export const confirmDraft = mutation({
       const done = await committedResult(ctx, userId, draft.submissionId);
       if (done !== null) return done;
     }
-    if (draft.status !== "pending") throw new Error(`Draft is ${draft.status}`);
+    if (draft.status !== "pending") throw new ConvexError({ code: "DRAFT_CLOSED", message: `Draft is ${draft.status}` });
 
     const userMeasures = await userMeasuresOf(ctx, userId);
     const today = (await resolveLocalDay(ctx, userId, Date.now())).localDate;
@@ -182,7 +184,9 @@ export const confirmDraft = mutation({
       const fix = (corrections ?? []).find((c) => c.index === index);
       if (fix?.remove === true) continue;
       const foodId = fix?.foodId ?? item.foodId;
-      if (foodId === undefined) throw new Error(`Item ${n} ("${item.text}") needs a food. Pick one or remove it.`);
+      if (foodId === undefined) {
+        throw new ConvexError({ code: "DRAFT_ITEM", message: `Item ${n} ("${item.text}") needs a food. Pick one or remove it.` });
+      }
       const food = await requireVisibleFood(ctx, userId, foodId, n);
       const foodChanged = foodId !== item.foodId;
       // An out-of-range fraction was refused at extraction, so it never scales the grams here either.
@@ -191,23 +195,32 @@ export const confirmDraft = mutation({
       let grams: number | undefined;
       if (fix?.grams !== undefined) grams = fix.grams;
       else if (fix?.kcal !== undefined) {
-        if (!(food.per100g.kcal > 0)) throw new Error(`Item ${n}: ${food.name} has no kcal, so set grams instead`);
+        if (!(food.per100g.kcal > 0)) {
+          throw new ConvexError({ code: "DRAFT_ITEM", message: `Item ${n}: ${food.name} has no kcal, so set grams instead` });
+        }
         grams = (fix.kcal / food.per100g.kcal) * 100;
       } else if (fix?.quantity !== undefined || fix?.unit !== undefined || (foodChanged && item.quantity !== undefined)) {
         const quantity = fix?.quantity ?? item.quantity ?? 1;
         const portion = await resolveFoodPortion(ctx, food, quantity, fix?.unit ?? item.unit ?? null, userMeasures);
-        if (portion.status !== "resolved") throw new Error(`Item ${n}: cannot turn that amount into grams. Enter grams.`);
+        if (portion.status !== "resolved") {
+          throw new ConvexError({ code: "DRAFT_ITEM", message: `Item ${n}: cannot turn that amount into grams. Enter grams.` });
+        }
         grams = fix?.quantity === undefined && scale !== undefined ? portion.grams * scale : portion.grams;
       } else grams = item.grams;
-      if (grams === undefined) throw new Error(`Item ${n} ("${item.text}") needs an amount.`);
+      if (grams === undefined) throw new ConvexError({ code: "DRAFT_ITEM", message: `Item ${n} ("${item.text}") needs an amount.` });
 
       let localDate = item.localDate;
       if (fix?.localDate !== undefined) {
         const ago = isLocalDate(fix.localDate) ? daysBetween(fix.localDate, today) : -1;
-        if (ago < 0 || ago > MAX_PAST_DAYS) throw new Error(`Item ${n}: pick a date within the last ${MAX_PAST_DAYS} days.`);
+        if (ago < 0 || ago > MAX_PAST_DAYS) {
+          throw new ConvexError({ code: "DRAFT_ITEM", message: `Item ${n}: pick a date within the last ${MAX_PAST_DAYS} days.` });
+        }
         localDate = fix.localDate;
       } else if (item.requestedDate !== undefined) {
-        throw new Error(`Item ${n} ("${item.text}"): ${item.requestedDate} cannot be logged. Pick a date or remove it.`);
+        throw new ConvexError({
+          code: "DRAFT_ITEM",
+          message: `Item ${n} ("${item.text}"): ${item.requestedDate} cannot be logged. Pick a date or remove it.`,
+        });
       }
 
       const corrected = fix !== undefined;
@@ -227,7 +240,9 @@ export const confirmDraft = mutation({
       });
       links.push({ text: item.text, foodId });
     }
-    if (entries.length === 0) throw new Error("Nothing left to log. Discard the draft instead.");
+    if (entries.length === 0) {
+      throw new ConvexError({ code: "DRAFT_EMPTY", message: "Nothing left to log. Discard the draft instead." });
+    }
 
     await insertEntries(ctx, userId, draft.submissionId, entries, {
       createdBy: "user",
@@ -251,7 +266,7 @@ export const discardDraft = mutation({
     await assertLedgerWritable(ctx, userId);
     const draft = await ownDraft(ctx, userId, draftId);
     if (draft.status === "discarded") return null;
-    if (draft.status !== "pending") throw new Error(`Draft is ${draft.status}`);
+    if (draft.status !== "pending") throw new ConvexError({ code: "DRAFT_CLOSED", message: `Draft is ${draft.status}` });
     await ctx.db.patch("drafts", draft._id, { status: "discarded", resolvedAt: Date.now() });
     return null;
   },
@@ -279,7 +294,7 @@ export const forgetFoodLink = mutation({
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
     const link = await ctx.db.get("food_links", linkId);
-    if (link === null || link.userId !== userId) throw new Error("Memory not found");
+    if (link === null || link.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Memory not found" });
     await ctx.db.patch("food_links", link._id, { status: "deleted", updatedAt: Date.now() });
     return null;
   },
