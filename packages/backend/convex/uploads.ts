@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, type ActionCtx } from "./_generated/server";
@@ -27,7 +27,7 @@ export const registerUpload = mutation({
     await assertLedgerWritable(ctx, userId);
     const existing = await ctx.db.query("uploads").withIndex("by_storageId", (q) => q.eq("storageId", storageId)).unique();
     if (existing === null || existing.userId !== userId || (await ctx.db.system.get("_storage", storageId)) === null) {
-      throw new Error("Upload not found. Upload it again.");
+      throw new ConvexError({ code: "UPLOAD_NOT_FOUND", message: "Upload not found. Upload it again." });
     }
     return null;
   },
@@ -40,7 +40,7 @@ export const registerStoredUpload = internalMutation({
   handler: async (ctx, { storageId }) => {
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
-    if ((await ctx.db.system.get("_storage", storageId)) === null) throw new Error("Upload not found. Upload it again.");
+    if ((await ctx.db.system.get("_storage", storageId)) === null) throw new ConvexError({ code: "UPLOAD_NOT_FOUND", message: "Upload not found. Upload it again." });
     await ctx.db.insert("uploads", { userId, storageId, createdAt: Date.now() });
     return null;
   },
@@ -62,5 +62,5 @@ export const ownsUpload = internalQuery({
 /** Throws unless the caller owns the file, so no one can feed, or later delete, another user's upload. */
 export async function requireOwnUpload(ctx: ActionCtx, userId: string, storageId: Id<"_storage">): Promise<void> {
   const owned: boolean = await ctx.runQuery(internal.uploads.ownsUpload, { userId, storageId });
-  if (!owned) throw new Error("Photo not found. Upload it again.");
+  if (!owned) throw new ConvexError({ code: "UPLOAD_NOT_FOUND", message: "Photo not found. Upload it again." });
 }

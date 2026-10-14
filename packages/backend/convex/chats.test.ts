@@ -174,10 +174,8 @@ describe("multi-chat (D12)", () => {
 
     const other = t.withIdentity({ subject: "user_b" });
     expect(await other.query(api.chats.listChats, {})).toEqual([]);
-    await expect(other.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } })).rejects.toThrow(
-      /Chat not found/,
-    );
-    await expect(other.action(api.chats.sendMessage, { chatId, submissionId: "x", text: "hi" })).rejects.toThrow(/Chat not found/);
+    await expect(other.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } })
+    await expect(other.action(api.chats.sendMessage, { chatId, submissionId: "x", text: "hi" })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
 
     vi.useFakeTimers();
     await user.mutation(api.chats.deleteChat, { chatId });
@@ -248,11 +246,9 @@ describe("multi-chat (D12)", () => {
         claimedAt: Date.now(),
       }),
     );
-    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(
-      /already being handled/,
-    );
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toMatchObject({ data: { code: "MESSAGE_BUSY" } })
     const audio = { data: btoa("fake audio bytes"), mimeType: "audio/webm" };
-    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", audio })).rejects.toThrow(/already being handled/);
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", audio })).rejects.toMatchObject({ data: { code: "MESSAGE_BUSY" } });
     expect(bodies).toHaveLength(0);
     expect(groqCalls).toBe(0);
   });
@@ -445,26 +441,44 @@ async function replyRow(t: TestConvex<typeof schema>): Promise<Doc<"messages">> 
   return reply;
 }
 
-/** Waits until the reply row shows `text`; the stream reads ahead of the turn, so event order alone proves nothing. */
+/** Every live reply text row. */
+async function streamRows(t: TestConvex<typeof schema>): Promise<Doc<"reply_streams">[]> {
+  return await t.run((ctx) => ctx.db.query("reply_streams").take(20));
+}
+
+/** Waits until the reply's live row shows `text`, then returns the reply row; the stream reads ahead of the turn, so event order alone proves nothing. */
 async function waitForText(t: TestConvex<typeof schema>, text: string): Promise<Doc<"messages">> {
   for (let i = 0; i < 200; i++) {
-    const row = await replyRow(t).catch(() => null);
-    if (row?.text === text) return row;
+    const stream = (await streamRows(t)).find((s) => s.text === text);
+    const row = stream === undefined ? null : await t.run((ctx) => ctx.db.get("messages", stream.messageId));
+    if (row !== null) return row;
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
   throw new Error(`reply never showed ${JSON.stringify(text.slice(0, 40))}`);
 }
 
 describe("streaming replies (A12)", () => {
-  test("text lands on the reply row while it streams, and the row ends done", async () => {
+  test("text lands on the live row while it streams, and the reply row ends done", async () => {
     const { t, user, chatId } = await setup();
     const long = "x".repeat(STREAM_FLUSH_CHARS + 50);
     const seen: Doc<"messages">[] = [];
-    llm = () => ({ chunks: ["Hello ", long, " end"], beforeEvent: async (i) => void (i === 2 && seen.push(await waitForText(t, `Hello ${long}`))) });
+    const live: (string | null)[] = [];
+    llm = () => ({
+      chunks: ["Hello ", long, " end"],
+      beforeEvent: async (i) => {
+        if (i !== 2) return;
+        const row = await waitForText(t, `Hello ${long}`);
+        seen.push(row);
+        live.push(await user.query(api.chats.liveReply, { messageId: row._id }));
+      },
+    });
     const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
 
-    expect(seen[0]).toMatchObject({ status: "streaming", text: `Hello ${long}` });
+    expect(seen[0]).toMatchObject({ status: "streaming", text: "" });
+    expect(live).toEqual([`Hello ${long}`]);
     expect(turn.reply).toBe(`Hello ${long} end`);
+    expect(await streamRows(t)).toEqual([]);
+    expect(await user.query(api.chats.liveReply, { messageId: turn.assistantMessageId })).toBeNull();
     expect(await replyRow(t)).toMatchObject({ _id: turn.assistantMessageId, status: "done", text: `Hello ${long} end` });
     const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } });
     expect(page.page[0]).toMatchObject({ role: "assistant", status: "done" });
@@ -562,7 +576,159 @@ describe("streaming replies (A12)", () => {
     const { t, user, chatId } = await setup();
     await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
     const other = t.withIdentity({ subject: "user_b" });
-    await expect(other.mutation(api.chats.stopMessage, { messageId: (await replyRow(t))._id })).rejects.toThrow(/Message not found/);
+    await expect(other.mutation(api.chats.stopMessage, { messageId: (await replyRow(t))._id })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+  });
+});
+
+describe("live reply rows (B3)", () => {
+  /** Every messages and chats row: what the paged message query and the chat list read. */
+  async function pagedRows(t: TestConvex<typeof schema>) {
+    return await t.run(async (ctx) => ({ messages: await ctx.db.query("messages").take(20), chats: await ctx.db.query("chats").take(5) }));
+  }
+
+  test("streaming writes touch neither messages nor chats, so listMessages and listChats don't rerun", async () => {
+    const { t, user, chatId } = await setup();
+    const a = "a".repeat(STREAM_FLUSH_CHARS + 10);
+    const b = "b".repeat(STREAM_FLUSH_CHARS + 10);
+    const snapshots: Awaited<ReturnType<typeof pagedRows>>[] = [];
+    let writes = 0;
+    llm = () => ({
+      chunks: ["Hello", a, b, " end"],
+      beforeEvent: async (i) => {
+        if (i === 1) await waitForText(t, "Hello");
+        if (i === 3) await waitForText(t, `Hello${a}${b}`);
+        if (i === 1 || i === 3) {
+          snapshots.push(await pagedRows(t));
+          writes++;
+        }
+      },
+    });
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(writes).toBe(2);
+    // Three streamed writes landed between the snapshots; not one of them changed a row the paged queries read.
+    expect(snapshots[1]).toEqual(snapshots[0]);
+    expect(turn.reply).toBe(`Hello${a}${b} end`);
+  });
+
+  test("the live row is gone after a stop, a late stop, a failure, an expiry, a regenerate and a deleted chat", async () => {
+    const { t, user, chatId } = await setup();
+    // Stop mid-stream.
+    llm = () => ({
+      chunks: ["Hello", "x".repeat(STREAM_FLUSH_CHARS + 10), " tail"],
+      beforeEvent: async (i) => {
+        if (i === 2) await user.mutation(api.chats.stopMessage, { messageId: (await waitForText(t, `Hello${"x".repeat(STREAM_FLUSH_CHARS + 10)}`))._id });
+      },
+    });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    expect(await streamRows(t)).toEqual([]);
+
+    // A broken stream fails the reply and keeps the text it reached on the message.
+    llm = () => ({ chunks: ["Partial", " more"], failAt: 1 });
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m2", text: "again" })).rejects.toThrow(/connection reset/);
+    expect(await streamRows(t)).toEqual([]);
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
+    expect(page.page[0]).toMatchObject({ status: "failed", text: "Partial" });
+
+    // Regenerate streams into a new row and cleans it up when done.
+    llm = () => ({ content: "Fresh take." });
+    await user.action(api.chats.regenerate, { chatId });
+    expect(await streamRows(t)).toEqual([]);
+
+    // A chat deleted mid-stream: the turn ends, its rows are purged, and no live row is left.
+    llm = () => ({
+      chunks: ["Doomed", " reply"],
+      beforeEvent: async (i) => {
+        if (i !== 1) return;
+        await waitForText(t, "Doomed");
+        await user.mutation(api.chats.deleteChat, { chatId });
+      },
+    });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m3", text: "last" });
+    expect(await streamRows(t)).toEqual([]);
+  });
+
+  test("an expired reply keeps the streamed text and drops its live row", async () => {
+    const { t, chatId } = await setup();
+    vi.useFakeTimers();
+    const claim = await t.mutation(internal.chats.claimTurn, { userId: "user_a", chatId, submissionId: "m1", text: "hi", attachments: [], audioPending: false });
+    expect(await t.mutation(internal.chats.appendReply, { messageId: claim.replyId, claimedAt: claim.claimedAt, text: "Half" })).toBe(false);
+    expect(await streamRows(t)).toHaveLength(1);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    expect(await replyRow(t)).toMatchObject({ status: "failed", text: "Half" });
+    expect(await streamRows(t)).toEqual([]);
+  });
+
+  test("a stale attempt can't write the live row, and a retry starts it empty", async () => {
+    const { t, chatId } = await setup();
+    const first = await t.mutation(internal.chats.claimTurn, { userId: "user_a", chatId, submissionId: "m1", text: "hi", attachments: [], audioPending: false });
+    await t.mutation(internal.chats.appendReply, { messageId: first.replyId, claimedAt: first.claimedAt, text: "Old attempt" });
+    await t.mutation(internal.chats.releaseTurn, { userId: "user_a", messageId: first.messageId, replyId: first.replyId, claimedAt: first.claimedAt });
+    expect(await replyRow(t)).toMatchObject({ status: "failed", text: "Old attempt" });
+    expect(await streamRows(t)).toEqual([]);
+
+    // Claim times fence attempts, so the retry must start at a later millisecond.
+    vi.useFakeTimers({ toFake: ["Date"], now: first.claimedAt + 1_000 });
+    const retry = await t.mutation(internal.chats.claimTurn, { userId: "user_a", chatId, submissionId: "m1", text: "hi", attachments: [], audioPending: false });
+    vi.useRealTimers();
+    expect(retry.replyId).toBe(first.replyId);
+    expect(await t.mutation(internal.chats.appendReply, { messageId: first.replyId, claimedAt: first.claimedAt, text: "stale" })).toBe(true);
+    expect(await streamRows(t)).toEqual([]);
+    expect(await t.mutation(internal.chats.appendReply, { messageId: retry.replyId, claimedAt: retry.claimedAt, text: "New" })).toBe(false);
+    expect((await streamRows(t)).map((s) => s.text)).toEqual(["New"]);
+  });
+
+  test("purging a deleted chat removes a live row left by a reply that never ended", async () => {
+    const { t, user, chatId } = await setup();
+    const claim = await t.mutation(internal.chats.claimTurn, { userId: "user_a", chatId, submissionId: "m1", text: "hi", attachments: [], audioPending: false });
+    await t.mutation(internal.chats.appendReply, { messageId: claim.replyId, claimedAt: claim.claimedAt, text: "Cut off" });
+    vi.useFakeTimers();
+    await user.mutation(api.chats.deleteChat, { chatId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    vi.useRealTimers();
+    expect(await streamRows(t)).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("messages").take(10))).toEqual([]);
+  });
+
+  test("liveReply hides another user's stream", async () => {
+    const { t, chatId } = await setup();
+    const claim = await t.mutation(internal.chats.claimTurn, { userId: "user_a", chatId, submissionId: "m1", text: "hi", attachments: [], audioPending: false });
+    await t.mutation(internal.chats.appendReply, { messageId: claim.replyId, claimedAt: claim.claimedAt, text: "Private" });
+    expect(await t.withIdentity({ subject: "user_a" }).query(api.chats.liveReply, { messageId: claim.replyId })).toBe("Private");
+    expect(await t.withIdentity({ subject: "user_b" }).query(api.chats.liveReply, { messageId: claim.replyId })).toBeNull();
+  });
+});
+
+describe("chat previews on the chat row (B3)", () => {
+  /** The stored preview field of the only chat. */
+  async function storedPreview(t: TestConvex<typeof schema>): Promise<string | null | undefined> {
+    return (await t.run((ctx) => ctx.db.query("chats").first()))?.lastMessage;
+  }
+
+  test("the preview follows claim, finish, failure, retry and regenerate", async () => {
+    const { t, user, chatId } = await setup();
+    expect(await storedPreview(t)).toBeNull();
+
+    llm = () => ({ chunks: ["Partial", " more"], failAt: 1 });
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "my question" })).rejects.toThrow();
+    expect(await storedPreview(t)).toBe("Partial");
+
+    // The retry resets the reply, so the preview falls back to the question until the new reply finishes.
+    llm = () => ({ chunks: ["Answer"], beforeEvent: async (i) => void (i === 0 && expect(await storedPreview(t)).toBe("my question")) });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "my question" });
+    expect(await storedPreview(t)).toBe("Answer");
+
+    llm = () => ({ content: "y".repeat(150) });
+    await user.action(api.chats.regenerate, { chatId });
+    expect(await storedPreview(t)).toBe("y".repeat(100));
+    expect((await user.query(api.chats.listChats, {}))[0]?.lastMessage).toBe("y".repeat(100));
+  });
+
+  test("a chat stored before previews falls back to reading its messages", async () => {
+    const { t, user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+    await t.run((ctx) => ctx.db.patch("chats", chatId, { lastMessage: undefined }));
+    expect((await user.query(api.chats.listChats, {}))[0]?.lastMessage).toBe("Hi!");
   });
 });
 
@@ -619,7 +785,7 @@ describe("regenerate", () => {
         claimedAt: Date.now(),
       }),
     );
-    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toThrow(/Wait for the reply/);
+    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toMatchObject({ data: { code: "REPLY_STREAMING" } });
     expect(bodies).toHaveLength(1);
   });
 
@@ -628,7 +794,7 @@ describe("regenerate", () => {
     await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
     await user.action(api.chats.regenerate, { chatId });
     const calls = bodies.length;
-    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(/already being handled/);
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toMatchObject({ data: { code: "MESSAGE_BUSY" } });
     expect(bodies).toHaveLength(calls);
   });
 });
@@ -640,9 +806,9 @@ describe("rename, preview and search", () => {
     expect((await user.query(api.chats.listChats, {}))[0]?.title).toBe("Dinner ideas");
 
     const other = t.withIdentity({ subject: "user_b" });
-    await expect(other.mutation(api.chats.renameChat, { chatId, title: "Mine" })).rejects.toThrow(/Chat not found/);
-    await expect(user.mutation(api.chats.renameChat, { chatId, title: "   " })).rejects.toThrow(/1-60 characters/);
-    await expect(user.mutation(api.chats.renameChat, { chatId, title: "x".repeat(61) })).rejects.toThrow(/1-60 characters/);
+    await expect(other.mutation(api.chats.renameChat, { chatId, title: "Mine" })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+    await expect(user.mutation(api.chats.renameChat, { chatId, title: "   " })).rejects.toMatchObject({ data: { code: "INVALID_TEXT" } });
+    await expect(user.mutation(api.chats.renameChat, { chatId, title: "x".repeat(61) })).rejects.toMatchObject({ data: { code: "INVALID_TEXT" } });
     expect((await user.query(api.chats.listChats, {}))[0]?.title).toBe("Dinner ideas");
   });
 

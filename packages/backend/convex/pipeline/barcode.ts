@@ -1,5 +1,5 @@
 import { resolvePortion, type Nutrients } from "@stride/core";
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { action, internalMutation, internalQuery, type ActionCtx } from "../_generated/server";
@@ -146,7 +146,7 @@ export const cacheProduct = internalMutation({
 /** Finds a barcode in the cache, else fetches it from OFF and caches it. Null when OFF has no usable product. */
 export async function lookupBarcodeFood(ctx: ActionCtx, barcode: string): Promise<BarcodeFood | null> {
   const code = barcode.trim();
-  if (!BARCODE_RE.test(code)) throw new Error("Barcode must be 8-14 digits");
+  if (!BARCODE_RE.test(code)) throw new ConvexError({ code: "INVALID_BARCODE", message: "Barcode must be 8-14 digits" });
   const cached: BarcodeFood | null = await ctx.runQuery(internal.pipeline.barcode.cachedProduct, { barcode: code });
   if (cached !== null) return cached;
 
@@ -159,7 +159,9 @@ export async function lookupBarcodeFood(ctx: ActionCtx, barcode: string): Promis
       signal: controller.signal,
     });
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`Open Food Facts error ${res.status}`);
+    if (!res.ok) {
+      throw new ConvexError({ code: "FOOD_DB_UNAVAILABLE", message: `Open Food Facts error ${res.status}` });
+    }
     data = await res.json();
   } finally {
     clearTimeout(timeout);
@@ -176,7 +178,7 @@ export const lookupBarcode = action({
   returns: v.union(barcodeFoodValidator, v.null()),
   handler: async (ctx, { barcode }): Promise<BarcodeFood | null> => {
     const identity = await ctx.auth.getUserIdentity();
-    if (identity === null) throw new Error("Unauthenticated");
+    if (identity === null) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     return await lookupBarcodeFood(ctx, barcode);
   },
 });

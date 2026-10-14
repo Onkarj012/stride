@@ -105,7 +105,7 @@ test("searchFoods matches names and aliases, bounded, signed-in only", async () 
   const byName = await user.query(api.foods_db.searchFoods, { query: "ghee", limit: 500 });
   expect(byName.map((f) => f.name)).toEqual(["Ghee"]);
   expect(await user.query(api.foods_db.searchFoods, { query: "   " })).toEqual([]);
-  await expect(t.query(api.foods_db.searchFoods, { query: "rice" })).rejects.toThrow(/Unauthenticated/);
+  await expect(t.query(api.foods_db.searchFoods, { query: "rice" })).rejects.toMatchObject({ data: { code: "UNAUTHENTICATED" } });
 });
 
 test("import batches are capped", async () => {

@@ -1,5 +1,5 @@
 import { isLocalDate, isValidTimeZone, localDateTime, inferSlot, type MealSlot } from "@stride/core";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 
 /** A user's local day for one instant, as decided by the D15 resolver. */
@@ -12,7 +12,7 @@ export interface LocalDay {
 /** Caller's Clerk subject, the userId used across the ledger tables. Throws when signed out. */
 export async function requireUserId(ctx: QueryCtx | MutationCtx): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error("Unauthenticated");
+  if (!identity) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
   return identity.subject;
 }
 
@@ -46,7 +46,7 @@ export async function localDateOrToday(
   localDate: string | undefined,
 ): Promise<string> {
   if (localDate === undefined) return (await resolveLocalDay(ctx, userId, Date.now())).localDate;
-  if (!isLocalDate(localDate)) throw new Error(`Not a YYYY-MM-DD date: ${localDate}`);
+  if (!isLocalDate(localDate)) throw new ConvexError({ code: "INVALID_DATE", message: `Not a YYYY-MM-DD date: ${localDate}` });
   return localDate;
 }
 

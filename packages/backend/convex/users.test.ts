@@ -157,6 +157,23 @@ describe("clearAllData", () => {
     });
   });
 
+  test("removes the live text row of a reply streaming while the clear runs, and keeps another user's", async () => {
+    vi.useFakeTimers();
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      for (const userId of ["user_a", "user_b"]) {
+        const chatId = await ctx.db.insert("chats", { userId, title: "Live", updatedAt: 1 });
+        const messageId = await ctx.db.insert("messages", {
+          userId, chatId, role: "assistant", text: "", attachments: [], toolCalls: [], draftIds: [], submissionId: `${userId}-live:reply`, status: "streaming", claimedAt: 1,
+        });
+        await ctx.db.insert("reply_streams", { messageId, userId, text: "half a reply" });
+      }
+    });
+    await user.mutation(api.users.clearAllData, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run((ctx) => ctx.db.query("reply_streams").take(10))).map((row) => row.userId)).toEqual(["user_b"]);
+  });
+
   test("removes the caller's saved OpenRouter key and keeps another user's", async () => {
     const { t, user } = await setup();
     await t.run(async (ctx) => {
@@ -173,12 +190,11 @@ describe("clearAllData", () => {
     vi.useFakeTimers();
     const { t, sharedFood, a, user } = await setup();
     await user.mutation(api.users.clearAllData, {});
-    const cleared = /being cleared/;
 
-    await expect(user.mutation(api.chats.createChat, {})).rejects.toThrow(cleared);
-    await expect(user.mutation(api.uploads.generateUploadUrl, {})).rejects.toThrow(cleared);
-    await expect(user.mutation(api.uploads.registerUpload, { storageId: a.fileId })).rejects.toThrow(cleared);
-    await expect(user.mutation(internal.uploads.registerStoredUpload, { storageId: a.fileId })).rejects.toThrow(cleared);
+    await expect(user.mutation(api.chats.createChat, {})).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+    await expect(user.mutation(api.uploads.generateUploadUrl, {})).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+    await expect(user.mutation(api.uploads.registerUpload, { storageId: a.fileId })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+    await expect(user.mutation(internal.uploads.registerStoredUpload, { storageId: a.fileId })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
     await expect(
       t.mutation(internal.chats.claimTurn, {
         userId: "user_a",
@@ -188,7 +204,7 @@ describe("clearAllData", () => {
         attachments: [],
         audioPending: false,
       }),
-    ).rejects.toThrow(cleared);
+    ).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
     const replyId = await t.run((ctx) =>
       ctx.db.insert("messages", {
         userId: "user_a",
@@ -213,7 +229,7 @@ describe("clearAllData", () => {
         draftIds: [],
         entryIds: [],
       }),
-    ).rejects.toThrow(cleared);
+    ).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
     await expect(
       t.mutation(internal.pipeline.resolve.commitLog, {
         userId: "user_a",
@@ -222,11 +238,11 @@ describe("clearAllData", () => {
         items: [{ food: "rice", quantity: 1, unit: "cup", slot: null, date: null, fromPhoto: false, portionScale: null, cookingOil: false, confidence: 1 }],
         picks: [{ index: 0, foodId: sharedFood }],
       }),
-    ).rejects.toThrow(cleared);
-    await expect(user.mutation(api.pipeline.drafts.confirmDraft, { draftId: a.draftId })).rejects.toThrow(cleared);
-    await expect(user.mutation(api.pipeline.drafts.discardDraft, { draftId: a.draftId })).rejects.toThrow(cleared);
-    await expect(user.mutation(api.pipeline.drafts.forgetFoodLink, { linkId: a.linkId })).rejects.toThrow(cleared);
-    await expect(user.mutation(api.foods_db.createUserFood, { name: "Ghee roti", per100g: PER_100G })).rejects.toThrow(cleared);
+    ).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+    await expect(user.mutation(api.pipeline.drafts.confirmDraft, { draftId: a.draftId })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+    await expect(user.mutation(api.pipeline.drafts.discardDraft, { draftId: a.draftId })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+    await expect(user.mutation(api.pipeline.drafts.forgetFoodLink, { linkId: a.linkId })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+    await expect(user.mutation(api.foods_db.createUserFood, { name: "Ghee roti", per100g: PER_100G })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
 
     // Another user's writes are not blocked.
     const other = t.withIdentity({ subject: "user_b" });
@@ -368,7 +384,7 @@ describe("deleteAccount", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { t, user } = await setup();
 
-    await expect(user.action(api.users.deleteAccount, {})).rejects.toThrow("CLERK_SECRET_KEY is not set");
+    await expect(user.action(api.users.deleteAccount, {})).rejects.toMatchObject({ data: { code: "ACCOUNT_DELETE_FAILED" } });
     expect(fetchMock).not.toHaveBeenCalled();
     const settings = await t.run((ctx) => ctx.db.query("user_settings").take(10));
     expect(settings.map((row) => row.userId)).toEqual(["user_a", "user_b"]);
@@ -381,7 +397,7 @@ describe("deleteAccount", () => {
     const { t, sharedFood, user } = await setup();
     await seedAccountRows(t, sharedFood);
 
-    await expect(user.action(api.users.deleteAccount, {})).rejects.toThrow("Clerk delete failed (500)");
+    await expect(user.action(api.users.deleteAccount, {})).rejects.toMatchObject({ data: { code: "ACCOUNT_DELETE_FAILED" } });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     const owners = await t.run(async (ctx) => ({

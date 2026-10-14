@@ -1,6 +1,6 @@
 import { addDays, epley, weekStart, weeklyVolumeByMuscle } from "@stride/core";
 import { paginationOptsValidator } from "convex/server";
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { revisionOpValidator } from "./ledger_validators";
@@ -8,9 +8,12 @@ import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
 import { assertLedgerWritable } from "./users";
 
 const MAX_SESSION_SETS = 200;
-// Each retained set can require a separate session and exercise read; leave room below 4,096 ranges.
+// Shared by all exercises in one sessionDetail query. Each set read can also cost a session read, so this stays under Convex's 4,096 range limit.
 const MAX_HISTORY_SETS = 1000;
+const RECENT_SET_SCAN = 200;
+const RECENT_EXERCISE_LIMIT = 6;
 type RevisionOp = Infer<typeof revisionOpValidator>;
+type SessionCache = Map<Id<"workout_sessions">, Doc<"workout_sessions"> | null>;
 type SetContent = Pick<Doc<"sets">, "sessionId" | "exerciseId" | "setIndex" | "weightKg" | "reps" | "rpe" | "deletedAt">;
 type ReadCtx = QueryCtx | MutationCtx;
 
@@ -21,34 +24,34 @@ function checkSubmissionId(submissionId: string): void {
 
 /** Rejects implausible set values while allowing bodyweight sets at zero kg. */
 function checkSet(weightKg: number, reps: number, rpe: number | undefined): void {
-  if (!Number.isFinite(weightKg) || weightKg < 0 || weightKg > 1000) throw new Error("weightKg must be within 0-1000");
-  if (!Number.isInteger(reps) || reps < 1 || reps > 1000) throw new Error("reps must be an integer within 1-1000");
-  if (rpe !== undefined && (!Number.isFinite(rpe) || rpe < 1 || rpe > 10)) throw new Error("rpe must be within 1-10");
+  if (!Number.isFinite(weightKg) || weightKg < 0 || weightKg > 1000) throw new ConvexError({ code: "INVALID_SET", message: "weightKg must be within 0-1000" });
+  if (!Number.isInteger(reps) || reps < 1 || reps > 1000) throw new ConvexError({ code: "INVALID_SET", message: "reps must be an integer within 1-1000" });
+  if (rpe !== undefined && (!Number.isFinite(rpe) || rpe < 1 || rpe > 10)) throw new ConvexError({ code: "INVALID_SET", message: "rpe must be within 1-10" });
 }
 
 /** Rejects invalid timestamps before resolving a local day. */
 function checkTimestamp(timestamp: number): void {
-  if (!Number.isFinite(timestamp) || !Number.isFinite(new Date(timestamp).getTime())) throw new Error("Timestamp must be a valid finite instant");
+  if (!Number.isFinite(timestamp) || !Number.isFinite(new Date(timestamp).getTime())) throw new ConvexError({ code: "INVALID_DATE", message: "Timestamp must be a valid finite instant" });
 }
 
 /** Loads a session owned by the caller. */
 async function requireSession(ctx: ReadCtx, userId: string, sessionId: Id<"workout_sessions">): Promise<Doc<"workout_sessions">> {
   const session = await ctx.db.get("workout_sessions", sessionId);
-  if (session === null || session.userId !== userId || session.deletedAt !== undefined) throw new Error("Session not found");
+  if (session === null || session.userId !== userId || session.deletedAt !== undefined) throw new ConvexError({ code: "NOT_FOUND", message: "Session not found" });
   return session;
 }
 
 /** Loads a shared exercise and rejects missing library rows. */
 async function requireExercise(ctx: ReadCtx, exerciseId: Id<"exercises">): Promise<Doc<"exercises">> {
   const exercise = await ctx.db.get("exercises", exerciseId);
-  if (exercise === null) throw new Error("Exercise not found");
+  if (exercise === null) throw new ConvexError({ code: "NOT_FOUND", message: "Exercise not found" });
   return exercise;
 }
 
 /** Loads a set owned by the caller and checks its parent session. */
 async function requireSet(ctx: ReadCtx, userId: string, setId: Id<"sets">): Promise<Doc<"sets">> {
   const set = await ctx.db.get("sets", setId);
-  if (set === null || set.userId !== userId) throw new Error("Set not found");
+  if (set === null || set.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Set not found" });
   await requireSession(ctx, userId, set.sessionId);
   return set;
 }
@@ -56,7 +59,7 @@ async function requireSet(ctx: ReadCtx, userId: string, setId: Id<"sets">): Prom
 /** Reads current rows for a session and refuses a partial set list. */
 async function sessionSets(ctx: ReadCtx, sessionId: Id<"workout_sessions">, userId: string): Promise<Doc<"sets">[]> {
   const rows = await ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(MAX_SESSION_SETS + 1);
-  if (rows.length > MAX_SESSION_SETS) throw new Error("Session exceeds 200 sets");
+  if (rows.length > MAX_SESSION_SETS) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 200 sets" });
   if (rows.some((row) => row.userId !== userId)) throw new Error("Set ownership mismatch");
   return rows.sort((a, b) => a.setIndex - b.setIndex);
 }
@@ -71,6 +74,19 @@ async function history(ctx: ReadCtx, userId: string) {
     if (session !== null && session.userId === userId && session.deletedAt === undefined) sessionMap.set(session._id, session);
   }
   return { sets: sets.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap, historyLimited: rows.length > MAX_HISTORY_SETS };
+}
+
+/** Reads up to `limit` of one exercise's recent live sets and their sessions, reporting when older history is omitted. */
+async function exerciseHistory(ctx: ReadCtx, userId: string, exerciseId: Id<"exercises">, cache: SessionCache, limit: number) {
+  const rows = await ctx.db.query("sets").withIndex("by_userId_and_exerciseId_and_status", (q) => q.eq("userId", userId).eq("exerciseId", exerciseId).eq("status", "live")).order("desc").take(limit + 1);
+  const kept = rows.slice(0, limit);
+  const sessionMap = new Map<Id<"workout_sessions">, Doc<"workout_sessions">>();
+  for (const sessionId of new Set(kept.map((set) => set.sessionId))) {
+    if (!cache.has(sessionId)) cache.set(sessionId, await ctx.db.get("workout_sessions", sessionId));
+    const session = cache.get(sessionId);
+    if (session && session.userId === userId && session.deletedAt === undefined) sessionMap.set(session._id, session);
+  }
+  return { sets: kept.filter((set) => sessionMap.has(set.sessionId)), sessions: sessionMap, read: kept.length, historyLimited: rows.length > limit };
 }
 
 /** Returns a set with a deterministic Epley estimate, or null outside its valid rep range. */
@@ -106,8 +122,8 @@ async function replay(ctx: MutationCtx, userId: string, submissionId: string, op
 
 /** Appends a revision and marks its previous head superseded. */
 async function writeRevision(ctx: MutationCtx, head: Doc<"sets">, content: SetContent, op: RevisionOp, submissionId: string): Promise<Id<"sets">> {
-  if (head.status === "superseded") throw new Error("Set has a newer revision. Reload and retry.");
-  if (head.status !== "live" && content.deletedAt === undefined && (await sessionSets(ctx, head.sessionId, head.userId)).length >= MAX_SESSION_SETS) throw new Error("Session exceeds 200 sets");
+  if (head.status === "superseded") throw new ConvexError({ code: "STALE_REVISION", message: "Set has a newer revision. Reload and retry." });
+  if (head.status !== "live" && content.deletedAt === undefined && (await sessionSets(ctx, head.sessionId, head.userId)).length >= MAX_SESSION_SETS) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 200 sets" });
   await ctx.db.patch("sets", head._id, { status: "superseded" });
   return await ctx.db.insert("sets", { ...content, userId: head.userId, revision: head.revision + 1, supersedes: head._id, op, status: content.deletedAt === undefined ? "live" : "deleted", submissionId });
 }
@@ -124,10 +140,10 @@ export const startSession = mutation({
     if (prior !== null) return prior._id;
     const startedAt = args.startedAt ?? Date.now();
     checkTimestamp(startedAt);
-    if (args.name !== undefined && (args.name.trim().length === 0 || args.name.length > 100)) throw new Error("name must be 1-100 characters");
+    if (args.name !== undefined && (args.name.trim().length === 0 || args.name.length > 100)) throw new ConvexError({ code: "INVALID_TEXT", message: "name must be 1-100 characters" });
     const day = await resolveLocalDay(ctx, userId, startedAt);
     const sameDay = await ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).eq("localDate", day.localDate)).take(30);
-    if (sameDay.length >= 30) throw new Error("Day exceeds 30 workout sessions");
+    if (sameDay.length >= 30) throw new ConvexError({ code: "LIMIT_REACHED", message: "Day exceeds 30 workout sessions" });
     return await ctx.db.insert("workout_sessions", { userId, localDate: day.localDate, timeZone: day.timeZone, startedAt, submissionId: args.submissionId, ...(args.name === undefined ? {} : { name: args.name.trim() }) });
   },
 });
@@ -143,7 +159,7 @@ export const endSession = mutation({
     if (session.endedAt !== undefined) return session._id;
     const endedAt = args.endedAt ?? Date.now();
     checkTimestamp(endedAt);
-    if (endedAt < session.startedAt) throw new Error("endedAt must be at or after startedAt");
+    if (endedAt < session.startedAt) throw new ConvexError({ code: "END_BEFORE_START", message: "endedAt must be at or after startedAt" });
     await ctx.db.patch("workout_sessions", session._id, { endedAt });
     return session._id;
   },
@@ -164,10 +180,10 @@ export const addSet = mutation({
       if (prior.op !== "add" || prior.sessionId !== session._id || prior.exerciseId !== args.exerciseId) throw new Error("submissionId already used for a different change");
       return prior._id;
     }
-    if (session.endedAt !== undefined) throw new Error("Session is finished");
+    if (session.endedAt !== undefined) throw new ConvexError({ code: "SESSION_FINISHED", message: "Session is finished" });
     checkSet(args.weightKg, args.reps, args.rpe);
     const rows = await sessionSets(ctx, session._id, userId);
-    if (rows.length >= MAX_SESSION_SETS) throw new Error("Session exceeds 200 sets");
+    if (rows.length >= MAX_SESSION_SETS) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 200 sets" });
     const last = await ctx.db.query("sets").withIndex("by_sessionId_and_exerciseId_and_setIndex", (q) => q.eq("sessionId", session._id).eq("exerciseId", args.exerciseId)).order("desc").first();
     const setIndex = (last?.setIndex ?? 0) + 1;
     return await ctx.db.insert("sets", { userId, sessionId: session._id, exerciseId: args.exerciseId, setIndex, reps: args.reps, weightKg: args.weightKg, ...(args.rpe === undefined ? {} : { rpe: args.rpe }), revision: 1, op: "add", status: "live", submissionId: args.submissionId });
@@ -184,7 +200,7 @@ export const editSet = mutation({
     const head = await requireSet(ctx, userId, args.setId);
     const prior = await replay(ctx, userId, args.submissionId, "edit", head._id);
     if (prior !== null) return prior;
-    if (head.status === "deleted") throw new Error("Set is deleted. Undo the delete first.");
+    if (head.status === "deleted") throw new ConvexError({ code: "ALREADY_DELETED", message: "Set is deleted. Undo the delete first." });
     if (args.weightKg === undefined && args.reps === undefined && args.rpe === undefined) throw new Error("editSet needs at least one change");
     const content = contentOf(head);
     content.weightKg = args.weightKg ?? content.weightKg;
@@ -206,7 +222,7 @@ export const deleteSet = mutation({
     const head = await requireSet(ctx, userId, args.setId);
     const prior = await replay(ctx, userId, args.submissionId, "delete", head._id);
     if (prior !== null) return prior;
-    if (head.status === "deleted") throw new Error("Set is already deleted");
+    if (head.status === "deleted") throw new ConvexError({ code: "ALREADY_DELETED", message: "Set is already deleted" });
     return await writeRevision(ctx, head, { ...contentOf(head), deletedAt: Date.now() }, "delete", args.submissionId);
   },
 });
@@ -238,7 +254,7 @@ export const sessionsForDay = query({
     const userId = await requireUserId(ctx);
     const date = await localDateOrToday(ctx, userId, args.localDate);
     const rows = await ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).eq("localDate", date)).take(31);
-    if (rows.length > 30) throw new Error("Day exceeds 30 workout sessions");
+    if (rows.length > 30) throw new ConvexError({ code: "LIMIT_REACHED", message: "Day exceeds 30 workout sessions" });
     return rows.filter((row) => row.deletedAt === undefined).sort((a, b) => a.startedAt - b.startedAt);
   },
 });
@@ -268,7 +284,7 @@ export const exerciseHints = query({
     const userId = await requireUserId(ctx);
     const session = await requireSession(ctx, userId, args.sessionId);
     await requireExercise(ctx, args.exerciseId);
-    const past = await history(ctx, userId);
+    const past = await exerciseHistory(ctx, userId, args.exerciseId, new Map(), MAX_HISTORY_SETS);
     return { previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, args.exerciseId, session), historyLimited: past.historyLimited };
   },
 });
@@ -280,19 +296,44 @@ export const sessionDetail = query({
     const userId = await requireUserId(ctx);
     const session = await requireSession(ctx, userId, args.sessionId);
     const sets = await sessionSets(ctx, session._id, userId);
-    const past = await history(ctx, userId);
+    const cache: SessionCache = new Map();
+    let budget = MAX_HISTORY_SETS;
+    let historyLimited = false;
     const exercises = [];
     const newBests = [];
     for (const exerciseId of new Set(sets.map((set) => set.exerciseId))) {
       const exercise = await requireExercise(ctx, exerciseId);
+      const past = await exerciseHistory(ctx, userId, exerciseId, cache, budget);
+      budget -= past.read;
+      historyLimited ||= past.historyLimited;
       const currentSets = sets.filter((set) => set.exerciseId === exerciseId);
-      exercises.push({ exercise, sets: currentSets.map(setView), previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId, session) });
+      exercises.push({ exercise, sets: currentSets.map(setView), previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId, session), historyLimited: past.historyLimited });
       const best = Math.max(0, ...currentSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
-      const olderSets = past.sets.filter((set) => set.exerciseId === exerciseId && (past.sessions.get(set.sessionId)?.startedAt ?? Infinity) < session.startedAt);
+      const olderSets = past.sets.filter((set) => (past.sessions.get(set.sessionId)?.startedAt ?? Infinity) < session.startedAt);
       const previous = Math.max(0, ...olderSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
       if (!past.historyLimited && best > previous) newBests.push({ exerciseId, name: exercise.name, e1rmKg: best, previousBestKg: previous === 0 ? null : previous });
     }
-    return { session, exercises, historyLimited: past.historyLimited, historySetLimit: MAX_HISTORY_SETS, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
+    return { session, exercises, historyLimited, historySetLimit: MAX_HISTORY_SETS, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
+  },
+});
+
+/** Lists the caller's lifts ranked by the start time of their latest workout, newest first. */
+export const recentExercises = query({
+  args: {},
+  returns: v.array(v.id("exercises")),
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    const rows = await ctx.db.query("sets").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "live")).order("desc").take(RECENT_SET_SCAN);
+    const cache: SessionCache = new Map();
+    const latestWorkout = new Map<Id<"exercises">, number>();
+    for (const set of rows) {
+      if (!cache.has(set.sessionId)) cache.set(set.sessionId, await ctx.db.get("workout_sessions", set.sessionId));
+      const session = cache.get(set.sessionId);
+      if (!session || session.userId !== userId || session.deletedAt !== undefined) continue;
+      latestWorkout.set(set.exerciseId, Math.max(latestWorkout.get(set.exerciseId) ?? session.startedAt, session.startedAt));
+    }
+    // Map keeps first-seen order and sort is stable, so ties keep the newest-set scan order.
+    return [...latestWorkout].sort((a, b) => b[1] - a[1]).slice(0, RECENT_EXERCISE_LIMIT).map(([exerciseId]) => exerciseId);
   },
 });
 
