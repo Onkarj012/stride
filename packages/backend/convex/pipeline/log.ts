@@ -2,13 +2,13 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { action, internalQuery, type ActionCtx } from "../_generated/server";
-import { transcribeAudio } from "../ai";
 import { AI_INPUT_LIMITS, assertMaxChars } from "../ai_guard";
 import { mealSlotValidator } from "../ledger_validators";
 import { requireOwnUpload } from "../uploads";
 import { extractItems, type ExtractedItem } from "./extract";
 import { logResultValidator, type InputKind, type LogResult, type UnresolvedItem } from "./resolve";
 import { runToolPass } from "./tools";
+import { transcribeAudio } from "./transcribe";
 
 /** Where a pipeline run came from, so its entries and drafts link back to the chat message. */
 export interface PipelineRun {
