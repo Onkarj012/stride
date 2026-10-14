@@ -23,8 +23,8 @@ function oneDecimal(n: number): string {
 }
 
 // Strength card: hard sets per week as bars, then each lift's best estimated 1RM, a sparkline and its change.
-export function StrengthCard() {
-  const stats = useQuery(api.strength.stats, { weeks: 8 });
+export function StrengthCard({ localDate }: { localDate: string }) {
+  const stats = useQuery(api.strength.stats, { weeks: 8, localDate });
   if (stats === undefined) return <CardSkeleton className="h-[420px]" lines={5} />;
 
   if (stats.exercises.length === 0)

@@ -8,6 +8,7 @@ import { StrengthCard } from "@/components/progress/StrengthCard";
 import { TargetCard } from "@/components/progress/TargetCard";
 import { WeightCard } from "@/components/progress/WeightCard";
 import { Eyebrow, pressSpring } from "@/components/ui";
+import { useLocalToday } from "@/lib/useLocalToday";
 import { SUMMARY_DAYS } from "@/lib/log";
 import { savedUnits } from "@/lib/units";
 import { cn } from "@/lib/utils";
@@ -21,7 +22,8 @@ const RANGES = [
 // Progress page: weight trend and logging, daily burn, target, and strength, in a grid that reads left to right.
 export function ProgressPage() {
   const [range, setRange] = useState<number>(SUMMARY_DAYS);
-  const summary = useQuery(api.progress_v2.summary, { rangeDays: range });
+  const today = useLocalToday();
+  const summary = useQuery(api.progress_v2.summary, { rangeDays: range, localDate: today });
   const profile = useQuery(api.progress_v2.profile, {});
   const units = savedUnits(profile?.units);
 
@@ -55,12 +57,12 @@ export function ProgressPage() {
           <WeightCard summary={summary} range={range} units={units} />
         </div>
         <div className="flex flex-col gap-6">
-          <LogWeightCard units={profile === undefined ? undefined : units} />
+          <LogWeightCard localDate={today} units={profile === undefined ? undefined : units} />
           <TargetCard summary={summary} sex={profile?.sex} />
         </div>
         <ExpenditureCard summary={summary} />
         <div className="xl:col-span-2">
-          <StrengthCard />
+          <StrengthCard localDate={today} />
         </div>
       </div>
     </div>

@@ -10,6 +10,12 @@ import { FoodPicker } from "./FoodPicker";
 import { submissionIdFor, type Submission } from "./submission";
 import { useLogToast } from "./toasts";
 
+// Meal slot for the current time of day.
+function currentSlot(): MealSlot {
+  const now = new Date();
+  return inferSlot(now.getHours(), now.getMinutes());
+}
+
 // Manual add for the day shown. Works on past days too, unlike typed logging.
 export function AddFood({ localDate }: { localDate: string }) {
   const addEntries = useMutation(api.entries.addEntries);
@@ -17,10 +23,7 @@ export function AddFood({ localDate }: { localDate: string }) {
   const [open, setOpen] = useState(false);
   const [food, setFood] = useState<{ _id: FoodId; name: string } | null>(null);
   const [gramsText, setGramsText] = useState("100");
-  const [slot, setSlot] = useState<MealSlot>(() => {
-    const now = new Date();
-    return inferSlot(now.getHours(), now.getMinutes());
-  });
+  const [slot, setSlot] = useState<MealSlot>(currentSlot);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const pending = useRef<Submission>(null);
@@ -55,7 +58,10 @@ export function AddFood({ localDate }: { localDate: string }) {
     return (
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setSlot(currentSlot());
+          setOpen(true);
+        }}
         className="flex w-full items-center gap-3.5 rounded-md border-[1.5px] border-dashed border-line2 px-4 py-3.5 text-left transition-[background-color,transform] hover:bg-card/60 active:scale-[0.99]"
       >
         <span className="grid size-9 place-items-center rounded-[12px] bg-card2 text-ink">
