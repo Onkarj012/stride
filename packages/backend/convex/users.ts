@@ -70,6 +70,11 @@ async function clearBatch(ctx: MutationCtx, table: LedgerTable, userId: string):
         // The file may already be gone, and storage.delete throws on a missing id.
         if ((await ctx.db.system.get("_storage", storageId)) !== null) await ctx.storage.delete(storageId);
       }
+      // A reply still streaming keeps its text in a live row; once the message is gone no ending would delete it.
+      if (row.status === "streaming") {
+        const stream = await ctx.db.query("reply_streams").withIndex("by_messageId", (q) => q.eq("messageId", row._id)).unique();
+        if (stream !== null) await ctx.db.delete("reply_streams", stream._id);
+      }
       await ctx.db.delete("messages", row._id);
     }
     return rows.length === CLEAR_MESSAGE_BATCH;
