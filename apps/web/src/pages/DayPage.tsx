@@ -2,7 +2,7 @@ import { Navigate, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { isLocalDate } from "@stride/core";
 import { api } from "@convex/_generated/api";
-import { ToastProvider } from "@/components/Toast";
+import { LogPanel } from "@/components/log/LogPanel";
 import { DayHeader } from "@/components/day/DayHeader";
 import { MealsList } from "@/components/day/MealsList";
 import { TotalsCard } from "@/components/day/TotalsCard";
@@ -15,11 +15,7 @@ export function DayPage() {
   const today = todayIn(browserTimeZone());
   if (date !== undefined && (!isLocalDate(date) || date > today)) return <Navigate to="/day" replace />;
 
-  return (
-    <ToastProvider>
-      <DayView localDate={date ?? today} today={today} />
-    </ToastProvider>
-  );
+  return <DayView localDate={date ?? today} today={today} />;
 }
 
 // Totals, meals and editing for one already-validated day.
@@ -33,7 +29,7 @@ function DayView({ localDate, today }: { localDate: string; today: string }) {
     <div className="mx-auto flex max-w-[720px] flex-col gap-6">
       <DayHeader localDate={localDate} today={today} />
       <TotalsCard nutrients={totals?.nutrients} targets={targets} />
-      {/* LogPanel */}
+      <LogPanel localDate={localDate} today={today} />
       <MealsList entries={entries} />
     </div>
   );

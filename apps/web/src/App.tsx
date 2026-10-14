@@ -3,6 +3,7 @@ import { AuthenticateWithRedirectCallback, ClerkLoaded, ClerkLoading, Show } fro
 import { Layout } from "@/components/Layout";
 import { ProfileGate } from "@/components/ProfileGate";
 import { TimeZoneGate } from "@/components/TimeZoneGate";
+import { ToastProvider } from "@/components/Toast";
 import { DayPage } from "@/pages/DayPage";
 import { ProgressPage } from "@/pages/ProgressPage";
 import { SignInPage, SignUpPage } from "@/pages/AuthPages";
@@ -25,15 +26,17 @@ export default function App() {
         <Show when="signed-in">
           <TimeZoneGate>
             <ProfileGate>
-              <Layout>
-                <Routes>
-                  <Route path="/" element={<Navigate to="/day" replace />} />
-                  <Route path="/day" element={<DayPage />} />
-                  <Route path="/day/:date" element={<DayPage />} />
-                  <Route path="/progress" element={<ProgressPage />} />
-                  <Route path="*" element={<Navigate to="/day" replace />} />
-                </Routes>
-              </Layout>
+              <ToastProvider>
+                <Layout>
+                  <Routes>
+                    <Route path="/" element={<Navigate to="/day" replace />} />
+                    <Route path="/day" element={<DayPage />} />
+                    <Route path="/day/:date" element={<DayPage />} />
+                    <Route path="/progress" element={<ProgressPage />} />
+                    <Route path="*" element={<Navigate to="/day" replace />} />
+                  </Routes>
+                </Layout>
+              </ToastProvider>
             </ProfileGate>
           </TimeZoneGate>
         </Show>
