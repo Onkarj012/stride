@@ -9,10 +9,22 @@ export function WeightCard({ summary, range, units }: { summary: Summary | undef
   if (summary === undefined) return <CardSkeleton className="h-[420px]" lines={4} />;
   const { weights, latestTrendKg, weeklyRateKg, localDate } = summary;
 
-  if (latestTrendKg === null || weights.length === 0)
+  if (latestTrendKg === null)
     return (
       <Card title="Weight trend">
         <Empty title="No weigh-ins yet." body="Log your first weigh-in and the trend line starts here." />
+      </Card>
+    );
+
+  if (weights.length === 0)
+    return (
+      <Card title="Weight trend">
+        <Empty title="No weigh-ins in this range." body="Pick a longer range to see your recent weigh-ins.">
+          <p className="type-metric tabular-nums">
+            {weightNumber(latestTrendKg, units)}
+            <span className="ml-1.5 type-unit text-ink3">{weightUnit(units)} trend</span>
+          </p>
+        </Empty>
       </Card>
     );
 

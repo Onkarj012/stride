@@ -4,7 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { useToast } from "@/components/Toast";
 import { formatDayLabel } from "@/lib/date";
-import { plainError, type DraftId, type DraftItem, type FoodId } from "@/lib/log";
+import { plainError, SLOT_NAMES, type DraftId, type DraftItem, type FoodId } from "@/lib/log";
 import { FoodPicker } from "./FoodPicker";
 import { loggedTitle, useLogToast } from "./toasts";
 import { Button, CardSkeleton, Polo, Tag, fieldClass, pressSpring } from "@/components/ui";
@@ -31,6 +31,15 @@ function viewOf(item: DraftItem, fix: Fix) {
   return { foodName, changedFood, grams, kcal, protein };
 }
 
+// Where an item will be saved: its meal, plus its day when that is not the page's day. Null parts are left out.
+function destinationOf(item: DraftItem, pageDate: string): string | null {
+  const parts = [
+    item.slot ? SLOT_NAMES[item.slot] : null,
+    item.localDate && item.localDate !== pageDate ? formatDayLabel(item.localDate) : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 // "2", "1½" or "0.75" for a quantity.
 function formatQuantity(q: number): string {
   const whole = Math.floor(q);
@@ -48,7 +57,7 @@ function amountText(item: DraftItem, fix: Fix, view: ReturnType<typeof viewOf>):
 }
 
 // Draft card: fix grams or foods, drop items, then log the rest or discard the draft.
-export function DraftCard({ draftId, today }: { draftId: DraftId; today: string }) {
+export function DraftCard({ draftId, today, pageDate }: { draftId: DraftId; today: string; pageDate: string }) {
   const draft = useQuery(api.pipeline.drafts.getDraft, { draftId });
   const confirmDraft = useMutation(api.pipeline.drafts.confirmDraft);
   const discardDraft = useMutation(api.pipeline.drafts.discardDraft);
@@ -85,6 +94,8 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
     return !(view.changedFood && draft.items[i]?.quantity !== null);
   };
   const gramsBlocked = kept.some((i) => badGrams(i) || needsAmount(i));
+  // Every draft control is locked while a save runs, so no edit is lost after Confirm.
+  const locked = busy !== null;
 
   // Only the changes that differ from the draft. The server resolves amounts and computes every nutrient.
   function corrections() {
@@ -156,12 +167,13 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
           const view = views[i];
           if (!view) return null;
           const name = view.foodName ?? `"${item.text}"`;
+          const destination = destinationOf(item, pageDate);
 
           if (fix.remove) {
             return (
               <li key={i} className="flex items-center justify-between gap-3 rounded-sm border border-dashed border-line2 px-4 py-2.5">
                 <span className="truncate type-callout text-ink3 line-through">{name}</span>
-                <Button variant="quiet" size="sm" onClick={() => patch(i, { remove: false })}>
+                <Button variant="quiet" size="sm" disabled={locked} onClick={() => patch(i, { remove: false })}>
                   Put back
                 </Button>
               </li>
@@ -179,6 +191,7 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
                       {amountText(item, fix, view)}
                       {view.protein !== null ? ` · ${Math.round(view.protein)} g protein` : ""}
                     </span>
+                    {destination ? <span>{destination}</span> : null}
                     {item.estimated ? <Tag tone="est">est.</Tag> : null}
                   </div>
                 </div>
@@ -195,6 +208,7 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
                       aria-label={`Grams for ${view.foodName}`}
                       value={gramsText[i] ?? (view.grams === null ? "" : Math.round(view.grams * 10) / 10)}
                       placeholder="grams"
+                      disabled={locked}
                       onChange={(e) => {
                         setGramsText((all) => ({ ...all, [i]: e.target.value }));
                         patch(i, { grams: parseGrams(e.target.value) });
@@ -203,10 +217,10 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
                     />
                     <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 type-caption text-ink3">g</span>
                   </span>
-                  <Button variant="quiet" size="sm" onClick={() => setEditing(editing === i ? null : i)}>
+                  <Button variant="quiet" size="sm" disabled={locked} onClick={() => setEditing(editing === i ? null : i)}>
                     {editing === i ? "Keep this food" : "Change food"}
                   </Button>
-                  <Button variant="quiet" size="sm" className="ml-auto" onClick={() => patch(i, { remove: true })}>
+                  <Button variant="quiet" size="sm" disabled={locked} className="ml-auto" onClick={() => patch(i, { remove: true })}>
                     Remove
                   </Button>
                   {badGrams(i) || needsAmount(i) ? <p className="w-full type-caption text-polo-ink">Enter an amount in grams.</p> : null}
@@ -216,14 +230,15 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
               {item.requestedDate !== null && !fix.localDate ? (
                 <div className="flex flex-col items-start gap-2 rounded-sm bg-card px-3.5 py-3 type-secondary text-ink2">
                   <p>This says {item.requestedDate}, which can't be logged. Pick today, or remove it.</p>
-                  <Button variant="ghost" size="sm" onClick={() => patch(i, { localDate: today })}>
+                  <Button variant="ghost" size="sm" disabled={locked} onClick={() => patch(i, { localDate: today })}>
                     Log for today, {formatDayLabel(today)}
                   </Button>
                 </div>
               ) : null}
 
               {asking ? (
-                <div className="rounded-sm bg-card p-4">
+                // A disabled fieldset turns off the picker's native search box and food buttons.
+                <fieldset disabled={locked} className="min-w-0 rounded-sm bg-card p-4 disabled:opacity-60">
                   <FoodPicker
                     candidates={item.candidates}
                     chosen={fix.foodId ?? item.food?._id ?? null}
@@ -234,12 +249,12 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
                       setEditing(null);
                     }}
                   />
-                </div>
+                </fieldset>
               ) : null}
 
               {view.foodName === null ? (
                 <div>
-                  <Button variant="quiet" size="sm" onClick={() => patch(i, { remove: true })}>
+                  <Button variant="quiet" size="sm" disabled={locked} onClick={() => patch(i, { remove: true })}>
                     Remove
                   </Button>
                 </div>

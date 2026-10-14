@@ -10,14 +10,17 @@ export function useLogToast(): (input: LoggedToast) => void {
   const toast = useToast();
   const undoRevision = useMutation(api.entries.undoRevision);
 
-  // Reverts the latest revision of each entry and says how it went.
+  // Reverts the latest revision of each entry and says how many worked.
   async function undo(entryIds: EntryId[]) {
     const base = newSubmissionId();
-    try {
-      await Promise.all(entryIds.map((entryId, i) => undoRevision({ submissionId: `${base}-${i}`, entryId })));
+    const results = await Promise.allSettled(entryIds.map((entryId, i) => undoRevision({ submissionId: `${base}-${i}`, entryId })));
+    const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+    if (errors.length === 0) {
       toast.show({ title: "Undone. Nothing lost.", sub: "It's back the way it was." });
-    } catch (err) {
-      toast.show({ title: "Couldn't undo that.", sub: plainError(err) });
+    } else if (errors.length === results.length) {
+      toast.show({ title: "Couldn't undo that.", sub: plainError(errors[0]) });
+    } else {
+      toast.show({ title: `Undid ${results.length - errors.length} of ${results.length}.`, sub: plainError(errors[0]) });
     }
   }
 

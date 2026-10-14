@@ -20,7 +20,7 @@ export function LogPanel({ localDate, today }: { localDate: string; today: strin
         </p>
       )}
       {drafts?.map((draft) => (
-        <DraftCard key={draft._id} draftId={draft._id} today={today} />
+        <DraftCard key={draft._id} draftId={draft._id} today={today} pageDate={localDate} />
       ))}
       <AddFood localDate={localDate} />
     </section>
