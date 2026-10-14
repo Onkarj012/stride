@@ -5,9 +5,9 @@
   "type": "module",
   "packageManager": "pnpm@10.34.3+sha512.f2c531b08829d7be7f03c90addc266615f9c5477463e4bf1d275cb263ce9ea57cf0d5599110d94649a9bb3fed9f0b5efcea74a7016b61532a24cb9ad87860c1d",
   "scripts": {
-    "predev": "pnpm -w run build:tokens",
+    "predev": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/tokens-css.ts",
     "dev": "vite",
-    "prebuild": "pnpm -w run build:tokens && node scripts/check-env.mjs",
+    "prebuild": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/tokens-css.ts && node scripts/check-env.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
@@ -15,19 +15,17 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@sentry/react": "^10.20.0",
     "@clerk/react": "^6.7.1",
-    "class-variance-authority": "^0.7.1",
+    "@sentry/react": "^10.20.0",
+    "@stride/core": "workspace:*",
+    "@stride/ui-tokens": "workspace:*",
     "clsx": "^2.1.1",
     "convex": "^1.39.1",
-    "gsap": "^3.15.0",
     "lucide-react": "^0.468.0",
     "motion": "^12.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-markdown": "8",
     "react-router-dom": "^7.1.1",
-    "remark-gfm": "3",
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {

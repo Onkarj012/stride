@@ -38,13 +38,13 @@ function mapClerkError(err: any): { message: string; field: ErrorField } {
 function AuthShell({ children, hero }: { children: React.ReactNode; hero: { headline: string; sub: string } }) {
   return (
     <div className="min-h-dvh w-full bg-bg flex flex-col lg:flex-row">
-      <div className="hidden lg:flex lg:w-1/2 bg-lavender flex-col justify-between p-12 relative overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 bg-card2 flex-col justify-between p-12 relative overflow-hidden">
         <div className="flex items-center gap-2.5">
-          <StrideIcon fill="#3b1f8c" className="w-8 h-8 shrink-0" />
+          <StrideIcon fill="#C9431F" className="w-8 h-8 shrink-0" />
           <span className="text-[22px] font-extrabold tracking-tight text-ink">Stride</span>
         </div>
         <div className="space-y-3">
-          <h2 className="text-display text-ink leading-[1.05] max-w-md">{hero.headline}</h2>
+          <h2 className="font-display text-[40px] font-bold text-ink leading-[1.05] max-w-md">{hero.headline}</h2>
           <p className="text-[16px] text-ink/75 max-w-sm leading-relaxed">{hero.sub}</p>
         </div>
         <div className="text-[12px] text-ink/55">Stride · adaptive AI wellness</div>
@@ -53,11 +53,11 @@ function AuthShell({ children, hero }: { children: React.ReactNode; hero: { head
       <div className="flex-1 flex items-center justify-center p-6 lg:p-12">
         <div className="w-full max-w-sm space-y-6">
           <div className="lg:hidden flex flex-col items-center gap-4">
-            {/* App icon — white S on lavender bg */}
-            <div className="w-24 h-24 rounded-[22px] bg-lavender flex items-center justify-center shadow-[var(--shadow-elev)]">
+            {/* App icon — white S on orange tile */}
+            <div className="w-24 h-24 rounded-card bg-polo flex items-center justify-center shadow-card">
               <StrideIcon fill="white" className="w-16 h-16" />
             </div>
-            <span className="text-h3 font-extrabold tracking-tight text-text">Stride</span>
+            <span className="font-display text-[20px] font-bold font-extrabold tracking-tight text-ink">Stride</span>
           </div>
           {children}
         </div>
@@ -72,10 +72,10 @@ function Field({ icon: Icon, label, ...rest }: {
 } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block space-y-1.5">
-      <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">{label}</span>
-      <div className="flex items-center gap-2 rounded-2xl bg-card border border-border focus-within:border-lavender transition-colors px-4 py-3">
-        <Icon className="h-4 w-4 text-text-muted shrink-0" strokeWidth={1.75} />
-        <input {...rest} className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none" />
+      <span className="text-[12px] font-semibold text-ink2 uppercase tracking-wider">{label}</span>
+      <div className="flex items-center gap-2 rounded-field bg-card border border-line2 focus-within:border-polo transition-colors px-4 py-3">
+        <Icon className="h-4 w-4 text-ink2 shrink-0" strokeWidth={1.75} />
+        <input {...rest} className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink3 focus:outline-none" />
       </div>
     </label>
   );
@@ -84,7 +84,7 @@ function Field({ icon: Icon, label, ...rest }: {
 function GoogleButton({ onClick }: { onClick: () => void }) {
   return (
     <button type="button" onClick={onClick}
-      className="w-full inline-flex items-center justify-center gap-2 rounded-full border border-border bg-card text-text py-3 text-[14px] font-semibold hover:bg-card-elev transition-colors">
+      className="w-full inline-flex items-center justify-center gap-2 rounded-full border border-line2 bg-card text-ink py-3 text-[14px] font-semibold hover:bg-card2 transition-colors">
       <svg className="h-4 w-4" viewBox="0 0 24 24">
         <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
         <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
@@ -99,9 +99,9 @@ function GoogleButton({ onClick }: { onClick: () => void }) {
 function Divider() {
   return (
     <div className="flex items-center gap-3">
-      <div className="flex-1 h-px bg-border" />
-      <span className="text-[11px] text-text-subtle uppercase tracking-wider">or</span>
-      <div className="flex-1 h-px bg-border" />
+      <div className="flex-1 h-px bg-line2" />
+      <span className="text-[11px] text-ink3 uppercase tracking-wider">or</span>
+      <div className="flex-1 h-px bg-line2" />
     </div>
   );
 }
@@ -218,44 +218,44 @@ export function SignInPage() {
         {view === "signin" && (
           <motion.div key="signin" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="space-y-6">
             <div className="space-y-1">
-              <h1 className="text-h1 text-text">Sign in</h1>
-              <p className="text-[14px] text-text-muted">
+              <h1 className="font-display text-[34px] font-bold tracking-tight text-ink">Sign in</h1>
+              <p className="text-[14px] text-ink2">
                 New here?{" "}
-                <Link to="/sign-up" className="font-semibold text-text underline-offset-4 hover:underline">Create an account</Link>
+                <Link to="/sign-up" className="font-semibold text-ink underline-offset-4 hover:underline">Create an account</Link>
               </p>
             </div>
             <form onSubmit={onSubmit} className="space-y-4">
               <label className="block space-y-1.5">
-                <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Email</span>
-                <div className={cn("flex items-center gap-2 rounded-2xl bg-card border focus-within:border-lavender transition-colors px-4 py-3", errorField === "email" ? "border-bubblegum" : "border-border")}>
-                  <Mail className="h-4 w-4 text-text-muted shrink-0" strokeWidth={1.75} />
+                <span className="text-[12px] font-semibold text-ink2 uppercase tracking-wider">Email</span>
+                <div className={cn("flex items-center gap-2 rounded-field bg-card border focus-within:border-polo transition-colors px-4 py-3", errorField === "email" ? "border-polo-ink" : "border-line2")}>
+                  <Mail className="h-4 w-4 text-ink2 shrink-0" strokeWidth={1.75} />
                   <input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com"
-                    className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none" />
+                    className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink3 focus:outline-none" />
                 </div>
               </label>
               <label className="block space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Password</span>
+                  <span className="text-[12px] font-semibold text-ink2 uppercase tracking-wider">Password</span>
                   <button type="button" onClick={() => { setError(null); setErrorField(null); setView("forgot_email"); }}
-                    className="text-[12px] font-medium text-text-muted hover:text-text underline-offset-2 hover:underline">
+                    className="text-[12px] font-medium text-ink2 hover:text-ink underline-offset-2 hover:underline">
                     Forgot password?
                   </button>
                 </div>
-                <div className={cn("flex items-center gap-2 rounded-2xl bg-card border focus-within:border-lavender transition-colors px-4 py-3", errorField === "password" ? "border-bubblegum" : "border-border")}>
-                  <Lock className="h-4 w-4 text-text-muted shrink-0" strokeWidth={1.75} />
+                <div className={cn("flex items-center gap-2 rounded-field bg-card border focus-within:border-polo transition-colors px-4 py-3", errorField === "password" ? "border-polo-ink" : "border-line2")}>
+                  <Lock className="h-4 w-4 text-ink2 shrink-0" strokeWidth={1.75} />
                   <input type={showPwd ? "text" : "password"} autoComplete="current-password" required value={password}
                     onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
-                    className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none" />
-                  <button type="button" onClick={() => setShowPwd((s) => !s)} className="text-text-muted hover:text-text">
+                    className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink3 focus:outline-none" />
+                  <button type="button" onClick={() => setShowPwd((s) => !s)} className="text-ink2 hover:text-ink">
                     {showPwd ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
                   </button>
                 </div>
               </label>
               <AnimatePresence>
-                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-error font-medium">{error}</motion.p>}
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-polo-ink font-medium">{error}</motion.p>}
               </AnimatePresence>
               <button type="submit" disabled={loading || !email || !password}
-                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || !email || !password) && "opacity-50")}>
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-bg py-3 text-[14px] font-semibold transition-opacity", (loading || !email || !password) && "opacity-50")}>
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Sign in"}
               </button>
             </form>
@@ -267,68 +267,68 @@ export function SignInPage() {
         {view === "forgot_email" && (
           <motion.div key="forgot_email" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="space-y-6">
             <div className="space-y-1">
-              <h1 className="text-h1 text-text">Reset password</h1>
-              <p className="text-[14px] text-text-muted">Enter your email and we'll send a reset code.</p>
+              <h1 className="font-display text-[34px] font-bold tracking-tight text-ink">Reset password</h1>
+              <p className="text-[14px] text-ink2">Enter your email and we'll send a reset code.</p>
             </div>
             <form onSubmit={onForgotSendCode} className="space-y-4">
               <Field icon={Mail} label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
               <AnimatePresence>
-                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-error font-medium">{error}</motion.p>}
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-polo-ink font-medium">{error}</motion.p>}
               </AnimatePresence>
               <button type="submit" disabled={loading || !email}
-                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || !email) && "opacity-50")}>
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-bg py-3 text-[14px] font-semibold transition-opacity", (loading || !email) && "opacity-50")}>
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Send reset code"}
               </button>
             </form>
-            <button type="button" onClick={() => { setError(null); setErrorField(null); setView("signin"); }} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back to sign in</button>
+            <button type="button" onClick={() => { setError(null); setErrorField(null); setView("signin"); }} className="w-full text-[12.5px] text-ink2 hover:text-ink">← Back to sign in</button>
           </motion.div>
         )}
 
         {view === "forgot_code" && (
           <motion.div key="forgot_code" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="space-y-6">
             <div className="space-y-1">
-              <h1 className="text-h1 text-text">Check your email</h1>
-              <p className="text-[14px] text-text-muted">We sent a code to <span className="font-semibold text-text">{email}</span>.</p>
+              <h1 className="font-display text-[34px] font-bold tracking-tight text-ink">Check your email</h1>
+              <p className="text-[14px] text-ink2">We sent a code to <span className="font-semibold text-ink">{email}</span>.</p>
             </div>
             <form onSubmit={onForgotVerifyCode} className="space-y-4">
               <Field icon={KeyRound} label="Reset code" type="text" inputMode="numeric" maxLength={6} required
                 value={code} onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))} placeholder="123456" />
               <AnimatePresence>
-                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-error font-medium">{error}</motion.p>}
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-polo-ink font-medium">{error}</motion.p>}
               </AnimatePresence>
               <button type="submit" disabled={loading || code.length < 6}
-                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || code.length < 6) && "opacity-50")}>
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-bg py-3 text-[14px] font-semibold transition-opacity", (loading || code.length < 6) && "opacity-50")}>
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify code"}
               </button>
             </form>
-            <button type="button" onClick={() => { setError(null); setErrorField(null); setView("forgot_email"); }} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back</button>
+            <button type="button" onClick={() => { setError(null); setErrorField(null); setView("forgot_email"); }} className="w-full text-[12.5px] text-ink2 hover:text-ink">← Back</button>
           </motion.div>
         )}
 
         {view === "forgot_newpwd" && (
           <motion.div key="forgot_newpwd" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={SPRING} className="space-y-6">
             <div className="space-y-1">
-              <h1 className="text-h1 text-text">New password</h1>
-              <p className="text-[14px] text-text-muted">Choose a strong password you haven't used before.</p>
+              <h1 className="font-display text-[34px] font-bold tracking-tight text-ink">New password</h1>
+              <p className="text-[14px] text-ink2">Choose a strong password you haven't used before.</p>
             </div>
             <form onSubmit={onForgotSetPassword} className="space-y-4">
               <label className="block space-y-1.5">
-                <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">New password</span>
-                <div className="flex items-center gap-2 rounded-2xl bg-card border border-border focus-within:border-lavender transition-colors px-4 py-3">
-                  <Lock className="h-4 w-4 text-text-muted shrink-0" strokeWidth={1.75} />
+                <span className="text-[12px] font-semibold text-ink2 uppercase tracking-wider">New password</span>
+                <div className="flex items-center gap-2 rounded-field bg-card border border-line2 focus-within:border-polo transition-colors px-4 py-3">
+                  <Lock className="h-4 w-4 text-ink2 shrink-0" strokeWidth={1.75} />
                   <input type={showNewPwd ? "text" : "password"} autoComplete="new-password" required minLength={8} value={newPwd}
                     onChange={(e) => setNewPwd(e.target.value)} placeholder="At least 8 characters"
-                    className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none" />
-                  <button type="button" onClick={() => setShowNewPwd((s) => !s)} className="text-text-muted hover:text-text">
+                    className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink3 focus:outline-none" />
+                  <button type="button" onClick={() => setShowNewPwd((s) => !s)} className="text-ink2 hover:text-ink">
                     {showNewPwd ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
                   </button>
                 </div>
               </label>
               <AnimatePresence>
-                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-error font-medium">{error}</motion.p>}
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-polo-ink font-medium">{error}</motion.p>}
               </AnimatePresence>
               <button type="submit" disabled={loading || newPwd.length < 8}
-                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || newPwd.length < 8) && "opacity-50")}>
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-bg py-3 text-[14px] font-semibold transition-opacity", (loading || newPwd.length < 8) && "opacity-50")}>
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Set new password"}
               </button>
             </form>
@@ -404,11 +404,11 @@ export function SignUpPage() {
     <AuthShell hero={{ headline: "An adaptive wellness companion that learns with you.", sub: "Frictionless tracking, personalized coaching, and a system that gets better the more you use it." }}>
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={SPRING} className="space-y-6">
         <div className="space-y-1">
-          <h1 className="text-h1 text-text">{step === "form" ? "Create your account" : "Verify your email"}</h1>
-          <p className="text-[14px] text-text-muted">
+          <h1 className="font-display text-[34px] font-bold tracking-tight text-ink">{step === "form" ? "Create your account" : "Verify your email"}</h1>
+          <p className="text-[14px] text-ink2">
             {step === "form"
-              ? <><Link to="/sign-in" className="font-semibold text-text underline-offset-4 hover:underline">Sign in</Link> if you already have one</>
-              : <>We sent a code to <span className="text-text font-semibold">{email}</span></>}
+              ? <><Link to="/sign-in" className="font-semibold text-ink underline-offset-4 hover:underline">Sign in</Link> if you already have one</>
+              : <>We sent a code to <span className="text-ink font-semibold">{email}</span></>}
           </p>
         </div>
 
@@ -418,23 +418,23 @@ export function SignUpPage() {
               <Field icon={User} label="First name" type="text" required value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Sandra" />
               <Field icon={Mail} label="Email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
               <label className="block space-y-1.5">
-                <span className="text-[12px] font-semibold text-text-muted uppercase tracking-wider">Password</span>
-                <div className="flex items-center gap-2 rounded-2xl bg-card border border-border focus-within:border-lavender transition-colors px-4 py-3">
-                  <Lock className="h-4 w-4 text-text-muted shrink-0" strokeWidth={1.75} />
+                <span className="text-[12px] font-semibold text-ink2 uppercase tracking-wider">Password</span>
+                <div className="flex items-center gap-2 rounded-field bg-card border border-line2 focus-within:border-polo transition-colors px-4 py-3">
+                  <Lock className="h-4 w-4 text-ink2 shrink-0" strokeWidth={1.75} />
                   <input type={showPwd ? "text" : "password"} autoComplete="new-password" required minLength={8} value={password}
                     onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters"
-                    className="min-w-0 flex-1 bg-transparent text-[14px] text-text placeholder:text-text-subtle focus:outline-none" />
-                  <button type="button" onClick={() => setShowPwd((s) => !s)} className="text-text-muted hover:text-text">
+                    className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink3 focus:outline-none" />
+                  <button type="button" onClick={() => setShowPwd((s) => !s)} className="text-ink2 hover:text-ink">
                     {showPwd ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
                   </button>
                 </div>
               </label>
               <div id="clerk-captcha" />
               <AnimatePresence>
-                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-error font-medium">{error}</motion.p>}
+                {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-polo-ink font-medium">{error}</motion.p>}
               </AnimatePresence>
               <button type="submit" disabled={loading || !email || !password || !firstName}
-                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || !email || !password || !firstName) && "opacity-50")}>
+                className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-bg py-3 text-[14px] font-semibold transition-opacity", (loading || !email || !password || !firstName) && "opacity-50")}>
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Create account"}
               </button>
             </form>
@@ -446,13 +446,13 @@ export function SignUpPage() {
             <Field icon={Mail} label="Verification code" type="text" inputMode="numeric" maxLength={6} required
               value={code} onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))} placeholder="123456" />
             <AnimatePresence>
-              {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-error font-medium">{error}</motion.p>}
+              {error && <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-[12.5px] text-polo-ink font-medium">{error}</motion.p>}
             </AnimatePresence>
             <button type="submit" disabled={loading || code.length < 6}
-              className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-text-on-ink py-3 text-[14px] font-semibold transition-opacity", (loading || code.length < 6) && "opacity-50")}>
+              className={cn("w-full inline-flex items-center justify-center gap-2 rounded-full bg-ink text-bg py-3 text-[14px] font-semibold transition-opacity", (loading || code.length < 6) && "opacity-50")}>
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify and continue"}
             </button>
-            <button type="button" onClick={() => setStep("form")} className="w-full text-[12.5px] text-text-muted hover:text-text">← Back</button>
+            <button type="button" onClick={() => setStep("form")} className="w-full text-[12.5px] text-ink2 hover:text-ink">← Back</button>
           </form>
         )}
       </motion.div>
