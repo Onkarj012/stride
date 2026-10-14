@@ -1,5 +1,5 @@
 import { daysBetween, isLocalDate } from "@stride/core";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { localDateOrToday, requireUserId } from "./time_zone";
 import { assertLedgerWritable } from "./users";
@@ -18,7 +18,7 @@ export const logWeight = mutation({
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
     if (!Number.isFinite(args.kg) || args.kg < WEIGHT_KG_RANGE.min || args.kg > WEIGHT_KG_RANGE.max) {
-      throw new Error(`kg must be within ${WEIGHT_KG_RANGE.min}-${WEIGHT_KG_RANGE.max}, got ${args.kg}`);
+      throw new ConvexError({ code: "INVALID_WEIGHT", message: `kg must be within ${WEIGHT_KG_RANGE.min}-${WEIGHT_KG_RANGE.max}, got ${args.kg}` });
     }
     const localDate = await localDateOrToday(ctx, userId, args.localDate);
     const existing = await ctx.db
@@ -43,10 +43,10 @@ export const weightsInRange = query({
   returns: v.array(v.object({ localDate: v.string(), kg: v.number() })),
   handler: async (ctx, { from, to }) => {
     const userId = await requireUserId(ctx);
-    if (!isLocalDate(from) || !isLocalDate(to)) throw new Error("from and to must be YYYY-MM-DD dates");
+    if (!isLocalDate(from) || !isLocalDate(to)) throw new ConvexError({ code: "INVALID_DATE", message: "from and to must be YYYY-MM-DD dates" });
     const span = daysBetween(from, to) + 1;
     if (span < 1 || span > MAX_WEIGHT_RANGE_DAYS) {
-      throw new Error(`Range must cover 1-${MAX_WEIGHT_RANGE_DAYS} days, got ${span}`);
+      throw new ConvexError({ code: "INVALID_DATE", message: `Range must cover 1-${MAX_WEIGHT_RANGE_DAYS} days, got ${span}` });
     }
     const rows = await ctx.db
       .query("weights")

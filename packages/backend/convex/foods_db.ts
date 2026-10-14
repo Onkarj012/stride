@@ -1,5 +1,5 @@
 import { hasAtwaterMismatch, normalizeText } from "@stride/core";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import {
@@ -215,11 +215,11 @@ export const createUserFood = mutation({
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
     const key = normalizeText(name);
-    if (key === "" || name.length > 120) throw new Error("Food name must be 1-120 characters");
+    if (key === "" || name.length > 120) throw new ConvexError({ code: "INVALID_FOOD", message: "Food name must be 1-120 characters" });
     const cleanAliases = (aliases ?? []).map((a) => a.trim()).filter((a) => a !== "").slice(0, 10);
     const numbers = [per100g.kcal, per100g.protein, per100g.carbs, per100g.fat, per100g.fiber, per100g.sugar, per100g.sodiumMg];
-    if (numbers.some((n) => n !== null && (!Number.isFinite(n) || n < 0))) throw new Error("Nutrients must be finite and not negative");
-    if (per100g.protein + per100g.carbs + per100g.fat > 100) throw new Error("Macros cannot exceed 100 g per 100 g");
+    if (numbers.some((n) => n !== null && (!Number.isFinite(n) || n < 0))) throw new ConvexError({ code: "INVALID_FOOD", message: "Nutrients must be finite and not negative" });
+    if (per100g.protein + per100g.carbs + per100g.fat > 100) throw new ConvexError({ code: "INVALID_FOOD", message: "Macros cannot exceed 100 g per 100 g" });
     const row: Omit<Doc<"foods">, "_id" | "_creationTime"> = {
       name: name.trim(),
       aliases: cleanAliases,
@@ -242,7 +242,7 @@ export const createUserFood = mutation({
       .query("foods")
       .withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId))
       .take(MAX_USER_FOODS);
-    if (owned.length >= MAX_USER_FOODS) throw new Error(`You can keep at most ${MAX_USER_FOODS} personal foods`);
+    if (owned.length >= MAX_USER_FOODS) throw new ConvexError({ code: "FOOD_LIMIT", message: `You can keep at most ${MAX_USER_FOODS} personal foods` });
     return await ctx.db.insert("foods", row);
   },
 });

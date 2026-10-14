@@ -11,7 +11,7 @@ import {
   type MealSlot,
 } from "@stride/core";
 import { paginationOptsValidator } from "convex/server";
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
@@ -153,7 +153,7 @@ type Claim = Infer<typeof claimValidator>;
 /** Loads one of the user's chats or throws. */
 async function ownChat(ctx: QueryCtx | MutationCtx, userId: string, chatId: Id<"chats">): Promise<Doc<"chats">> {
   const chat = await ctx.db.get("chats", chatId);
-  if (chat === null || chat.userId !== userId) throw new Error("Chat not found");
+  if (chat === null || chat.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Chat not found" });
   return chat;
 }
 
@@ -261,7 +261,7 @@ export const renameChat = mutation({
     const userId = await requireUserId(ctx);
     await ownChat(ctx, userId, chatId);
     const clean = title.trim();
-    if (clean === "" || clean.length > MAX_TITLE_CHARS) throw new Error(`Title must be 1-${MAX_TITLE_CHARS} characters`);
+    if (clean === "" || clean.length > MAX_TITLE_CHARS) throw new ConvexError({ code: "INVALID_TEXT", message: `Title must be 1-${MAX_TITLE_CHARS} characters` });
     await ctx.db.patch("chats", chatId, { title: clean });
     return null;
   },
@@ -412,7 +412,7 @@ export const claimTurn = internalMutation({
       const replies = await liveReplies(ctx, existing._id);
       const running = existing.claimedAt !== undefined && now - existing.claimedAt < TURN_LEASE_MS;
       if (running || replies.some(isFinished)) {
-        throw new Error("This message is already being handled. Try again in a moment.");
+        throw new ConvexError({ code: "MESSAGE_BUSY", message: "This message is already being handled. Try again in a moment." });
       }
       await ctx.db.patch("messages", existing._id, { claimedAt: now });
       // The newest live reply is the failed attempt to reuse, if there is one.
@@ -480,7 +480,7 @@ export const claimRegenerate = internalMutation({
     await ownChat(ctx, args.userId, args.chatId);
     const old = await ctx.db.get("messages", args.replyId);
     if (old === null || old.userId !== args.userId || old.chatId !== args.chatId || old.deletedAt !== undefined || old.status === "streaming") {
-      throw new Error("This reply can't be regenerated right now.");
+      throw new ConvexError({ code: "REGENERATE_UNAVAILABLE", message: "This reply can't be regenerated right now." });
     }
     const now = Date.now();
     await ctx.db.patch("messages", args.replyId, { deletedAt: now });
@@ -554,7 +554,7 @@ export const stopMessage = mutation({
   handler: async (ctx, { messageId }) => {
     const userId = await requireUserId(ctx);
     const row = await ctx.db.get("messages", messageId);
-    if (row === null || row.userId !== userId || row.role !== "assistant") throw new Error("Message not found");
+    if (row === null || row.userId !== userId || row.role !== "assistant") throw new ConvexError({ code: "NOT_FOUND", message: "Message not found" });
     if (row.status === "streaming") await ctx.db.patch("messages", messageId, { stopRequested: true });
     return null;
   },
@@ -585,7 +585,7 @@ export const saveTranscript = internalMutation({
   returns: v.null(),
   handler: async (ctx, { userId, messageId, text }) => {
     const message = await ctx.db.get("messages", messageId);
-    if (message === null || message.userId !== userId) throw new Error("Message not found");
+    if (message === null || message.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Message not found" });
     await ctx.db.patch("messages", messageId, { text, audioPending: undefined });
     const chat = await ctx.db.get("chats", message.chatId);
     if (chat !== null) await ctx.db.patch("chats", chat._id, { title: titleFor(chat, text) });
@@ -1169,7 +1169,8 @@ async function runChatTurn(
           result = (await runLookupTool(ctx, userId, call.function.name, args, seen)) ?? { error: `Unknown tool ${call.function.name}` };
         }
       } catch (err) {
-        result = { error: err instanceof Error ? err.message : String(err) };
+        // ConvexError.message is JSON, so the model gets the plain text from its data.
+        result = { error: err instanceof ConvexError && typeof err.data?.message === "string" ? err.data.message : err instanceof Error ? err.message : String(err) };
       }
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       toolCalls.push({ name: call.function.name, argsJson: call.function.arguments.slice(0, MAX_TOOL_RESULT_CHARS), resultJson: capJson(result) });
@@ -1189,7 +1190,7 @@ async function runChatTurn(
 /** Refuses an empty or oversized message before any model work. */
 function checkMessage(text: string, imageStorageId: Id<"_storage"> | undefined): void {
   assertMaxChars(text, AI_INPUT_LIMITS.messageChars, "message");
-  if (text === "" && imageStorageId === undefined) throw new Error("Message is empty");
+  if (text === "" && imageStorageId === undefined) throw new ConvexError({ code: "MESSAGE_EMPTY", message: "Message is empty" });
 }
 
 const SLOTS: readonly MealSlot[] = ["breakfast", "lunch", "snack", "dinner"];
@@ -1214,7 +1215,7 @@ export const sendMessage = action({
   returns: turnResultValidator,
   handler: async (ctx, args): Promise<TurnResult> => {
     const identity = await ctx.auth.getUserIdentity();
-    if (identity === null) throw new Error("Unauthenticated");
+    if (identity === null) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const userId = identity.subject;
     // Turn writes use `${submissionId}:...` keys, so a ':' in a client id could collide with another turn's keys.
     if (args.submissionId.length === 0 || args.submissionId.length > MAX_SUBMISSION_ID_CHARS || args.submissionId.includes(":")) {
@@ -1240,7 +1241,7 @@ export const sendMessage = action({
     try {
       let text = claim.text;
       if (claim.audioPending) {
-        if (args.audio === undefined) throw new Error("Send the voice note again.");
+        if (args.audio === undefined) throw new ConvexError({ code: "VOICE_RESEND", message: "Send the voice note again." });
         text = [text, await transcribeAudio(ctx, userId, args.audio.data, args.audio.mimeType)].join(" ").trim();
         checkMessage(text, args.imageStorageId);
         await ctx.runMutation(internal.chats.saveTranscript, { userId, messageId: userMessageId, text });
@@ -1288,11 +1289,11 @@ export const regenerateTarget = internalQuery({
       .order("desc")
       .take(HISTORY_WINDOW);
     const reply = recent.find((m) => m.role === "assistant" && m.deletedAt === undefined);
-    if (reply === undefined) throw new Error("Nothing to regenerate yet.");
-    if (reply.status === "streaming") throw new Error("Wait for the reply to finish, then regenerate it.");
+    if (reply === undefined) throw new ConvexError({ code: "NOTHING_TO_REGENERATE", message: "Nothing to regenerate yet." });
+    if (reply.status === "streaming") throw new ConvexError({ code: "REPLY_STREAMING", message: "Wait for the reply to finish, then regenerate it." });
     const user = reply.answersMessageId === undefined ? null : await ctx.db.get("messages", reply.answersMessageId);
-    if (user === null || user.userId !== userId || user.submissionId === undefined) throw new Error("Nothing to regenerate yet.");
-    if (user.attachments.some((a) => a.kind === "image")) throw new Error("Photo replies can't be regenerated yet.");
+    if (user === null || user.userId !== userId || user.submissionId === undefined) throw new ConvexError({ code: "NOTHING_TO_REGENERATE", message: "Nothing to regenerate yet." });
+    if (user.attachments.some((a) => a.kind === "image")) throw new ConvexError({ code: "PHOTO_REGENERATE", message: "Photo replies can't be regenerated yet." });
     return { userMessageId: user._id, userSubmissionId: user.submissionId, replyId: reply._id, draftIds: reply.draftIds, entryIds: reply.entryIds ?? [] };
   },
 });
@@ -1303,7 +1304,7 @@ export const regenerate = action({
   returns: regenerateResultValidator,
   handler: async (ctx, { chatId }): Promise<RegenerateResult> => {
     const identity = await ctx.auth.getUserIdentity();
-    if (identity === null) throw new Error("Unauthenticated");
+    if (identity === null) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const userId = identity.subject;
     const old: {
       userMessageId: Id<"messages">;

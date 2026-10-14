@@ -1,5 +1,5 @@
 import { isLocalDate, roundNutrients, scaleNutrients, sumNutrients, type MealSlot, type Nutrients } from "@stride/core";
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { applyToDayTotals, MAX_DAY_ENTRIES } from "./day_totals";
@@ -78,7 +78,7 @@ function checkSubmissionId(submissionId: string): void {
 /** Rejects grams that are not a positive finite amount within `MAX_ENTRY_GRAMS`. */
 function checkGrams(grams: number): void {
   if (!Number.isFinite(grams) || grams <= 0 || grams > MAX_ENTRY_GRAMS) {
-    throw new Error(`grams must be above 0 and at most ${MAX_ENTRY_GRAMS}, got ${grams}`);
+    throw new ConvexError({ code: "INVALID_GRAMS", message: `grams must be above 0 and at most ${MAX_ENTRY_GRAMS}, got ${grams}` });
   }
 }
 
@@ -86,7 +86,7 @@ function checkGrams(grams: number): void {
 async function requireFood(ctx: MutationCtx, foodId: Id<"foods">, userId: string): Promise<Doc<"foods">> {
   const food = await ctx.db.get("foods", foodId);
   if (food === null || (food.ownerUserId !== undefined && food.ownerUserId !== userId)) {
-    throw new Error(`Unknown food: ${foodId}`);
+    throw new ConvexError({ code: "NOT_FOUND", message: `Unknown food: ${foodId}` });
   }
   return food;
 }
@@ -123,10 +123,10 @@ export async function insertEntries(
     const confidence = item.confidence ?? 1;
     if (!(confidence >= 0 && confidence <= 1)) throw new Error(`confidence must be within 0-1, got ${confidence}`);
     if (item.localDate !== undefined && !isLocalDate(item.localDate)) {
-      throw new Error(`Not a YYYY-MM-DD date: ${item.localDate}`);
+      throw new ConvexError({ code: "INVALID_DATE", message: `Not a YYYY-MM-DD date: ${item.localDate}` });
     }
     const loggedAt = item.loggedAt ?? now;
-    if (!Number.isFinite(loggedAt)) throw new Error("loggedAt must be a finite timestamp");
+    if (!Number.isFinite(loggedAt)) throw new ConvexError({ code: "INVALID_DATE", message: "loggedAt must be a finite timestamp" });
     const food = await requireFood(ctx, item.foodId, userId);
     const day = await resolveLocalDay(ctx, userId, loggedAt);
     const row: EntryRow = {
@@ -177,8 +177,10 @@ function contentOf(row: Doc<"entries">): EntryContent {
 /** Loads the caller's current revision of an entry. Older revisions are rejected so edits never fork history. */
 async function loadHead(ctx: MutationCtx, userId: string, entryId: Id<"entries">): Promise<Doc<"entries">> {
   const entry = await ctx.db.get("entries", entryId);
-  if (entry === null || entry.userId !== userId) throw new Error("Entry not found");
-  if (entry.status === "superseded") throw new Error("Entry has a newer revision. Reload and retry.");
+  if (entry === null || entry.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Entry not found" });
+  if (entry.status === "superseded") {
+    throw new ConvexError({ code: "STALE_REVISION", message: "Entry has a newer revision. Reload and retry." });
+  }
   return entry;
 }
 
@@ -274,9 +276,13 @@ export async function editEntryAs(
     throw new Error("editEntry needs at least one change");
   }
   const head = await loadHead(ctx, userId, entryId);
-  if (head.status === "deleted") throw new Error("Entry is deleted. Undo the delete first.");
+  if (head.status === "deleted") {
+    throw new ConvexError({ code: "ALREADY_DELETED", message: "Entry is deleted. Undo the delete first." });
+  }
   if (grams !== undefined) checkGrams(grams);
-  if (localDate !== undefined && !isLocalDate(localDate)) throw new Error(`Not a YYYY-MM-DD date: ${localDate}`);
+  if (localDate !== undefined && !isLocalDate(localDate)) {
+    throw new ConvexError({ code: "INVALID_DATE", message: `Not a YYYY-MM-DD date: ${localDate}` });
+  }
 
   const content = contentOf(head);
   if (grams !== undefined || foodId !== undefined) {
@@ -302,7 +308,7 @@ export async function deleteEntryAs(
   const replayed = await replayedRevision(ctx, userId, submissionId, "delete", entryId);
   if (replayed !== null) return replayed;
   const head = await loadHead(ctx, userId, entryId);
-  if (head.status === "deleted") throw new Error("Entry is already deleted");
+  if (head.status === "deleted") throw new ConvexError({ code: "ALREADY_DELETED", message: "Entry is already deleted" });
   return await writeRevision(ctx, head, { ...contentOf(head), deletedAt: Date.now() }, "delete", submissionId, createdBy);
 }
 

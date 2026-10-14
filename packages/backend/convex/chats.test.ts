@@ -174,10 +174,8 @@ describe("multi-chat (D12)", () => {
 
     const other = t.withIdentity({ subject: "user_b" });
     expect(await other.query(api.chats.listChats, {})).toEqual([]);
-    await expect(other.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } })).rejects.toThrow(
-      /Chat not found/,
-    );
-    await expect(other.action(api.chats.sendMessage, { chatId, submissionId: "x", text: "hi" })).rejects.toThrow(/Chat not found/);
+    await expect(other.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 5, cursor: null } })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } })
+    await expect(other.action(api.chats.sendMessage, { chatId, submissionId: "x", text: "hi" })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
 
     vi.useFakeTimers();
     await user.mutation(api.chats.deleteChat, { chatId });
@@ -248,11 +246,9 @@ describe("multi-chat (D12)", () => {
         claimedAt: Date.now(),
       }),
     );
-    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(
-      /already being handled/,
-    );
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toMatchObject({ data: { code: "MESSAGE_BUSY" } })
     const audio = { data: btoa("fake audio bytes"), mimeType: "audio/webm" };
-    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", audio })).rejects.toThrow(/already being handled/);
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", audio })).rejects.toMatchObject({ data: { code: "MESSAGE_BUSY" } });
     expect(bodies).toHaveLength(0);
     expect(groqCalls).toBe(0);
   });
@@ -580,7 +576,7 @@ describe("streaming replies (A12)", () => {
     const { t, user, chatId } = await setup();
     await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
     const other = t.withIdentity({ subject: "user_b" });
-    await expect(other.mutation(api.chats.stopMessage, { messageId: (await replyRow(t))._id })).rejects.toThrow(/Message not found/);
+    await expect(other.mutation(api.chats.stopMessage, { messageId: (await replyRow(t))._id })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
   });
 });
 
@@ -789,7 +785,7 @@ describe("regenerate", () => {
         claimedAt: Date.now(),
       }),
     );
-    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toThrow(/Wait for the reply/);
+    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toMatchObject({ data: { code: "REPLY_STREAMING" } });
     expect(bodies).toHaveLength(1);
   });
 
@@ -798,7 +794,7 @@ describe("regenerate", () => {
     await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
     await user.action(api.chats.regenerate, { chatId });
     const calls = bodies.length;
-    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toThrow(/already being handled/);
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toMatchObject({ data: { code: "MESSAGE_BUSY" } });
     expect(bodies).toHaveLength(calls);
   });
 });
@@ -810,9 +806,9 @@ describe("rename, preview and search", () => {
     expect((await user.query(api.chats.listChats, {}))[0]?.title).toBe("Dinner ideas");
 
     const other = t.withIdentity({ subject: "user_b" });
-    await expect(other.mutation(api.chats.renameChat, { chatId, title: "Mine" })).rejects.toThrow(/Chat not found/);
-    await expect(user.mutation(api.chats.renameChat, { chatId, title: "   " })).rejects.toThrow(/1-60 characters/);
-    await expect(user.mutation(api.chats.renameChat, { chatId, title: "x".repeat(61) })).rejects.toThrow(/1-60 characters/);
+    await expect(other.mutation(api.chats.renameChat, { chatId, title: "Mine" })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+    await expect(user.mutation(api.chats.renameChat, { chatId, title: "   " })).rejects.toMatchObject({ data: { code: "INVALID_TEXT" } });
+    await expect(user.mutation(api.chats.renameChat, { chatId, title: "x".repeat(61) })).rejects.toMatchObject({ data: { code: "INVALID_TEXT" } });
     expect((await user.query(api.chats.listChats, {}))[0]?.title).toBe("Dinner ideas");
   });
 

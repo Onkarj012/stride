@@ -45,17 +45,17 @@ test("startSession uses today and rejects missing zones, bad ids, names and inst
   const noZone = t.withIdentity({ subject: "no_zone" });
   await expect(noZone.mutation(api.strength.startSession, { submissionId: "missing" })).rejects.toThrow(/Time zone not set/);
   await expect(user.mutation(api.strength.startSession, { submissionId: "" })).rejects.toThrow(/submissionId/);
-  await expect(user.mutation(api.strength.startSession, { submissionId: "invalid-name", name: " " })).rejects.toThrow(/name/);
-  await expect(user.mutation(api.strength.startSession, { submissionId: "invalid-time", startedAt: Infinity })).rejects.toThrow(/Timestamp/);
+  await expect(user.mutation(api.strength.startSession, { submissionId: "invalid-name", name: " " })).rejects.toMatchObject({ data: { code: "INVALID_TEXT" } });
+  await expect(user.mutation(api.strength.startSession, { submissionId: "invalid-time", startedAt: Infinity })).rejects.toMatchObject({ data: { code: "INVALID_DATE" } });
 });
 
 test("endSession is idempotent, validates chronology and blocks new sets", async () => {
   const { t, user, sessionId, exerciseId, setId } = await withSet();
-  await expect(user.mutation(api.strength.endSession, { sessionId, endedAt: START - 1 })).rejects.toThrow(/endedAt/);
+  await expect(user.mutation(api.strength.endSession, { sessionId, endedAt: START - 1 })).rejects.toMatchObject({ data: { code: "END_BEFORE_START" } });
   expect(await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 })).toBe(sessionId);
   expect(await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 120_000 })).toBe(sessionId);
   expect(await t.run((ctx) => ctx.db.get("workout_sessions", sessionId))).toMatchObject({ endedAt: START + 60_000 });
-  await expect(user.mutation(api.strength.addSet, { submissionId: "after-finish", sessionId, exerciseId, weightKg: 60, reps: 8 })).rejects.toThrow(/finished/);
+  await expect(user.mutation(api.strength.addSet, { submissionId: "after-finish", sessionId, exerciseId, weightKg: 60, reps: 8 })).rejects.toMatchObject({ data: { code: "SESSION_FINISHED" } });
   expect(await user.mutation(api.strength.addSet, { submissionId: "add", sessionId, exerciseId, weightKg: 60, reps: 8 })).toBe(setId);
   await user.mutation(api.strength.editSet, { submissionId: "correct-finished", setId, reps: 9 });
 });
@@ -73,7 +73,7 @@ test("addSet retries once and gives each exercise ordered set numbers", async ()
 test("addSet validates numbers, allows bodyweight and suppresses high-rep e1RM", async () => {
   const { user, sessionId, exerciseId } = await setup();
   for (const values of [{ weightKg: -1, reps: 8 }, { weightKg: 1001, reps: 8 }, { weightKg: 60, reps: 0 }, { weightKg: 60, reps: 1.5 }, { weightKg: 60, reps: 8, rpe: 11 }]) {
-    await expect(user.mutation(api.strength.addSet, { submissionId: "bad", sessionId, exerciseId, ...values })).rejects.toThrow(/weightKg|reps|rpe/);
+    await expect(user.mutation(api.strength.addSet, { submissionId: "bad", sessionId, exerciseId, ...values })).rejects.toMatchObject({ data: { code: "INVALID_SET" } });
   }
   await user.mutation(api.strength.addSet, { submissionId: "bodyweight", sessionId, exerciseId, weightKg: 0, reps: 10 });
   await user.mutation(api.strength.addSet, { submissionId: "high-reps", sessionId, exerciseId, weightKg: 60, reps: 13 });
@@ -90,9 +90,9 @@ test("editSet appends revisions, clears RPE and rejects stale edits or empty cha
   const row = await t.run((ctx) => ctx.db.get("sets", edited));
   expect(row).toMatchObject({ revision: 2, supersedes: setId, status: "live", weightKg: 65, op: "edit" });
   expect(row?.rpe).toBeUndefined();
-  await expect(user.mutation(api.strength.editSet, { submissionId: "stale", setId, reps: 9 })).rejects.toThrow(/newer revision/);
+  await expect(user.mutation(api.strength.editSet, { submissionId: "stale", setId, reps: 9 })).rejects.toMatchObject({ data: { code: "STALE_REVISION" } });
   await expect(user.mutation(api.strength.editSet, { submissionId: "empty", setId: edited })).rejects.toThrow(/at least one/);
-  await expect(user.mutation(api.strength.editSet, { submissionId: "bad", setId: edited, reps: 0 })).rejects.toThrow(/reps/);
+  await expect(user.mutation(api.strength.editSet, { submissionId: "bad", setId: edited, reps: 0 })).rejects.toMatchObject({ data: { code: "INVALID_SET" } });
   expect((await user.query(api.strength.sessionDetail, { sessionId })).summary.volumeKg).toBe(520);
 });
 
@@ -102,8 +102,8 @@ test("deleteSet creates a tombstone and undo restores the previous content", asy
   expect(await user.mutation(api.strength.deleteSet, { submissionId: "delete", setId })).toBe(deleted);
   expect(await t.run((ctx) => ctx.db.get("sets", deleted))).toMatchObject({ status: "deleted", op: "delete", revision: 2 });
   expect((await user.query(api.strength.sessionDetail, { sessionId })).summary.setCount).toBe(0);
-  await expect(user.mutation(api.strength.editSet, { submissionId: "deleted-edit", setId: deleted, reps: 9 })).rejects.toThrow(/deleted/);
-  await expect(user.mutation(api.strength.deleteSet, { submissionId: "deleted-again", setId: deleted })).rejects.toThrow(/already deleted/);
+  await expect(user.mutation(api.strength.editSet, { submissionId: "deleted-edit", setId: deleted, reps: 9 })).rejects.toMatchObject({ data: { code: "ALREADY_DELETED" } });
+  await expect(user.mutation(api.strength.deleteSet, { submissionId: "deleted-again", setId: deleted })).rejects.toMatchObject({ data: { code: "ALREADY_DELETED" } });
   const restored = await user.mutation(api.strength.undoRevision, { submissionId: "undo", setId: deleted });
   expect(await user.mutation(api.strength.undoRevision, { submissionId: "undo", setId: deleted })).toBe(restored);
   expect(await t.run((ctx) => ctx.db.get("sets", restored))).toMatchObject({ status: "live", weightKg: 60, reps: 8, rpe: 7, revision: 3 });
@@ -151,13 +151,13 @@ test("session and set id arguments enforce ownership", async () => {
   const { t, sessionId, exerciseId, setId } = await withSet();
   const other = t.withIdentity({ subject: "user_b" });
   await other.mutation(api.time_zone.setTimeZone, { timeZone: "UTC" });
-  await expect(other.mutation(api.strength.endSession, { sessionId })).rejects.toThrow(/Session not found/);
-  await expect(other.query(api.strength.sessionDetail, { sessionId })).rejects.toThrow(/Session not found/);
-  await expect(other.query(api.strength.exerciseHints, { sessionId, exerciseId })).rejects.toThrow(/Session not found/);
-  await expect(other.mutation(api.strength.addSet, { submissionId: "x", sessionId, exerciseId, weightKg: 60, reps: 8 })).rejects.toThrow(/Session not found/);
-  await expect(other.mutation(api.strength.editSet, { submissionId: "x", setId, reps: 9 })).rejects.toThrow(/Set not found/);
-  await expect(other.mutation(api.strength.deleteSet, { submissionId: "x", setId })).rejects.toThrow(/Set not found/);
-  await expect(other.mutation(api.strength.undoRevision, { submissionId: "x", setId })).rejects.toThrow(/Set not found/);
+  await expect(other.mutation(api.strength.endSession, { sessionId })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+  await expect(other.query(api.strength.sessionDetail, { sessionId })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+  await expect(other.query(api.strength.exerciseHints, { sessionId, exerciseId })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+  await expect(other.mutation(api.strength.addSet, { submissionId: "x", sessionId, exerciseId, weightKg: 60, reps: 8 })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+  await expect(other.mutation(api.strength.editSet, { submissionId: "x", setId, reps: 9 })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+  await expect(other.mutation(api.strength.deleteSet, { submissionId: "x", setId })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
+  await expect(other.mutation(api.strength.undoRevision, { submissionId: "x", setId })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
   expect(await other.query(api.strength.sessionsForDay, { localDate: "2026-10-06" })).toEqual([]);
   expect((await other.query(api.strength.stats, {})).exercises).toEqual([]);
   expect((await other.query(api.strength.savedSessions, { paginationOpts: { numItems: 20, cursor: null } })).page).toEqual([]);
@@ -167,7 +167,7 @@ test("undo rejects a previous revision belonging to another user", async () => {
   const { t, user, setId, sessionId, exerciseId } = await withSet();
   const foreign = await t.run((ctx) => ctx.db.insert("sets", { userId: "user_b", sessionId, exerciseId, weightKg: 99, reps: 1, setIndex: 1, revision: 1, status: "superseded", submissionId: "foreign" }));
   await t.run((ctx) => ctx.db.patch("sets", setId, { supersedes: foreign }));
-  await expect(user.mutation(api.strength.undoRevision, { submissionId: "x", setId })).rejects.toThrow(/Set not found/);
+  await expect(user.mutation(api.strength.undoRevision, { submissionId: "x", setId })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
 });
 
 test("each strength mutation refuses writes and retries during clearAllData", async () => {
@@ -232,7 +232,7 @@ test("stats returns empty weeks and rejects invalid bounds or missing exercises"
   expect((await user.query(api.strength.stats, { weeks: 12 })).weeklyVolume).toHaveLength(12);
   for (const weeks of [0, 13, 1.5]) await expect(user.query(api.strength.stats, { weeks })).rejects.toThrow(/weeks/);
   await t.run((ctx) => ctx.db.delete("exercises", exerciseId));
-  await expect(user.query(api.strength.stats, { exerciseId })).rejects.toThrow(/Exercise not found/);
+  await expect(user.query(api.strength.stats, { exerciseId })).rejects.toMatchObject({ data: { code: "NOT_FOUND" } });
 });
 
 test("sessionsForDay validates dates and refuses silently truncated days", async () => {
@@ -241,7 +241,7 @@ test("sessionsForDay validates dates and refuses silently truncated days", async
   await t.run(async (ctx) => {
     for (let index = 0; index < 30; index++) await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-06", timeZone: "Asia/Kolkata", startedAt: START + index, submissionId: `overflow-${index}` });
   });
-  await expect(user.query(api.strength.sessionsForDay, { localDate: "2026-10-06" })).rejects.toThrow(/30 workout sessions/);
+  await expect(user.query(api.strength.sessionsForDay, { localDate: "2026-10-06" })).rejects.toMatchObject({ data: { code: "LIMIT_REACHED" } });
 });
 
 test("sessionDetail and addSet refuse session set overflow", async () => {
@@ -249,9 +249,9 @@ test("sessionDetail and addSet refuse session set overflow", async () => {
   await t.run(async (ctx) => {
     for (let index = 0; index < 200; index++) await ctx.db.insert("sets", { userId: "user_a", sessionId, exerciseId, setIndex: index + 1, weightKg: 60, reps: 8, revision: 1, status: "live", submissionId: `set-${index}` });
   });
-  await expect(user.mutation(api.strength.addSet, { submissionId: "overflow", sessionId, exerciseId, weightKg: 60, reps: 8 })).rejects.toThrow(/200 sets/);
+  await expect(user.mutation(api.strength.addSet, { submissionId: "overflow", sessionId, exerciseId, weightKg: 60, reps: 8 })).rejects.toMatchObject({ data: { code: "LIMIT_REACHED" } });
   await t.run((ctx) => ctx.db.insert("sets", { userId: "user_a", sessionId, exerciseId, setIndex: 201, weightKg: 60, reps: 8, revision: 1, status: "live", submissionId: "overflow-seed" }));
-  await expect(user.query(api.strength.sessionDetail, { sessionId })).rejects.toThrow(/200 sets/);
+  await expect(user.query(api.strength.sessionDetail, { sessionId })).rejects.toMatchObject({ data: { code: "LIMIT_REACHED" } });
 });
 
 test("empty lifetime sessions do not block stats or workout details", async () => {
@@ -433,7 +433,7 @@ test("undo cannot restore a deleted set above the session cap", async () => {
   await t.run(async (ctx) => {
     for (let index = 0; index < 200; index++) await ctx.db.insert("sets", { userId: "user_a", sessionId, exerciseId, setIndex: index + 2, weightKg: 60, reps: 8, revision: 1, status: "live", submissionId: `cap-${index}` });
   });
-  await expect(user.mutation(api.strength.undoRevision, { submissionId: "undo-overflow", setId: deleted })).rejects.toThrow(/200 sets/);
+  await expect(user.mutation(api.strength.undoRevision, { submissionId: "undo-overflow", setId: deleted })).rejects.toMatchObject({ data: { code: "LIMIT_REACHED" } });
 });
 
 test("activeSession finds an unfinished session from an earlier day, skipping ended, deleted and other users' sessions", async () => {
@@ -453,7 +453,7 @@ test("startSession refuses a thirty-first session on one day", async () => {
   await t.run(async (ctx) => {
     for (let index = 0; index < 29; index++) await ctx.db.insert("workout_sessions", { userId: "user_a", localDate: "2026-10-06", timeZone: "Asia/Kolkata", startedAt: START + index, submissionId: `day-${index}` });
   });
-  await expect(user.mutation(api.strength.startSession, { submissionId: "overflow", startedAt: START })).rejects.toThrow(/30 workout sessions/);
+  await expect(user.mutation(api.strength.startSession, { submissionId: "overflow", startedAt: START })).rejects.toMatchObject({ data: { code: "LIMIT_REACHED" } });
 });
 
 test("every successful mutation retry is also blocked during a ledger clear", async () => {
