@@ -25,10 +25,10 @@ pnpm workspaces (`pnpm-workspace.yaml`: `apps/*`, `packages/*`).
 | Path | Package | What it is today |
 |---|---|---|
 | `apps/mobile` | `@stride/mobile` | Expo app (expo-router, NativeWind, Clerk). Will be rebuilt in slices 5-9. |
-| `apps/web` | `@stride/web` | React 19 + Vite + Tailwind v4 web app. Frozen until slice 10. |
+| `apps/web` | `@stride/web` | React 19 + Vite + Tailwind v4 desktop app: day log and Progress on the new backend. No account or chat screens (A13). |
 | `packages/backend` | `stride-backend` | Convex functions, schema, and tests in `convex/`. |
 | `packages/core` | `@stride/core` | Pure TS math (nutrition, energy, strength, local dates), zero runtime deps. Food and exercise import scripts in `scripts/`. Not wired into backend or web yet. |
-| `packages/shared` | `@stride/shared` | Design tokens (`tokens.ts`) and chat-turn contracts. Folds into `core` (D19). |
+| `packages/ui-tokens` | `@stride/ui-tokens` | Design tokens (`tokens.ts`) for mobile StyleSheets and web Tailwind (D20). |
 | `plans/` | | `007-restart.md` plus its codebase report and stack research. |
 
 Target layout per D19: `apps/mobile`, `apps/web`, `packages/backend`, `packages/core` (pure TS math, zero runtime deps, property-tested), `packages/ui-tokens` (single `tokens.ts` for web and native).
@@ -53,7 +53,6 @@ Run from the repo root. Node 20+, pnpm 10.
 | `pnpm --filter stride-backend test` | Backend tests only |
 | `pnpm build` | Production web build. Fails if web env vars are missing. |
 | `pnpm --filter @stride/core data:import` | Download and map FDC and exercise data into `packages/core/data/out/` (gitignored). See `packages/core/scripts/README.md`. Not run in CI. |
-| `pnpm build:tokens` | Regenerate `apps/web/src/styles/tokens.generated.css` from `packages/shared` |
 
 ## Environment variables
 

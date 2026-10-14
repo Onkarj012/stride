@@ -24,7 +24,6 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
-import { transcribeAudio } from "./ai";
 import { AI_INPUT_LIMITS, assertMaxChars } from "./ai_guard";
 import { MAX_DAY_ENTRIES } from "./day_totals";
 import { deleteEntryAs, editEntryAs } from "./entries";
@@ -42,6 +41,7 @@ import {
 } from "./pipeline/openrouter";
 import { resolveFoodPortion, userFoodsOf, userMeasuresOf } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
+import { transcribeAudio } from "./pipeline/transcribe";
 import { calorieTarget, dietsOf, MAX_PROGRESS_RANGE_DAYS, tdeeInput } from "./progress_v2";
 import { requireUserId, resolveLocalDay } from "./time_zone";
 import { requireOwnUpload } from "./uploads";

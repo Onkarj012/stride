@@ -61,9 +61,10 @@ Set backend variables in the Convex dashboard. Set client variables in each app'
 
 ```
 apps/mobile        Expo app (Android first)
-apps/web           Web app (frozen)
+apps/web           Desktop web app (day log, Progress)
 packages/backend   Convex schema, functions, tests
-packages/shared    Design tokens and shared types
+packages/core      Pure TS math (nutrition, energy, strength, dates)
+packages/ui-tokens Design tokens for mobile and web
 plans/             The restart plan and its research
 ```
 

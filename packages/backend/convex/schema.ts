@@ -45,75 +45,6 @@ export default defineSchema({
     name: v.string(),
   }).index("by_clerk_id", ["clerkId"]),
 
-  meals: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    name: v.string(),
-    calories: v.number(),
-    protein: v.number(),
-    carbs: v.number(),
-    fat: v.number(),
-    time: v.string(),
-    aiSuggestion: v.optional(v.string()),
-    mealType: v.optional(v.string()),
-    components: v.optional(v.string()),
-    // NEW: Nutrition engine fields
-    confidence: v.optional(v.number()),
-    nutritionSource: v.optional(v.string()),
-    nutritionVerified: v.optional(v.boolean()),
-    structuredItems: v.optional(v.string()),
-    ingredientBreakdown: v.optional(v.string()),
-    // Canonical nutrition draft calorie provenance.
-    reportedCalories: v.optional(v.number()),
-    estimatedCalories: v.optional(v.number()),
-    calorieSource: v.optional(v.union(v.literal("reported"), v.literal("estimated"))),
-    ingredientBreakdownInvalidated: v.optional(v.boolean()),
-    // Diet memory: set when auto-applied from food_memory
-    foodMemoryId: v.optional(v.id("food_memory")),
-    logSource: v.optional(v.string()),
-    idempotencyKey: v.optional(v.string()),
-    sourceActionId: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-  })
-    .index("by_user_date", ["userId", "date"])
-    .index("by_user_date_and_idempotency_key", ["userId", "date", "idempotencyKey"]),
-
-  workouts: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    name: v.string(),
-    sets: v.string(),
-    reps: v.optional(v.string()),
-    weight: v.optional(v.string()),
-    duration: v.optional(v.string()),
-    intensity: v.string(),
-    exercises: v.optional(v.any()),
-    rationale: v.optional(v.string()),
-    caloriesBurned: v.optional(v.number()),
-    // NEW: Calorie engine fields
-    calorieConfidence: v.optional(v.number()),
-    calorieRangeLow: v.optional(v.number()),
-    calorieRangeHigh: v.optional(v.number()),
-    calorieEstimateRough: v.optional(v.boolean()),
-    calorieBreakdown: v.optional(v.string()),
-    calculationVersion: v.optional(v.number()),
-    // Canonical workout draft calorie provenance.
-    reportedCalories: v.optional(v.number()),
-    estimatedCalories: v.optional(v.number()),
-    calorieSource: v.optional(v.union(v.literal("reported"), v.literal("estimated"))),
-    calorieEstimateProvenance: v.optional(v.string()),
-    // Structured exercise data — JSON: ExerciseEntry[]
-    structuredSets: v.optional(v.string()),
-    workoutDraft: v.optional(v.string()),
-    timestamp: v.optional(v.string()),
-    logSource: v.optional(v.string()),
-    idempotencyKey: v.optional(v.string()),
-    sourceActionId: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-  })
-    .index("by_user_date", ["userId", "date"])
-    .index("by_user_date_and_idempotency_key", ["userId", "date", "idempotencyKey"]),
-
   daily_goals: defineTable({
     userId: v.string(),
     date: v.string(),
@@ -122,32 +53,6 @@ export default defineSchema({
     carbGoal: v.number(),
     fatGoal: v.number(),
   }).index("by_user_date", ["userId", "date"]),
-
-  insights: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    content: v.string(),
-    // Source metadata lets readers distinguish generated output from a source
-    // set that has changed since generation.
-    sourceRowIds: v.optional(v.array(v.string())),
-    inputsVersion: v.optional(v.number()),
-    generatedAt: v.optional(v.number()),
-    stale: v.optional(v.boolean()),
-  }).index("by_user_date", ["userId", "date"]),
-
-  // Monotonic per-user/date version used to audit derived-state freshness.
-  derived_state_versions: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    version: v.number(),
-    updatedAt: v.number(),
-  }).index("by_user_date", ["userId", "date"]),
-
-  weekly_summaries: defineTable({
-    userId: v.string(),
-    weekStart: v.string(),
-    content: v.string(),
-  }).index("by_user_week", ["userId", "weekStart"]),
 
   user_profiles: defineTable({
     userId: v.string(),
@@ -239,44 +144,6 @@ export default defineSchema({
     })),
   }).index("by_user", ["userId"]),
 
-  chat_sessions: defineTable({
-    userId: v.string(),
-    title: v.string(),
-    updatedAt: v.number(),
-    previewTitle: v.optional(v.string()),
-  }).index("by_user", ["userId"]),
-
-  chat_messages: defineTable({
-    userId: v.string(),
-    sessionId: v.optional(v.id("chat_sessions")),
-    role: v.string(),
-    content: v.string(),
-    clientSubmissionId: v.optional(v.string()),
-    // Optional durable claim metadata. Older chat rows intentionally omit these
-    // fields and remain readable/retriable through the legacy path.
-    submissionFingerprint: v.optional(v.string()),
-    processingLeaseOwner: v.optional(v.string()),
-    processingLeaseVersion: v.optional(v.number()),
-    processingLeaseExpiresAt: v.optional(v.number()),
-    resolvedTurnMessageId: v.optional(v.id("chat_messages")),
-    turnContractVersion: v.optional(v.literal(1)),
-    turnOutcome: v.optional(v.union(
-      v.literal("committed"),
-      v.literal("confirmation_required"),
-      v.literal("failed"),
-      v.literal("no_action"),
-    )),
-    // Validated against @stride/shared's versioned ChatTurnCard union on write.
-    turnCards: v.optional(v.any()),
-    actionGroupId: v.optional(v.id("actionGroups")),
-    actionIds: v.optional(v.array(v.id("actions"))),
-  })
-    .index("by_session", ["sessionId"])
-    .index("by_user", ["userId"])
-    .index("by_action_group", ["actionGroupId"])
-    .index("by_action_group_role", ["actionGroupId", "role"])
-    .index("by_user_submission_and_role", ["userId", "clientSubmissionId", "role"]),
-
   food_cache: defineTable({
     barcode: v.optional(v.string()),
     name: v.string(),
@@ -315,93 +182,6 @@ export default defineSchema({
     missionsCompleted: v.optional(v.array(v.string())),
   }).index("by_user", ["userId"]),
 
-  // ─── Wellness logs (water, sleep, mood, steps) ─────────────────────────────
-
-  water_logs: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    ml: v.number(),
-    time: v.string(),
-    source: v.optional(v.string()),
-    confidence: v.optional(v.number()),
-    unresolved: v.optional(v.array(v.string())),
-    correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
-    state: v.optional(v.string()),
-    sourceActionId: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-  }).index("by_user_date", ["userId", "date"]),
-
-  sleep_logs: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    // Hours are optional because a user-reported sleep band is not a point estimate.
-    hours: v.optional(v.number()),
-    band: v.optional(v.union(v.literal("under_6"), v.literal("six_to_eight"), v.literal("eight_plus"))),
-    quality: v.optional(v.string()), // poor | ok | good | great
-    note: v.optional(v.string()),
-    kind: v.optional(v.string()), // sleep | state | wellness
-    state: v.optional(v.string()),
-    source: v.optional(v.string()),
-    confidence: v.optional(v.number()),
-    unresolved: v.optional(v.array(v.string())),
-    correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
-    intervalStart: v.optional(v.string()),
-    intervalEnd: v.optional(v.string()),
-    intervalDay: v.optional(v.string()),
-    waterMl: v.optional(v.number()),
-    mood: v.optional(v.number()),
-    stress: v.optional(v.number()),
-    energy: v.optional(v.number()),
-    soreness: v.optional(v.number()),
-    injury: v.optional(v.string()),
-    steps: v.optional(v.number()),
-    illness: v.optional(v.string()),
-    plannedRest: v.optional(v.boolean()),
-    travel: v.optional(v.string()),
-    sourceActionId: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-  }).index("by_user_date", ["userId", "date"]),
-
-  mood_logs: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    rating: v.number(), // 1..5
-    note: v.optional(v.string()),
-    time: v.string(),
-    source: v.optional(v.string()),
-    confidence: v.optional(v.number()),
-    unresolved: v.optional(v.array(v.string())),
-    correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
-    state: v.optional(v.string()),
-    sourceActionId: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-  }).index("by_user_date", ["userId", "date"]),
-
-  steps_logs: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    count: v.number(),
-    source: v.optional(v.string()),
-    confidence: v.optional(v.number()),
-    unresolved: v.optional(v.array(v.string())),
-    correctionState: v.optional(v.union(v.literal("original"), v.literal("corrected"))),
-    state: v.optional(v.string()),
-    sourceActionId: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-  }).index("by_user_date", ["userId", "date"]),
-
-  weight_logs: defineTable({
-    userId: v.string(),
-    date: v.string(),
-    weightKg: v.number(),
-    source: v.string(), // check_in | profile
-    createdAt: v.number(),
-    sourceActionId: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-  })
-    .index("by_user_date", ["userId", "date"])
-    .index("by_user", ["userId"]),
-
   // ─── Check-ins ────────────────────────────────────────────────────────────
 
   check_in_answers: defineTable({
@@ -424,16 +204,6 @@ export default defineSchema({
     .index("by_user_date_question", ["userId", "date", "questionId"])
     .index("by_user_question_date", ["userId", "questionId", "date"]),
 
-  check_in_template_settings: defineTable({
-    userId: v.string(),
-    templateId: v.string(),
-    enabled: v.boolean(),
-    window: v.string(),
-    updatedAt: v.number(),
-  })
-    .index("by_user", ["userId"])
-    .index("by_user_template", ["userId", "templateId"]),
-
   check_in_llm_questions: defineTable({
     userId: v.string(),
     date: v.string(),
@@ -449,14 +219,6 @@ export default defineSchema({
     fitnessLevel: v.string(),
     totalWorkoutsTracked: v.number(),
     lastCalibrationDate: v.optional(v.string()),
-  }).index("by_user", ["userId"]),
-
-  calorie_feedback: defineTable({
-    userId: v.string(),
-    workoutId: v.id("workouts"),
-    feedback: v.string(),
-    date: v.string(),
-    metabolicFactorSnapshot: v.number(),
   }).index("by_user", ["userId"]),
 
   // ─── Behavioral Memory (server-side) ───────────────────────────────────────
@@ -488,32 +250,6 @@ export default defineSchema({
     createdAt: v.number(),
     dismissedAt: v.optional(v.number()),
   }).index("by_user_status", ["userId", "status"]),
-
-  // ─── Diet Memory (auto-learned food profiles) ──────────────────────────────
-
-  food_memory: defineTable({
-    userId: v.string(),
-    normalizedName: v.string(),       // lowercased, stripped key for matching
-    displayName: v.string(),          // best user-facing name seen
-    aliases: v.array(v.string()),     // other names this meal has been logged as
-    kcal: v.number(),                 // smoothed average
-    protein: v.number(),
-    carbs: v.number(),
-    fat: v.number(),
-    components: v.optional(v.string()),
-    timesLogged: v.number(),
-    source: v.string(),               // "learned" | "corrected"
-    lastUsedDate: v.string(),         // YYYY-MM-DD
-    memoryType: v.optional(v.union(v.literal("explicit"), v.literal("inferred"))),
-    approvalStatus: v.optional(v.union(v.literal("pending"), v.literal("approved"), v.literal("rejected"))),
-    provenance: v.optional(v.string()),
-    sourceActionIds: v.optional(v.array(v.string())),
-    fact: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-    deletedAt: v.optional(v.number()),
-  })
-    .index("by_user", ["userId"])
-    .index("by_user_name", ["userId", "normalizedName"]),
 
   // ─── Personal Ingredient Memory ────────────────────────────────────────────
   // Stores user-defined ingredient facts extracted from chat (e.g. homemade
@@ -569,123 +305,6 @@ export default defineSchema({
     steps: v.optional(v.array(v.string())),
     source: v.optional(v.string()),
   }).index("by_user", ["userId"]),
-
-  actionGroups: defineTable({
-    userId: v.string(),
-    groupIdempotencyKey: v.string(),
-    sourceSurface: v.union(
-      v.literal("chat"),
-      v.literal("quick_log"),
-      v.literal("barcode"),
-      v.literal("recipe"),
-      v.literal("checkin"),
-      v.literal("direct_ui"),
-      v.literal("mobile"),
-    ),
-    rawInput: v.string(),
-    model: v.optional(v.string()),
-    status: v.union(
-      v.literal("pending"),
-      v.literal("committed"),
-      v.literal("partial"),
-      v.literal("failed"),
-      v.literal("discarded"),
-      v.literal("expired"),
-    ),
-    clientLocalDate: v.optional(v.string()),
-    clientLocalTime: v.optional(v.string()),
-    clientTimeZone: v.optional(v.string()),
-    createdAt: v.number(),
-    resolvedAt: v.optional(v.number()),
-    submissionFingerprint: v.optional(v.string()),
-  })
-    .index("by_user_created_at", ["userId", "createdAt"])
-    .index("by_group_idempotency_key", ["userId", "groupIdempotencyKey"]),
-
-  actions: defineTable({
-    groupId: v.id("actionGroups"),
-    userId: v.string(),
-    actionType: v.union(
-      v.literal("meal"),
-      v.literal("workout"),
-      v.literal("recovery"),
-      v.literal("rest"),
-      v.literal("memory"),
-    ),
-    memberIdempotencyKey: v.string(),
-    payload: v.any(),
-    originalPayload: v.optional(v.any()),
-    provenance: v.union(
-      v.literal("user_reported"),
-      v.literal("ai_extracted"),
-      v.literal("ai_estimated"),
-      v.literal("database_match"),
-    ),
-    confidence: v.optional(v.number()),
-    retryCount: v.optional(v.number()),
-    validation: v.object({
-      status: v.union(v.literal("valid"), v.literal("warning"), v.literal("error")),
-      messages: v.array(v.string()),
-    }),
-    status: v.union(
-      v.literal("pending"),
-      v.literal("committed"),
-      v.literal("failed"),
-      v.literal("undone"),
-      v.literal("discarded"),
-      v.literal("expired"),
-    ),
-    reversible: v.boolean(),
-    resolvedDate: v.optional(v.string()),
-    resolvedTime: v.optional(v.string()),
-    committedRowRef: v.optional(v.object({ table: v.string(), id: v.string() })),
-    committedRowTable: v.optional(v.string()),
-    committedRowId: v.optional(v.string()),
-    undoneAt: v.optional(v.number()),
-  })
-    .index("by_group", ["groupId"])
-    .index("by_user_status", ["userId", "status"])
-    .index("by_user_committed_row", ["userId", "committedRowTable", "committedRowId"])
-    .index("by_member_idempotency_key", ["userId", "memberIdempotencyKey"]),
-
-  action_telemetry: defineTable({
-    actionId: v.string(),
-    groupId: v.string(),
-    userId: v.string(),
-    actionType: v.string(),
-    event: v.union(
-      v.literal("staged"),
-      v.literal("committed"),
-      v.literal("failed"),
-      v.literal("discarded"),
-      v.literal("expired"),
-      v.literal("undone"),
-      v.literal("already_undone"),
-      v.literal("already_committed"),
-      v.literal("clarification_resolved"),
-    ),
-    sourceSurface: v.string(),
-    model: v.optional(v.string()),
-    retryCount: v.number(),
-    validationStatus: v.optional(v.string()),
-    confidence: v.optional(v.number()),
-    provenance: v.optional(v.string()),
-    mutationResult: v.object({
-      ok: v.boolean(),
-      error: v.optional(v.string()),
-      code: v.optional(v.string()),
-    }),
-    undoResult: v.optional(v.object({
-      status: v.string(),
-      error: v.optional(v.string()),
-      code: v.optional(v.string()),
-    })),
-    derivedStateVersion: v.optional(v.number()),
-    createdAt: v.number(),
-  })
-    .index("by_group", ["groupId"])
-    .index("by_action", ["actionId"])
-    .index("by_user_created_at", ["userId", "createdAt"]),
 
   // ─── Restart ledger (plan 007 section 3.2) ─────────────────────────────────
   // userId is the Clerk subject, matching user_settings and the older tables.
@@ -764,7 +383,7 @@ export default defineSchema({
     sodiumMgUnknown: v.number(),
   }).index("by_userId_and_localDate", ["userId", "localDate"]),
 
-  // Plan 3.2 calls this `workouts`; that name is still the pre-restart table.
+  // Plan 3.2 calls this `workouts`.
   workout_sessions: defineTable({
     userId: v.string(),
     localDate: v.string(),

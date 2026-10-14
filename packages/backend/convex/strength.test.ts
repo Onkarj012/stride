@@ -33,7 +33,6 @@ test("startSession retries once and resolves IST midnight without touching calor
   expect(await user.query(api.strength.sessionsForDay, { localDate: "2026-10-05" })).toEqual([]);
   expect((await user.query(api.strength.sessionsForDay, { localDate: "2026-10-06" })).map((row) => row._id)).toEqual([sessionId]);
   expect(await t.run((ctx) => ctx.db.query("day_totals").take(1))).toEqual([]);
-  expect(await t.run((ctx) => ctx.db.query("workouts").take(1))).toEqual([]);
 });
 
 test("startSession uses today and rejects missing zones, bad ids, names and instants", async () => {
