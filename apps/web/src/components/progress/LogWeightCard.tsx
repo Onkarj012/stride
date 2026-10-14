@@ -8,8 +8,8 @@ import { weightNumber, weightToKg, weightUnit, type Units } from "@/lib/units";
 import { cn } from "@/lib/utils";
 
 // Log-weight card: saves today's weigh-in and shows the one already logged today. Units undefined means the profile is still loading.
-export function LogWeightCard({ units }: { units: Units | undefined }) {
-  const today = useQuery(api.weights.todayWeight, {});
+export function LogWeightCard({ localDate, units }: { localDate: string; units: Units | undefined }) {
+  const today = useQuery(api.weights.todayWeight, { localDate });
   const logWeight = useMutation(api.weights.logWeight);
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -34,7 +34,7 @@ export function LogWeightCard({ units }: { units: Units | undefined }) {
     setSaving(true);
     setError(null);
     try {
-      await logWeight({ kg: weightToKg(typed, units) });
+      await logWeight({ kg: weightToKg(typed, units), localDate });
       setValue("");
     } catch (err) {
       setError(plainError(err));
