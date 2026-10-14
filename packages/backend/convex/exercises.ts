@@ -1,5 +1,5 @@
 import type { ExerciseRecord } from "@stride/core";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, query } from "./_generated/server";
 import { exerciseRecordValidator } from "./ledger_validators";
@@ -56,7 +56,7 @@ export const search = query({
   handler: async (ctx, args) => {
     await requireUserId(ctx);
     const text = args.query.trim();
-    if (text.length > 200) throw new Error("query must be at most 200 characters");
+    if (text.length > 200) throw new ConvexError({ code: "INVALID_TEXT", message: "query must be at most 200 characters" });
     const category = args.category === undefined ? undefined : catalogText(args.category, "category", 80);
     const limit = args.limit ?? MAX_SEARCH_RESULTS;
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SEARCH_RESULTS) {
