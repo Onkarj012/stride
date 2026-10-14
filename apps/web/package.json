@@ -5,9 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.34.3+sha512.f2c531b08829d7be7f03c90addc266615f9c5477463e4bf1d275cb263ce9ea57cf0d5599110d94649a9bb3fed9f0b5efcea74a7016b61532a24cb9ad87860c1d",
   "scripts": {
-    "predev": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/tokens-css.ts",
     "dev": "vite",
-    "prebuild": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/tokens-css.ts && node scripts/check-env.mjs",
+    "prebuild": "node scripts/check-env.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
