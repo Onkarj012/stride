@@ -307,7 +307,7 @@ export const sessionDetail = query({
       budget -= past.read;
       historyLimited ||= past.historyLimited;
       const currentSets = sets.filter((set) => set.exerciseId === exerciseId);
-      exercises.push({ exercise, sets: currentSets.map(setView), previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId, session) });
+      exercises.push({ exercise, sets: currentSets.map(setView), previousSets: past.historyLimited ? [] : previousSets(past.sets, past.sessions, exerciseId, session), historyLimited: past.historyLimited });
       const best = Math.max(0, ...currentSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
       const olderSets = past.sets.filter((set) => (past.sessions.get(set.sessionId)?.startedAt ?? Infinity) < session.startedAt);
       const previous = Math.max(0, ...olderSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
@@ -317,7 +317,7 @@ export const sessionDetail = query({
   },
 });
 
-/** Lists the caller's most recently trained exercises, newest first. */
+/** Lists the caller's lifts ranked by the start time of their latest workout, newest first. */
 export const recentExercises = query({
   args: {},
   returns: v.array(v.id("exercises")),
@@ -325,16 +325,15 @@ export const recentExercises = query({
     const userId = await requireUserId(ctx);
     const rows = await ctx.db.query("sets").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "live")).order("desc").take(RECENT_SET_SCAN);
     const cache: SessionCache = new Map();
-    const exerciseIds: Id<"exercises">[] = [];
+    const latestWorkout = new Map<Id<"exercises">, number>();
     for (const set of rows) {
-      if (exerciseIds.includes(set.exerciseId)) continue;
       if (!cache.has(set.sessionId)) cache.set(set.sessionId, await ctx.db.get("workout_sessions", set.sessionId));
       const session = cache.get(set.sessionId);
       if (!session || session.userId !== userId || session.deletedAt !== undefined) continue;
-      exerciseIds.push(set.exerciseId);
-      if (exerciseIds.length === RECENT_EXERCISE_LIMIT) break;
+      latestWorkout.set(set.exerciseId, Math.max(latestWorkout.get(set.exerciseId) ?? session.startedAt, session.startedAt));
     }
-    return exerciseIds;
+    // Map keeps first-seen order and sort is stable, so ties keep the newest-set scan order.
+    return [...latestWorkout].sort((a, b) => b[1] - a[1]).slice(0, RECENT_EXERCISE_LIMIT).map(([exerciseId]) => exerciseId);
   },
 });
 
