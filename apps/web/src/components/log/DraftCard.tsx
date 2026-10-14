@@ -40,7 +40,7 @@ function formatQuantity(q: number): string {
 
 // The amount line under an item: its quantity as typed, its grams, or why it has none.
 function amountText(item: DraftItem, fix: Fix, view: ReturnType<typeof viewOf>): string {
-  if (view.grams === null) return view.foodName === null ? "not matched yet" : "amount on save";
+  if (view.grams === null) return view.foodName === null ? "not matched yet" : "";
   if (!view.changedFood && fix.grams === undefined && item.quantity !== null && item.unit !== null) {
     return `${formatQuantity(item.quantity)} ${item.unit}`;
   }
@@ -78,7 +78,13 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
   const photo = draft.inputKind === "photo";
   // True when an item's grams text was typed but does not parse to a usable amount.
   const badGrams = (i: number) => gramsText[i] !== undefined && parseGrams(gramsText[i]) === undefined;
-  const gramsBlocked = kept.some(badGrams);
+  // True when no grams are known and the save cannot resolve them. A changed food resolves from its quantity.
+  const needsAmount = (i: number) => {
+    const view = views[i];
+    if (!view || view.foodName === null || view.grams !== null) return false;
+    return !(view.changedFood && draft.items[i]?.quantity !== null);
+  };
+  const gramsBlocked = kept.some((i) => badGrams(i) || needsAmount(i));
 
   // Only the changes that differ from the draft. The server resolves amounts and computes every nutrient.
   function corrections() {
@@ -203,7 +209,7 @@ export function DraftCard({ draftId, today }: { draftId: DraftId; today: string 
                   <Button variant="quiet" size="sm" className="ml-auto" onClick={() => patch(i, { remove: true })}>
                     Remove
                   </Button>
-                  {badGrams(i) ? <p className="w-full type-caption text-polo-ink">Enter an amount in grams.</p> : null}
+                  {badGrams(i) || needsAmount(i) ? <p className="w-full type-caption text-polo-ink">Enter an amount in grams.</p> : null}
                 </div>
               ) : null}
 
