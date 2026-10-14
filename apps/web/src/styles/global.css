@@ -1,188 +1,58 @@
 @import "tailwindcss";
 @import "./tokens.generated.css";
 
-/* =========================================================================
-   Dark mode — first-class theme variant declaration.
-   Token overrides live in tokens.generated.css (.dark block).
-   ========================================================================= */
-
-@custom-variant dark (&:where(.dark, .dark *));
-
-/* =========================================================================
-   Base
-   ========================================================================= */
-
 @layer base {
-  html, body, #root {
+  html,
+  body,
+  #root {
     height: 100%;
   }
 
-  html {
-    font-size: 100%;
-    -webkit-text-size-adjust: 100%;
-    font-feature-settings: "ss01", "cv11";
-  }
-
   body {
-    background-color: var(--color-bg);
-    color: var(--color-text);
-    font-family: var(--font-sans);
-    font-size: var(--text-body);
-    line-height: var(--text-body--line-height);
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    text-rendering: optimizeLegibility;
-    transition: background-color 250ms var(--ease-out-soft),
-                color 250ms var(--ease-out-soft);
+    color-scheme: light dark;
   }
 
-  /* Atmospheric backdrop — subtle in light, very subtle in dark */
-  #root {
-    background:
-      radial-gradient(circle at 92% 6%, rgba(179, 160, 255, 0.14), transparent 38%),
-      radial-gradient(circle at 6% 96%, rgba(160, 198, 255, 0.10), transparent 42%),
-      var(--color-bg);
-    background-attachment: fixed;
+  button:not(:disabled),
+  select:not(:disabled) {
+    cursor: pointer;
   }
-
-  .dark #root {
-    background:
-      radial-gradient(circle at 92% 6%, rgba(179, 160, 255, 0.06), transparent 38%),
-      radial-gradient(circle at 6% 96%, rgba(160, 198, 255, 0.04), transparent 42%),
-      var(--color-bg);
-    background-attachment: fixed;
-  }
-
-  /* Default no horizontal overflow at the page root */
-  body { overflow-x: hidden; }
-
-  .no-scrollbar::-webkit-scrollbar { display: none; }
-  .no-scrollbar { scrollbar-width: none; }
 
   :focus-visible {
-    outline: 2px solid var(--color-lavender);
+    outline: 2px solid var(--color-polo);
     outline-offset: 2px;
-    border-radius: 6px;
   }
 
-  ::selection {
-    background-color: var(--color-lavender);
-    color: var(--color-ink);
+  input[type="number"] {
+    -moz-appearance: textfield;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after {
-      animation-duration: 0.001ms !important;
-      animation-iteration-count: 1 !important;
-      transition-duration: 0.001ms !important;
-    }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
 }
 
-/* =========================================================================
-   Typography utilities
-   ========================================================================= */
-
-@utility text-display {
-  font-size: var(--text-display);
-  line-height: var(--text-display--line-height);
-  font-weight: 800;
-  letter-spacing: -0.5px;
-}
-@utility text-h1 {
-  font-size: var(--text-h1);
-  line-height: var(--text-h1--line-height);
-  font-weight: 700;
-  letter-spacing: -0.5px;
-}
-@utility text-h2 {
-  font-size: var(--text-h2);
-  line-height: var(--text-h2--line-height);
-  font-weight: 700;
-}
-@utility text-h3 {
-  font-size: var(--text-h3);
-  line-height: var(--text-h3--line-height);
-  font-weight: 700;
-}
-@utility text-body-default {
-  font-size: var(--text-body);
-  line-height: var(--text-body--line-height);
-  font-weight: 400;
-}
-@utility text-caption {
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  font-weight: 400;
-}
-@utility text-micro {
-  font-size: var(--text-micro);
-  line-height: var(--text-micro--line-height);
-  font-weight: 500;
-}
-@utility text-stat-value {
-  font-size: var(--text-stat-value);
-  line-height: var(--text-stat-value--line-height);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--tracking-tight);
-}
-@utility text-stat-label {
-  font-size: var(--text-stat-label);
-  line-height: var(--text-stat-label--line-height);
-  font-weight: var(--weight-medium);
-  opacity: 0.7;
-}
-
-@utility page-container {
-  width: 100%;
-  max-width: 72rem;
-  margin-inline: auto;
-}
-
-/* =========================================================================
-   Interaction utilities
-   ========================================================================= */
-
-@utility hover-lift {
-  transition:
-    transform 200ms var(--ease-out-soft),
-    box-shadow 200ms var(--ease-out-soft);
-  @media (min-width: 1024px) and (hover: hover) {
-    &:hover {
-      transform: translateY(-2px);
-      box-shadow: var(--shadow-card-hover);
-    }
+@keyframes breathe {
+  50% {
+    transform: scale(1.035, 0.975);
   }
 }
 
-@utility skeleton-shimmer {
-  background: linear-gradient(
-    90deg,
-    rgba(13, 16, 27, 0.04) 0%,
-    rgba(13, 16, 27, 0.10) 50%,
-    rgba(13, 16, 27, 0.04) 100%
-  );
-  background-size: 200% 100%;
-  animation: var(--animate-shimmer);
+@keyframes toast-ring {
+  to {
+    stroke-dashoffset: 56.5;
+  }
 }
 
-.dark .skeleton-shimmer {
-  background: linear-gradient(
-    90deg,
-    rgba(255, 255, 255, 0.04) 0%,
-    rgba(255, 255, 255, 0.09) 50%,
-    rgba(255, 255, 255, 0.04) 100%
-  );
-  background-size: 200% 100%;
-}
-
-/* Hide native number-input spinners app-wide (users type values directly) */
-input[type="number"]::-webkit-inner-spin-button,
-input[type="number"]::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-input[type="number"] {
-  -moz-appearance: textfield;
-  appearance: textfield;
+@keyframes dot {
+  40% {
+    transform: translateY(-4px);
+    opacity: 0.4;
+  }
 }

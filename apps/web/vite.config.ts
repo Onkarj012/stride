@@ -2,6 +2,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
+import { writeTokensCss } from "./scripts/tokens-css.ts";
+
+// Regenerate the design token stylesheet on every dev and build start.
+writeTokensCss();
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -15,8 +19,6 @@ export default defineConfig({
       // browser-safe ESM path. TypeScript types still come from api.d.ts.
       "@convex/_generated/api": path.resolve(__dirname, "./src/lib/convex-api-shim.ts"),
       "@convex": path.resolve(__dirname, "../../packages/backend/convex"),
-      // Shared cross-surface contracts (chat turn cards, design tokens).
-      "@stride/shared": path.resolve(__dirname, "../../packages/shared/src/index.ts"),
     },
   },
   build: {

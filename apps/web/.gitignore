@@ -6,3 +6,4 @@ dist
 .env
 .env.*
 !.env.example
+src/styles/tokens.generated.css
