@@ -134,6 +134,8 @@ function Profile() {
   const goal = profile.goal ?? 'maintain'
   const targets = targetsFor(dailyTarget?.kcal ?? null)
   const source = dailyTarget?.source === 'adaptive' ? 'Learned from your logs' : 'Set from your profile'
+  // Shows an ellipsis in place of a target value until today's targets load.
+  const shown = (value: string) => (dailyTarget === undefined ? '…' : value)
   const note = clampNote(dailyTarget?.clamped, profile.sex ?? 'male')
   const weightValue = profile.latestWeightKg === null ? 'Not set' : kgLabel(profile.latestWeightKg, units)
   const heightValue = profile.heightCm === undefined ? 'Not set' : heightLabel(profile.heightCm, units)
@@ -171,18 +173,12 @@ function Profile() {
         </Tap>
 
         <Section title="Daily targets" />
-        {dailyTarget === undefined ? (
-          <View style={s.targetsLoading}>
-            <Polo size={40} />
-          </View>
-        ) : (
-          <ListCard>
-            <ListRow label="Calories" detail={source} value={`${formatNumber(targets.kcal)} kcal`} strong />
-            <ListRow label="Protein" value={`${formatNumber(targets.proteinG)} g`} strong />
-            <ListRow label="Carbs" value={`${formatNumber(targets.carbsG)} g`} strong />
-            <ListRow label="Fat" value={`${formatNumber(targets.fatG)} g`} strong last />
-          </ListCard>
-        )}
+        <ListCard>
+          <ListRow label="Calories" detail={shown(source)} value={shown(`${formatNumber(targets.kcal)} kcal`)} strong />
+          <ListRow label="Protein" value={shown(`${formatNumber(targets.proteinG)} g`)} strong />
+          <ListRow label="Carbs" value={shown(`${formatNumber(targets.carbsG)} g`)} strong />
+          <ListRow label="Fat" value={shown(`${formatNumber(targets.fatG)} g`)} strong last />
+        </ListCard>
         {note ? <Text style={s.caption}>{note}</Text> : null}
 
         <Section title="Your answers" />
@@ -394,7 +390,6 @@ const useStyles = themedStyles((t) => ({
   identityText: { flex: 1, minWidth: 0 },
   name: { ...font('cardTitle'), color: t.c.ink },
   hint: { ...font('caption'), color: t.c.ink3, marginTop: 2 },
-  targetsLoading: { alignItems: 'center', paddingVertical: 24 },
   caption: { ...font('caption'), color: t.c.ink3, marginTop: 10, marginHorizontal: 2 },
   sheetEyebrow: { ...font('eyebrow'), color: t.c.ink3 },
   sheetTitle: { ...font('cardTitle'), color: t.c.ink, marginTop: 4, marginBottom: 16 },
@@ -410,3 +405,5 @@ const useStyles = themedStyles((t) => ({
   save: { marginTop: 18 },
   error: { ...font('callout'), color: t.c.poloInk, marginTop: 14 },
 }))
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError'

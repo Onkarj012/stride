@@ -422,3 +422,5 @@ const useStyles = themedStyles((t) => ({
   note: { ...font('secondary'), color: t.c.ink2, textAlign: 'center', marginTop: 18 },
   revealLead: { ...font('secondary'), color: t.c.ink3, textAlign: 'center', marginTop: 10, maxWidth: 300 },
 }))
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError'

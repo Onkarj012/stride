@@ -465,3 +465,5 @@ const useStyles = themedStyles((t) => ({
   stopButton: { backgroundColor: t.c.ink },
   stopGlyph: { width: 11, height: 11, borderRadius: 3, backgroundColor: t.c.bg },
 }))
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError'

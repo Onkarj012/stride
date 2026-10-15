@@ -187,7 +187,15 @@ function WeighCard({ today, trendKg, weeklyRateKg }: { today: string; trendKg: n
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  if (weight === undefined) return null
+  if (weight === undefined)
+    return (
+      <View style={[s.card, s.weighCard, s.weighSaved]}>
+        <View style={s.grow}>
+          <Text style={s.eyebrow}>Morning weight</Text>
+          <Text style={[s.weighNote, { color: t.c.ink3 }]}>Checking today's weigh-in…</Text>
+        </View>
+      </View>
+    )
   const units = savedUnits(profile?.units)
   // Start from today's or the latest weigh-in; 70 is only a starting point for the very first one.
   const start = weight.kg ?? weight.latestKg ?? 70

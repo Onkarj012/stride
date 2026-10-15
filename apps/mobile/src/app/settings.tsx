@@ -440,3 +440,5 @@ const useStyles = themedStyles((t) => ({
   danger: { backgroundColor: t.c.poloInk },
   gap: { marginTop: 10 },
 }))
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError'
