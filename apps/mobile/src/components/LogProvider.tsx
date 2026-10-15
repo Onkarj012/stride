@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { newSubmissionId, plainError, type DraftId, type EntryId, type MealSlot } from '@/lib/log'
@@ -7,6 +7,7 @@ import { Compose, type ComposeMode, type ComposePrefill } from './Compose'
 import { MealSheet } from './MealSheet'
 import { Sheet } from './Sheet'
 import { Toast, type ToastMessage } from './Toast'
+import { LogContext, type LogApi } from './useLog'
 
 type SheetContent =
   | { kind: 'compose'; mode: ComposeMode; defaultSlot?: MealSlot; draftId?: DraftId; prefill?: ComposePrefill }
@@ -15,28 +16,6 @@ type SheetContent =
 
 // One sheet opening. Its session number changes on every show, so each opening mounts fresh.
 type Opening = SheetContent & { session: number }
-
-type LogApi = {
-  // Prefill fills the box with text, or logs an already uploaded photo.
-  compose: (mode?: ComposeMode, defaultSlot?: MealSlot, prefill?: ComposePrefill) => void
-  openDraft: (draftId: DraftId) => void
-  openMeal: (localDate: string, slot: MealSlot) => void
-  // The daily-burn explainer, or the one-time milestone version of it.
-  openBurn: (milestone: boolean) => void
-  toast: (message: Omit<ToastMessage, 'id'>) => void
-  // Builds an undo that reverts the latest revision of each entry, with its own toast on success or failure. Resolves true only if it worked.
-  undoFor: (entryIds: EntryId[]) => () => Promise<boolean>
-  sheetOpen: boolean
-}
-
-const LogContext = createContext<LogApi | null>(null)
-
-// The actions every screen shares: the compose, meal and burn sheets and the undo toast.
-export function useLog(): LogApi {
-  const value = useContext(LogContext)
-  if (!value) throw new Error('useLog must be used inside LogProvider')
-  return value
-}
 
 // Hosts the one bottom sheet and the toast above the tabs, and hands out the actions to open them.
 export function LogProvider({ children }: { children: ReactNode }) {

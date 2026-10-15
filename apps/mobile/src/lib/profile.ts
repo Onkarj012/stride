@@ -13,7 +13,7 @@ export type Pace = NonNullable<SaveProfileArgs['pace']>
 export type Units = 'metric' | 'imperial'
 export type DatePart = 'day' | 'month' | 'year'
 
-const LB_PER_KG = 2.20462
+export const LB_PER_KG = 2.20462
 const CM_PER_INCH = 2.54
 export const WEIGHT_KG = { min: 30, max: 300 }
 export const HEIGHT_CM = { min: 100, max: 250 }
@@ -70,6 +70,19 @@ export function heightLabel(cm: number, units: Units): string {
 export function rateLabel(kgPerWeek: number, units: Units): string {
   const value = units === 'metric' ? kgPerWeek : kgPerWeek * LB_PER_KG
   return `${Number(value.toFixed(2))} ${units === 'metric' ? 'kg' : 'lb'} a week`
+}
+
+// Weekly rate in the user's unit with a real minus or plus sign, e.g. "−0.45 kg a week". No sign when it shows as zero.
+export function signedRateLabel(kgPerWeek: number, units: Units): string {
+  const shown = Number((units === 'metric' ? kgPerWeek : kgPerWeek * LB_PER_KG).toFixed(2))
+  const sign = shown === 0 ? '' : shown < 0 ? '−' : '+'
+  return `${sign}${rateLabel(Math.abs(kgPerWeek), units)}`
+}
+
+// Whether a target 0.1 kg past today's weight, in the goal's direction, still fits inside the allowed weights.
+export function hasTargetRoom(goal: 'lose' | 'gain', weightKg: number): boolean {
+  const target = round1(goal === 'lose' ? weightKg - 0.1 : weightKg + 0.1)
+  return target >= WEIGHT_KG.min && target <= WEIGHT_KG.max
 }
 
 // One step of weight (0.1 kg or 1 lb), returned in kg.

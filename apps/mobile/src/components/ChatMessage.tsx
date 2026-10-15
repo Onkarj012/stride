@@ -18,7 +18,7 @@ import type { EntryId } from '@/lib/log'
 import { font, themedStyles } from '@/theme'
 import { Button } from './Controls'
 import { DraftCard } from './DraftCard'
-import { useLog } from './LogProvider'
+import { useLog } from './useLog'
 import { Polo } from './Polo'
 import { Tap } from './Tap'
 

@@ -37,6 +37,7 @@ import {
   dateParts,
   daysLabel,
   dietsLabel,
+  hasTargetRoom,
   heightLabel,
   kgLabel,
   savedUnits,
@@ -244,8 +245,12 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
       goal={targetSide(draft.goal)}
       weightKg={draft.weightKg}
       units={units}
+      onMaintain={field === 'goal' ? () => patch({ goal: 'maintain' }) : undefined}
     />
   )
+
+  // Goal and target can't be saved while the goal's side of today's weight has no room for a target.
+  const noRoom = (field === 'goal' || field === 'target') && draft.goal !== 'maintain' && !hasTargetRoom(targetSide(draft.goal), draft.weightKg)
 
   // The input for this field, bound to the draft.
   function input(): ReactNode {
@@ -308,7 +313,7 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
         label="Save"
         size="block"
         busy={busy}
-        disabled={(field === 'name' && draft.name.trim() === '') || (field === 'dob' && !dobValid)}
+        disabled={noRoom || (field === 'name' && draft.name.trim() === '') || (field === 'dob' && !dobValid)}
         onPress={() => void save()}
         style={s.save}
       />

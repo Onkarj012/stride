@@ -28,7 +28,7 @@ import { font, themedStyles, useTheme } from '@/theme'
 import { BarcodeScanner, PhotoCapture, ScanningPhoto, VoiceCapture } from './Capture'
 import { Button, RoundButton, Stepper, Tag, Thinking } from './Controls'
 import { DraftCard } from './DraftCard'
-import { useLog } from './LogProvider'
+import { useLog } from './useLog'
 import { Polo, type PoloMood } from './Polo'
 import { Tap } from './Tap'
 

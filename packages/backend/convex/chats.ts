@@ -1,5 +1,6 @@
 import {
   addDays,
+  DEFAULT_MACRO_REFERENCE,
   daysBetween,
   leastSquaresSlope,
   PACE_KG_PER_WEEK,
@@ -7,7 +8,6 @@ import {
   scaleMacroTargets,
   scaleNutrients,
   weightTrend,
-  type DailyTargets,
   type MealSlot,
 } from "@stride/core";
 import { paginationOptsValidator } from "convex/server";
@@ -698,8 +698,6 @@ export const finishReply = internalMutation({
   },
 });
 
-/** The app's daily macro reference at the default calorie target. Mirrors DEFAULT_TARGETS in apps/mobile/src/lib/log.ts. */
-const DEFAULT_TARGETS: DailyTargets = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 };
 const DIET_LABELS = { veg: "Vegetarian", eggetarian: "Eggetarian", non_veg: "Non-vegetarian", vegan: "Vegan", jain: "Jain" } as const;
 
 const coachProfileValidator = v.union(
@@ -754,7 +752,7 @@ async function coachProfileOf(ctx: QueryCtx, userId: string, localDate: string):
       ? null
       : 7 * leastSquaresSlope(recent.map((row) => ({ x: daysBetween(first.localDate, row.localDate), y: trend.get(row.localDate) ?? row.kg })));
   const kcal = calorieTarget(settings, input.baseline, snapshot, localDate, input.latestWeightKg)?.kcal ?? null;
-  const macros = kcal === null ? null : scaleMacroTargets(kcal, DEFAULT_TARGETS);
+  const macros = kcal === null ? null : scaleMacroTargets(kcal, DEFAULT_MACRO_REFERENCE);
   return {
     goal: settings.goal,
     pace: settings.pace,

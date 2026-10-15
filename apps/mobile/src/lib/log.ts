@@ -1,5 +1,5 @@
 import { ConvexError } from 'convex/values'
-import { scaleMacroTargets } from '@stride/core'
+import { DEFAULT_MACRO_REFERENCE, scaleMacroTargets } from '@stride/core'
 import type { FunctionReturnType } from 'convex/server'
 import { getCalendars } from 'expo-localization'
 import { File } from 'expo-file-system'
@@ -22,7 +22,7 @@ export const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'snack', 'dinner']
 export const SLOT_NAMES: Record<MealSlot, string> = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' }
 
 // Fallback daily targets while the backend has no target for the user yet.
-export const DEFAULT_TARGETS = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 }
+export const DEFAULT_TARGETS = DEFAULT_MACRO_REFERENCE
 
 // Range for progress_v2.summary on Today, Log and Progress, so Convex shares one subscription.
 export const SUMMARY_DAYS = 14

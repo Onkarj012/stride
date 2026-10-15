@@ -3,7 +3,7 @@ import { ActivityIndicator, FlatList, Image, ScrollView, Text, TextInput, View, 
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { launchImageLibraryAsync } from 'expo-image-picker'
+import { launchCameraAsync, launchImageLibraryAsync, requestCameraPermissionsAsync } from 'expo-image-picker'
 import { useAuth } from '@clerk/expo'
 import type { FunctionReturnType } from 'convex/server'
 import { useAction, useMutation, usePaginatedQuery, useQuery } from 'convex/react'
@@ -309,6 +309,22 @@ const Composer = memo(function Composer({ streaming, sending, onSubmit, onStop, 
     }
   }
 
+  // Takes a new photo with the camera for the next message, after asking for camera access.
+  async function takePhoto() {
+    try {
+      const permission = await requestCameraPermissionsAsync()
+      if (!permission.granted) {
+        onProblem('Camera is off. Allow it in Settings, or pick from the gallery.')
+        return
+      }
+      const picked = await launchCameraAsync({ mediaTypes: ['images'], quality: 0.5 })
+      const asset = picked.canceled ? undefined : picked.assets[0]
+      if (asset) setPhotoUri(asset.uri)
+    } catch {
+      onProblem("Couldn't open the camera. Try again.")
+    }
+  }
+
   return (
     <View style={s.composer}>
       {photoUri ? (
@@ -321,6 +337,7 @@ const Composer = memo(function Composer({ streaming, sending, onSubmit, onStop, 
       ) : null}
       <View style={s.inputRow}>
         <RoundButton icon="image" label="Attach a photo" tone="card" size={46} onPress={() => void attach()} />
+        <RoundButton icon="cam" label="Take a photo" tone="card" size={46} onPress={() => void takePhoto()} />
         <View style={s.field}>
           <TextInput
             style={s.input}
