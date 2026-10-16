@@ -48,9 +48,10 @@ export const FOOD_SPECIFIC_MEASURES: readonly string[] = ["plate", "serving", "s
 /** The unit used when the input gives a count with no unit, as in "2 rotis". */
 export const PIECE_UNIT = "piece";
 
-/** Grams for one piece of a food, matched when every key token appears in the food name. */
+/** Grams for one piece of a food, matched when every key token appears in the food name and no excluded token does. */
 export interface PieceWeight {
   keys: readonly string[];
+  excludes?: readonly string[];
   grams: number;
   note: string;
 }
@@ -60,9 +61,11 @@ export const PIECE_WEIGHTS: readonly PieceWeight[] = [
   { keys: ["roti"], grams: 40, note: "Whole-wheat roti, about 30 g atta. Plan 007 D10 and the previous Stride engine." },
   { keys: ["chapati"], grams: 40, note: "Same as roti." },
   { keys: ["phulka"], grams: 30, note: "Thinner, puffed roti without ghee. Household estimate, owner-editable." },
-  { keys: ["paratha"], grams: 80, note: "Plain layered paratha. Previous Stride engine value." },
+  { keys: ["paratha"], excludes: ["aloo"], grams: 80, note: "Plain layered paratha. Previous Stride engine value. Stuffed parathas are not covered." },
   { keys: ["idli"], grams: 40, note: "One medium idli. Previous Stride engine value." },
   { keys: ["egg"], grams: 50, note: "One large egg without shell, FDC 171287 portion 'large'." },
+  { keys: ["banana"], excludes: ["chip", "bread", "juice"], grams: 118, note: "One medium banana, FDC 173944 (SR Legacy) household measure, 7 to 7 7/8 in long." },
+  { keys: ["apple"], excludes: ["juice", "sauce", "pie"], grams: 182, note: "One medium apple with skin, FDC 171688 (SR Legacy) household measure, 3 in diameter." },
 ];
 
 /** Density of a food class in g/ml, matched when every key token appears in the food name and no excluded token does. */
