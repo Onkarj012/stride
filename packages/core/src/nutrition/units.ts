@@ -119,6 +119,12 @@ export function pieceWeightFor(foodName: string): number | null {
   return longestMatch(foodName, PIECE_WEIGHTS)?.grams ?? null;
 }
 
+/** True when a piece row's keys match the food name but one of its excluded words does, e.g. "aloo paratha". */
+function isExcludedPiece(foodName: string): boolean {
+  const nameTokens = new Set(tokenize(foodName));
+  return PIECE_WEIGHTS.some((p) => tokensMatch(nameTokens, p.keys) && !tokensMatch(nameTokens, p.keys, p.excludes));
+}
+
 /** Returns grams per measure from the food's own portion rows, null when absent, or "conflict" when rows disagree. */
 function foodPortionGrams(unit: string, portions: PortionContext["portions"]): number | "conflict" | null {
   const grams = new Set(
@@ -187,7 +193,7 @@ export function resolvePortion(
   }
 
   if (unit === PIECE_UNIT) {
-    const perPiece = pieceWeightFor(ctx.foodName) ?? pieceWeightFor(rawUnit);
+    const perPiece = pieceWeightFor(ctx.foodName) ?? (isExcludedPiece(ctx.foodName) ? null : pieceWeightFor(rawUnit));
     if (perPiece === null) return { status: "unresolved", reason: "missing_piece_weight" };
     return resolved(quantity * perPiece, PORTION_CONFIDENCE.pieceTable, "piece");
   }
