@@ -126,12 +126,31 @@ function pieceRowsFor(foodName: string): PieceWeight[] {
   return PIECE_WEIGHTS.filter((p) => tokensMatch(nameTokens, p.keys));
 }
 
-/** Grams per piece for a food name. Null unless exactly one row covers the name and none of its excluded words appear. */
+/** Key tokens of a piece row as a set. */
+function keyTokenSet(row: PieceWeight): Set<string> {
+  return new Set(row.keys.flatMap(tokenize));
+}
+
+/**
+ * Grams per piece for a food name. Any excluded word vetoes. Otherwise the rows must agree on grams,
+ * or one row must have strictly more key tokens than the others and contain all of theirs.
+ */
 function pieceWeightForName(foodName: string): number | null {
+  const nameTokens = new Set(tokenize(foodName));
   const rows = pieceRowsFor(foodName);
-  const [row] = rows;
-  if (row === undefined || rows.length > 1) return null;
-  return tokensMatch(new Set(tokenize(foodName)), row.keys, row.excludes) ? row.grams : null;
+  if (rows.length === 0 || rows.some((r) => !tokensMatch(nameTokens, r.keys, r.excludes))) return null;
+  const [first] = rows;
+  if (first === undefined) return null;
+  if (rows.every((r) => r.grams === first.grams)) return first.grams;
+  const specific = rows.find((r) => {
+    const keys = keyTokenSet(r);
+    return rows.every((o) => {
+      if (o === r) return true;
+      const otherKeys = keyTokenSet(o);
+      return keys.size > otherKeys.size && [...otherKeys].every((t) => keys.has(t));
+    });
+  });
+  return specific?.grams ?? null;
 }
 
 /** Returns grams per measure from the food's own portion rows, null when absent, or "conflict" when rows disagree. */

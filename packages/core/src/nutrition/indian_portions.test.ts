@@ -19,6 +19,7 @@ const PHRASES: readonly Phrase[] = [
   { phrase: "2 chapati", quantity: 2, unit: "chapati", food: "chapati", expected: { grams: 80 } },
   { phrase: "2 chapatis", quantity: 2, unit: "chapatis", food: "chapati", expected: { grams: 80 } },
   { phrase: "1 phulka", quantity: 1, unit: "phulka", food: "phulka", expected: { grams: 30 } },
+  { phrase: "USDA bread, chapati or roti, plain", quantity: 1, unit: null, food: "Bread, chapati or roti, plain, commercially prepared", expected: { grams: 40 } },
   { phrase: "1 paratha", quantity: 1, unit: "paratha", food: "paratha", expected: { grams: 80 } },
   { phrase: "1 aloo paratha", quantity: 1, unit: null, food: "aloo paratha", expected: { reason: "missing_piece_weight" } },
   { phrase: "1 aloo paratha, unit paratha", quantity: 1, unit: "paratha", food: "aloo paratha", expected: { reason: "missing_piece_weight" } },
