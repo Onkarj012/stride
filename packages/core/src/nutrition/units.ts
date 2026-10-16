@@ -5,6 +5,7 @@ import {
   MASS_UNITS_G,
   PIECE_UNIT,
   PIECE_WEIGHTS,
+  type PieceWeight,
   VOLUME_UNITS_ML,
 } from "./household_measures.ts";
 import { normalizeText, tokenize } from "./text.ts";
@@ -119,10 +120,18 @@ export function pieceWeightFor(foodName: string): number | null {
   return longestMatch(foodName, PIECE_WEIGHTS)?.grams ?? null;
 }
 
-/** True when a piece row's keys match the food name but one of its excluded words does, e.g. "aloo paratha". */
-function isExcludedPiece(foodName: string): boolean {
+/** Piece rows whose keys all appear in the food name, ignoring excludes. */
+function pieceRowsFor(foodName: string): PieceWeight[] {
   const nameTokens = new Set(tokenize(foodName));
-  return PIECE_WEIGHTS.some((p) => tokensMatch(nameTokens, p.keys) && !tokensMatch(nameTokens, p.keys, p.excludes));
+  return PIECE_WEIGHTS.filter((p) => tokensMatch(nameTokens, p.keys));
+}
+
+/** Grams per piece for a food name. Null unless exactly one row covers the name and none of its excluded words appear. */
+function pieceWeightForName(foodName: string): number | null {
+  const rows = pieceRowsFor(foodName);
+  const [row] = rows;
+  if (row === undefined || rows.length > 1) return null;
+  return tokensMatch(new Set(tokenize(foodName)), row.keys, row.excludes) ? row.grams : null;
 }
 
 /** Returns grams per measure from the food's own portion rows, null when absent, or "conflict" when rows disagree. */
@@ -193,7 +202,8 @@ export function resolvePortion(
   }
 
   if (unit === PIECE_UNIT) {
-    const perPiece = pieceWeightFor(ctx.foodName) ?? (isExcludedPiece(ctx.foodName) ? null : pieceWeightFor(rawUnit));
+    // A food that some piece row covers is decided by that food alone, so the unit cannot pull in another row's weight.
+    const perPiece = pieceRowsFor(ctx.foodName).length > 0 ? pieceWeightForName(ctx.foodName) : pieceWeightFor(rawUnit);
     if (perPiece === null) return { status: "unresolved", reason: "missing_piece_weight" };
     return resolved(quantity * perPiece, PORTION_CONFIDENCE.pieceTable, "piece");
   }

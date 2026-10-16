@@ -64,8 +64,8 @@ export const PIECE_WEIGHTS: readonly PieceWeight[] = [
   { keys: ["paratha"], excludes: ["aloo"], grams: 80, note: "Plain layered paratha. Previous Stride engine value. Stuffed parathas are not covered." },
   { keys: ["idli"], grams: 40, note: "One medium idli. Previous Stride engine value." },
   { keys: ["egg"], grams: 50, note: "One large egg without shell, FDC 171287 portion 'large'." },
-  { keys: ["banana"], excludes: ["chip", "bread", "juice"], grams: 118, note: "One medium banana, FDC 173944 (SR Legacy) household measure, 7 to 7 7/8 in long." },
-  { keys: ["apple"], excludes: ["juice", "sauce", "pie"], grams: 182, note: "One medium apple with skin, FDC 171688 (SR Legacy) household measure, 3 in diameter." },
+  { keys: ["banana"], excludes: ["chip", "bread", "cake", "muffin", "shake", "smoothie", "halwa", "pudding", "custard", "fritter", "split", "juice", "puree", "dried", "frozen", "peeled", "sliced", "mashed", "chopped", "small", "large", "big", "mini", "baby", "extra", "jumbo"], grams: 118, note: "One medium banana, FDC 173944 (SR Legacy) household measure, 7 to 7 7/8 in long." },
+  { keys: ["apple"], excludes: ["juice", "sauce", "pie", "custard", "sugar", "crab", "cake", "muffin", "chip", "cider", "vinegar", "dried", "frozen", "peeled", "sliced", "mashed", "chopped", "small", "large", "big", "mini", "baby", "extra", "jumbo"], grams: 182, note: "One medium apple with skin, FDC 171688 (SR Legacy) household measure, 3 in diameter." },
 ];
 
 /** Density of a food class in g/ml, matched when every key token appears in the food name and no excluded token does. */

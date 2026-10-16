@@ -52,6 +52,24 @@ const PHRASES: readonly Phrase[] = [
   { phrase: "2 bananas", quantity: 2, unit: "bananas", food: "Bananas, raw", expected: { grams: 236 } },
   { phrase: "1 apple", quantity: 1, unit: "apple", food: "Apples, raw, with skin", expected: { grams: 182 } },
 
+  // Dishes and other fruits that share a word with a whole fruit: never the fruit's weight.
+  { phrase: "1 banana cake", quantity: 1, unit: null, food: "banana cake", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 banana bread slice", quantity: 1, unit: null, food: "banana bread", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 banana shake", quantity: 1, unit: null, food: "banana shake", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 custard apple", quantity: 1, unit: null, food: "custard apple", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 sugar apple", quantity: 1, unit: null, food: "sugar apple", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 apple cake", quantity: 1, unit: null, food: "apple cake", expected: { reason: "missing_piece_weight" } },
+
+  // Size and prep words the medium portion does not cover.
+  { phrase: "1 small banana", quantity: 1, unit: null, food: "small banana", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 large apple", quantity: 1, unit: null, food: "large apple", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 peeled apple", quantity: 1, unit: null, food: "peeled apple", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 big banana, unit banana", quantity: 1, unit: "banana", food: "big banana", expected: { reason: "missing_piece_weight" } },
+
+  // One food name that two piece rows cover is ambiguous, whatever the unit says.
+  { phrase: "1 egg aloo paratha", quantity: 1, unit: null, food: "egg aloo paratha", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 egg aloo paratha, unit egg", quantity: 1, unit: "egg", food: "egg aloo paratha", expected: { reason: "missing_piece_weight" } },
+
   // Vague or food-specific measures: never guessed.
   { phrase: "a handful of peanuts", quantity: 1, unit: "handful", food: "peanuts", expected: { reason: "unknown_unit" } },
   { phrase: "1 scoop whey", quantity: 1, unit: "scoop", food: "whey protein", expected: { reason: "unknown_unit" } },
