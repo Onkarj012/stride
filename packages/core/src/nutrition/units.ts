@@ -187,7 +187,7 @@ function headWords(foodName: string): Set<string> {
   const [second] = rest;
   const breadClass = GENERIC_BREAD_PARTS.includes(first) && second !== undefined && FLATBREAD_KEYS.includes(lastWord(second) ?? "");
   const headPart = breadClass ? second : first;
-  const alternatives = [headPart, ...rest.filter((part) => part.split(" ").includes("or"))].flatMap((part) => part.split(" or "));
+  const alternatives = headPart.split(" or ");
   return new Set(alternatives.map(lastWord).filter((word): word is string => word !== undefined));
 }
 
@@ -221,6 +221,11 @@ function portionGrams(portions: PortionContext["portions"], matches: (measure: s
  * any count label for a bare count, only "piece" for an explicit unit. A named unit ("roti") never borrows a seed.
  */
 function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: PortionContext): PortionResult {
+  if (!isBare && rawUnit === PIECE_UNIT) {
+    const explicitPiece = portionGrams(ctx.portions, (measure) => measure === PIECE_UNIT);
+    if (explicitPiece === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+    if (explicitPiece !== null) return resolved(quantity * explicitPiece, PORTION_CONFIDENCE.foodPortion, "food_portion");
+  }
   const seed = headedPieceSeed(ctx.foodName);
   if (seed !== null) {
     // A named unit must name this food's seed, so "roti" never counts a banana.
@@ -260,11 +265,18 @@ export function resolvePortion(
   const { quantity } = input;
   if (!Number.isFinite(quantity) || quantity <= 0) return { status: "unresolved", reason: "invalid_quantity" };
   const rawUnit = normalizeUnit(input.unit);
+  const isBare = normalizeText(input.unit ?? "") === "";
   // "1 phulka" arrives with the food name as its unit; treat it as one piece of that food.
   const unit = pieceWeightFor(rawUnit) !== null ? PIECE_UNIT : rawUnit;
 
   const measureNames = new Set([rawUnit, unit]);
   if (unit === PIECE_UNIT) measureNames.add(normalizeText(ctx.foodName));
+  if (isBare) {
+    for (const portion of ctx.portions ?? []) {
+      const measure = normalizeUnit(portion.measure);
+      if (COUNT_MEASURES.includes(measure)) measureNames.add(measure);
+    }
+  }
   const userMeasure = (ctx.userMeasures ?? []).find((m) => measureNames.has(normalizeUnit(m.measure)));
   if (userMeasure && "grams" in userMeasure && userMeasure.grams > 0) {
     return resolved(quantity * userMeasure.grams, PORTION_CONFIDENCE.userMeasure, "user_measure");
@@ -294,7 +306,7 @@ export function resolvePortion(
     return resolved(quantity * mlPerUnit * density.gPerMl, confidence, "volume");
   }
 
-  if (unit === PIECE_UNIT) return pieceGrams(quantity, rawUnit, normalizeText(input.unit ?? "") === "", ctx);
+  if (unit === PIECE_UNIT) return pieceGrams(quantity, rawUnit, isBare, ctx);
 
   if (FOOD_SPECIFIC_MEASURES.includes(unit)) return { status: "unresolved", reason: "food_specific_measure" };
   return { status: "unresolved", reason: "unknown_unit" };

@@ -179,6 +179,31 @@ describe("counts and spoons", () => {
     });
   });
 
+  it("uses the food's exact piece row for an explicit piece unit", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 68 }];
+    expect(resolvePortion({ quantity: 2, unit: "piece" }, { foodName: "roti", portions })).toMatchObject({
+      grams: 136, method: "food_portion",
+    });
+  });
+
+  it("uses a saved count measure before the food's count row", () => {
+    const ctx = {
+      foodName: "Biscuits, marie",
+      portions: [{ measure: "cookie", gramsPerMeasure: 5.6 }],
+      userMeasures: [{ measure: "cookie", grams: 8 }],
+    };
+    expect(resolvePortion({ quantity: 2, unit: null }, ctx)).toMatchObject({
+      grams: 16, method: "user_measure",
+    });
+  });
+
+  it("does not use ingredient alternatives as piece seed heads", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 90 }];
+    expect(resolvePortion({ quantity: 1, unit: null }, { foodName: "Turnover, apple or cherry", portions })).toMatchObject({
+      grams: 90, method: "food_portion",
+    });
+  });
+
   it("reads a spoon as a 5 ml teaspoon", () => {
     expect(resolvePortion({ quantity: 1, unit: "spoon" }, { foodName: "mystery", densityGPerMl: 1 })).toMatchObject({
       grams: 5, method: "volume",
