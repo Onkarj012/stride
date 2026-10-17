@@ -99,15 +99,20 @@ export function Stepper({
   const s = useStyles()
   const [typing, setTyping] = useState<string | null>(null)
 
-  // Hands the typed text to the caller and goes back to showing the value.
+  // Stops editing after live text changes have already reached the caller.
   function commit() {
-    if (typing !== null) onType?.(typing)
     setTyping(null)
+  }
+
+  // Closes text entry before applying a step.
+  function step(direction: -1 | 1) {
+    setTyping(null)
+    onStep(direction)
   }
 
   return (
     <View style={s.step}>
-      <StepButton dir={-1} icon="minus" label={`Less ${label}`} onStep={onStep} />
+      <StepButton dir={-1} icon="minus" label={`Less ${label}`} onStep={step} />
       {typing === null ? (
         <Tap
           onPress={() => setTyping(typeText ?? value)}
@@ -136,7 +141,7 @@ export function Stepper({
           accessibilityLabel={`${label} value`}
         />
       )}
-      <StepButton dir={1} icon="plus" label={`More ${label}`} onStep={onStep} />
+      <StepButton dir={1} icon="plus" label={`More ${label}`} onStep={step} />
     </View>
   )
 }
