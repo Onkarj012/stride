@@ -353,6 +353,34 @@ describe("D14 tool loop", () => {
     expect(result.kind).toBe("draft");
     expect(openRouterBodies.filter((b) => kind(b) === "resolve")).toHaveLength(MAX_TOOL_ITERATIONS);
   });
+
+  test("a tool pass that ends with no text and no tool calls still leaves a draft", async () => {
+    const { t, user } = await setup();
+    llm = (body) => (kind(body) === "extract" ? extraction([{ food: "zzz unknown dish" }]) : { content: null });
+    const result = await logText(user, "zzz unknown dish");
+    expect(result.kind).toBe("draft");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve"]);
+  });
+
+  test("a provider error in the tool pass is logged as a warning and the log still becomes a draft", async () => {
+    const { user } = await setup();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    llm = (body) => {
+      if (kind(body) === "extract") return extraction([{ food: "zzz unknown dish" }]);
+      throw new Error("provider down");
+    };
+    const result = await logText(user, "zzz unknown dish");
+    expect(result.kind).toBe("draft");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Tool pass failed"), "provider down");
+    warn.mockRestore();
+  });
+
+  test("an extraction reply with no content still fails clearly", async () => {
+    const { user } = await setup();
+    llm = () => ({ content: null });
+    await expect(logText(user, "2 rotis")).rejects.toThrow(/Extraction returned no content/);
+  });
 });
 
 describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", () => {
