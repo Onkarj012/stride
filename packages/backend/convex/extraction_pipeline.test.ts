@@ -781,6 +781,53 @@ describe("draft amounts: a food is only offered units it converts in", () => {
   });
 });
 
+describe("draft amounts: bare counts keep their resolver meaning", () => {
+  test("previews bare roti at 40 g and explicit piece at its 68 g row", async () => {
+    const { t, user, foods } = await setup();
+    await t.run((ctx) =>
+      ctx.db.insert("food_portions", {
+        foodId: foods.chapati,
+        source: "fdc",
+        measure: "piece",
+        description: "piece",
+        gramsPerMeasure: 68,
+      }),
+    );
+
+    const [bare, piece] = await user.query(api.pipeline.drafts.amountOptions, {
+      items: [
+        { foodId: foods.chapati, unit: null },
+        { foodId: foods.chapati, unit: "piece" },
+      ],
+    });
+    expect(bare?.units.find((unit) => unit.unit === null)?.gramsPerUnit).toBe(40);
+    expect(piece?.units.find((unit) => unit.unit === "piece")?.gramsPerUnit).toBe(68);
+  });
+
+  test("changing a bare roti count to three confirms 120 g", async () => {
+    const { t, user, foods } = await setup();
+    await t.run((ctx) =>
+      ctx.db.insert("food_portions", {
+        foodId: foods.chapati,
+        source: "fdc",
+        measure: "piece",
+        description: "piece",
+        gramsPerMeasure: 68,
+      }),
+    );
+    llm = () => extraction([{ food: "roti", quantity: 2, confidence: 0.5 }]);
+    const result = await logText(user, "2 rotis");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+
+    await user.mutation(api.pipeline.drafts.confirmDraft, {
+      draftId: result.draftId,
+      corrections: [{ index: 0, quantity: 3, unit: null }],
+    });
+
+    expect(await entryRows(t)).toMatchObject([{ foodId: foods.chapati, grams: 120 }]);
+  });
+});
+
 describe("draft amounts: a food-name unit does not follow a food change", () => {
   test("a roti amount on a roti food is not offered or saved once the food is coffee powder", async () => {
     const { t, user, foods } = await setup();

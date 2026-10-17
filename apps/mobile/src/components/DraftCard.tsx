@@ -13,7 +13,7 @@ import { Button, RoundButton, Stepper, Tag, Thinking } from './Controls'
 import { Tap } from './Tap'
 
 /** One change the user made to a draft item before confirming. A null quantity means the typed amount was not a positive number. */
-type Fix = { remove?: boolean; foodId?: FoodId; foodName?: string; quantity?: number | null; unit?: string; localDate?: string }
+type Fix = { remove?: boolean; foodId?: FoodId; foodName?: string; quantity?: number | null; unit?: string | null; localDate?: string }
 
 const spring = FadeInDown.springify().stiffness(300).damping(17)
 const HALF_UNITS = new Set(['katori', 'bowl', 'glass', 'cup', 'plate', 'ladle'])
@@ -45,7 +45,7 @@ type Plan = {
   kcal: number | null
   protein: number | null
   ready: boolean
-  payload: { quantity: number; unit: string } | { grams: number } | null
+  payload: { quantity: number; unit: string | null } | { grams: number } | null
 }
 
 /** What an item logs as: the server's amount until the user edits it, else quantity times the unit's grams. */
@@ -55,7 +55,9 @@ function planOf(item: DraftItem, fix: Fix, set: AmountSet | null): Plan {
   const touched = foodChanged || fix.quantity !== undefined || fix.unit !== undefined
   const quantity = fix.quantity !== undefined ? fix.quantity : item.quantity
   // Same unit the server reads from the draft. A unit that no longer converts for this food finds no option here.
-  const option = set?.units.find((u) => u.unit === (fix.unit ?? normalizeUnit(item.unit))) ?? null
+  const selectedUnit = fix.unit !== undefined ? fix.unit : item.unit
+  const normalizedUnit = selectedUnit === null ? null : normalizeUnit(selectedUnit)
+  const option = set?.units.find((u) => u.unit === normalizedUnit) ?? null
   if (!touched) {
     return {
       foodName,
@@ -94,7 +96,7 @@ function planOf(item: DraftItem, fix: Fix, set: AmountSet | null): Plan {
 function metaOf(plan: Plan): string {
   if (plan.foodName === null) return 'not matched yet'
   if (plan.grams === null) return 'amount needed'
-  if (plan.quantity !== null && plan.option !== null) return `${formatQuantity(plan.quantity)} ${plan.option.unit} · ${formatGrams(plan.grams)}`
+  if (plan.quantity !== null && plan.option !== null) return `${formatQuantity(plan.quantity)} ${plan.option.label} · ${formatGrams(plan.grams)}`
   return formatGrams(plan.grams)
 }
 
@@ -235,13 +237,13 @@ export function DraftCard({
                   <Stepper
                     value={plan.quantity === null ? '–' : formatQuantity(plan.quantity)}
                     typeText={plan.quantity === null ? '' : String(plan.quantity)}
-                    label={option.unit}
+                    label={option.label}
                     onType={(text) => patch(i, { quantity: parseQuantity(text) })}
                     onStep={(d) => {
                       // A new amount starts at 1. Steps go down to a quarter, so small amounts are reachable by tapping.
                       if (plan.quantity === null) return patch(i, { quantity: 1 })
                       const q = plan.quantity
-                      const step = HALF_UNITS.has(option.unit) || q <= 1 ? 0.5 : 1
+                      const step = HALF_UNITS.has(option.unit ?? 'piece') || q <= 1 ? 0.5 : 1
                       patch(i, { quantity: Math.max(MIN_QUANTITY, q + d * step) })
                     }}
                   />
@@ -252,7 +254,7 @@ export function DraftCard({
                       const on = option?.unit === u.unit
                       return (
                         <Tap
-                          key={u.unit}
+                          key={u.unit === null ? 'count:null' : `unit:${u.unit}`}
                           style={[s.chip, on && s.chipOn]}
                           scale={0.97}
                           onPress={() => patch(i, { unit: u.unit, quantity: plan.quantity ?? 1 })}

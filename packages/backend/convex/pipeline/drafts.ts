@@ -45,7 +45,7 @@ const correctionValidator = v.object({
   /** A kcal figure typed into the card. Converted to grams of the chosen food, so the stored kcal matches it. */
   kcal: v.optional(v.number()),
   quantity: v.optional(v.number()),
-  unit: v.optional(v.string()),
+  unit: v.optional(v.union(v.string(), v.null())),
   /** YYYY-MM-DD within the last `MAX_PAST_DAYS` days. Required when the extracted date was refused. */
   localDate: v.optional(v.string()),
 });
@@ -174,7 +174,7 @@ export const listPendingDrafts = query({
 });
 
 /** One unit a food can be counted in, and the grams one of it weighs for that food. */
-const amountUnitValidator = v.object({ unit: v.string(), label: v.string(), gramsPerUnit: v.number() });
+const amountUnitValidator = v.object({ unit: v.union(v.string(), v.null()), label: v.string(), gramsPerUnit: v.number() });
 /** A food's nutrients per 100 g and the units it converts in. */
 const amountSetValidator = v.object({ per100g: nutrientsValidator, units: v.array(amountUnitValidator) });
 type AmountUnit = Infer<typeof amountUnitValidator>;
@@ -195,14 +195,16 @@ async function amountUnitsOf(
     ...portions.map((p) => p.measure),
     ...userMeasures.map((m) => m.measure),
   ];
-  const grams = new Map<string, number>();
+  const grams = new Map<string | null, number>();
+  const bareCount = resolvePortion({ quantity: 1, unit: null }, { foodName: food.name, portions, userMeasures });
+  if (bareCount.status === "resolved") grams.set(null, bareCount.grams);
   for (const name of names) {
     const unit = normalizeUnit(name);
     if (grams.has(unit)) continue;
     const portion = resolvePortion({ quantity: 1, unit: name }, { foodName: food.name, portions, userMeasures });
     if (portion.status === "resolved") grams.set(unit, portion.grams);
   }
-  return [...grams].map(([unit, gramsPerUnit]) => ({ unit, label: unit, gramsPerUnit }));
+  return [...grams].map(([unit, gramsPerUnit]) => ({ unit, label: unit ?? "count", gramsPerUnit }));
 }
 
 /**
@@ -275,7 +277,8 @@ export const confirmDraft = mutation({
         grams = (fix.kcal / food.per100g.kcal) * 100;
       } else if (fix?.quantity !== undefined || fix?.unit !== undefined || (foodChanged && item.quantity !== undefined)) {
         const quantity = fix?.quantity ?? item.quantity ?? 1;
-        const portion = await resolveFoodPortion(ctx, food, quantity, fix?.unit ?? item.unit ?? null, userMeasures);
+        const unit = fix?.unit !== undefined ? fix.unit : item.unit ?? null;
+        const portion = await resolveFoodPortion(ctx, food, quantity, unit, userMeasures);
         if (portion.status !== "resolved") {
           throw new ConvexError({ code: "DRAFT_ITEM", message: `Item ${n}: cannot turn that amount into grams. Enter grams.` });
         }
