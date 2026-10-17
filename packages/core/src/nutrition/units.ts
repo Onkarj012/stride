@@ -1,9 +1,13 @@
 import {
   COUNT_MEASURES,
   DENSITIES,
+  type DensityEntry,
+  FLATBREAD_KEYS,
   FOOD_SPECIFIC_MEASURES,
+  GENERIC_BREAD_PARTS,
   HOUSEHOLD_VESSELS,
   MASS_UNITS_G,
+  PIECE_ALIASES,
   PIECE_UNIT,
   PIECE_WEIGHTS,
   type PieceWeight,
@@ -115,11 +119,17 @@ function headToken(foodName: string): string | undefined {
   return head?.split(" ").at(-1);
 }
 
+/** Words that say a drink was made, so "ground" there means the grounds it came from ("brewed from grounds"). */
+const MADE_DRINK_WORDS: ReadonlySet<string> = new Set(["brewed", "prepared"]);
+
 /** Looks up a density in g/ml for a food name from the seed table, or null when none applies. */
 export function densityFor(foodName: string): number | null {
   // Only entries naming the food's head word apply, so "milk chocolate" never gets liquid milk's density.
   const head = headToken(foodName);
-  const entries = DENSITIES.filter((d) => head !== undefined && d.keys.flatMap(tokenize).includes(head));
+  const made = tokenize(foodName).some((t) => MADE_DRINK_WORDS.has(t)) || normalizeText(foodName).includes("from ground");
+  // "ground" blocks a drink only when nothing says it was made. "Coffee, brewed from grounds" is a made drink.
+  const entries = DENSITIES.filter((d) => head !== undefined && d.keys.flatMap(tokenize).includes(head))
+    .map((d): DensityEntry => (made && d.excludes ? { ...d, excludes: d.excludes.filter((t) => t !== "ground") } : d));
   return longestMatch(foodName, entries)?.gPerMl ?? null;
 }
 
@@ -161,22 +171,38 @@ function pieceRowsForName(foodName: string): PieceWeight[] {
   return specific ? [specific] : [];
 }
 
-/** Head words of a food name: the last word of its first comma part and of each "or" alternative. "Bread, chapati or roti" gives bread, chapati, roti. */
+/** Last word of a normalized phrase. */
+function lastWord(phrase: string): string | undefined {
+  return phrase.split(" ").at(-1);
+}
+
+/**
+ * Head words of a food name: the last word of its head part and of each "or" alternative. The head part is the first
+ * comma part, except "Bread, paratha": a generic bread class hands the head to a flatbread second part.
+ */
 function headWords(foodName: string): Set<string> {
   const parts = foodName.replace(/\(.*?\)/g, "").split(",").map(normalizeText).filter((part) => part !== "");
   const [first, ...rest] = parts;
   if (first === undefined) return new Set();
-  const alternatives = [first, ...rest.filter((part) => part.split(" ").includes("or"))].flatMap((part) => part.split(" or "));
-  return new Set(alternatives.map((alt) => alt.split(" ").at(-1)).filter((word): word is string => word !== undefined));
+  const [second] = rest;
+  const breadClass = GENERIC_BREAD_PARTS.includes(first) && second !== undefined && FLATBREAD_KEYS.includes(lastWord(second) ?? "");
+  const headPart = breadClass ? second : first;
+  const alternatives = [headPart, ...rest.filter((part) => part.split(" ").includes("or"))].flatMap((part) => part.split(" or "));
+  return new Set(alternatives.map(lastWord).filter((word): word is string => word !== undefined));
 }
 
-/** Seed grams per piece for a food name, and whether a deciding row names the food's head word. Null when no row applies. */
-function pieceSeedFor(foodName: string): { grams: number; headed: boolean } | null {
-  const rows = pieceRowsForName(foodName);
+/** The piece name an alias stands for. "chapati" and "roti" are one piece. */
+function pieceName(name: string): string {
+  return own(PIECE_ALIASES, name) ?? name;
+}
+
+/** Seed for a food whose head word names a piece row: grams, and the piece names it answers to. Null when none. */
+function headedPieceSeed(foodName: string): { grams: number; names: ReadonlySet<string> } | null {
+  const heads = headWords(foodName);
+  const rows = pieceRowsForName(foodName).filter((r) => r.keys.flatMap(tokenize).some((t) => heads.has(t)));
   const [first] = rows;
   if (first === undefined) return null;
-  const heads = headWords(foodName);
-  return { grams: first.grams, headed: rows.some((r) => r.keys.flatMap(tokenize).some((t) => heads.has(t))) };
+  return { grams: first.grams, names: new Set(rows.flatMap((r) => r.keys.flatMap(tokenize)).map(pieceName)) };
 }
 
 /** Grams from the food's portion rows whose measure passes `matches`: null when none, or "conflict" when they disagree. */
@@ -195,8 +221,14 @@ function portionGrams(portions: PortionContext["portions"], matches: (measure: s
  * any count label for a bare count, only "piece" for an explicit unit. A named unit ("roti") never borrows a seed.
  */
 function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: PortionContext): PortionResult {
-  const seed = pieceSeedFor(ctx.foodName);
-  if (seed?.headed) return resolved(quantity * seed.grams, PORTION_CONFIDENCE.pieceTable, "piece");
+  const seed = headedPieceSeed(ctx.foodName);
+  if (seed !== null) {
+    // A named unit must name this food's seed, so "roti" never counts a banana.
+    if (rawUnit === PIECE_UNIT || tokenize(rawUnit).every((w) => seed.names.has(pieceName(w)))) {
+      return resolved(quantity * seed.grams, PORTION_CONFIDENCE.pieceTable, "piece");
+    }
+    return { status: "unresolved", reason: "missing_piece_weight" };
+  }
   if (rawUnit !== PIECE_UNIT) return { status: "unresolved", reason: "missing_piece_weight" };
   const matches = isBare ? (measure: string) => COUNT_MEASURES.includes(measure) : (measure: string) => measure === PIECE_UNIT;
   const perCount = portionGrams(ctx.portions, matches);

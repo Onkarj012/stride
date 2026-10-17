@@ -75,6 +75,15 @@ export const PIECE_WEIGHTS: readonly PieceWeight[] = [
   { keys: ["apple"], excludes: ["juice", "sauce", "pie", "custard", "sugar", "crab", "cake", "muffin", "chip", "cider", "vinegar", "dried", "frozen", "canned", "peeled", "sliced", "mashed", "chopped", "small", "large", "big", "mini", "baby", "extra", "jumbo"], grams: 182, note: "One medium apple with skin, FDC 171688 (SR Legacy) household measure, 3 in diameter." },
 ];
 
+/** Generic bread names. In "Bread, paratha" the second part is the food, when it is a flatbread key. */
+export const GENERIC_BREAD_PARTS: readonly string[] = ["bread", "flatbread"];
+
+/** Flatbread keys that can be the head of a name like "Bread, paratha" or "Bread, chapati, whole wheat". */
+export const FLATBREAD_KEYS: readonly string[] = ["roti", "chapati", "phulka", "paratha", "puri", "naan", "kulcha", "bhatura"];
+
+/** Piece names that mean the same food as a seed row. "chapati" names the roti row, so a roti food takes "1 chapati". */
+export const PIECE_ALIASES: Readonly<Record<string, string>> = { chapati: "roti" };
+
 /** Density of a food class in g/ml, matched when every key token appears in the food name and no excluded token does. */
 export interface DensityEntry {
   keys: readonly string[];
@@ -83,7 +92,7 @@ export interface DensityEntry {
   note: string;
 }
 
-/** Forms of a drink that are not the prepared drink: powders, mixes, leaves, ground beans, bags, creamers and syrups. */
+/** Dry forms of a drink that are not the drink: powders, mixes, leaves, ground beans, bags, creamers and syrups. */
 const BEVERAGE_EXCLUDES: readonly string[] = [
   "powder", "instant", "dry", "dried", "granules", "mix", "concentrate", "leaves", "ground", "bags", "creamer", "whitener", "beans", "syrup",
 ];

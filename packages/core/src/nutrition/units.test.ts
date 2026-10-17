@@ -212,6 +212,28 @@ describe("counts and spoons", () => {
     });
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Roti" }))).toBe(40);
   });
+
+  it("gives a flatbread second part the seed, but keeps a modifier like egg as the bread's own row", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 68 }];
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, { foodName: "Bread, paratha", portions }))).toBe(160);
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, { foodName: "Bread, chapati, whole wheat", portions }))).toBe(80);
+    const egg = [{ measure: "piece", gramsPerMeasure: 30 }];
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, { foodName: "Bread, egg", portions: egg }))).toBe(60);
+  });
+
+  it("keeps 'brewed from grounds' drinks eligible for density, and blocks plain ground coffee", () => {
+    expect(densityFor("Coffee, brewed from grounds")).toBe(1.01);
+    expect(densityFor("Beverages, coffee, ground")).toBeNull();
+  });
+
+  it("counts a named unit only for the food's own seed, with aliases", () => {
+    expect(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Bananas, raw" })).toEqual({
+      status: "unresolved", reason: "missing_piece_weight",
+    });
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "banana" }, { foodName: "Bananas, raw" }))).toBe(118);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "chapati" }, { foodName: "Roti" }))).toBe(40);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Chapati" }))).toBe(40);
+  });
 });
 
 describe("properties", () => {
