@@ -78,6 +78,16 @@ describe("volume", () => {
     expect(densityFor("Coffee, instant, powder")).toBeNull();
     expect(densityFor("Beverages, tea, instant, unsweetened, powder")).toBeNull();
   });
+
+  it("gives no drink density to leaves, ground beans, creamer or bags", () => {
+    expect(densityFor("Tea, leaves")).toBeNull();
+    expect(densityFor("Beverages, coffee, ground")).toBeNull();
+    expect(densityFor("Coffee, creamer, non-dairy")).toBeNull();
+    expect(densityFor("Tea, bags")).toBeNull();
+    expect(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea, leaves" })).toEqual({
+      status: "unresolved", reason: "missing_density",
+    });
+  });
 });
 
 describe("household measures", () => {
@@ -173,6 +183,34 @@ describe("counts and spoons", () => {
     expect(resolvePortion({ quantity: 1, unit: "spoon" }, { foodName: "mystery", densityGPerMl: 1 })).toMatchObject({
       grams: 5, method: "volume",
     });
+  });
+
+  it("does not give a compound food the egg seed weight when egg is only a modifier", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 30 }];
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: null }, { foodName: "Bread, egg", portions }))).toBe(30);
+    const noodles = [{ measure: "piece", gramsPerMeasure: 60 }];
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, { foodName: "Egg noodles", portions: noodles }))).toBe(120);
+  });
+
+  it("uses an explicit piece row even when a different-weight slice row exists", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 5.6 }, { measure: "slice", gramsPerMeasure: 10 }];
+    expect(resolvePortion({ quantity: 2, unit: "piece" }, { foodName: "Biscuits, marie", portions })).toMatchObject({
+      grams: 11.2, method: "food_portion",
+    });
+  });
+
+  it("gives the phulka weight, not the roti weight or a packaged row, to 'Phulka roti'", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 68 }];
+    expect(resolvePortion({ quantity: 2, unit: "phulka" }, { foodName: "Phulka roti", portions })).toMatchObject({
+      grams: 60, method: "piece",
+    });
+  });
+
+  it("does not give a named unit like roti to another food", () => {
+    expect(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Beverages, coffee, instant, powder" })).toEqual({
+      status: "unresolved", reason: "missing_piece_weight",
+    });
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Roti" }))).toBe(40);
   });
 });
 

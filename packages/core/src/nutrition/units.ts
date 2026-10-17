@@ -140,16 +140,16 @@ function keyTokenSet(row: PieceWeight): Set<string> {
 }
 
 /**
- * Grams per piece for a food name. Any excluded word vetoes. Otherwise the rows must agree on grams,
+ * The piece rows that decide a food name's weight. Any excluded word vetoes. Otherwise the rows must agree on grams,
  * or one row must have strictly more key tokens than the others and contain all of theirs.
  */
-function pieceWeightForName(foodName: string): number | null {
+function pieceRowsForName(foodName: string): PieceWeight[] {
   const nameTokens = new Set(tokenize(foodName));
   const rows = pieceRowsFor(foodName);
-  if (rows.length === 0 || rows.some((r) => !tokensMatch(nameTokens, r.keys, r.excludes))) return null;
+  if (rows.length === 0 || rows.some((r) => !tokensMatch(nameTokens, r.keys, r.excludes))) return [];
   const [first] = rows;
-  if (first === undefined) return null;
-  if (rows.every((r) => r.grams === first.grams)) return first.grams;
+  if (first === undefined) return [];
+  if (rows.every((r) => r.grams === first.grams)) return rows;
   const specific = rows.find((r) => {
     const keys = keyTokenSet(r);
     return rows.every((o) => {
@@ -158,7 +158,25 @@ function pieceWeightForName(foodName: string): number | null {
       return keys.size > otherKeys.size && [...otherKeys].every((t) => keys.has(t));
     });
   });
-  return specific?.grams ?? null;
+  return specific ? [specific] : [];
+}
+
+/** Head words of a food name: the last word of its first comma part and of each "or" alternative. "Bread, chapati or roti" gives bread, chapati, roti. */
+function headWords(foodName: string): Set<string> {
+  const parts = foodName.replace(/\(.*?\)/g, "").split(",").map(normalizeText).filter((part) => part !== "");
+  const [first, ...rest] = parts;
+  if (first === undefined) return new Set();
+  const alternatives = [first, ...rest.filter((part) => part.split(" ").includes("or"))].flatMap((part) => part.split(" or "));
+  return new Set(alternatives.map((alt) => alt.split(" ").at(-1)).filter((word): word is string => word !== undefined));
+}
+
+/** Seed grams per piece for a food name, and whether a deciding row names the food's head word. Null when no row applies. */
+function pieceSeedFor(foodName: string): { grams: number; headed: boolean } | null {
+  const rows = pieceRowsForName(foodName);
+  const [first] = rows;
+  if (first === undefined) return null;
+  const heads = headWords(foodName);
+  return { grams: first.grams, headed: rows.some((r) => r.keys.flatMap(tokenize).some((t) => heads.has(t))) };
 }
 
 /** Grams from the food's portion rows whose measure passes `matches`: null when none, or "conflict" when they disagree. */
@@ -172,12 +190,16 @@ function portionGrams(portions: PortionContext["portions"], matches: (measure: s
   return only ?? null;
 }
 
-/** Grams for a bare count: the seed piece weight first, then the food's own count row. Otherwise unresolved. */
-function pieceGrams(quantity: number, rawUnit: string, ctx: PortionContext): PortionResult {
-  // A food that some piece row covers is decided by that food alone, so the unit cannot pull in another row's weight.
-  const perPiece = pieceRowsFor(ctx.foodName).length > 0 ? pieceWeightForName(ctx.foodName) : pieceWeightFor(rawUnit);
-  if (perPiece !== null) return resolved(quantity * perPiece, PORTION_CONFIDENCE.pieceTable, "piece");
-  const perCount = portionGrams(ctx.portions, (measure) => COUNT_MEASURES.includes(measure));
+/**
+ * Grams for a count. A seed whose key is the food's head word wins. Otherwise the food's own count row decides:
+ * any count label for a bare count, only "piece" for an explicit unit. A named unit ("roti") never borrows a seed.
+ */
+function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: PortionContext): PortionResult {
+  const seed = pieceSeedFor(ctx.foodName);
+  if (seed?.headed) return resolved(quantity * seed.grams, PORTION_CONFIDENCE.pieceTable, "piece");
+  if (rawUnit !== PIECE_UNIT) return { status: "unresolved", reason: "missing_piece_weight" };
+  const matches = isBare ? (measure: string) => COUNT_MEASURES.includes(measure) : (measure: string) => measure === PIECE_UNIT;
+  const perCount = portionGrams(ctx.portions, matches);
   if (perCount === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
   if (perCount !== null) return resolved(quantity * perCount, PORTION_CONFIDENCE.foodPortion, "food_portion");
   return { status: "unresolved", reason: "missing_piece_weight" };
@@ -240,7 +262,7 @@ export function resolvePortion(
     return resolved(quantity * mlPerUnit * density.gPerMl, confidence, "volume");
   }
 
-  if (unit === PIECE_UNIT) return pieceGrams(quantity, rawUnit, ctx);
+  if (unit === PIECE_UNIT) return pieceGrams(quantity, rawUnit, normalizeText(input.unit ?? "") === "", ctx);
 
   if (FOOD_SPECIFIC_MEASURES.includes(unit)) return { status: "unresolved", reason: "food_specific_measure" };
   return { status: "unresolved", reason: "unknown_unit" };

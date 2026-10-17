@@ -19,6 +19,8 @@ const PHRASES: readonly Phrase[] = [
   { phrase: "2 chapati", quantity: 2, unit: "chapati", food: "chapati", expected: { grams: 80 } },
   { phrase: "2 chapatis", quantity: 2, unit: "chapatis", food: "chapati", expected: { grams: 80 } },
   { phrase: "1 phulka", quantity: 1, unit: "phulka", food: "phulka", expected: { grams: 30 } },
+  { phrase: "2 phulka roti, bare count", quantity: 2, unit: null, food: "Phulka roti", expected: { grams: 60 } },
+  { phrase: "2 phulka chapati, bare count", quantity: 2, unit: null, food: "Phulka chapati", expected: { grams: 60 } },
   { phrase: "USDA bread, chapati or roti, plain", quantity: 1, unit: null, food: "Bread, chapati or roti, plain, commercially prepared", expected: { grams: 40 } },
   { phrase: "1 paratha", quantity: 1, unit: "paratha", food: "paratha", expected: { grams: 80 } },
   { phrase: "1 aloo paratha", quantity: 1, unit: null, food: "aloo paratha", expected: { reason: "missing_piece_weight" } },
@@ -62,6 +64,10 @@ const PHRASES: readonly Phrase[] = [
   { phrase: "1 custard apple", quantity: 1, unit: null, food: "custard apple", expected: { reason: "missing_piece_weight" } },
   { phrase: "1 sugar apple", quantity: 1, unit: null, food: "sugar apple", expected: { reason: "missing_piece_weight" } },
   { phrase: "1 apple cake", quantity: 1, unit: null, food: "apple cake", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 apple fritter", quantity: 1, unit: null, food: "Apple fritters", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 apple butter", quantity: 1, unit: null, food: "Apple butter", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 banana chips", quantity: 1, unit: null, food: "Banana chips", expected: { reason: "missing_piece_weight" } },
+  { phrase: "1 canned apple", quantity: 1, unit: null, food: "Apples, canned, sweetened", expected: { reason: "missing_piece_weight" } },
 
   // Size and prep words the medium portion does not cover.
   { phrase: "1 small banana", quantity: 1, unit: null, food: "small banana", expected: { reason: "missing_piece_weight" } },
