@@ -780,3 +780,34 @@ describe("draft amounts: a food is only offered units it converts in", () => {
     expect(set?.units).toContainEqual({ unit: "piece", label: "piece", gramsPerUnit: 5.6 });
   });
 });
+
+describe("draft amounts: a food-name unit does not follow a food change", () => {
+  test("a roti amount on a roti food is not offered or saved once the food is coffee powder", async () => {
+    const { t, user, foods } = await setup();
+    llm = () => extraction([{ food: "roti", quantity: 2, unit: "roti", confidence: 0.5 }]);
+    const result = await logText(user, "2 rotis");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.food?._id).toBe(foods.chapati);
+    expect(draft?.items[0]?.unit).toBe("roti");
+
+    const coffee = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Beverages, coffee, instant, powder",
+        aliases: [],
+        searchText: "Beverages, coffee, instant, powder",
+        per100g: RICE,
+        source: "fdc",
+        sourceId: "coffee-powder",
+        verified: true,
+      }),
+    );
+    const [set] = await user.query(api.pipeline.drafts.amountOptions, { items: [{ foodId: coffee, unit: "roti" }] });
+    expect(set?.units.map((u) => u.unit)).not.toContain("roti");
+
+    await expect(
+      user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, foodId: coffee }] }),
+    ).rejects.toThrow(/cannot turn that amount/);
+    expect(await entryRows(t)).toHaveLength(0);
+  });
+});
