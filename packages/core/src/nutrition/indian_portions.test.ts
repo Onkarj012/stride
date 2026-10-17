@@ -36,16 +36,18 @@ const PHRASES: readonly Phrase[] = [
 
   // Rice, dal and drinks: volume through a vessel and a food density.
   { phrase: "half katori rice", quantity: 0.5, unit: "katori", food: "cooked rice", expected: { grams: 0.5 * 150 * 0.668 } },
-  { phrase: "1/2 katori dal", quantity: 0.5, unit: "katori", food: "dal", expected: { grams: 0.5 * 150 * 0.837 } },
-  { phrase: "1.5 katori dal", quantity: 1.5, unit: "katori", food: "dal", expected: { grams: 1.5 * 150 * 0.837 } },
+  { phrase: "1/2 katori dal", quantity: 0.5, unit: "katori", food: "dal", expected: { grams: 0.5 * 150 * 1.01 } },
+  { phrase: "1.5 katori dal", quantity: 1.5, unit: "katori", food: "dal", expected: { grams: 1.5 * 150 * 1.01 } },
   { phrase: "1 katori rice (no cooked/raw)", quantity: 1, unit: "katori", food: "rice", expected: { reason: "missing_density" } },
   { phrase: "1 glass milk", quantity: 1, unit: "glass", food: "milk", expected: { grams: 250 * 1.031 } },
   { phrase: "1 glass chaas", quantity: 1, unit: "glass", food: "chaas", expected: { reason: "missing_density" } },
-  { phrase: "1 cup chai", quantity: 1, unit: "cup", food: "chai", expected: { reason: "missing_density" } },
+  { phrase: "1 cup chai", quantity: 1, unit: "cup", food: "chai", expected: { grams: 240 * 1.01 } },
+  { phrase: "1 cup instant coffee powder", quantity: 1, unit: "cup", food: "Beverages, coffee, instant, powder", expected: { reason: "missing_density" } },
 
   // Fats and sugar: standard kitchen spoons with FDC densities.
   { phrase: "1 tbsp ghee", quantity: 1, unit: "tbsp", food: "ghee", expected: { grams: 15 * 0.866 } },
   { phrase: "1 tsp sugar", quantity: 1, unit: "tsp", food: "sugar", expected: { grams: 5 * 0.845 } },
+  { phrase: "half spoon sugar", quantity: 0.5, unit: "spoon", food: "sugar", expected: { grams: 0.5 * 5 * 0.845 } },
 
   // Protein and fruit: one piece weight each, from the SR Legacy household measure.
   { phrase: "2 boiled eggs", quantity: 2, unit: null, food: "boiled egg", expected: { grams: 100 } },

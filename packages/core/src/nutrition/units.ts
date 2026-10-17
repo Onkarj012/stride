@@ -1,4 +1,5 @@
 import {
+  COUNT_MEASURES,
   DENSITIES,
   FOOD_SPECIFIC_MEASURES,
   HOUSEHOLD_VESSELS,
@@ -31,6 +32,8 @@ export const UNIT_ALIASES: Readonly<Record<string, string>> = {
   milliliter: "ml", millilitre: "ml", mls: "ml",
   liter: "l", litre: "l", ltr: "l",
   teaspoon: "tsp", tsps: "tsp",
+  // "spoon" has no size. Treated as a teaspoon so the draft shows an estimate for review.
+  spoon: "tsp", chamach: "tsp",
   tablespoon: "tbsp", tbsps: "tbsp", tbs: "tbsp",
   "fluid ounce": "fl oz", floz: "fl oz",
   vati: "katori", wati: "katori",
@@ -102,9 +105,14 @@ function longestMatch<T extends { keys: readonly string[]; excludes?: readonly s
   return best;
 }
 
-/** Last word of the name's first comma part, without parentheses: "Milk, whole" gives "milk", "Milk chocolate" gives "chocolate". */
+/** Comma parts that name a food group rather than the food, so "Beverages, tea" is headed by "tea". */
+const CATEGORY_PARTS: ReadonlySet<string> = new Set(["beverage"]);
+
+/** Last word of the name's first non-category comma part, without parentheses: "Milk, whole" gives "milk", "Milk chocolate" gives "chocolate". */
 function headToken(foodName: string): string | undefined {
-  return tokenize(foodName.replace(/\(.*?\)/g, "").split(",")[0] ?? "").at(-1);
+  const parts = foodName.replace(/\(.*?\)/g, "").split(",").map(normalizeText);
+  const head = parts.find((part) => part !== "" && !CATEGORY_PARTS.has(part));
+  return head?.split(" ").at(-1);
 }
 
 /** Looks up a density in g/ml for a food name from the seed table, or null when none applies. */
@@ -153,15 +161,26 @@ function pieceWeightForName(foodName: string): number | null {
   return specific?.grams ?? null;
 }
 
-/** Returns grams per measure from the food's own portion rows, null when absent, or "conflict" when rows disagree. */
-function foodPortionGrams(unit: string, portions: PortionContext["portions"]): number | "conflict" | null {
+/** Grams from the food's portion rows whose measure passes `matches`: null when none, or "conflict" when they disagree. */
+function portionGrams(portions: PortionContext["portions"], matches: (measure: string) => boolean): number | "conflict" | null {
   const grams = new Set(
-    (portions ?? []).filter((p) => normalizeUnit(p.measure) === unit && p.gramsPerMeasure > 0).map((p) => p.gramsPerMeasure),
+    (portions ?? []).filter((p) => matches(normalizeUnit(p.measure)) && p.gramsPerMeasure > 0).map((p) => p.gramsPerMeasure),
   );
   // Two different weights for one measure (banana "cup, mashed" vs "cup, sliced") is ambiguous, so do not pick one.
   if (grams.size > 1) return "conflict";
   const [only] = grams;
   return only ?? null;
+}
+
+/** Grams for a bare count: the seed piece weight first, then the food's own count row. Otherwise unresolved. */
+function pieceGrams(quantity: number, rawUnit: string, ctx: PortionContext): PortionResult {
+  // A food that some piece row covers is decided by that food alone, so the unit cannot pull in another row's weight.
+  const perPiece = pieceRowsFor(ctx.foodName).length > 0 ? pieceWeightForName(ctx.foodName) : pieceWeightFor(rawUnit);
+  if (perPiece !== null) return resolved(quantity * perPiece, PORTION_CONFIDENCE.pieceTable, "piece");
+  const perCount = portionGrams(ctx.portions, (measure) => COUNT_MEASURES.includes(measure));
+  if (perCount === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+  if (perCount !== null) return resolved(quantity * perCount, PORTION_CONFIDENCE.foodPortion, "food_portion");
+  return { status: "unresolved", reason: "missing_piece_weight" };
 }
 
 /** Usable density: a positive finite number from the record, else the seed table, else null. */
@@ -202,10 +221,11 @@ export function resolvePortion(
 
   // The user's own volume for a measure beats the food's portion row for that measure.
   const userMl = userMeasure && "ml" in userMeasure && userMeasure.ml > 0 ? userMeasure.ml : undefined;
-  if (userMl === undefined) {
-    const portionGrams = foodPortionGrams(unit, ctx.portions);
-    if (portionGrams === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
-    if (portionGrams !== null) return resolved(quantity * portionGrams, PORTION_CONFIDENCE.foodPortion, "food_portion");
+  // Counts skip this step, so a packaged "piece" row cannot beat the vetted piece weight.
+  if (userMl === undefined && unit !== PIECE_UNIT) {
+    const perMeasure = portionGrams(ctx.portions, (measure) => measure === unit);
+    if (perMeasure === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+    if (perMeasure !== null) return resolved(quantity * perMeasure, PORTION_CONFIDENCE.foodPortion, "food_portion");
   }
 
   const vessel = own(HOUSEHOLD_VESSELS, unit);
@@ -220,12 +240,7 @@ export function resolvePortion(
     return resolved(quantity * mlPerUnit * density.gPerMl, confidence, "volume");
   }
 
-  if (unit === PIECE_UNIT) {
-    // A food that some piece row covers is decided by that food alone, so the unit cannot pull in another row's weight.
-    const perPiece = pieceRowsFor(ctx.foodName).length > 0 ? pieceWeightForName(ctx.foodName) : pieceWeightFor(rawUnit);
-    if (perPiece === null) return { status: "unresolved", reason: "missing_piece_weight" };
-    return resolved(quantity * perPiece, PORTION_CONFIDENCE.pieceTable, "piece");
-  }
+  if (unit === PIECE_UNIT) return pieceGrams(quantity, rawUnit, ctx);
 
   if (FOOD_SPECIFIC_MEASURES.includes(unit)) return { status: "unresolved", reason: "food_specific_measure" };
   return { status: "unresolved", reason: "unknown_unit" };
