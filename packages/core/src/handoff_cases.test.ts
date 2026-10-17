@@ -76,10 +76,10 @@ describe("HANDOFF #9: household units", () => {
     expect(resolvePortion({ quantity: 1, unit: null }, { foodName: "phulka" })).toMatchObject({ grams: 30 });
   });
 
-  it("prefers the matched food's own piece weight", () => {
+  it("prefers the vetted roti seed weight over a packaged 68 g piece row", () => {
     const portions = [{ measure: "piece", gramsPerMeasure: 68 }];
     expect(resolvePortion({ quantity: 2, unit: "roti" }, { foodName: "Bread, chapati or roti", portions })).toMatchObject({
-      grams: 136, method: "food_portion",
+      grams: 80, method: "piece",
     });
   });
 });

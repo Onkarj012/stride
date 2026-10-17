@@ -48,9 +48,15 @@ export const FOOD_SPECIFIC_MEASURES: readonly string[] = ["plate", "serving", "s
 /** The unit used when the input gives a count with no unit, as in "2 rotis". */
 export const PIECE_UNIT = "piece";
 
-/** Grams for one piece of a food, matched when every key token appears in the food name. */
+/** Normalized measure labels that count whole items. A bare count ("2 cookies") can use a food's row with one of these. */
+export const COUNT_MEASURES: readonly string[] = [
+  PIECE_UNIT, "biscuit", "cookie", "cracker", "slice", "bar", "roti", "chapati", "phulka", "paratha", "idli", "dosa", "puri",
+];
+
+/** Grams for one piece of a food, matched when every key token appears in the food name and no excluded token does. */
 export interface PieceWeight {
   keys: readonly string[];
+  excludes?: readonly string[];
   grams: number;
   note: string;
 }
@@ -60,10 +66,23 @@ export const PIECE_WEIGHTS: readonly PieceWeight[] = [
   { keys: ["roti"], grams: 40, note: "Whole-wheat roti, about 30 g atta. Plan 007 D10 and the previous Stride engine." },
   { keys: ["chapati"], grams: 40, note: "Same as roti." },
   { keys: ["phulka"], grams: 30, note: "Thinner, puffed roti without ghee. Household estimate, owner-editable." },
-  { keys: ["paratha"], grams: 80, note: "Plain layered paratha. Previous Stride engine value." },
+  { keys: ["phulka", "roti"], grams: 30, note: "Phulka named as a roti. Same 30 g as the phulka row, and more specific than the roti row." },
+  { keys: ["phulka", "chapati"], grams: 30, note: "Phulka named as a chapati. Same 30 g as the phulka row, and more specific than the chapati row." },
+  { keys: ["paratha"], excludes: ["aloo"], grams: 80, note: "Plain layered paratha. Previous Stride engine value. Stuffed parathas are not covered." },
   { keys: ["idli"], grams: 40, note: "One medium idli. Previous Stride engine value." },
   { keys: ["egg"], grams: 50, note: "One large egg without shell, FDC 171287 portion 'large'." },
+  { keys: ["banana"], excludes: ["chip", "bread", "cake", "muffin", "shake", "smoothie", "halwa", "pudding", "custard", "fritter", "split", "juice", "puree", "dried", "frozen", "canned", "peeled", "sliced", "mashed", "chopped", "small", "large", "big", "mini", "baby", "extra", "jumbo"], grams: 118, note: "One medium banana, FDC 173944 (SR Legacy) household measure, 7 to 7 7/8 in long." },
+  { keys: ["apple"], excludes: ["juice", "sauce", "pie", "custard", "sugar", "crab", "cake", "muffin", "chip", "cider", "vinegar", "dried", "frozen", "canned", "peeled", "sliced", "mashed", "chopped", "small", "large", "big", "mini", "baby", "extra", "jumbo"], grams: 182, note: "One medium apple with skin, FDC 171688 (SR Legacy) household measure, 3 in diameter." },
 ];
+
+/** Generic bread names. In "Bread, paratha" the second part is the food, when it is a flatbread key. */
+export const GENERIC_BREAD_PARTS: readonly string[] = ["bread", "flatbread"];
+
+/** Flatbread keys that can be the head of a name like "Bread, paratha" or "Bread, chapati, whole wheat". */
+export const FLATBREAD_KEYS: readonly string[] = ["roti", "chapati", "phulka", "paratha", "puri", "naan", "kulcha", "bhatura"];
+
+/** Piece names that mean the same food as a seed row. "chapati" names the roti row, so a roti food takes "1 chapati". */
+export const PIECE_ALIASES: Readonly<Record<string, string>> = { chapati: "roti" };
 
 /** Density of a food class in g/ml, matched when every key token appears in the food name and no excluded token does. */
 export interface DensityEntry {
@@ -73,6 +92,11 @@ export interface DensityEntry {
   note: string;
 }
 
+/** Dry forms of a drink that are not the drink: powders, mixes, leaves, ground beans, bags, creamers and syrups. */
+const BEVERAGE_EXCLUDES: readonly string[] = [
+  "powder", "instant", "dry", "dried", "granules", "mix", "concentrate", "leaves", "ground", "bags", "creamer", "whitener", "beans", "syrup",
+];
+
 /** Densities for volume-to-mass conversion. Longest key match wins, so "cooked rice" beats a plain "rice" key. */
 export const DENSITIES: readonly DensityEntry[] = [
   { keys: ["water"], gPerMl: 1.0, note: "FDC 174158, 1 cup = 237 g." },
@@ -80,9 +104,17 @@ export const DENSITIES: readonly DensityEntry[] = [
   { keys: ["yogurt"], gPerMl: 1.036, note: "FDC 171284 plain whole-milk yogurt, 1 cup = 245 g." },
   { keys: ["curd"], gPerMl: 1.036, note: "Indian curd, same as plain yogurt (FDC 171284)." },
   { keys: ["dahi"], gPerMl: 1.036, note: "Same as curd." },
+  { keys: ["tea"], excludes: BEVERAGE_EXCLUDES, gPerMl: 1.01, note: "Brewed tea. FAO/INFOODS black tea 1.00. FNDDS tea with milk 240 g per 8 fl oz (1.014). Rounded." },
+  { keys: ["tea", "milk"], excludes: BEVERAGE_EXCLUDES, gPerMl: 1.01, note: "Tea with milk, same basis as tea with milk in FNDDS (1.014). Rounded." },
+  { keys: ["chai"], excludes: BEVERAGE_EXCLUDES, gPerMl: 1.01, note: "Brewed chai, same basis as tea with milk. Indian recipes vary, so this is an estimate." },
+  { keys: ["chai", "milk"], excludes: BEVERAGE_EXCLUDES, gPerMl: 1.01, note: "Chai with milk, same basis as tea with milk. Indian recipes vary, so this is an estimate." },
+  { keys: ["coffee"], excludes: BEVERAGE_EXCLUDES, gPerMl: 1.01, note: "Brewed coffee. FAO/INFOODS 1.00. FNDDS espresso and coffee drinks 240 g per cup (1.014). Rounded." },
+  { keys: ["coffee", "milk"], excludes: BEVERAGE_EXCLUDES, gPerMl: 1.01, note: "Coffee with milk, FNDDS cappuccino and latte 240 g per 8 fl oz (1.014). Rounded." },
+  { keys: ["cappuccino"], excludes: BEVERAGE_EXCLUDES, gPerMl: 1.01, note: "FNDDS cappuccino 240 g per 8 fl oz (1.014). Rounded." },
+  { keys: ["latte"], excludes: BEVERAGE_EXCLUDES, gPerMl: 1.01, note: "FNDDS latte 240 g per 8 fl oz (1.014). Rounded." },
   { keys: ["cooked", "rice"], gPerMl: 0.668, note: "FDC 168878 white rice, cooked, 1 cup = 158 g." },
   { keys: ["rice", "raw"], gPerMl: 0.782, note: "FDC 169756 white rice, raw, 1 cup = 185 g." },
-  { keys: ["dal"], excludes: ["raw", "dry", "flour"], gPerMl: 0.837, note: "Cooked dal, from FDC 172421 lentils boiled, 1 cup = 198 g." },
+  { keys: ["dal"], excludes: ["raw", "dry", "flour"], gPerMl: 1.01, note: "Dal as served in a katori, FNDDS 'Dal' 240 g per cup (1.014), rounded. Drained lentils are 0.837 (FDC 172421)." },
   { keys: ["lentils", "cooked"], gPerMl: 0.837, note: "FDC 172421 lentils boiled, 1 cup = 198 g." },
   { keys: ["chickpeas", "cooked"], gPerMl: 0.693, note: "FDC 173757 chickpeas boiled, 1 cup = 164 g." },
   { keys: ["oil"], gPerMl: 0.913, note: "FDC 171413 olive oil, 1 cup = 216 g. Vegetable oils are within 2%." },
