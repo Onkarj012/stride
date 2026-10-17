@@ -739,3 +739,44 @@ describe("dates and slots", () => {
     }
   });
 });
+
+describe("draft amounts: a food is only offered units it converts in", () => {
+  test("grams always convert, and a powder with no density or cup row offers no cup or ml", async () => {
+    const { t, user } = await setup();
+    const powder = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Coffee, instant, powder",
+        aliases: [],
+        searchText: "Coffee, instant, powder",
+        per100g: RICE,
+        source: "fdc",
+        sourceId: "powder",
+        verified: true,
+      }),
+    );
+    const [set] = await user.query(api.pipeline.drafts.amountOptions, { items: [{ foodId: powder, unit: null }] });
+    const units = set?.units.map((u) => u.unit) ?? [];
+    expect(set?.units.find((u) => u.unit === "g")?.gramsPerUnit).toBe(1);
+    expect(units).not.toContain("cup");
+    expect(units).not.toContain("ml");
+  });
+
+  test("a cookie's piece row offers piece at that row's weight", async () => {
+    const { t, user } = await setup();
+    const cookie = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("foods", {
+        name: "Cookies, chocolate chip",
+        aliases: [],
+        searchText: "Cookies, chocolate chip",
+        per100g: OIL,
+        source: "fdc",
+        sourceId: "cookie",
+        verified: true,
+      });
+      await ctx.db.insert("food_portions", { foodId: id, source: "fdc", measure: "piece", description: "piece", gramsPerMeasure: 5.6 });
+      return id;
+    });
+    const [set] = await user.query(api.pipeline.drafts.amountOptions, { items: [{ foodId: cookie, unit: null }] });
+    expect(set?.units).toContainEqual({ unit: "piece", label: "piece", gramsPerUnit: 5.6 });
+  });
+});

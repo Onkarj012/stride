@@ -1,12 +1,22 @@
-import { daysBetween, isLocalDate, scaleNutrients } from "@stride/core";
+import {
+  daysBetween,
+  HOUSEHOLD_VESSELS,
+  isLocalDate,
+  normalizeUnit,
+  PIECE_UNIT,
+  resolvePortion,
+  scaleNutrients,
+  type UserMeasure,
+} from "@stride/core";
 import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import { mutation, query, type MutationCtx } from "../_generated/server";
+import { mutation, query, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { insertEntries, type NewEntry } from "../entries";
 import { isVisibleFood } from "../foods_db";
 import { inputKindValidator, mealSlotValidator, nutrientsValidator } from "../ledger_validators";
 import { requireUserId, resolveLocalDay } from "../time_zone";
 import { assertLedgerWritable } from "../users";
+import { MAX_EXTRACTED_ITEMS } from "./extract";
 import {
   committedResult,
   draftLines,
@@ -14,6 +24,7 @@ import {
   linkKey,
   logResultValidator,
   MAX_PAST_DAYS,
+  portionsOf,
   resolveFoodPortion,
   userMeasuresOf,
   validScale,
@@ -22,6 +33,8 @@ import {
 
 const MAX_PENDING_DRAFTS = 20;
 const MAX_LINKS_LISTED = 100;
+/** Units every food is offered in when it converts, besides household vessels and the piece. */
+const STANDARD_UNITS = ["g", "ml", "cup", "tsp", "tbsp"];
 
 /** One user change to a draft item. Corrections are food choices and amounts; nutrients are always recomputed. */
 const correctionValidator = v.object({
@@ -50,6 +63,8 @@ const draftItemViewValidator = v.object({
   preview: v.union(nutrientsValidator, v.null()),
   unresolved: v.union(v.string(), v.null()),
   reasons: v.array(v.string()),
+  /** Recipe fraction applied to the grams, when valid. The card applies it to any amount the user picks. */
+  portionScale: v.union(v.number(), v.null()),
   estimated: v.boolean(),
   cookingOil: v.boolean(),
   candidates: v.array(v.object({ _id: v.id("foods"), name: v.string() })),
@@ -126,6 +141,7 @@ export const getDraft = query({
         preview: food !== null && item.grams !== undefined ? scaleNutrients(food.per100g, item.grams) : null,
         unresolved: item.unresolved ?? null,
         reasons: item.reasons ?? [],
+        portionScale: item.portionScale !== undefined && validScale(item.portionScale) ? item.portionScale : null,
         estimated: item.fromPhoto === true,
         cookingOil: item.cookingOil === true,
         candidates,
@@ -154,6 +170,64 @@ export const listPendingDrafts = query({
       .order("desc")
       .take(MAX_PENDING_DRAFTS);
     return rows.map((row) => ({ _id: row._id, createdAt: row.createdAt, itemCount: row.items.length }));
+  },
+});
+
+/** One unit a food can be counted in, and the grams one of it weighs for that food. */
+const amountUnitValidator = v.object({ unit: v.string(), label: v.string(), gramsPerUnit: v.number() });
+/** A food's nutrients per 100 g and the units it converts in. */
+const amountSetValidator = v.object({ per100g: nutrientsValidator, units: v.array(amountUnitValidator) });
+type AmountUnit = Infer<typeof amountUnitValidator>;
+
+/** The units one food converts in, each resolved by the core resolver with quantity 1. Only units that convert appear. */
+async function amountUnitsOf(
+  ctx: QueryCtx,
+  food: Doc<"foods">,
+  statedUnit: string | null,
+  userMeasures: UserMeasure[],
+): Promise<AmountUnit[]> {
+  const portions = await portionsOf(ctx, food._id);
+  const names = [
+    ...(statedUnit === null ? [] : [statedUnit]),
+    ...STANDARD_UNITS,
+    ...Object.keys(HOUSEHOLD_VESSELS),
+    PIECE_UNIT,
+    ...portions.map((p) => p.measure),
+    ...userMeasures.map((m) => m.measure),
+  ];
+  const grams = new Map<string, number>();
+  for (const name of names) {
+    const unit = normalizeUnit(name);
+    if (grams.has(unit)) continue;
+    const portion = resolvePortion({ quantity: 1, unit: name }, { foodName: food.name, portions, userMeasures });
+    if (portion.status === "resolved") grams.set(unit, portion.grams);
+  }
+  return [...grams].map(([unit, gramsPerUnit]) => ({ unit, label: unit, gramsPerUnit }));
+}
+
+/**
+ * For each draft item, the food's nutrients per 100 g and the units it converts in. The card uses these to offer
+ * amounts. A removed item, or a food the caller cannot see, gets null. Owner-only: foods must be visible to the caller.
+ */
+export const amountOptions = query({
+  args: {
+    items: v.array(v.union(v.object({ foodId: v.id("foods"), unit: v.union(v.string(), v.null()) }), v.null())),
+  },
+  returns: v.array(v.union(amountSetValidator, v.null())),
+  handler: async (ctx, { items }) => {
+    if (items.length > MAX_EXTRACTED_ITEMS) throw new ConvexError({ code: "DRAFT_ITEM", message: "Too many items" });
+    const userId = await requireUserId(ctx);
+    const userMeasures = await userMeasuresOf(ctx, userId);
+    const sets: (Infer<typeof amountSetValidator> | null)[] = [];
+    for (const item of items) {
+      const food = item === null ? null : await ctx.db.get("foods", item.foodId);
+      if (item === null || food === null || !isVisibleFood(food, userId)) {
+        sets.push(null);
+        continue;
+      }
+      sets.push({ per100g: food.per100g, units: await amountUnitsOf(ctx, food, item.unit, userMeasures) });
+    }
+    return sets;
   },
 });
 
