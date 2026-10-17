@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { HOUSEHOLD_VESSELS, MASS_UNITS_G, VOLUME_UNITS_ML } from "./household_measures.ts";
-import { densityFor, normalizeUnit, PORTION_CONFIDENCE, resolvePortion, type PortionResult } from "./units.ts";
+import { densityFor, normalizeUnit, PORTION_CONFIDENCE, resolvePortion, type PortionResult, type UserMeasure } from "./units.ts";
 
 /** Grams from a result that must be resolved. */
 function gramsOf(result: PortionResult): number {
@@ -195,6 +195,36 @@ describe("counts and spoons", () => {
     expect(resolvePortion({ quantity: 2, unit: null }, ctx)).toMatchObject({
       grams: 16, method: "user_measure",
     });
+  });
+
+  it.each([
+    { userMeasures: [
+      { measure: "cookie", grams: 8 },
+      { measure: "slice", grams: 20 },
+    ] },
+    { userMeasures: [
+      { measure: "slice", grams: 20 },
+      { measure: "cookie", grams: 8 },
+    ] },
+  ] satisfies { userMeasures: UserMeasure[] }[])("rejects conflicting inferred saved count weights regardless of order", ({ userMeasures }) => {
+    expect(resolvePortion({ quantity: 2, unit: null }, {
+      foodName: "Biscuits, marie",
+      portions: [{ measure: "cookie", gramsPerMeasure: 5.6 }, { measure: "slice", gramsPerMeasure: 10 }],
+      userMeasures,
+    })).toEqual({ status: "unresolved", reason: "conflicting_portions" });
+  });
+
+  it.each(["piece", "Biscuits, marie"])("prefers direct saved %s measure over conflicting inferred counts", (measure) => {
+    expect(resolvePortion({ quantity: 2, unit: null }, {
+      foodName: "Biscuits, marie",
+      densityGPerMl: 1,
+      portions: [{ measure: "cookie", gramsPerMeasure: 5.6 }, { measure: "slice", gramsPerMeasure: 10 }],
+      userMeasures: [
+        { measure: "cookie", grams: 8 },
+        { measure: "slice", grams: 20 },
+        { measure, ml: 10 },
+      ],
+    })).toMatchObject({ status: "resolved", grams: 20, method: "volume" });
   });
 
   it("does not use ingredient alternatives as piece seed heads", () => {

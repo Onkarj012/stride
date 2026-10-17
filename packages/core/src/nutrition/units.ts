@@ -269,15 +269,35 @@ export function resolvePortion(
   // "1 phulka" arrives with the food name as its unit; treat it as one piece of that food.
   const unit = pieceWeightFor(rawUnit) !== null ? PIECE_UNIT : rawUnit;
 
-  const measureNames = new Set([rawUnit, unit]);
-  if (unit === PIECE_UNIT) measureNames.add(normalizeText(ctx.foodName));
+  const directMeasureNames = new Set([rawUnit, unit]);
+  if (unit === PIECE_UNIT) directMeasureNames.add(normalizeText(ctx.foodName));
+  const userMeasures = ctx.userMeasures ?? [];
+  let userMeasure = userMeasures.find((m) => directMeasureNames.has(normalizeUnit(m.measure)));
   if (isBare) {
+    const inferredMeasureNames = new Set<string>();
     for (const portion of ctx.portions ?? []) {
       const measure = normalizeUnit(portion.measure);
-      if (COUNT_MEASURES.includes(measure)) measureNames.add(measure);
+      if (COUNT_MEASURES.includes(measure) && !directMeasureNames.has(measure)) inferredMeasureNames.add(measure);
+    }
+    if (userMeasure === undefined) {
+      const density = resolveDensity(ctx);
+      const inferred: { measure: UserMeasure; grams: number }[] = [];
+      for (const m of userMeasures) {
+        if (!inferredMeasureNames.has(normalizeUnit(m.measure))) continue;
+        if ("grams" in m && Number.isFinite(m.grams) && m.grams > 0) {
+          inferred.push({ measure: m, grams: m.grams });
+          continue;
+        }
+        if ("ml" in m && Number.isFinite(m.ml) && m.ml > 0 && density !== null) {
+          inferred.push({ measure: m, grams: m.ml * density.gPerMl });
+        }
+      }
+      const inferredWeights = new Set(inferred.map(({ grams }) => grams));
+      if (inferredWeights.size > 1) return { status: "unresolved", reason: "conflicting_portions" };
+      inferred.sort((a, b) => normalizeUnit(a.measure.measure).localeCompare(normalizeUnit(b.measure.measure)));
+      userMeasure = inferred[0]?.measure;
     }
   }
-  const userMeasure = (ctx.userMeasures ?? []).find((m) => measureNames.has(normalizeUnit(m.measure)));
   if (userMeasure && "grams" in userMeasure && userMeasure.grams > 0) {
     return resolved(quantity * userMeasure.grams, PORTION_CONFIDENCE.userMeasure, "user_measure");
   }
