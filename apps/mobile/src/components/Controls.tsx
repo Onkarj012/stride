@@ -82,11 +82,6 @@ export function RoundButton({
   )
 }
 
-// True when typed text reads as a finite number. Partial input like "80." counts.
-function readsAsNumber(text: string): boolean {
-  return text.trim() !== '' && Number.isFinite(Number(text.replace(',', '.')))
-}
-
 // Minus, value, plus in one pill, like the mock's meal-sheet stepper. Tap the value to type it when onType is set; a held button keeps stepping.
 export function Stepper({
   value,
@@ -128,8 +123,8 @@ export function Stepper({
           value={typing}
           onChangeText={(text) => {
             setTyping(text)
-            // Pushes each readable number up now, so a Save tapped while typing reads the new value.
-            if (readsAsNumber(text)) onType?.(text)
+            // Pushes every edit up, so the caller can disable Save while the text is empty or invalid.
+            onType?.(text)
           }}
           onSubmitEditing={commit}
           onBlur={commit}

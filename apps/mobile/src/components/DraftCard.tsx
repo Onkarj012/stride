@@ -12,17 +12,27 @@ import { font, themedStyles, useTheme } from '@/theme'
 import { Button, RoundButton, Stepper, Tag, Thinking } from './Controls'
 import { Tap } from './Tap'
 
-/** One change the user made to a draft item before confirming. */
-type Fix = { remove?: boolean; foodId?: FoodId; foodName?: string; quantity?: number; unit?: string; localDate?: string }
+/** One change the user made to a draft item before confirming. A null quantity means the typed amount was not a positive number. */
+type Fix = { remove?: boolean; foodId?: FoodId; foodName?: string; quantity?: number | null; unit?: string; localDate?: string }
 
 const spring = FadeInDown.springify().stiffness(300).damping(17)
 const HALF_UNITS = new Set(['katori', 'bowl', 'glass', 'cup', 'plate', 'ladle'])
+const MIN_QUANTITY = 0.25
+const NUMBER_TEXT = /^(\d+[.,]?\d*|[.,]\d+)$/
 
 // "2", "1½" or "0.75" for a quantity.
 function formatQuantity(q: number): string {
   const whole = Math.floor(q)
   if (q - whole === 0.5) return whole === 0 ? '½' : `${whole}½`
   return String(Math.round(q * 100) / 100)
+}
+
+// A typed amount, or null unless it is a positive finite number such as "0.25" or "35".
+function parseQuantity(text: string): number | null {
+  const t = text.trim()
+  if (!NUMBER_TEXT.test(t)) return null
+  const n = Number(t.replace(',', '.'))
+  return Number.isFinite(n) && n > 0 ? n : null
 }
 
 /** What one item will log. `payload` is what confirm sends for an amount the user set; null when the server's amount stands. */
@@ -43,7 +53,7 @@ function planOf(item: DraftItem, fix: Fix, set: AmountSet | null): Plan {
   const foodName = fix.foodName ?? item.food?.name ?? null
   const foodChanged = fix.foodId !== undefined && fix.foodId !== item.food?._id
   const touched = foodChanged || fix.quantity !== undefined || fix.unit !== undefined
-  const quantity = fix.quantity ?? item.quantity
+  const quantity = fix.quantity !== undefined ? fix.quantity : item.quantity
   // Same unit the server reads from the draft. A unit that no longer converts for this food finds no option here.
   const option = set?.units.find((u) => u.unit === (fix.unit ?? normalizeUnit(item.unit))) ?? null
   if (!touched) {
@@ -221,14 +231,18 @@ export function DraftCard({
 
             {plan.foodName !== null ? (
               <View style={s.amount}>
-                {plan.quantity !== null && option !== null ? (
+                {option !== null ? (
                   <Stepper
-                    value={formatQuantity(plan.quantity)}
+                    value={plan.quantity === null ? '–' : formatQuantity(plan.quantity)}
+                    typeText={plan.quantity === null ? '' : String(plan.quantity)}
                     label={option.unit}
+                    onType={(text) => patch(i, { quantity: parseQuantity(text) })}
                     onStep={(d) => {
-                      const q = plan.quantity ?? 1
+                      // A new amount starts at 1. Steps go down to a quarter, so small amounts are reachable by tapping.
+                      if (plan.quantity === null) return patch(i, { quantity: 1 })
+                      const q = plan.quantity
                       const step = HALF_UNITS.has(option.unit) || q <= 1 ? 0.5 : 1
-                      patch(i, { quantity: Math.max(step, q + d * step) })
+                      patch(i, { quantity: Math.max(MIN_QUANTITY, q + d * step) })
                     }}
                   />
                 ) : null}
