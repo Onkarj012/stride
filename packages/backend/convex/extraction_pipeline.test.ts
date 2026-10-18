@@ -340,6 +340,19 @@ describe("HANDOFF #4: an unresolved food never contributes 0 kcal silently", () 
     expect(draft?.items[0]?.reasons).toContain("low_match");
     expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve", "resolve"]);
   });
+
+  test("a partial database name is never saved, and the unresolved item keeps its row as a candidate", async () => {
+    const { t, user, foods } = await setup();
+    llm = (body) => (kind(body) === "extract" ? extraction([{ food: "rice", quantity: 100, unit: "g" }]) : { content: "I could not find it." });
+    const result = await logText(user, "100 g rice");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    expect(await entryRows(t)).toHaveLength(0);
+    const toolPass = openRouterBodies.find((b) => kind(b) === "resolve");
+    expect(JSON.stringify(toolPass?.messages)).toContain(foods.rice);
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.food).toBeNull();
+    expect(draft?.items[0]?.candidates).toEqual([{ _id: foods.rice, name: "Rice, white, cooked" }]);
+  });
 });
 
 describe("D14 tool loop", () => {
