@@ -980,6 +980,26 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(0);
   });
 
+  test("a tool-picked estimate stays among the item's candidates, so the picker can offer it again", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : {
+            toolCalls: [
+              {
+                name: "estimate_food",
+                args: { item_index: 0, name: "Masala chai", grams: 110, kcal: 55, protein_g: 2.5, carbs_g: 7, fat_g: 2, assumptions: "Milk and sugar" },
+              },
+            ],
+          };
+    const result = await logText(user, "a teacup of masala chai");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const estimate = (await t.run((ctx) => ctx.db.query("foods").collect())).find((food) => food.source === "ai_estimate");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.candidates.map((food) => food._id)).toContain(estimate?._id);
+  });
+
   test("two unconfirmed logs of the same estimate make one food row", async () => {
     const { t, user } = await setup();
     llm = (body) =>
@@ -1068,7 +1088,7 @@ describe("AI estimate identity and portions", () => {
     llm = (body) =>
       kind(body) === "extract"
         ? extraction([{ food: "samosa", quantity: 3, unit: "samosa" }])
-        : { toolCalls: [{ name: "estimate_food", args: samosa(3, 100, 300, 8, 40, 12) }] };
+        : { toolCalls: [{ name: "estimate_food", args: samosa(3, 99, 297, 7.92, 39.6, 11.88) }] };
     await logText(user, "3 samosa", "sub-1");
 
     llm = (body) =>
@@ -1086,7 +1106,7 @@ describe("AI estimate identity and portions", () => {
     llm = () => extraction([{ food: "samosa", quantity: 2 }]);
     const third = await logText(user, "2 samosa", "sub-3");
     expect(third.kind).toBe("committed");
-    expect((await entryRows(t)).at(-1)?.grams).toBeCloseTo(2 * (100 / 3), 6);
+    expect((await entryRows(t)).at(-1)?.grams).toBeCloseTo(2 * 33, 6);
   });
 
   test("'Acai bowl' with unit bowl keeps a bowl row, and the draft resolves to its 200 g", async () => {

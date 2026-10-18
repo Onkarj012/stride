@@ -524,7 +524,11 @@ export const commitLog = internalMutation({
         fromPhoto: r.fromPhoto,
         confidence: r.confidence,
         reasons: r.reasons,
-        candidateIds: r.candidates.map((food) => food._id),
+        // A tool-picked estimate is offered again in the picker, since search does not show estimates.
+        candidateIds: [
+          ...r.candidates.map((food) => food._id),
+          ...(r.matchSource === "tool" && r.food !== null && r.food.source === "ai_estimate" ? [r.food._id] : []),
+        ],
       })),
     });
     const draft = await ctx.db.get("drafts", draftId);

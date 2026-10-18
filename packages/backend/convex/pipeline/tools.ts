@@ -29,6 +29,13 @@ const MAX_RECENT_DAYS = 7;
 /** Most portion rows read for one estimated food. An estimate has a handful, one per unit it was saved with. */
 const MAX_ESTIMATE_PORTIONS = 50;
 const RESOLVE_MAX_TOKENS = 600;
+/** Ceiling for the tool pass budget. Each open item can need its own estimate_food call, so the budget grows per item. */
+const RESOLVE_MAX_TOKENS_CAP = 4000;
+
+/** Output budget for one tool-pass call, scaled to the items still open. */
+function resolveMaxTokens(openItems: number): number {
+  return Math.min(RESOLVE_MAX_TOKENS_CAP, RESOLVE_MAX_TOKENS + 200 * openItems);
+}
 
 /** Food ids the model has seen in tool results this loop. Only these may be chosen, so it cannot invent ids. */
 export type SeenFoods = Map<string, Id<"foods">>;
@@ -348,7 +355,7 @@ export const saveEstimate = internalMutation({
       Math.round(per100(a.protein) * 10) / 10,
       Math.round(per100(a.carbs) * 10) / 10,
       Math.round(per100(a.fat) * 10) / 10,
-      Math.round(a.grams / a.quantity),
+      Math.round((a.grams / a.quantity) * 100) / 100,
     ];
     const sourceId = `${a.userId}:ai:${estimateKey(a.name)}:${identity.join(":")}`;
     // An identical estimate is one food, found by its exact sourceId. A repeat keeps the stored nutrients and note.
@@ -410,7 +417,7 @@ async function estimate(
   if (parsed === null) return { ok: false, error: "name, grams, kcal, protein_g, carbs_g, fat_g and assumptions are required" };
   const problem = estimateProblem(parsed, item.quantity, item.unit);
   if (problem !== null) return { ok: false, error: problem };
-  const foodId = await ctx.runMutation(internal.pipeline.tools.saveEstimate, {
+  const foodId: Id<"foods"> = await ctx.runMutation(internal.pipeline.tools.saveEstimate, {
     userId,
     quantity: item.quantity,
     unit: item.unit,
@@ -451,7 +458,7 @@ export async function runToolPass(
   for (let i = 0; i < MAX_TOOL_ITERATIONS && picks.size < open.size; i++) {
     const reply = await callOpenRouter(ctx, userId, {
       model: PIPELINE_MODEL,
-      maxTokens: RESOLVE_MAX_TOKENS,
+      maxTokens: resolveMaxTokens(open.size - picks.size),
       messages,
       tools: [...LOOKUP_TOOLS, CHOOSE_FOOD_TOOL, ESTIMATE_FOOD_TOOL],
     });
