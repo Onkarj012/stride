@@ -31,9 +31,10 @@ export async function searchVisibleFoodRows(
   text: string,
   limit: number,
 ): Promise<Doc<"foods">[]> {
+  // Only saved foods: AI estimates share the owner, and must not fill this window.
   const own = await ctx.db
     .query("foods")
-    .withSearchIndex("search_text", (q) => q.search("searchText", text).eq("ownerUserId", userId))
+    .withSearchIndex("search_text", (q) => q.search("searchText", text).eq("ownerUserId", userId).eq("source", "user"))
     .take(limit);
   const shared = await ctx.db
     .query("foods")
@@ -240,7 +241,7 @@ export const createUserFood = mutation({
     }
     const owned = await ctx.db
       .query("foods")
-      .withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId))
+      .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", userId).eq("source", "user"))
       .take(MAX_USER_FOODS);
     if (owned.length >= MAX_USER_FOODS) throw new ConvexError({ code: "FOOD_LIMIT", message: `You can keep at most ${MAX_USER_FOODS} personal foods` });
     return await ctx.db.insert("foods", row);
@@ -255,7 +256,7 @@ export const listUserFoods = query({
     const userId = await requireUserId(ctx);
     const rows = await ctx.db
       .query("foods")
-      .withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId))
+      .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", userId).eq("source", "user"))
       .take(MAX_USER_FOODS);
     return rows.map((row) => ({ _id: row._id, name: row.name, aliases: row.aliases, per100g: row.per100g }));
   },

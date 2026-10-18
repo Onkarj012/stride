@@ -878,7 +878,6 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     carbs_g: 7,
     fat_g: 2,
     assumptions: "Milk and sugar, cafe cup",
-    confidence: 0.6,
   };
 
   test("the estimate lands on the draft with its chip data and a private food row, and does not auto-commit", async () => {
@@ -920,5 +919,57 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     const rows = await entryRows(t);
     expect(rows.at(-1)).toMatchObject({ source: "memory", grams: 110 });
     expect(rows.at(-1)?.flags).toContain("estimated");
+  });
+
+  test("two unconfirmed logs of the same estimate make one food row", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const first = await logText(user, "a teacup of masala chai", "sub-1");
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+
+    expect(first.kind).toBe("draft");
+    expect(second.kind).toBe("draft");
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(1);
+  });
+});
+
+describe("saved foods are never crowded out by AI estimates", () => {
+  test("a user with 210 AI estimates still matches their own saved food", async () => {
+    const { t, user } = await setup();
+    const saved = await t.run(async (ctx) => {
+      for (let i = 0; i < 210; i++) {
+        await ctx.db.insert("foods", {
+          name: `Estimate ${i}`,
+          aliases: [],
+          searchText: `Estimate ${i}`,
+          per100g: RICE,
+          source: "ai_estimate",
+          sourceId: `user_a:ai:estimate ${i}`,
+          verified: false,
+          ownerUserId: "user_a",
+        });
+      }
+      return await ctx.db.insert("foods", {
+        name: "Homemade paneer",
+        aliases: [],
+        searchText: "Homemade paneer",
+        per100g: PANEER,
+        source: "user",
+        sourceId: "user_a:homemade-paneer",
+        verified: true,
+        ownerUserId: "user_a",
+      });
+    });
+    // The saved-food list has no search fallback, so it shows whether estimates crowd saved foods out.
+    expect((await user.query(api.foods_db.listUserFoods, {})).map((food) => food._id)).toContain(saved);
+    llm = () => extraction([{ food: "homemade paneer", quantity: 100, unit: "g" }]);
+    const result = await logText(user, "100 g homemade paneer");
+
+    expect(result.kind).toBe("committed");
+    expect((await entryRows(t)).at(-1)).toMatchObject({ foodId: saved, source: "db", grams: 100 });
   });
 });

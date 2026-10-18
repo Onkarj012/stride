@@ -1,10 +1,10 @@
-import { addDays, HOUSEHOLD_VESSELS, normalizeUnit, rankCandidates, type MealSlot } from "@stride/core";
+import { addDays, HOUSEHOLD_VESSELS, normalizeText, normalizeUnit, rankCandidates, type MealSlot } from "@stride/core";
 import { ConvexError, v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery, type ActionCtx } from "../_generated/server";
 import { MAX_DAY_ENTRIES } from "../day_totals";
-import { isVisibleFood } from "../foods_db";
+import { isVisibleFood, MAX_USER_FOODS } from "../foods_db";
 import { foodSourceValidator, mealSlotValidator } from "../ledger_validators";
 import { resolveLocalDay } from "../time_zone";
 import { lookupBarcodeFood } from "./barcode";
@@ -66,9 +66,8 @@ const ESTIMATE_FOOD_TOOL = tool(
     carbs_g: { type: "number" },
     fat_g: { type: "number" },
     assumptions: { type: "string" },
-    confidence: { type: "number" },
   },
-  ["item_index", "name", "grams", "kcal", "protein_g", "carbs_g", "fat_g", "assumptions", "confidence"],
+  ["item_index", "name", "grams", "kcal", "protein_g", "carbs_g", "fat_g", "assumptions"],
 );
 
 const RESOLVE_PROMPT = [
@@ -299,9 +298,15 @@ export const saveEstimate = internalMutation({
   },
   returns: v.id("foods"),
   handler: async (ctx, a) => {
+    const key = normalizeText(a.name);
+    // Same-named estimates are one food. A repeat keeps the stored nutrients and note.
+    const same = (await ctx.db
+      .query("foods")
+      .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", a.userId).eq("source", "ai_estimate"))
+      .take(MAX_USER_FOODS)).find((food) => normalizeText(food.name) === key);
     // Nutrients are stored per 100 g, like every other food.
     const per100 = (amount: number): number => (amount / a.grams) * 100;
-    const foodId = await ctx.db.insert("foods", {
+    const foodId = same?._id ?? (await ctx.db.insert("foods", {
       name: a.name,
       aliases: [],
       searchText: a.name,
@@ -315,20 +320,26 @@ export const saveEstimate = internalMutation({
         sodiumMg: null,
       },
       source: "ai_estimate",
-      sourceId: crypto.randomUUID(),
+      sourceId: `${a.userId}:ai:${key}`,
       verified: false,
       ownerUserId: a.userId,
       note: a.assumptions,
-    });
-    // A missing unit is a bare count, stored as the "piece" measure.
+    }));
+    // A missing unit is a bare count, stored as the "piece" measure. A reused food gains a row only for a new unit.
     const measure = normalizeUnit(a.unit);
-    await ctx.db.insert("food_portions", {
-      foodId,
-      source: "ai_estimate",
-      measure,
-      description: measure,
-      gramsPerMeasure: a.grams / a.quantity,
-    });
+    const hasMeasure = await ctx.db
+      .query("food_portions")
+      .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId).eq("description", measure))
+      .first();
+    if (hasMeasure === null) {
+      await ctx.db.insert("food_portions", {
+        foodId,
+        source: "ai_estimate",
+        measure,
+        description: measure,
+        gramsPerMeasure: a.grams / a.quantity,
+      });
+    }
     return foodId;
   },
 });

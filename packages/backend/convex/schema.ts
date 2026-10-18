@@ -322,6 +322,7 @@ export default defineSchema({
   })
     .index("by_source_and_sourceId", ["source", "sourceId"])
     .index("by_ownerUserId", ["ownerUserId"])
+    .index("by_ownerUserId_and_source", ["ownerUserId", "source"])
     .searchIndex("search_text", { searchField: "searchText", filterFields: ["source", "verified", "ownerUserId"] }),
 
   food_portions: defineTable({

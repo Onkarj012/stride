@@ -130,11 +130,11 @@ export async function activeLinkFood(ctx: Ctx, userId: string, key: string): Pro
   return null;
 }
 
-/** The caller's personal foods, bounded. */
+/** The caller's saved foods, bounded. AI estimates are not saved foods, so they are not listed. */
 export async function userFoodsOf(ctx: Ctx, userId: string): Promise<Doc<"foods">[]> {
   return await ctx.db
     .query("foods")
-    .withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId))
+    .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", userId).eq("source", "user"))
     .take(MAX_USER_FOODS);
 }
 
@@ -156,14 +156,9 @@ function cardCandidates(
   return pool.slice(0, MAX_CARD_CANDIDATES).map((r) => r.candidate);
 }
 
-/** Keeps AI estimates out of name matching. A discarded draft's estimate must not auto-commit by name later. */
-function notEstimate(food: Doc<"foods">): boolean {
-  return food.source !== "ai_estimate";
-}
-
 /** D5 matcher: user foods, then food memory, then the `foods` search index. First confident tier wins. */
 async function matchFood(ctx: Ctx, userId: string, text: string, userFoods: Doc<"foods">[]): Promise<Match> {
-  const userRanked = rankCandidates(text, userFoods.filter(notEstimate));
+  const userRanked = rankCandidates(text, userFoods);
   const userPick = selectMatch(userRanked);
   if (userPick.status === "matched") {
     return { food: userPick.candidate, score: userPick.score, source: "user_food", candidates: [] };
@@ -172,7 +167,7 @@ async function matchFood(ctx: Ctx, userId: string, text: string, userFoods: Doc<
   const remembered = await activeLinkFood(ctx, userId, linkKey(text));
   if (remembered !== null) return { food: remembered, score: MEMORY_MATCH_SCORE, source: "memory", candidates: [] };
 
-  const ranked = rankCandidates(text, (await searchVisibleFoods(ctx, userId, text)).filter(notEstimate));
+  const ranked = rankCandidates(text, await searchVisibleFoods(ctx, userId, text));
   const pick = selectExactMatch(ranked);
   if (pick.status === "matched") return { food: pick.candidate, score: pick.score, source: "db", candidates: [] };
   const candidates = [...cardCandidates(userPick, userRanked), ...cardCandidates(pick, ranked)];
