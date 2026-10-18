@@ -5,8 +5,6 @@ import {
   evaluateGate,
   expandSynonyms,
   isLocalDate,
-  normalizeUnit,
-  PORTION_CONFIDENCE,
   rankCandidates,
   resolvePortion,
   scaleNutrients,
