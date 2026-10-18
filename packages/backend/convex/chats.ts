@@ -1135,11 +1135,13 @@ async function runChatTurn(
     if (reply.toolCalls.length === 0) {
       // An empty first step has nothing to show, so it fails. After tools ran, their saved writes stand and the turn ends.
       if (i === 0 && stream.text === "") throw new Error("OpenRouter returned an empty reply");
-      // With no streamed text, the tool notes say what changed. A step that changed nothing gets the sorry line, not "Done.".
+      // With no streamed text, say what the tools did. A turn that only offered a Log this button points at it.
       let reply = stream.text;
       if (reply === "") {
         if (notes.length > 0) reply = notes.join(" ");
-        else reply = entryIds.length + draftIds.length > 0 ? "Done." : SORRY_REPLY;
+        else if (entryIds.length + draftIds.length > 0) reply = "Done.";
+        else if (offered !== undefined) reply = "Tap Log this to add it.";
+        else reply = SORRY_REPLY;
       }
       return { reply, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
     }

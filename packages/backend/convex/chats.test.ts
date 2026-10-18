@@ -346,6 +346,16 @@ describe("Log this (A11)", () => {
     expect((await replyRow(t)).logAction).toEqual({ text: "2 roti and dal" });
   });
 
+  test("offer_log then an empty step says to tap Log this, and the button is kept", async () => {
+    const { t, user, chatId } = await setup();
+    llm = (body) => (afterToolResult(body) ? { content: null } : { toolCalls: [{ name: "offer_log", args: { text: "2 roti and dal" } }] });
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "log 2 roti and dal" });
+
+    expect(turn.reply).toBe("Tap Log this to add it.");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect((await replyRow(t)).logAction).toEqual({ text: "2 roti and dal" });
+  });
+
   test("a plain text reply has no Log this action", async () => {
     const { t, user, chatId } = await setup();
     await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
