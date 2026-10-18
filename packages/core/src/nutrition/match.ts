@@ -160,9 +160,15 @@ export function selectMatch<T extends MatchCandidate>(ranked: readonly RankedCan
   return { status: "matched", candidate: best.candidate, score: best.score };
 }
 
-/** Like `selectMatch`, but auto-picks only an exact name. A weaker top match is no pick, so it stays a candidate. */
-export function selectExactMatch<T extends MatchCandidate>(ranked: readonly RankedCandidate<T>[]): MatchSelection<T> {
-  const best = ranked[0];
-  if (best === undefined || best.score !== MATCH_SCORES.exact) return { status: "no_match" };
-  return selectMatch(ranked);
+/** True when the query and a name or alias are the same canonical words in the same order. */
+function isExactName(query: string, candidate: MatchCandidate): boolean {
+  const q = canonicalTokens(query).join(" ");
+  return [candidate.name, ...(candidate.aliases ?? [])].some((name) => canonicalTokens(name).join(" ") === q);
+}
+
+/** Like `selectMatch`, but auto-picks only an exact name or alias. Partial, reordered and tied matches stay candidates. */
+export function selectExactMatch<T extends MatchCandidate>(query: string, ranked: readonly RankedCandidate<T>[]): MatchSelection<T> {
+  const pick = selectMatch(ranked);
+  if (pick.status === "matched" && !isExactName(query, pick.candidate)) return { status: "no_match" };
+  return pick;
 }

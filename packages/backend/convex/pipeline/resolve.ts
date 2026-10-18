@@ -167,7 +167,7 @@ async function matchFood(ctx: Ctx, userId: string, text: string, userFoods: Doc<
   if (remembered !== null) return { food: remembered, score: MEMORY_MATCH_SCORE, source: "memory", candidates: [] };
 
   const ranked = rankCandidates(text, await searchVisibleFoods(ctx, userId, text));
-  const pick = selectExactMatch(ranked);
+  const pick = selectExactMatch(text, ranked);
   if (pick.status === "matched") return { food: pick.candidate, score: pick.score, source: "db", candidates: [] };
   const candidates = [...cardCandidates(userPick, userRanked), ...cardCandidates(pick, ranked)];
   const unique = candidates.filter((food, i) => candidates.findIndex((other) => other._id === food._id) === i);
