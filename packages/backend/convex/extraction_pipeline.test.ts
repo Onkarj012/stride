@@ -1053,6 +1053,42 @@ describe("AI estimate identity and portions", () => {
     expect(rows).toHaveLength(2);
   });
 
+  test("a reused estimate keeps one piece row, so counts stated two ways never conflict", async () => {
+    const { t, user } = await setup();
+    const samosa = (quantity: number, grams: number, kcal: number, protein: number, carbs: number, fat: number) => ({
+      item_index: 0,
+      name: "Samosa",
+      grams,
+      kcal,
+      protein_g: protein,
+      carbs_g: carbs,
+      fat_g: fat,
+      assumptions: "Fried, potato filling",
+    });
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "samosa", quantity: 3, unit: "samosa" }])
+        : { toolCalls: [{ name: "estimate_food", args: samosa(3, 100, 300, 8, 40, 12) }] };
+    await logText(user, "3 samosa", "sub-1");
+
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "samosa", quantity: 1 }])
+        : { toolCalls: [{ name: "estimate_food", args: samosa(1, 33, 99, 2.64, 13.2, 3.96) }] };
+    const second = await logText(user, "1 samosa", "sub-2");
+    if (second.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: second.draftId });
+
+    const estimate = (await t.run((ctx) => ctx.db.query("foods").collect())).find((food) => food.source === "ai_estimate");
+    const portions = await t.run((ctx) => ctx.db.query("food_portions").collect());
+    expect(portions.filter((p) => p.foodId === estimate?._id).map((p) => p.measure)).toEqual(["piece"]);
+
+    llm = () => extraction([{ food: "samosa", quantity: 2 }]);
+    const third = await logText(user, "2 samosa", "sub-3");
+    expect(third.kind).toBe("committed");
+    expect((await entryRows(t)).at(-1)?.grams).toBeCloseTo(2 * (100 / 3), 6);
+  });
+
   test("'Acai bowl' with unit bowl keeps a bowl row, and the draft resolves to its 200 g", async () => {
     const { t, user } = await setup();
     llm = (body) =>

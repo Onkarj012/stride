@@ -26,6 +26,8 @@ import { searchVisibleFoods, userFoodsOf, type Pick, type UnresolvedItem } from 
 export const MAX_TOOL_ITERATIONS = 4;
 const MAX_TOOL_FOODS = 10;
 const MAX_RECENT_DAYS = 7;
+/** Most portion rows read for one estimated food. An estimate has a handful, one per unit it was saved with. */
+const MAX_ESTIMATE_PORTIONS = 50;
 const RESOLVE_MAX_TOKENS = 600;
 
 /** Food ids the model has seen in tool results this loop. Only these may be chosen, so it cannot invent ids. */
@@ -374,17 +376,17 @@ export const saveEstimate = internalMutation({
       note: a.assumptions,
     });
     // A bare count or a unit that names the food is stored as "piece", so a later bare count finds it. The stated word stays as the description.
-    const label = normalizeUnit(a.unit);
-    const hasLabel = await ctx.db
+    // One row per measure: a reused food keeps the row it already has, so its counts never conflict.
+    const rows = await ctx.db
       .query("food_portions")
-      .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId).eq("description", label))
-      .first();
-    if (hasLabel === null) {
+      .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId))
+      .take(MAX_ESTIMATE_PORTIONS);
+    if (!rows.some((row) => row.measure === measure)) {
       await ctx.db.insert("food_portions", {
         foodId,
         source: "ai_estimate",
         measure,
-        description: label,
+        description: normalizeUnit(a.unit),
         gramsPerMeasure: a.grams / a.quantity,
       });
     }

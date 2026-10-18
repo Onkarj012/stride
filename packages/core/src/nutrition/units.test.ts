@@ -359,4 +359,9 @@ describe("AI estimate portions", () => {
     const pizza = { foodName: "Pizza", portions: [{ measure: "piece", gramsPerMeasure: 400 }], skipSeedPieceWeights: true };
     expect(resolvePortion({ quantity: 2, unit: "slice" }, pizza)).toEqual({ status: "unresolved", reason: "food_specific_measure" });
   });
+
+  it("a bare count of an estimate made from slices stays unresolved when it has no piece row", () => {
+    const paratha = { foodName: "Masala paratha", portions: [{ measure: "slice", gramsPerMeasure: 20 }], skipSeedPieceWeights: true };
+    expect(resolvePortion({ quantity: 2, unit: null }, paratha)).toEqual({ status: "unresolved", reason: "missing_piece_weight" });
+  });
 });

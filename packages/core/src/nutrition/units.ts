@@ -257,7 +257,10 @@ function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: Por
     return { status: "unresolved", reason: "missing_piece_weight" };
   }
   if (rawUnit !== PIECE_UNIT) return { status: "unresolved", reason: "missing_piece_weight" };
-  const matches = isBare ? (measure: string) => COUNT_MEASURES.includes(measure) : (measure: string) => measure === PIECE_UNIT;
+  // An AI estimate has one piece row. Its other count rows ("slice") describe part of the food, so a bare count must not use them.
+  const matches = isBare && ctx.skipSeedPieceWeights !== true
+    ? (measure: string) => COUNT_MEASURES.includes(measure)
+    : (measure: string) => measure === PIECE_UNIT;
   const perCount = portionGrams(ctx.portions, matches);
   if (perCount === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
   if (perCount !== null) return resolved(quantity * perCount, PORTION_CONFIDENCE.foodPortion, "food_portion");
