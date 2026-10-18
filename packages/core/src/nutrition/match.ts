@@ -159,3 +159,10 @@ export function selectMatch<T extends MatchCandidate>(ranked: readonly RankedCan
   }
   return { status: "matched", candidate: best.candidate, score: best.score };
 }
+
+/** Like `selectMatch`, but auto-picks only an exact name. A weaker top match is no pick, so it stays a candidate. */
+export function selectExactMatch<T extends MatchCandidate>(ranked: readonly RankedCandidate<T>[]): MatchSelection<T> {
+  const best = ranked[0];
+  if (best === undefined || best.score !== MATCH_SCORES.exact) return { status: "no_match" };
+  return selectMatch(ranked);
+}
