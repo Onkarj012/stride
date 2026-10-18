@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { MAX_TOOL_ITERATIONS } from "./pipeline/tools";
+import { estimateProblem, type Estimate, MAX_TOOL_ITERATIONS } from "./pipeline/tools";
 import { isRecord, OPENROUTER_CHAT_URL, PHOTO_MODEL, PIPELINE_MODEL } from "./pipeline/openrouter";
 import { UNDO_WINDOW_MS } from "./pipeline/resolve";
 import { AI_INPUT_LIMITS } from "./ai_guard";
@@ -856,5 +856,69 @@ describe("draft amounts: a food-name unit does not follow a food change", () => 
       user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, foodId: coffee }] }),
     ).rejects.toThrow(/cannot turn that amount/);
     expect(await entryRows(t)).toHaveLength(0);
+  });
+});
+
+describe("AI estimate checks", () => {
+  test("a chai estimate passes; macros that do not add up and a 600 g katori are refused", () => {
+    const chai: Estimate = { name: "Masala chai", grams: 110, kcal: 55, protein: 2.5, carbs: 7, fat: 2, assumptions: "Milk and sugar, cafe cup" };
+    expect(estimateProblem(chai, 1, "teacup")).toBeNull();
+    expect(estimateProblem({ ...chai, fat: 10 }, 1, "teacup")).toMatch(/add up/);
+    expect(estimateProblem({ ...chai, grams: 600, kcal: 300, protein: 10, carbs: 40, fat: 10 }, 1, "katori")).toMatch(/fit one katori/);
+  });
+});
+
+describe("AI estimate: an unmatched item becomes a private estimate on the draft", () => {
+  const CHAI_CALL = {
+    item_index: 0,
+    name: "Masala chai",
+    grams: 110,
+    kcal: 55,
+    protein_g: 2.5,
+    carbs_g: 7,
+    fat_g: 2,
+    assumptions: "Milk and sugar, cafe cup",
+    confidence: 0.6,
+  };
+
+  test("the estimate lands on the draft with its chip data and a private food row, and does not auto-commit", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const result = await logText(user, "a teacup of masala chai");
+
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve"]);
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]).toMatchObject({ aiEstimate: true, note: "Milk and sugar, cafe cup", grams: 110 });
+    expect(draft?.items[0]?.reasons).toContain("ai_estimate");
+
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    const estimates = foods.filter((food) => food.source === "ai_estimate");
+    expect(estimates).toHaveLength(1);
+    expect(estimates[0]).toMatchObject({ name: "Masala chai", ownerUserId: "user_a", verified: false });
+    expect(draft?.items[0]?.food?._id).toBe(estimates[0]?._id);
+  });
+
+  test("once confirmed, the same text auto-commits from memory with no model call", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const first = await logText(user, "a teacup of masala chai", "sub-1");
+    if (first.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: first.draftId });
+
+    const callsBefore = openRouterBodies.length;
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+    expect(second.kind).toBe("committed");
+    expect(openRouterBodies.slice(callsBefore).map(kind)).toEqual(["extract"]);
+    const rows = await entryRows(t);
+    expect(rows.at(-1)).toMatchObject({ source: "memory", grams: 110 });
+    expect(rows.at(-1)?.flags).toContain("estimated");
   });
 });

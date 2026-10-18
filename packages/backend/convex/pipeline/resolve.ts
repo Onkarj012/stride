@@ -59,7 +59,8 @@ export type ItemReason =
   | "low_confidence"
   | "clamp_flag"
   | "invalid_date"
-  | "invalid_portion_scale";
+  | "invalid_portion_scale"
+  | "ai_estimate";
 
 /** The matcher's answer for one item text. */
 interface Match {
@@ -155,9 +156,14 @@ function cardCandidates(
   return pool.slice(0, MAX_CARD_CANDIDATES).map((r) => r.candidate);
 }
 
+/** Keeps AI estimates out of name matching. A discarded draft's estimate must not auto-commit by name later. */
+function notEstimate(food: Doc<"foods">): boolean {
+  return food.source !== "ai_estimate";
+}
+
 /** D5 matcher: user foods, then food memory, then the `foods` search index. First confident tier wins. */
 async function matchFood(ctx: Ctx, userId: string, text: string, userFoods: Doc<"foods">[]): Promise<Match> {
-  const userRanked = rankCandidates(text, userFoods);
+  const userRanked = rankCandidates(text, userFoods.filter(notEstimate));
   const userPick = selectMatch(userRanked);
   if (userPick.status === "matched") {
     return { food: userPick.candidate, score: userPick.score, source: "user_food", candidates: [] };
@@ -166,7 +172,7 @@ async function matchFood(ctx: Ctx, userId: string, text: string, userFoods: Doc<
   const remembered = await activeLinkFood(ctx, userId, linkKey(text));
   if (remembered !== null) return { food: remembered, score: MEMORY_MATCH_SCORE, source: "memory", candidates: [] };
 
-  const ranked = rankCandidates(text, await searchVisibleFoods(ctx, userId, text));
+  const ranked = rankCandidates(text, (await searchVisibleFoods(ctx, userId, text)).filter(notEstimate));
   const pick = selectExactMatch(ranked);
   if (pick.status === "matched") return { food: pick.candidate, score: pick.score, source: "db", candidates: [] };
   const candidates = [...cardCandidates(userPick, userRanked), ...cardCandidates(pick, ranked)];
@@ -255,7 +261,10 @@ export async function resolveItems(
     }
 
     const fromPhoto = inputKind === "photo" && item.fromPhoto;
-    if (fromPhoto) flags.push("estimated");
+    // An AI estimate stays on the draft the first time (tool pick), then auto-commits from memory with the flag.
+    const aiEstimate = match.food?.source === "ai_estimate";
+    if (aiEstimate && match.source === "tool") reasons.push("ai_estimate");
+    if (fromPhoto || aiEstimate) flags.push("estimated");
     if (item.cookingOil) flags.push("cooking_oil");
     const clamp = match.food !== null && portion.status === "resolved"
       ? clampFlags(portion.grams, scaleNutrients(match.food.per100g, portion.grams))
@@ -329,7 +338,7 @@ export async function draftLines(ctx: Ctx, draft: Doc<"drafts">): Promise<LogLin
       grams: item.grams ?? null,
       kcal: food !== null && item.grams !== undefined ? scaleNutrients(food.per100g, item.grams).kcal : null,
       reasons: item.reasons ?? [],
-      estimated: item.fromPhoto === true,
+      estimated: item.fromPhoto === true || food?.source === "ai_estimate",
     });
   }
   return lines;

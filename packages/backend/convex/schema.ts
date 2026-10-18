@@ -317,7 +317,8 @@ export default defineSchema({
     source: foodSourceValidator,
     sourceId: v.string(),
     verified: v.boolean(),
-    ownerUserId: v.optional(v.string()), // set on source "user" rows; only that user sees them
+    ownerUserId: v.optional(v.string()), // set on source "user" and "ai_estimate" rows; only that user sees them
+    note: v.optional(v.string()), // assumptions behind an AI estimate, shown on the draft card
   })
     .index("by_source_and_sourceId", ["source", "sourceId"])
     .index("by_ownerUserId", ["ownerUserId"])
