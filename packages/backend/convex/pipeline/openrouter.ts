@@ -151,6 +151,15 @@ function ownKeyRejected(own: boolean, status: number): ConvexError<{ code: strin
   return new ConvexError({ code: "OWN_KEY_INVALID", message: "Your OpenRouter key was rejected. Check it in Settings." });
 }
 
+/** The user's own OpenRouter key has no credits left (402). The user tops it up or removes it. */
+function ownKeyNoCredits(own: boolean, status: number): ConvexError<{ code: string; message: string }> | null {
+  if (!own || status !== 402) return null;
+  return new ConvexError({
+    code: "OWN_KEY_NO_CREDITS",
+    message: "Your OpenRouter key is out of credits. Top it up, or remove it in Settings to use Stride's AI.",
+  });
+}
+
 /** The app's OpenRouter account has no credits left (402). Own-key calls are the user's to fund, so they pass through. */
 function outOfCredits(own: boolean, status: number): ConvexError<{ code: string; message: string }> | null {
   if (own || status !== 402) return null;
@@ -201,7 +210,7 @@ export async function callOpenRouter(ctx: ActionCtx, userId: string, request: Ch
       }
       if (!res.ok) {
         release = true;
-        const rejected = ownKeyRejected(own, res.status) ?? outOfCredits(own, res.status);
+        const rejected = ownKeyRejected(own, res.status) ?? ownKeyNoCredits(own, res.status) ?? outOfCredits(own, res.status);
         if (rejected) throw rejected;
         lastError = new Error(`OpenRouter error ${res.status}: ${(await res.text()).slice(0, 300)}`);
         if (res.status === 429 || res.status >= 500) continue;
@@ -316,7 +325,7 @@ export async function streamOpenRouter(
       }
       if (!res.ok) {
         release = true;
-        const rejected = ownKeyRejected(own, res.status) ?? outOfCredits(own, res.status);
+        const rejected = ownKeyRejected(own, res.status) ?? ownKeyNoCredits(own, res.status) ?? outOfCredits(own, res.status);
         if (rejected) throw rejected;
         lastError = new Error(`OpenRouter error ${res.status}: ${(await res.text()).slice(0, 300)}`);
         if (res.status === 429 || res.status >= 500) continue;

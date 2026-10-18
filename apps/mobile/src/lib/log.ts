@@ -113,6 +113,7 @@ const CODE_MESSAGES: Readonly<Record<string, string | null>> = {
   RATE_LIMITED: "That's a lot at once. Give it a minute, then try again.",
   INPUT_TOO_LARGE: "That's too long for me. Try something shorter.",
   OWN_KEY_INVALID: 'Your OpenRouter key was rejected. Check it in Settings.',
+  OWN_KEY_NO_CREDITS: "Your OpenRouter key is out of credits. Top it up, or remove it in Settings to use Stride's AI.",
   AI_UNAVAILABLE: 'The AI is unavailable right now. Try again later, or add your own OpenRouter key in Settings.',
   KEY_FORMAT: "That doesn't look like an OpenRouter key.",
   KEY_REJECTED: 'OpenRouter rejected that key.',

@@ -250,5 +250,11 @@ describe("own OpenRouter key on chat turns", () => {
       data: { code: "AI_UNAVAILABLE" },
     });
     expect(calls.filter((call) => call.url === OPENROUTER_CHAT_URL)).toHaveLength(1);
+
+    // The user's own key out of credits names their key, not the app's.
+    await user.action(api.api_keys.saveOpenRouterKey, { key: FAKE_KEY });
+    await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m2", text: "hello again" })).rejects.toMatchObject({
+      data: { code: "OWN_KEY_NO_CREDITS" },
+    });
   });
 });

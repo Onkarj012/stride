@@ -387,6 +387,25 @@ describe("chat corrections (D8)", () => {
     expect((await user.query(api.day_totals.dayTotals, {})).nutrients.kcal).toBe(238);
   });
 
+  test("an empty step after a tool ran ends the turn with that tool's note, and the entry the tool wrote is kept", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const [original] = await user.mutation(api.entries.addEntries, {
+      submissionId: "e1",
+      items: [{ foodId: foods.chapati, grams: 80, source: "db" }],
+    });
+    if (original === undefined) throw new Error("no entry");
+    llm = (body) =>
+      afterToolResult(body)
+        ? { content: null }
+        : { toolCalls: [{ name: "edit_entry", args: { entry_id: original, quantity: 3, unit: null } }] };
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "it was 3 rotis, not 2" });
+
+    expect(turn.reply).toBe("Updated Chapati.");
+    const rows = await entryRows(t);
+    expect(rows[1]).toMatchObject({ op: "edit", grams: 120, status: "live" });
+    expect(turn.entryIds).toEqual([rows[1]?._id]);
+  });
+
   test("delete_entry writes a deleted revision; a bad entry id returns an error to the model", async () => {
     const { t, user, chatId, foods } = await setup();
     const [original] = await user.mutation(api.entries.addEntries, {
@@ -1060,7 +1079,8 @@ describe("coach sees the profile (10f)", () => {
   test("a turn that fails after a correction keeps its Undo card on the failed reply", async () => {
     const { t, user, chatId, foods } = await setup();
     const [entry] = await user.mutation(api.entries.addEntries, { submissionId: "e1", items: [{ foodId: foods.chapati, grams: 80, source: "db" }] });
-    llm = (_body, n) => (n === 1 ? { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] } : {});
+    llm = (_body, n) =>
+      n === 1 ? { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] } : { chunks: ["Partial"], failAt: 1 };
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "3 rotis" })).rejects.toThrow();
     const failed = await replyRow(t);
     const revision = (await entryRows(t)).at(-1);
