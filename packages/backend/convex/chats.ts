@@ -1133,8 +1133,8 @@ async function runChatTurn(
     if (reply.toolCalls.length === 0) {
       // An empty first step has nothing to show, so it fails. After tools ran, their saved writes stand and the turn ends.
       if (i === 0 && stream.text === "") throw new Error("OpenRouter returned an empty reply");
-      const written = [stream.text, notes.join(" ")].filter((part) => part !== "").join("\n\n");
-      return { reply: written === "" ? "Done." : written, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
+      const reply = stream.text !== "" ? stream.text : notes.length > 0 ? notes.join(" ") : "Done.";
+      return { reply, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
     }
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
 
