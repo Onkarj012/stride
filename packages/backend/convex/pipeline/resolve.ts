@@ -199,8 +199,8 @@ export async function portionsOf(ctx: Ctx, foodId: Id<"foods">): Promise<Doc<"fo
 }
 
 /**
- * Grams for a quantity and unit of one food, from already-loaded portion rows. An AI estimate's own row for the
- * unit wins, so a seed piece weight (a paratha is 80 g) cannot change the grams the estimate was saved with.
+ * Grams for a quantity and unit of one food, from already-loaded portion rows, in the core resolver's order.
+ * An AI estimate skips the seed piece weights, so its own rows decide its grams.
  */
 export function resolveWithPortions(
   food: Doc<"foods">,
@@ -209,14 +209,12 @@ export function resolveWithPortions(
   unit: string | null,
   userMeasures: UserMeasure[],
 ): PortionResult {
-  if (food.source === "ai_estimate" && Number.isFinite(quantity) && quantity > 0) {
-    const measure = normalizeUnit(unit);
-    const own = portions.find((row) => normalizeUnit(row.measure) === measure);
-    if (own !== undefined) {
-      return { status: "resolved", grams: quantity * own.gramsPerMeasure, confidence: PORTION_CONFIDENCE.foodPortion, method: "food_portion" };
-    }
-  }
-  return resolvePortion({ quantity, unit }, { foodName: food.name, portions, userMeasures });
+  return resolvePortion({ quantity, unit }, {
+    foodName: food.name,
+    portions,
+    userMeasures,
+    skipSeedPieceWeights: food.source === "ai_estimate",
+  });
 }
 
 /** Grams for a quantity and unit of one food, from its portions, the user's measures and the density tables. */

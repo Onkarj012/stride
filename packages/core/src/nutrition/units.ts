@@ -57,6 +57,8 @@ export interface PortionContext {
   /** That food's `food_portions` rows. */
   portions?: readonly { measure: string; gramsPerMeasure: number }[];
   userMeasures?: readonly UserMeasure[];
+  /** Skips the PIECE_WEIGHTS seeds. A count then uses the food's own "piece" row, so an AI estimate's grams hold. */
+  skipSeedPieceWeights?: boolean;
 }
 
 /** How a resolved portion got its grams. */
@@ -226,7 +228,7 @@ function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: Por
     if (explicitPiece === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
     if (explicitPiece !== null) return resolved(quantity * explicitPiece, PORTION_CONFIDENCE.foodPortion, "food_portion");
   }
-  const seed = headedPieceSeed(ctx.foodName);
+  const seed = ctx.skipSeedPieceWeights === true ? null : headedPieceSeed(ctx.foodName);
   if (seed !== null) {
     // A named unit must name this food's seed, so "roti" never counts a banana.
     if (rawUnit === PIECE_UNIT || tokenize(rawUnit).every((w) => seed.names.has(pieceName(w)))) {
@@ -267,7 +269,7 @@ export function resolvePortion(
   const rawUnit = normalizeUnit(input.unit);
   const isBare = normalizeText(input.unit ?? "") === "";
   // "1 phulka" arrives with the food name as its unit; treat it as one piece of that food.
-  const unit = pieceWeightFor(rawUnit) !== null ? PIECE_UNIT : rawUnit;
+  const unit = ctx.skipSeedPieceWeights !== true && pieceWeightFor(rawUnit) !== null ? PIECE_UNIT : rawUnit;
 
   const directMeasureNames = new Set([rawUnit, unit]);
   if (unit === PIECE_UNIT) directMeasureNames.add(normalizeText(ctx.foodName));
@@ -324,6 +326,13 @@ export function resolvePortion(
       ? Math.min(base, PORTION_CONFIDENCE.userMeasure)
       : vessel !== undefined ? Math.min(base, PORTION_CONFIDENCE.householdVessel) : base;
     return resolved(quantity * mlPerUnit * density.gPerMl, confidence, "volume");
+  }
+
+  // With seeds skipped, a named count ("2 paratha") with no row of its own takes the food's piece row.
+  if (ctx.skipSeedPieceWeights === true && unit !== PIECE_UNIT && COUNT_MEASURES.includes(unit)) {
+    const piece = portionGrams(ctx.portions, (measure) => measure === PIECE_UNIT);
+    if (piece === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+    if (piece !== null) return resolved(quantity * piece, PORTION_CONFIDENCE.foodPortion, "food_portion");
   }
 
   if (unit === PIECE_UNIT) return pieceGrams(quantity, rawUnit, isBare, ctx);

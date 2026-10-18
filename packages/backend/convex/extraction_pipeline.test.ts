@@ -913,7 +913,7 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     expect(await entryRows(t)).toHaveLength(0);
     expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve"]);
     const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
-    expect(draft?.items[0]).toMatchObject({ aiEstimate: true, note: "Milk and sugar, cafe cup", grams: 110 });
+    expect(draft?.items[0]).toMatchObject({ aiEstimate: true, estimated: true, note: "Milk and sugar, cafe cup", grams: 110 });
     expect(draft?.items[0]?.reasons).toContain("ai_estimate");
 
     const foods = await t.run((ctx) => ctx.db.query("foods").collect());
@@ -987,6 +987,32 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     expect(second.kind).toBe("draft");
     const foods = await t.run((ctx) => ctx.db.query("foods").collect());
     expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(1);
+  });
+});
+
+describe("AI estimate names keep non-Latin scripts apart", () => {
+  test("two Devanagari estimates make two food rows", async () => {
+    const { t, user } = await setup();
+    const callFor = (name: string) => ({
+      item_index: 0,
+      name,
+      grams: 150,
+      kcal: 200,
+      protein_g: 5,
+      carbs_g: 30,
+      fat_g: 6,
+      assumptions: "Home-style, one katori",
+    });
+    for (const [submission, name] of [["sub-1", "पोहा"], ["sub-2", "उपमा"]] as const) {
+      llm = (body) =>
+        kind(body) === "extract"
+          ? extraction([{ food: name, quantity: 1, unit: "katori" }])
+          : { toolCalls: [{ name: "estimate_food", args: callFor(name) }] };
+      const result = await logText(user, name, submission);
+      expect(result.kind).toBe("draft");
+    }
+    const rows = (await t.run((ctx) => ctx.db.query("foods").collect())).filter((food) => food.source === "ai_estimate");
+    expect(rows.map((food) => food.name).sort()).toEqual(["उपमा", "पोहा"]);
   });
 });
 

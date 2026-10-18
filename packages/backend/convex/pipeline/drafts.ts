@@ -145,7 +145,7 @@ export const getDraft = query({
         unresolved: item.unresolved ?? null,
         reasons: item.reasons ?? [],
         portionScale: item.portionScale !== undefined && validScale(item.portionScale) ? item.portionScale : null,
-        estimated: item.fromPhoto === true,
+        estimated: item.fromPhoto === true || food?.source === "ai_estimate",
         aiEstimate: food?.source === "ai_estimate",
         note: food?.note ?? null,
         cookingOil: item.cookingOil === true,

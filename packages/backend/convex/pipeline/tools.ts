@@ -2,7 +2,6 @@ import {
   addDays,
   HOUSEHOLD_VESSELS,
   MASS_UNITS_G,
-  normalizeText,
   normalizeUnit,
   rankCandidates,
   type MealSlot,
@@ -96,6 +95,11 @@ const ESTIMATE_VESSEL_ML: Readonly<Partial<Record<string, number>>> = {
   cup: 240,
   teacup: 110,
 };
+
+/** Dedupe key for an estimate's name. Unicode-safe, so Devanagari names stay distinct. */
+export function estimateKey(name: string): string {
+  return name.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+}
 
 /** A table's number for a key, or undefined. Own properties only, so "constructor" is not a unit. */
 function ownNumber(table: Readonly<Partial<Record<string, number>>>, key: string): number | undefined {
@@ -280,7 +284,7 @@ function parseEstimate(args: Record<string, unknown>): Estimate | null {
 /** Why an estimate is refused, or null when it passes. Numbers are for the whole stated amount of `quantity` × `unit`. */
 export function estimateProblem(e: Estimate, quantity: number, unit: string | null): string | null {
   if (![e.grams, e.kcal, e.protein, e.carbs, e.fat].every(Number.isFinite)) return "numbers must be finite";
-  if (e.name === "") return "name is empty";
+  if (estimateKey(e.name) === "") return "name is empty";
   if (!(quantity > 0)) return "quantity must be above 0";
   if (!(e.grams > 0 && e.grams <= 2000)) return "grams must be above 0 and at most 2000";
   if (e.kcal < 0 || e.protein < 0 || e.carbs < 0 || e.fat < 0) return "nutrients cannot be negative";
@@ -329,8 +333,7 @@ export const saveEstimate = internalMutation({
     if (a.chatId !== undefined && (await ctx.db.get("chats", a.chatId))?.userId !== a.userId) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Chat not found" });
     }
-    const key = normalizeText(a.name);
-    const sourceId = `${a.userId}:ai:${key}`;
+    const sourceId = `${a.userId}:ai:${estimateKey(a.name)}`;
     // Same-named estimates are one food, found by its exact sourceId. A repeat keeps the stored nutrients and note.
     const same = await ctx.db
       .query("foods")
