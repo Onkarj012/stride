@@ -34,8 +34,8 @@ export async function runPipeline(ctx: ActionCtx, userId: string, run: PipelineR
   try {
     picks = await runToolPass(ctx, userId, unresolved);
   } catch (err) {
-    // Structured errors (budget, rate limit, own key) are for the user. Anything else only skips the food picks.
-    if (err instanceof ConvexError) throw err;
+    // Structured errors (budget, rate limit, own key) are for the user. Out of AI credits and other failures only skip the picks.
+    if (err instanceof ConvexError && err.data.code !== "AI_UNAVAILABLE") throw err;
     console.warn("Tool pass failed; logging unresolved items", err instanceof Error ? err.message : String(err));
   }
   return await ctx.runMutation(internal.pipeline.resolve.commitLog, {

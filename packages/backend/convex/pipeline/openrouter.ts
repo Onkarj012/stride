@@ -151,6 +151,15 @@ function ownKeyRejected(own: boolean, status: number): ConvexError<{ code: strin
   return new ConvexError({ code: "OWN_KEY_INVALID", message: "Your OpenRouter key was rejected. Check it in Settings." });
 }
 
+/** The app's OpenRouter account has no credits left (402). Own-key calls are the user's to fund, so they pass through. */
+function outOfCredits(own: boolean, status: number): ConvexError<{ code: string; message: string }> | null {
+  if (own || status !== 402) return null;
+  return new ConvexError({
+    code: "AI_UNAVAILABLE",
+    message: "The AI is unavailable right now. Try again later, or add your own OpenRouter key in Settings.",
+  });
+}
+
 /**
  * Calls OpenRouter once (plus one retry on transient failure). Every attempt reserves spend through the
  * `ai_guard` budget first and settles or releases it afterwards, so no call can skip the budget.
@@ -192,7 +201,7 @@ export async function callOpenRouter(ctx: ActionCtx, userId: string, request: Ch
       }
       if (!res.ok) {
         release = true;
-        const rejected = ownKeyRejected(own, res.status);
+        const rejected = ownKeyRejected(own, res.status) ?? outOfCredits(own, res.status);
         if (rejected) throw rejected;
         lastError = new Error(`OpenRouter error ${res.status}: ${(await res.text()).slice(0, 300)}`);
         if (res.status === 429 || res.status >= 500) continue;
@@ -307,7 +316,7 @@ export async function streamOpenRouter(
       }
       if (!res.ok) {
         release = true;
-        const rejected = ownKeyRejected(own, res.status);
+        const rejected = ownKeyRejected(own, res.status) ?? outOfCredits(own, res.status);
         if (rejected) throw rejected;
         lastError = new Error(`OpenRouter error ${res.status}: ${(await res.text()).slice(0, 300)}`);
         if (res.status === 429 || res.status >= 500) continue;
@@ -384,7 +393,6 @@ export async function streamOpenRouter(
       // A connection closed cleanly mid-answer looks like EOF; only a finish reason or [DONE] means the reply is whole.
       if (!sawDone && state.finishReason === undefined) throw new Error("OpenRouter stream ended before the reply finished");
       if (state.finishReason === "length") throw new Error("OpenRouter reply was cut off (finish_reason: length)");
-      if (content === null && toolCalls.length === 0) throw new Error("OpenRouter returned an empty reply");
       return { content, toolCalls, stopped };
     } finally {
       clearTimeout(timeout);

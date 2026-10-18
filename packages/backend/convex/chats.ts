@@ -1131,6 +1131,8 @@ async function runChatTurn(
     );
     if (reply.stopped) return stopped();
     if (reply.toolCalls.length === 0) {
+      // A chat step with no text and no tool call has nothing for the user, so the turn fails as it did before.
+      if (reply.content === null) throw new Error("OpenRouter returned an empty reply");
       return { reply: stream.text, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
     }
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
