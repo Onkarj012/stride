@@ -442,3 +442,27 @@ describe("clearAllData and portion rows", () => {
     expect((await remaining(t)).foods).toEqual(["shared", "user_b"]);
   });
 });
+
+describe("exportAllData includes portion rows", () => {
+  test("an owned food's portion rows come with the export, and nothing is truncated", async () => {
+    const { t, user } = await setup();
+    const food = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: PER_100G,
+        source: "user",
+        sourceId: "user_a:homemade dal",
+        verified: true,
+        ownerUserId: "user_a",
+      });
+      await ctx.db.insert("food_portions", { foodId: id, source: "user", measure: "katori", description: "katori", gramsPerMeasure: 150 });
+      return id;
+    });
+
+    const data = await user.query(api.users.exportAllData, {});
+    expect(data.food_portions.map((row) => [row.foodId, row.measure, row.gramsPerMeasure])).toEqual([[food, "katori", 150]]);
+    expect(data.truncated.food_portions).toBe(false);
+  });
+});

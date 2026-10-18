@@ -1,5 +1,6 @@
 import { action, internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
 import { ConvexError, v } from "convex/values";
 
 /** Per-user restart tables that clearAllData empties in scheduled batches. Owned foods go last, after the rows that point at them. */
@@ -104,6 +105,24 @@ async function clearBatch(ctx: MutationCtx, table: LedgerTable, userId: string):
 export const EXPORT_ROW_LIMIT = 1000;
 /** Most messages exportAllData returns. Smaller because a message carries tool-call JSON. */
 export const EXPORT_MESSAGE_LIMIT = 200;
+
+/** The portion rows of the given foods, up to one shared export limit. Says whether rows were left out. */
+async function portionsOfFoods(
+  ctx: QueryCtx,
+  foodIds: readonly Id<"foods">[],
+): Promise<{ rows: Doc<"food_portions">[]; truncated: boolean }> {
+  const rows: Doc<"food_portions">[] = [];
+  for (const foodId of foodIds) {
+    const room = EXPORT_ROW_LIMIT - rows.length;
+    const found = await ctx.db
+      .query("food_portions")
+      .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId))
+      .take(room + 1);
+    rows.push(...found.slice(0, room));
+    if (found.length > room) return { rows, truncated: true };
+  }
+  return { rows, truncated: false };
+}
 
 /** Keeps the first `limit` rows of a `take(limit + 1)` read and says whether any were left out. */
 function capped<T>(rows: T[], limit: number): { rows: T[]; truncated: boolean } {
@@ -305,6 +324,8 @@ export const exportAllData = query({
       tdee_snapshots: capped(tdee_snapshots, EXPORT_ROW_LIMIT),
     };
 
+    const portions = await portionsOfFoods(ctx, restart.foods.rows.map((food) => food._id));
+
     return {
       exportedAt: Date.now(),
       daily_goals, check_in_answers, check_in_llm_questions,
@@ -318,6 +339,7 @@ export const exportAllData = query({
       drafts: restart.drafts.rows,
       food_links: restart.food_links.rows,
       foods: restart.foods.rows,
+      food_portions: portions.rows,
       user_measures: restart.user_measures.rows,
       workout_sessions: restart.workout_sessions.rows,
       sets: restart.sets.rows,
@@ -328,6 +350,7 @@ export const exportAllData = query({
         drafts: restart.drafts.truncated,
         food_links: restart.food_links.truncated,
         foods: restart.foods.truncated,
+        food_portions: portions.truncated,
         user_measures: restart.user_measures.truncated,
         workout_sessions: restart.workout_sessions.truncated,
         sets: restart.sets.truncated,
