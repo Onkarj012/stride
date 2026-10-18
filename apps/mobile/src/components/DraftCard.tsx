@@ -230,7 +230,7 @@ export function DraftCard({
                     {metaOf(plan)}
                     {plan.protein !== null ? ` · ${Math.round(plan.protein)} g protein` : ''}
                   </Text>
-                  {item.estimated && !item.aiEstimate ? <Tag text="estimated" tone="est" /> : null}
+                  {item.fromPhoto && !onEstimate ? <Tag text="estimated" tone="est" /> : null}
                 </View>
               </View>
               <Text style={s.itemKcal}>{plan.kcal === null ? '–' : formatNumber(plan.kcal)}</Text>
