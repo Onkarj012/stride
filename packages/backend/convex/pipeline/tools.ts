@@ -3,8 +3,10 @@ import {
   HOUSEHOLD_VESSELS,
   MASS_UNITS_G,
   normalizeUnit,
+  PIECE_UNIT,
   rankCandidates,
   type MealSlot,
+  unitNamesFood,
   VOLUME_UNITS_ML,
 } from "@stride/core";
 import { ConvexError, v } from "convex/values";
@@ -288,6 +290,7 @@ export function estimateProblem(e: Estimate, quantity: number, unit: string | nu
   if (!(quantity > 0)) return "quantity must be above 0";
   if (!(e.grams > 0 && e.grams <= 2000)) return "grams must be above 0 and at most 2000";
   if (e.kcal < 0 || e.protein < 0 || e.carbs < 0 || e.fat < 0) return "nutrients cannot be negative";
+  if (e.protein + e.carbs + e.fat > e.grams) return "protein, carbs and fat cannot weigh more than the grams";
   if ((e.kcal / e.grams) * 100 > 900) return "kcal per 100 g is above 900";
   const fromMacros = 4 * e.protein + 4 * e.carbs + 9 * e.fat;
   if (Math.abs(fromMacros - e.kcal) > 0.2 * Math.max(e.kcal, 50)) return "protein, carbs and fat do not add up to kcal";
@@ -334,8 +337,10 @@ export const saveEstimate = internalMutation({
     if (a.chatId !== undefined && (await ctx.db.get("chats", a.chatId))?.userId !== a.userId) {
       throw new ConvexError({ code: "NOT_FOUND", message: "Chat not found" });
     }
-    const sourceId = `${a.userId}:ai:${estimateKey(a.name)}`;
-    // Same-named estimates are one food, found by its exact sourceId. A repeat keeps the stored nutrients and note.
+    // Identity is the name plus the saved values, so a different estimate of the same name gets its own row.
+    const measure = a.unit === null || unitNamesFood(a.unit, a.name) ? PIECE_UNIT : normalizeUnit(a.unit);
+    const sourceId = `${a.userId}:ai:${estimateKey(a.name)}:${Math.round((a.kcal / a.grams) * 100)}:${Math.round(a.grams / a.quantity)}`;
+    // An identical estimate is one food, found by its exact sourceId. A repeat keeps the stored nutrients and note.
     const same = await ctx.db
       .query("foods")
       .withIndex("by_source_and_sourceId", (q) => q.eq("source", "ai_estimate").eq("sourceId", sourceId))
@@ -361,18 +366,18 @@ export const saveEstimate = internalMutation({
       ownerUserId: a.userId,
       note: a.assumptions,
     });
-    // A missing unit is a bare count, stored as the "piece" measure. A reused food gains a row only for a new unit.
-    const measure = normalizeUnit(a.unit);
-    const hasMeasure = await ctx.db
+    // A bare count or a unit that names the food is stored as "piece", so a later bare count finds it. The stated word stays as the description.
+    const label = normalizeUnit(a.unit);
+    const hasLabel = await ctx.db
       .query("food_portions")
-      .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId).eq("description", measure))
+      .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId).eq("description", label))
       .first();
-    if (hasMeasure === null) {
+    if (hasLabel === null) {
       await ctx.db.insert("food_portions", {
         foodId,
         source: "ai_estimate",
         measure,
-        description: measure,
+        description: label,
         gramsPerMeasure: a.grams / a.quantity,
       });
     }

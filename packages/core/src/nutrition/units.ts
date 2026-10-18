@@ -198,6 +198,13 @@ function pieceName(name: string): string {
   return own(PIECE_ALIASES, name) ?? name;
 }
 
+/** True when every word of a unit appears in the food name, so "paratha" names "Masala paratha" but "slice" not "Pizza". */
+export function unitNamesFood(unit: string, foodName: string): boolean {
+  const nameTokens = new Set(tokenize(foodName).map(pieceName));
+  const unitTokens = tokenize(unit).map(pieceName);
+  return unitTokens.length > 0 && unitTokens.every((t) => nameTokens.has(t));
+}
+
 /** Seed for a food whose head word names a piece row: grams, and the piece names it answers to. Null when none. */
 function headedPieceSeed(foodName: string): { grams: number; names: ReadonlySet<string> } | null {
   const heads = headWords(foodName);
@@ -330,10 +337,7 @@ export function resolvePortion(
 
   // With seeds skipped, a named unit takes the food's piece row only when the food name carries that unit.
   // "2 slice" of a whole pizza must not reuse one piece row for each slice.
-  const nameTokens = new Set(tokenize(ctx.foodName).map(pieceName));
-  const unitTokens = tokenize(unit).map(pieceName);
-  const unitInName = unitTokens.length > 0 && unitTokens.every((t) => nameTokens.has(t));
-  if (ctx.skipSeedPieceWeights === true && unit !== PIECE_UNIT && unitInName) {
+  if (ctx.skipSeedPieceWeights === true && unit !== PIECE_UNIT && unitNamesFood(unit, ctx.foodName)) {
     const piece = portionGrams(ctx.portions, (measure) => measure === PIECE_UNIT);
     if (piece === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
     if (piece !== null) return resolved(quantity * piece, PORTION_CONFIDENCE.foodPortion, "food_portion");
