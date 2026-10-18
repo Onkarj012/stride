@@ -339,14 +339,21 @@ export const saveEstimate = internalMutation({
     }
     // Identity is the name plus the saved values, so a different estimate of the same name gets its own row.
     const measure = a.unit === null || unitNamesFood(a.unit, a.name) ? PIECE_UNIT : normalizeUnit(a.unit);
-    const sourceId = `${a.userId}:ai:${estimateKey(a.name)}:${Math.round((a.kcal / a.grams) * 100)}:${Math.round(a.grams / a.quantity)}`;
+    // Nutrients are stored per 100 g, like every other food.
+    const per100 = (amount: number): number => (amount / a.grams) * 100;
+    const identity = [
+      Math.round(per100(a.kcal)),
+      Math.round(per100(a.protein) * 10) / 10,
+      Math.round(per100(a.carbs) * 10) / 10,
+      Math.round(per100(a.fat) * 10) / 10,
+      Math.round(a.grams / a.quantity),
+    ];
+    const sourceId = `${a.userId}:ai:${estimateKey(a.name)}:${identity.join(":")}`;
     // An identical estimate is one food, found by its exact sourceId. A repeat keeps the stored nutrients and note.
     const same = await ctx.db
       .query("foods")
       .withIndex("by_source_and_sourceId", (q) => q.eq("source", "ai_estimate").eq("sourceId", sourceId))
       .first();
-    // Nutrients are stored per 100 g, like every other food.
-    const per100 = (amount: number): number => (amount / a.grams) * 100;
     const foodId = same !== null && same.ownerUserId === a.userId ? same._id : await ctx.db.insert("foods", {
       name: a.name,
       aliases: [],

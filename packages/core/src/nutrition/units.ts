@@ -198,8 +198,21 @@ function pieceName(name: string): string {
   return own(PIECE_ALIASES, name) ?? name;
 }
 
-/** True when every word of a unit appears in the food name, so "paratha" names "Masala paratha" but "slice" not "Pizza". */
+/** Units that state an amount (mass, volume, vessels, the cup family). They never name a piece, even when the food name has the word. */
+const AMOUNT_UNITS: ReadonlySet<string> = new Set([
+  ...Object.keys(MASS_UNITS_G),
+  ...Object.keys(VOLUME_UNITS_ML),
+  ...Object.keys(HOUSEHOLD_VESSELS),
+  "cup",
+  "teacup",
+]);
+
+/**
+ * True when a unit names a piece of this food: every word of it appears in the food name, and it is not an amount unit.
+ * "paratha" names "Masala paratha", "slice" does not name "Pizza", and "bowl" does not name a piece of "Acai bowl".
+ */
 export function unitNamesFood(unit: string, foodName: string): boolean {
+  if (AMOUNT_UNITS.has(normalizeUnit(unit))) return false;
   const nameTokens = new Set(tokenize(foodName).map(pieceName));
   const unitTokens = tokenize(unit).map(pieceName);
   return unitTokens.length > 0 && unitTokens.every((t) => nameTokens.has(t));

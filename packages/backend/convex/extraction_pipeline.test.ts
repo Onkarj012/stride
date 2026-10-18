@@ -1029,6 +1029,51 @@ describe("AI estimate identity and portions", () => {
     expect(rows).toHaveLength(2);
   });
 
+  test("two 200 g, 200 kcal shakes with different macros make two rows", async () => {
+    const { t, user } = await setup();
+    const shake = (protein: number, carbs: number, fat: number) => ({
+      item_index: 0,
+      name: "Protein shake",
+      grams: 200,
+      kcal: 200,
+      protein_g: protein,
+      carbs_g: carbs,
+      fat_g: fat,
+      assumptions: "Whey in milk",
+    });
+    for (const [submission, args] of [["sub-1", shake(20, 20, 2)], ["sub-2", shake(10, 35, 5)]] as const) {
+      llm = (body) =>
+        kind(body) === "extract"
+          ? extraction([{ food: "protein shake", quantity: 1 }])
+          : { toolCalls: [{ name: "estimate_food", args }] };
+      const result = await logText(user, "a protein shake", submission);
+      expect(result.kind).toBe("draft");
+    }
+    const rows = (await t.run((ctx) => ctx.db.query("foods").collect())).filter((food) => food.source === "ai_estimate");
+    expect(rows).toHaveLength(2);
+  });
+
+  test("'Acai bowl' with unit bowl keeps a bowl row, and the draft resolves to its 200 g", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "acai bowl", quantity: 1, unit: "bowl" }])
+        : {
+            toolCalls: [
+              {
+                name: "estimate_food",
+                args: { item_index: 0, name: "Acai bowl", grams: 200, kcal: 200, protein_g: 3, carbs_g: 30, fat_g: 6, assumptions: "Banana, granola" },
+              },
+            ],
+          };
+    const result = await logText(user, "an acai bowl");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.grams).toBe(200);
+    const portions = await t.run((ctx) => ctx.db.query("food_portions").collect());
+    expect(portions.map((p) => [p.measure, p.description])).toEqual([["bowl", "bowl"]]);
+  });
+
   test("an estimate saved with a unit that names the food answers a later bare count", async () => {
     const { t, user } = await setup();
     llm = (body) =>
