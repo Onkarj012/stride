@@ -3,7 +3,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { MAX_CHAT_ITERATIONS, STREAM_FLUSH_CHARS } from "./chats";
+import { MAX_CHAT_ITERATIONS, SORRY_REPLY, STREAM_FLUSH_CHARS } from "./chats";
 import { isRecord, OPENROUTER_CHAT_URL, PHOTO_MODEL } from "./pipeline/openrouter";
 import schema from "./schema";
 
@@ -404,6 +404,19 @@ describe("chat corrections (D8)", () => {
     const rows = await entryRows(t);
     expect(rows[1]).toMatchObject({ op: "edit", grams: 120, status: "live" });
     expect(turn.entryIds).toEqual([rows[1]?._id]);
+  });
+
+  test("a failed edit with an unknown id, then an empty step, says sorry instead of Done", async () => {
+    const { t, user, chatId } = await setup();
+    llm = (body) =>
+      afterToolResult(body)
+        ? { content: null }
+        : { toolCalls: [{ name: "edit_entry", args: { entry_id: "nope", quantity: 3, unit: null } }] };
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "it was 3 rotis" });
+
+    expect(turn.reply).toBe(SORRY_REPLY);
+    expect(turn.entryIds).toEqual([]);
+    expect(await entryRows(t)).toHaveLength(0);
   });
 
   test("delete_entry writes a deleted revision; a bad entry id returns an error to the model", async () => {
