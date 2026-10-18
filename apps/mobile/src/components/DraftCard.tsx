@@ -218,7 +218,11 @@ export function DraftCard({
               accessibilityLabel={`Change ${plan.foodName ?? item.text}`}
             >
               <View style={s.grow}>
-                <Text style={s.itemName}>{plan.foodName ?? `"${item.text}"`}</Text>
+                <View style={s.nameRow}>
+                  <Text style={s.itemName}>{plan.foodName ?? `"${item.text}"`}</Text>
+                  {item.aiEstimate ? <Tag text="AI estimate" tone="est" /> : null}
+                </View>
+                {item.aiEstimate && item.note ? <Text style={s.metaText}>{item.note}</Text> : null}
                 <View style={s.meta}>
                   <Text style={s.metaText}>
                     {metaOf(plan)}
@@ -401,6 +405,7 @@ const useStyles = themedStyles((t) => ({
   struck: { flex: 1, textDecorationLine: 'line-through', color: t.c.ink3 },
   itemTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   itemName: { ...font('bodyStrong'), color: t.c.ink },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },
   metaText: { ...font('caption'), color: t.c.ink3 },
   itemKcal: { ...font('value'), color: t.c.ink },
