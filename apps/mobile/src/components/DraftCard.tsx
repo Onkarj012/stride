@@ -208,6 +208,8 @@ export function DraftCard({
         const showUnits = !plan.ready || editing === i
         const option = plan.option
         const units = sets?.[i]?.units ?? []
+        // The estimate chip and note describe the original estimate, so they hide once another food is picked.
+        const onEstimate = item.aiEstimate && (fix.foodId ?? item.food?._id) === item.food?._id
         return (
           <Animated.View key={i} entering={spring.delay(i * 70)} layout={LinearTransition.springify()} style={s.item}>
             <Tap
@@ -220,9 +222,9 @@ export function DraftCard({
               <View style={s.grow}>
                 <View style={s.nameRow}>
                   <Text style={s.itemName}>{plan.foodName ?? `"${item.text}"`}</Text>
-                  {item.aiEstimate ? <Tag text="AI estimate" tone="est" /> : null}
+                  {onEstimate ? <Tag text="AI estimate" tone="est" /> : null}
                 </View>
-                {item.aiEstimate && item.note ? <Text style={s.metaText}>{item.note}</Text> : null}
+                {onEstimate && item.note ? <Text style={s.metaText}>{item.note}</Text> : null}
                 <View style={s.meta}>
                   <Text style={s.metaText}>
                     {metaOf(plan)}
