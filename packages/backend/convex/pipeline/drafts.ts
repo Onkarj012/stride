@@ -4,7 +4,6 @@ import {
   isLocalDate,
   normalizeUnit,
   PIECE_UNIT,
-  resolvePortion,
   scaleNutrients,
   type UserMeasure,
 } from "@stride/core";
@@ -26,6 +25,7 @@ import {
   MAX_PAST_DAYS,
   portionsOf,
   resolveFoodPortion,
+  resolveWithPortions,
   userMeasuresOf,
   validScale,
   type LogResult,
@@ -201,12 +201,12 @@ async function amountUnitsOf(
     ...userMeasures.map((m) => m.measure),
   ];
   const grams = new Map<string | null, number>();
-  const bareCount = resolvePortion({ quantity: 1, unit: null }, { foodName: food.name, portions, userMeasures });
+  const bareCount = resolveWithPortions(food, portions, 1, null, userMeasures);
   if (bareCount.status === "resolved") grams.set(null, bareCount.grams);
   for (const name of names) {
     const unit = normalizeUnit(name);
     if (grams.has(unit)) continue;
-    const portion = resolvePortion({ quantity: 1, unit: name }, { foodName: food.name, portions, userMeasures });
+    const portion = resolveWithPortions(food, portions, 1, name, userMeasures);
     if (portion.status === "resolved") grams.set(unit, portion.grams);
   }
   return [...grams].map(([unit, gramsPerUnit]) => ({ unit, label: unit ?? "count", gramsPerUnit }));

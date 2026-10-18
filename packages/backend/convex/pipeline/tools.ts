@@ -1,12 +1,22 @@
-import { addDays, HOUSEHOLD_VESSELS, normalizeText, normalizeUnit, rankCandidates, type MealSlot } from "@stride/core";
+import {
+  addDays,
+  HOUSEHOLD_VESSELS,
+  MASS_UNITS_G,
+  normalizeText,
+  normalizeUnit,
+  rankCandidates,
+  type MealSlot,
+  VOLUME_UNITS_ML,
+} from "@stride/core";
 import { ConvexError, v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery, type ActionCtx } from "../_generated/server";
 import { MAX_DAY_ENTRIES } from "../day_totals";
-import { isVisibleFood, MAX_USER_FOODS } from "../foods_db";
+import { isVisibleFood } from "../foods_db";
 import { foodSourceValidator, mealSlotValidator } from "../ledger_validators";
 import { resolveLocalDay } from "../time_zone";
+import { assertLedgerWritable } from "../users";
 import { lookupBarcodeFood } from "./barcode";
 import { callOpenRouter, isRecord, PIPELINE_MODEL, type ChatMessage, type JsonValue, type ToolDefinition } from "./openrouter";
 import { searchVisibleFoods, userFoodsOf, type Pick, type UnresolvedItem } from "./resolve";
@@ -86,6 +96,11 @@ const ESTIMATE_VESSEL_ML: Readonly<Partial<Record<string, number>>> = {
   cup: 240,
   teacup: 110,
 };
+
+/** A table's number for a key, or undefined. Own properties only, so "constructor" is not a unit. */
+function ownNumber(table: Readonly<Partial<Record<string, number>>>, key: string): number | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
 
 /** The fields of an `estimate_food` call. Numbers are for the whole stated amount of the item. */
 export interface Estimate {
@@ -272,7 +287,18 @@ export function estimateProblem(e: Estimate, quantity: number, unit: string | nu
   if ((e.kcal / e.grams) * 100 > 900) return "kcal per 100 g is above 900";
   const fromMacros = 4 * e.protein + 4 * e.carbs + 9 * e.fat;
   if (Math.abs(fromMacros - e.kcal) > 0.2 * Math.max(e.kcal, 50)) return "protein, carbs and fat do not add up to kcal";
-  const vesselMl = ESTIMATE_VESSEL_ML[normalizeUnit(unit)];
+  const name = normalizeUnit(unit);
+  // A stated mass or volume is an explicit amount, so the grams must agree with it.
+  const massG = ownNumber(MASS_UNITS_G, name);
+  if (massG !== undefined && Math.abs(e.grams - quantity * massG) > 0.05 * quantity * massG) {
+    return `grams do not match ${quantity} ${unit}`;
+  }
+  const volumeMl = ownNumber(VOLUME_UNITS_ML, name);
+  if (volumeMl !== undefined) {
+    const gramsPerMl = e.grams / (quantity * volumeMl);
+    if (gramsPerMl < 0.5 || gramsPerMl > 1.5) return `grams do not match ${quantity} ${unit} of this food`;
+  }
+  const vesselMl = ownNumber(ESTIMATE_VESSEL_ML, name);
   if (vesselMl !== undefined) {
     const gramsPerUnit = e.grams / quantity;
     if (gramsPerUnit < 0.4 * vesselMl || gramsPerUnit > 1.6 * vesselMl) {
@@ -295,18 +321,24 @@ export const saveEstimate = internalMutation({
     carbs: v.number(),
     fat: v.number(),
     assumptions: v.string(),
+    chatId: v.optional(v.id("chats")),
   },
   returns: v.id("foods"),
   handler: async (ctx, a) => {
+    await assertLedgerWritable(ctx, a.userId);
+    if (a.chatId !== undefined && (await ctx.db.get("chats", a.chatId))?.userId !== a.userId) {
+      throw new ConvexError({ code: "NOT_FOUND", message: "Chat not found" });
+    }
     const key = normalizeText(a.name);
-    // Same-named estimates are one food. A repeat keeps the stored nutrients and note.
-    const same = (await ctx.db
+    const sourceId = `${a.userId}:ai:${key}`;
+    // Same-named estimates are one food, found by its exact sourceId. A repeat keeps the stored nutrients and note.
+    const same = await ctx.db
       .query("foods")
-      .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", a.userId).eq("source", "ai_estimate"))
-      .take(MAX_USER_FOODS)).find((food) => normalizeText(food.name) === key);
+      .withIndex("by_source_and_sourceId", (q) => q.eq("source", "ai_estimate").eq("sourceId", sourceId))
+      .first();
     // Nutrients are stored per 100 g, like every other food.
     const per100 = (amount: number): number => (amount / a.grams) * 100;
-    const foodId = same?._id ?? (await ctx.db.insert("foods", {
+    const foodId = same !== null && same.ownerUserId === a.userId ? same._id : await ctx.db.insert("foods", {
       name: a.name,
       aliases: [],
       searchText: a.name,
@@ -320,11 +352,11 @@ export const saveEstimate = internalMutation({
         sodiumMg: null,
       },
       source: "ai_estimate",
-      sourceId: `${a.userId}:ai:${key}`,
+      sourceId,
       verified: false,
       ownerUserId: a.userId,
       note: a.assumptions,
-    }));
+    });
     // A missing unit is a bare count, stored as the "piece" measure. A reused food gains a row only for a new unit.
     const measure = normalizeUnit(a.unit);
     const hasMeasure = await ctx.db
@@ -351,6 +383,7 @@ async function estimate(
   args: Record<string, unknown>,
   open: ReadonlyMap<number, UnresolvedItem>,
   picks: Map<number, Id<"foods">>,
+  chatId: Id<"chats"> | undefined,
 ): Promise<JsonValue> {
   const index = args.item_index;
   const item = typeof index === "number" && !picks.has(index) ? open.get(index) : undefined;
@@ -364,6 +397,7 @@ async function estimate(
     quantity: item.quantity,
     unit: item.unit,
     ...parsed,
+    ...(chatId === undefined ? {} : { chatId }),
   });
   picks.set(index, foodId);
   return { ok: true };
@@ -373,7 +407,12 @@ async function estimate(
  * D14 second pass for items the matcher could not place. A bounded loop of luna calls with lookup tools;
  * the model picks food ids, never numbers. Returns the picks; the commit mutation re-checks and gates them.
  */
-export async function runToolPass(ctx: ActionCtx, userId: string, unresolved: readonly UnresolvedItem[]): Promise<Pick[]> {
+export async function runToolPass(
+  ctx: ActionCtx,
+  userId: string,
+  unresolved: readonly UnresolvedItem[],
+  chatId?: Id<"chats">,
+): Promise<Pick[]> {
   if (unresolved.length === 0) return [];
   const seen: SeenFoods = new Map();
   remember(seen, unresolved.flatMap((u) => u.candidates.map((c) => c.foodId)));
@@ -406,7 +445,7 @@ export async function runToolPass(ctx: ActionCtx, userId: string, unresolved: re
       const result = name === "choose_food"
         ? choose(args, open, seen, picks)
         : name === "estimate_food"
-          ? await estimate(ctx, userId, args, open, picks)
+          ? await estimate(ctx, userId, args, open, picks, chatId)
           : (await runLookupTool(ctx, userId, name, args, seen)) ?? { error: `Unknown tool ${name}` };
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }

@@ -879,6 +879,14 @@ describe("AI estimate checks", () => {
     expect(estimateProblem({ ...chai, fat: 10 }, 1, "teacup")).toMatch(/add up/);
     expect(estimateProblem({ ...chai, grams: 600, kcal: 300, protein: 10, carbs: 40, fat: 10 }, 1, "katori")).toMatch(/fit one katori/);
   });
+
+  test("grams must agree with an explicit mass or volume unit", () => {
+    const paneer: Estimate = { name: "Paneer", grams: 100, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Cubed" };
+    expect(estimateProblem(paneer, 100, "g")).toBeNull();
+    expect(estimateProblem({ ...paneer, grams: 150 }, 100, "g")).toMatch(/do not match 100 g/);
+    const milk: Estimate = { name: "Milk", grams: 600, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Whole" };
+    expect(estimateProblem(milk, 200, "ml")).toMatch(/do not match 200 ml/);
+  });
 });
 
 describe("AI estimate: an unmatched item becomes a private estimate on the draft", () => {
@@ -932,6 +940,38 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     const rows = await entryRows(t);
     expect(rows.at(-1)).toMatchObject({ source: "memory", grams: 110 });
     expect(rows.at(-1)?.flags).toContain("estimated");
+  });
+
+  test("an estimate's own portion row sets the grams, so a seed piece weight cannot change them", async () => {
+    const { user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala paratha", quantity: 2 }])
+        : {
+            toolCalls: [
+              {
+                name: "estimate_food",
+                args: { item_index: 0, name: "Masala paratha", grams: 240, kcal: 600, protein_g: 12, carbs_g: 72, fat_g: 24, assumptions: "Plain, ghee brushed" },
+              },
+            ],
+          };
+    const result = await logText(user, "2 masala paratha");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.grams).toBe(240);
+  });
+
+  test("while a clear runs, an estimate writes no food row and the log fails", async () => {
+    const { t, user } = await setup();
+    await t.run((ctx) => ctx.db.insert("ledger_clears", { userId: "user_a" }));
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+
+    await expect(logText(user, "a teacup of masala chai")).rejects.toThrow(/being cleared/);
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(0);
   });
 
   test("two unconfirmed logs of the same estimate make one food row", async () => {

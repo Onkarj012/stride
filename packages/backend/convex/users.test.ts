@@ -417,3 +417,28 @@ describe("deleteAccount", () => {
     expect(await user.query(api.users.ledgerClearPending, {})).toBe(false);
   });
 });
+
+describe("clearAllData and portion rows", () => {
+  test("clearing removes an owned food's portion rows with the food", async () => {
+    vi.useFakeTimers();
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      const food = await ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: PER_100G,
+        source: "ai_estimate",
+        sourceId: "user_a:ai:homemade dal",
+        verified: false,
+        ownerUserId: "user_a",
+      });
+      await ctx.db.insert("food_portions", { foodId: food, source: "ai_estimate", measure: "katori", description: "katori", gramsPerMeasure: 150 });
+    });
+    await user.mutation(api.users.clearAllData, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await t.run((ctx) => ctx.db.query("food_portions").collect())).toEqual([]);
+    expect((await remaining(t)).foods).toEqual(["shared", "user_b"]);
+  });
+});

@@ -79,6 +79,22 @@ async function clearBatch(ctx: MutationCtx, table: LedgerTable, userId: string):
     }
     return rows.length === CLEAR_MESSAGE_BATCH;
   }
+  if (table === "foods") {
+    // A food's portion rows go first, so none is left pointing at a deleted food.
+    const rows = await ctx.db.query("foods").withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId)).take(CLEAR_LEDGER_BATCH);
+    let kept = false;
+    for (const row of rows) {
+      const portions = await ctx.db
+        .query("food_portions")
+        .withIndex("by_foodId_and_description", (q) => q.eq("foodId", row._id))
+        .take(CLEAR_LEDGER_BATCH);
+      for (const portion of portions) await ctx.db.delete(portion._id);
+      // A food with more portions than one batch waits for a later pass.
+      if (portions.length < CLEAR_LEDGER_BATCH) await ctx.db.delete(row._id);
+      else kept = true;
+    }
+    return kept || rows.length === CLEAR_LEDGER_BATCH;
+  }
   const rows = await ledgerBatch(ctx, table, userId);
   for (const row of rows) await ctx.db.delete(row._id);
   return rows.length === CLEAR_LEDGER_BATCH;

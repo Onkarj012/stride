@@ -30,7 +30,7 @@ export async function runPipeline(ctx: ActionCtx, userId: string, run: PipelineR
     inputKind: run.inputKind,
     items: run.items,
   });
-  const picks = await runToolPass(ctx, userId, unresolved);
+  const picks = await runToolPass(ctx, userId, unresolved, run.chatId);
   return await ctx.runMutation(internal.pipeline.resolve.commitLog, {
     userId,
     submissionId: run.submissionId,
