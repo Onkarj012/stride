@@ -880,6 +880,11 @@ describe("AI estimate checks", () => {
     expect(estimateProblem({ ...chai, grams: 600, kcal: 300, protein: 10, carbs: 40, fat: 10 }, 1, "katori")).toMatch(/fit one katori/);
   });
 
+  test("a cup of dry oats at 0.34 g/ml passes", () => {
+    const oats: Estimate = { name: "Oats, dry", grams: 82, kcal: 319, protein: 13.2, carbs: 54.2, fat: 6.9, assumptions: "Rolled oats" };
+    expect(estimateProblem(oats, 1, "cup")).toBeNull();
+  });
+
   test("grams must agree with an explicit mass or volume unit", () => {
     const paneer: Estimate = { name: "Paneer", grams: 100, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Cubed" };
     expect(estimateProblem(paneer, 100, "g")).toBeNull();

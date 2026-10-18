@@ -66,6 +66,8 @@ const draftItemViewValidator = v.object({
   /** Recipe fraction applied to the grams, when valid. The card applies it to any amount the user picks. */
   portionScale: v.union(v.number(), v.null()),
   estimated: v.boolean(),
+  /** The item came from a photo. Separate from `estimated`, which also covers AI estimates. */
+  fromPhoto: v.boolean(),
   /** The food is an AI estimate, so the card shows its chip and assumptions. */
   aiEstimate: v.boolean(),
   note: v.union(v.string(), v.null()),
@@ -146,6 +148,7 @@ export const getDraft = query({
         reasons: item.reasons ?? [],
         portionScale: item.portionScale !== undefined && validScale(item.portionScale) ? item.portionScale : null,
         estimated: item.fromPhoto === true || food?.source === "ai_estimate",
+        fromPhoto: item.fromPhoto === true,
         aiEstimate: food?.source === "ai_estimate",
         note: food?.note ?? null,
         cookingOil: item.cookingOil === true,

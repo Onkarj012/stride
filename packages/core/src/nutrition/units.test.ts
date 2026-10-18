@@ -354,4 +354,9 @@ describe("AI estimate portions", () => {
     expect(gramsOf(resolvePortion({ quantity: 2, unit: "paratha" }, estimate))).toBe(240);
     expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, estimate))).toBe(240);
   });
+
+  it("a slice of a whole-pizza estimate does not reuse its piece row", () => {
+    const pizza = { foodName: "Pizza", portions: [{ measure: "piece", gramsPerMeasure: 400 }], skipSeedPieceWeights: true };
+    expect(resolvePortion({ quantity: 2, unit: "slice" }, pizza)).toEqual({ status: "unresolved", reason: "food_specific_measure" });
+  });
 });

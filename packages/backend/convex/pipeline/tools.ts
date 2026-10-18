@@ -299,13 +299,14 @@ export function estimateProblem(e: Estimate, quantity: number, unit: string | nu
   }
   const volumeMl = ownNumber(VOLUME_UNITS_ML, name);
   if (volumeMl !== undefined) {
+    // Light foods such as dry oats weigh about 0.3 g/ml, so the floor only rejects near-empty portions.
     const gramsPerMl = e.grams / (quantity * volumeMl);
-    if (gramsPerMl < 0.5 || gramsPerMl > 1.5) return `grams do not match ${quantity} ${unit} of this food`;
+    if (gramsPerMl < 0.05 || gramsPerMl > 1.5) return `grams do not match ${quantity} ${unit} of this food`;
   }
   const vesselMl = ownNumber(ESTIMATE_VESSEL_ML, name);
   if (vesselMl !== undefined) {
     const gramsPerUnit = e.grams / quantity;
-    if (gramsPerUnit < 0.4 * vesselMl || gramsPerUnit > 1.6 * vesselMl) {
+    if (gramsPerUnit < 0.05 * vesselMl || gramsPerUnit > 1.6 * vesselMl) {
       return `grams do not fit one ${unit} (about ${vesselMl} ml)`;
     }
   }

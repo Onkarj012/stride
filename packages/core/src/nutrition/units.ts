@@ -328,8 +328,12 @@ export function resolvePortion(
     return resolved(quantity * mlPerUnit * density.gPerMl, confidence, "volume");
   }
 
-  // With seeds skipped, a named count ("2 paratha") with no row of its own takes the food's piece row.
-  if (ctx.skipSeedPieceWeights === true && unit !== PIECE_UNIT && COUNT_MEASURES.includes(unit)) {
+  // With seeds skipped, a named unit takes the food's piece row only when the food name carries that unit.
+  // "2 slice" of a whole pizza must not reuse one piece row for each slice.
+  const nameTokens = new Set(tokenize(ctx.foodName).map(pieceName));
+  const unitTokens = tokenize(unit).map(pieceName);
+  const unitInName = unitTokens.length > 0 && unitTokens.every((t) => nameTokens.has(t));
+  if (ctx.skipSeedPieceWeights === true && unit !== PIECE_UNIT && unitInName) {
     const piece = portionGrams(ctx.portions, (measure) => measure === PIECE_UNIT);
     if (piece === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
     if (piece !== null) return resolved(quantity * piece, PORTION_CONFIDENCE.foodPortion, "food_portion");
