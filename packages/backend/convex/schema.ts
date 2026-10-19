@@ -580,9 +580,9 @@ export default defineSchema({
         after: foodLinkStateValidator,
       }),
     ),
-    undoneAt: v.optional(v.number()),
+    undoneAt: v.optional(v.number()), // set once the event is undone or cancelled; unset means it is live
   })
-    .index("by_userId_and_key", ["userId", "key"])
+    .index("by_userId_and_key_and_undoneAt", ["userId", "key", "undoneAt"])
     .index("by_userId_and_submissionId", ["userId", "submissionId"]),
 
   // A user's own OpenRouter key. Never returned to the client; the app only sees whether one is set and its last 4 characters.

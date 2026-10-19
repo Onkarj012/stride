@@ -635,6 +635,57 @@ describe("undo takes back the food memory a confirmation wrote", () => {
     expect(active.map((l) => ({ foodId: l.foodId, uses: l.uses }))).toEqual([{ foodId: foods.paneer, uses: 1 }]);
   });
 
+  test("undoing the older log and then the newer one leaves no memory", async () => {
+    const { t, user, foods } = await setup();
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g", confidence: 0.3 }]);
+    const [older] = await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    const [newer] = await confirmAs(user, "100 g ghar ka paneer", "sub-2", [foods.tikka]);
+    if (older === undefined || newer === undefined) throw new Error("expected entries");
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId: older });
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-2", entryId: newer });
+
+    expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
+    expect((await links(t)).map((l) => l.status).sort()).toEqual(["deleted", "deleted"]);
+  });
+
+  test("undoing an older replacement first still restores the first memory at the end", async () => {
+    const { t, user, foods } = await setup();
+    await t.run((ctx) =>
+      ctx.db.insert("food_links", { userId: "user_a", key: "ghar ka paneer", foodId: foods.biryani, status: "active", uses: 4, updatedAt: 1 }),
+    );
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g", confidence: 0.3 }]);
+    const [older] = await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    const [newer] = await confirmAs(user, "100 g ghar ka paneer", "sub-2", [foods.tikka]);
+    if (older === undefined || newer === undefined) throw new Error("expected entries");
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId: older });
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-2", entryId: newer });
+
+    const active = await user.query(api.pipeline.drafts.listFoodLinks, {});
+    expect(active.map((l) => ({ foodId: l.foodId, uses: l.uses }))).toEqual([{ foodId: foods.biryani, uses: 4 }]);
+  });
+
+  test("many undone events for a text never hide the live one", async () => {
+    const { t, user, foods } = await setup();
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g" }]);
+    const [entryId] = await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    if (entryId === undefined) throw new Error("expected an entry");
+    // Later confirmations that were since undone, more than any fixed read window.
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 25; i++) {
+        await ctx.db.insert("food_link_events", {
+          userId: "user_a",
+          key: "ghar ka paneer",
+          submissionId: `old-${i}`,
+          entryIds: [],
+          changes: [],
+          undoneAt: 1,
+        });
+      }
+    });
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId });
+    expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
+  });
+
   test("each item of a multi-item log rolls its own memory back once", async () => {
     const { t, user, foods } = await setup();
     llm = () =>

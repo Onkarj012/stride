@@ -43,7 +43,7 @@ async function ledgerBatch(ctx: MutationCtx, table: Exclude<LedgerTable, "messag
     case "food_links":
       return await ctx.db.query("food_links").withIndex("by_userId_and_status_and_key", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
     case "food_link_events":
-      return await ctx.db.query("food_link_events").withIndex("by_userId_and_key", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+      return await ctx.db.query("food_link_events").withIndex("by_userId_and_key_and_undoneAt", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
     case "user_measures":
       return await ctx.db.query("user_measures").withIndex("by_userId_and_measure", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
     case "sets":
