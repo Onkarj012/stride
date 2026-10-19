@@ -216,7 +216,7 @@ describe("line kcal stays unrounded until the app displays it", () => {
 describe("selected meal slot", () => {
   test("a composer default fills omitted slots, while an explicit extracted slot overrides it", async () => {
     const { t, user } = await setup();
-    llm = () => extraction([{ food: "roti", quantity: 2 }, { food: "rice", quantity: 100, unit: "g", slot: "dinner" }]);
+    llm = () => extraction([{ food: "roti", quantity: 2 }, { food: "rice, white, cooked", quantity: 100, unit: "g", slot: "dinner" }]);
     const result = await user.action(api.pipeline.log.logInput, {
       submissionId: "breakfast-sheet",
       defaultSlot: "breakfast",
@@ -229,7 +229,7 @@ describe("selected meal slot", () => {
 
   test("a draft keeps the selected default until confirmation", async () => {
     const { t, user } = await setup();
-    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 0.25, confidence: 0.5 }]);
+    llm = () => extraction([{ food: "biryani, chicken", quantity: 1, unit: "kg", portionScale: 0.25, confidence: 0.5 }]);
     const result = await user.action(api.pipeline.log.logInput, { submissionId: "draft-slot", defaultSlot: "breakfast", input: { kind: "text", text: "quarter of 1 kg biryani" } });
     if (result.kind !== "draft") throw new Error("expected a draft");
     await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId });
@@ -299,7 +299,7 @@ describe("HANDOFF #4: an unresolved food never contributes 0 kcal silently", () 
     const { t, user, foods } = await setup();
     llm = (body) =>
       kind(body) === "extract"
-        ? extraction([{ food: "rice", quantity: 1, unit: "katori" }, { food: "mystery sabzi", quantity: 1, unit: "katori" }])
+        ? extraction([{ food: "rice, white, cooked", quantity: 1, unit: "katori" }, { food: "mystery sabzi", quantity: 1, unit: "katori" }])
         : { content: "I could not find it." };
     const result = await logText(user, "a katori of rice and a katori of mystery sabzi");
 
@@ -339,6 +339,19 @@ describe("HANDOFF #4: an unresolved food never contributes 0 kcal silently", () 
     expect(draft?.items[0]).toMatchObject({ food: { _id: foods.paneer }, grams: 100 });
     expect(draft?.items[0]?.reasons).toContain("low_match");
     expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve", "resolve"]);
+  });
+
+  test("a partial database name is never saved, and the unresolved item keeps its row as a candidate", async () => {
+    const { t, user, foods } = await setup();
+    llm = (body) => (kind(body) === "extract" ? extraction([{ food: "rice", quantity: 100, unit: "g" }]) : { content: "I could not find it." });
+    const result = await logText(user, "100 g rice");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    expect(await entryRows(t)).toHaveLength(0);
+    const toolPass = openRouterBodies.find((b) => kind(b) === "resolve");
+    expect(JSON.stringify(toolPass?.messages)).toContain(foods.rice);
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.food).toBeNull();
+    expect(draft?.items[0]?.candidates).toEqual([{ _id: foods.rice, name: "Rice, white, cooked" }]);
   });
 });
 
@@ -414,8 +427,8 @@ describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", (
     const { t, user, foods } = await setup();
     llm = () =>
       extraction([
-        { food: "biryani", quantity: 1, unit: "kg", portionScale: 0.25 },
-        { food: "oil", quantity: 1, unit: "tbsp", cookingOil: true },
+        { food: "biryani, chicken", quantity: 1, unit: "kg", portionScale: 0.25 },
+        { food: "oil, sunflower", quantity: 1, unit: "tbsp", cookingOil: true },
       ]);
     const result = await logText(user, "a quarter of the 1 kg biryani, made with 1 tbsp oil");
     expect(result.kind).toBe("committed");
@@ -431,7 +444,7 @@ describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", (
 
   test("a scaled draft quantity preview can confirm its explicit grams without dropping the fraction", async () => {
     const { t, user } = await setup();
-    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 0.25, confidence: 0.5 }]);
+    llm = () => extraction([{ food: "biryani, chicken", quantity: 1, unit: "kg", portionScale: 0.25, confidence: 0.5 }]);
     const result = await logText(user, "a quarter of 1 kg biryani");
     if (result.kind !== "draft") throw new Error("expected a draft");
     const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
@@ -447,7 +460,7 @@ describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", (
 
   test("a fraction above the whole recipe is refused and asks", async () => {
     const { t, user } = await setup();
-    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 4 }]);
+    llm = () => extraction([{ food: "biryani, chicken", quantity: 1, unit: "kg", portionScale: 4 }]);
     const result = await logText(user, "biryani");
     expect(result.kind).toBe("draft");
     expect(result.lines[0]?.reasons).toContain("invalid_portion_scale");
@@ -456,7 +469,7 @@ describe("HANDOFF #6: recipe fraction and cooking oil are applied explicitly", (
 
   test("a refused fraction does not scale the grams when the draft's food is changed", async () => {
     const { t, user, foods } = await setup();
-    llm = () => extraction([{ food: "biryani", quantity: 1, unit: "kg", portionScale: 4 }]);
+    llm = () => extraction([{ food: "biryani, chicken", quantity: 1, unit: "kg", portionScale: 4 }]);
     const result = await logText(user, "biryani");
     if (result.kind !== "draft") throw new Error("expected a draft");
     await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, foodId: foods.rice }] });
@@ -471,10 +484,10 @@ describe("HANDOFF #7: rejected or deleted memories are never used", () => {
     const { t, user, foods } = await setup();
     await t.run(async (ctx) => {
       const now = Date.now();
-      await ctx.db.insert("food_links", { userId: "user_a", key: "dal", foodId: foods.paneer, status: "rejected", uses: 5, updatedAt: now });
-      await ctx.db.insert("food_links", { userId: "user_a", key: "dal", foodId: foods.biryani, status: "deleted", uses: 9, updatedAt: now });
+      await ctx.db.insert("food_links", { userId: "user_a", key: "dal cooked", foodId: foods.paneer, status: "rejected", uses: 5, updatedAt: now });
+      await ctx.db.insert("food_links", { userId: "user_a", key: "dal cooked", foodId: foods.biryani, status: "deleted", uses: 9, updatedAt: now });
     });
-    llm = () => extraction([{ food: "dal", quantity: 100, unit: "g" }]);
+    llm = () => extraction([{ food: "dal, cooked", quantity: 100, unit: "g" }]);
     await logText(user, "100 g dal");
     const [row] = await entryRows(t);
     expect(row).toMatchObject({ foodId: foods.dal, source: "db" });

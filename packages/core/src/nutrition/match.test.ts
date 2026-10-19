@@ -8,6 +8,7 @@ import {
   rankCandidates,
   scoreCandidate,
   scoreName,
+  selectExactMatch,
   selectMatch,
 } from "./match.ts";
 
@@ -47,6 +48,26 @@ describe("selectMatch", () => {
   it("reports no match below the threshold", () => {
     expect(selectMatch(rankCandidates("pizza", foods))).toEqual({ status: "no_match" });
     expect(selectMatch([])).toEqual({ status: "no_match" });
+  });
+});
+
+describe("selectExactMatch", () => {
+  it("does not auto-pick a partial name, which stays a ranked candidate", () => {
+    const ranked = rankCandidates("chai", [{ name: "SILK Chai, soymilk" }]);
+    expect(selectExactMatch("chai", ranked)).toEqual({ status: "no_match" });
+    expect(ranked[0]).toMatchObject({ candidate: { name: "SILK Chai, soymilk" }, score: MATCH_SCORES.contains });
+  });
+
+  it("does not auto-pick a containing name such as 'Cookies, Marie biscuit'", () => {
+    expect(selectExactMatch("marie biscuit", rankCandidates("marie biscuit", [{ name: "Cookies, Marie biscuit" }]))).toEqual({ status: "no_match" });
+  });
+
+  it("still auto-picks an exact name", () => {
+    expect(selectExactMatch("banana", rankCandidates("banana", [{ name: "Banana" }]))).toMatchObject({ status: "matched", score: MATCH_SCORES.exact });
+  });
+
+  it("does not auto-pick a reordered name, so 'chocolate milk' is not 'Milk chocolate'", () => {
+    expect(selectExactMatch("chocolate milk", rankCandidates("chocolate milk", [{ name: "Milk chocolate" }]))).toEqual({ status: "no_match" });
   });
 });
 
