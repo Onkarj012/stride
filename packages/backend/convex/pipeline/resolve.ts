@@ -186,6 +186,14 @@ export async function userMeasuresOf(ctx: Ctx, userId: string): Promise<UserMeas
   });
 }
 
+/** A food's `food_portions` rows, bounded. */
+export async function portionsOf(ctx: Ctx, foodId: Id<"foods">): Promise<Doc<"food_portions">[]> {
+  return ctx.db
+    .query("food_portions")
+    .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId))
+    .take(MAX_PORTION_ROWS);
+}
+
 /** Grams for a quantity and unit of one food, from its portions, the user's measures and the density tables. */
 export async function resolveFoodPortion(
   ctx: Ctx,
@@ -194,10 +202,7 @@ export async function resolveFoodPortion(
   unit: string | null,
   userMeasures: UserMeasure[],
 ): Promise<PortionResult> {
-  const portions = await ctx.db
-    .query("food_portions")
-    .withIndex("by_foodId_and_description", (q) => q.eq("foodId", food._id))
-    .take(MAX_PORTION_ROWS);
+  const portions = await portionsOf(ctx, food._id);
   return resolvePortion({ quantity, unit }, { foodName: food.name, portions, userMeasures });
 }
 

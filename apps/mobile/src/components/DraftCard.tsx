@@ -3,19 +3,22 @@ import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
+import { normalizeUnit, scaleNutrients } from '@stride/core'
 import { motion, radii } from '@stride/ui-tokens'
 import { formatDayTitle, formatGrams, formatNumber } from '@/lib/format'
-import { plainError, type DraftId, type DraftItem, type FoodId, type LogResult } from '@/lib/log'
+import { plainError, type AmountSet, type AmountUnit, type DraftId, type DraftItem, type FoodId, type LogResult } from '@/lib/log'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button, RoundButton, Stepper, Tag, Thinking } from './Controls'
 import { Tap } from './Tap'
 
-/** One change the user made to a draft item before confirming. */
-type Fix = { remove?: boolean; foodId?: FoodId; foodName?: string; grams?: number; quantity?: number; localDate?: string }
+/** One change the user made to a draft item before confirming. A null quantity means the typed amount was not a positive number. */
+type Fix = { remove?: boolean; foodId?: FoodId; foodName?: string; quantity?: number | null; unit?: string | null; localDate?: string }
 
 const spring = FadeInDown.springify().stiffness(300).damping(17)
 const HALF_UNITS = new Set(['katori', 'bowl', 'glass', 'cup', 'plate', 'ladle'])
+const MIN_QUANTITY = 0.25
+const NUMBER_TEXT = /^(\d+[.,]?\d*|[.,]\d+)$/
 
 // "2", "1½" or "0.75" for a quantity.
 function formatQuantity(q: number): string {
@@ -24,19 +27,77 @@ function formatQuantity(q: number): string {
   return String(Math.round(q * 100) / 100)
 }
 
-/** What an item will log as, with the server preview scaled to the user's amount. */
-function viewOf(item: DraftItem, fix: Fix) {
+// A typed amount, or null unless it is a positive finite number such as "0.25" or "35".
+function parseQuantity(text: string): number | null {
+  const t = text.trim()
+  if (!NUMBER_TEXT.test(t)) return null
+  const n = Number(t.replace(',', '.'))
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** What one item will log. `payload` is what confirm sends for an amount the user set; null when the server's amount stands. */
+type Plan = {
+  foodName: string | null
+  touched: boolean
+  quantity: number | null
+  option: AmountUnit | null
+  grams: number | null
+  kcal: number | null
+  protein: number | null
+  ready: boolean
+  payload: { quantity: number; unit: string | null } | { grams: number } | null
+}
+
+/** What an item logs as: the server's amount until the user edits it, else quantity times the unit's grams. */
+function planOf(item: DraftItem, fix: Fix, set: AmountSet | null): Plan {
   const foodName = fix.foodName ?? item.food?.name ?? null
-  const changedFood = fix.foodId !== undefined && fix.foodId !== item.food?._id
-  const quantityMode = !changedFood && fix.grams === undefined && item.quantity !== null && item.unit !== null && item.grams !== null
-  const grams = fix.grams ?? (changedFood ? null : item.grams)
-  let factor = 1
-  if (quantityMode && item.quantity) factor = (fix.quantity ?? item.quantity) / item.quantity
-  else if (grams !== null && item.grams) factor = grams / item.grams
-  // Display only: nutrients scale linearly with grams, and the server recomputes them on confirm.
-  const kcal = changedFood || !item.preview ? null : item.preview.kcal * factor
-  const protein = changedFood || !item.preview ? null : item.preview.protein * factor
-  return { foodName, changedFood, quantityMode, grams, kcal, protein }
+  const foodChanged = fix.foodId !== undefined && fix.foodId !== item.food?._id
+  const touched = foodChanged || fix.quantity !== undefined || fix.unit !== undefined
+  const quantity = fix.quantity !== undefined ? fix.quantity : item.quantity
+  // Same unit the server reads from the draft. A unit that no longer converts for this food finds no option here.
+  const selectedUnit = fix.unit !== undefined ? fix.unit : item.unit
+  const normalizedUnit = selectedUnit === null ? null : normalizeUnit(selectedUnit)
+  const option = set?.units.find((u) => u.unit === normalizedUnit) ?? null
+  if (!touched) {
+    return {
+      foodName,
+      touched,
+      quantity,
+      option,
+      grams: item.grams,
+      kcal: item.preview?.kcal ?? null,
+      protein: item.preview?.protein ?? null,
+      ready: foodName !== null && item.grams !== null,
+      payload: null,
+    }
+  }
+  if (option === null || quantity === null || quantity <= 0 || set === null) {
+    return { foodName, touched, quantity, option, grams: null, kcal: null, protein: null, ready: false, payload: null }
+  }
+  // A recipe fraction only survives as grams, so those are sent. Otherwise the server resolves quantity and unit itself.
+  const scale = item.portionScale ?? 1
+  const grams = quantity * option.gramsPerUnit * scale
+  const nutrients = scaleNutrients(set.per100g, grams)
+  const payload = item.portionScale === null ? { quantity, unit: option.unit } : { grams }
+  return {
+    foodName,
+    touched,
+    quantity,
+    option,
+    grams,
+    kcal: nutrients.kcal,
+    protein: nutrients.protein,
+    ready: foodName !== null,
+    payload,
+  }
+}
+
+/** The amount line under a food name. */
+function metaOf(plan: Plan): string {
+  if (plan.foodName === null) return 'not matched yet'
+  if (plan.grams === null) return 'amount needed'
+  if (plan.quantity !== null && plan.option !== null) return `${formatQuantity(plan.quantity)} ${plan.option.label} · ${formatGrams(plan.grams)}`
+  return formatGrams(plan.grams)
 }
 
 // Draft card (mock #/meal and #/ask): fix amounts or foods, drop items, then confirm or discard.
@@ -58,6 +119,13 @@ export function DraftCard({
   const [editing, setEditing] = useState<number | null>(null)
   const [busy, setBusy] = useState<'confirm' | 'discard' | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  // Units and nutrients for each item's current food, so every amount can be priced before saving.
+  const amountItems = (draft?.items ?? []).map((item, i) => {
+    const fix = fixes[i] ?? {}
+    const foodId = fix.remove ? undefined : (fix.foodId ?? item.food?._id)
+    return foodId === undefined ? null : { foodId, unit: item.unit }
+  })
+  const sets = useQuery(api.pipeline.drafts.amountOptions, { items: amountItems })
 
   if (draft === undefined) return <Thinking label="Opening the draft…" />
   if (draft === null || draft.status !== 'pending')
@@ -66,34 +134,29 @@ export function DraftCard({
   // Merges a change into one item's fix.
   const patch = (index: number, change: Fix) => setFixes((all) => ({ ...all, [index]: { ...all[index], ...change } }))
 
-  const views = draft.items.map((item, i) => viewOf(item, fixes[i] ?? {}))
+  const plans = draft.items.map((item, i) => planOf(item, fixes[i] ?? {}, sets?.[i] ?? null))
   const kept = draft.items.map((_, i) => i).filter((i) => fixes[i]?.remove !== true)
-  const missingFood = kept.some((i) => views[i]?.foodName === null)
+  const missingFood = kept.some((i) => plans[i]?.foodName === null)
+  const ready = kept.every((i) => plans[i]?.ready === true)
   const total = kept.reduce<number | null>((sum, i) => {
-    const k = views[i]?.kcal
+    const k = plans[i]?.kcal
     return sum === null || k === null || k === undefined ? null : sum + k
   }, 0)
   const photo = draft.inputKind === 'photo'
 
-  // Sends the fixes; the server resolves amounts to grams and computes every nutrient.
+  // Sends the fixes. The server turns quantity and unit into grams itself, so it checks every amount too.
   async function confirm() {
     if (!draft) return
     setBusy('confirm')
     setProblem(null)
     const corrections = Object.entries(fixes)
       .map(([index, fix]) => {
-        const item = draft.items[Number(index)]
-        // Quantity previews already include any portion fraction; save those same grams.
-        const scaledGrams = fix.quantity !== undefined && item?.grams !== null && item?.grams !== undefined &&
-          item.quantity !== null && item.quantity > 0 && (fix.foodId === undefined || fix.foodId === item.food?._id)
-          ? item.grams * fix.quantity / item.quantity : undefined
-        const grams = fix.grams ?? scaledGrams
+        const payload = plans[Number(index)]?.payload ?? null
         return {
           index: Number(index),
           ...(fix.remove ? { remove: true } : {}),
           ...(fix.foodId ? { foodId: fix.foodId } : {}),
-          ...(grams !== undefined ? { grams } : {}),
-          ...(fix.quantity !== undefined && grams === undefined ? { quantity: fix.quantity } : {}),
+          ...(payload ?? {}),
           ...(fix.localDate ? { localDate: fix.localDate } : {}),
         }
       })
@@ -128,20 +191,23 @@ export function DraftCard({
 
       {draft.items.map((item, i) => {
         const fix = fixes[i] ?? {}
-        const view = views[i]
-        if (!view) return null
+        const plan = plans[i]
+        if (!plan) return null
         if (fix.remove)
           return (
             <Animated.View key={i} layout={LinearTransition.springify()} style={[s.item, s.removed]}>
               <Text style={[s.itemName, s.struck]} numberOfLines={1}>
-                {view.foodName ?? item.text}
+                {plan.foodName ?? item.text}
               </Text>
               <Text style={s.link} onPress={() => patch(i, { remove: false })} suppressHighlighting>
                 Put back
               </Text>
             </Animated.View>
           )
-        const asking = view.foodName === null || editing === i
+        const asking = plan.foodName === null || editing === i
+        const showUnits = !plan.ready || editing === i
+        const option = plan.option
+        const units = sets?.[i]?.units ?? []
         return (
           <Animated.View key={i} entering={spring.delay(i * 70)} layout={LinearTransition.springify()} style={s.item}>
             <Tap
@@ -149,52 +215,58 @@ export function DraftCard({
               scale={motion.press.rowScale}
               onPress={() => setEditing(editing === i ? null : i)}
               accessibilityRole="button"
-              accessibilityLabel={`Change ${view.foodName ?? item.text}`}
+              accessibilityLabel={`Change ${plan.foodName ?? item.text}`}
             >
               <View style={s.grow}>
-                <Text style={s.itemName}>{view.foodName ?? `"${item.text}"`}</Text>
+                <Text style={s.itemName}>{plan.foodName ?? `"${item.text}"`}</Text>
                 <View style={s.meta}>
                   <Text style={s.metaText}>
-                    {view.quantityMode && item.unit
-                      ? `${formatQuantity(fix.quantity ?? item.quantity ?? 1)} ${item.unit}`
-                      : view.grams !== null
-                        ? formatGrams(view.grams)
-                        : view.foodName === null
-                          ? 'not matched yet'
-                          : 'amount on save'}
-                    {view.protein !== null ? ` · ${Math.round(view.protein)} g protein` : ''}
+                    {metaOf(plan)}
+                    {plan.protein !== null ? ` · ${Math.round(plan.protein)} g protein` : ''}
                   </Text>
                   {item.estimated ? <Tag text="estimated" tone="est" /> : null}
                 </View>
               </View>
-              <Text style={s.itemKcal}>{view.kcal === null ? '–' : formatNumber(view.kcal)}</Text>
-              <RoundButton icon="x" label={`Remove ${view.foodName ?? item.text}`} tone="plain" size={32} onPress={() => patch(i, { remove: true })} />
+              <Text style={s.itemKcal}>{plan.kcal === null ? '–' : formatNumber(plan.kcal)}</Text>
+              <RoundButton icon="x" label={`Remove ${plan.foodName ?? item.text}`} tone="plain" size={32} onPress={() => patch(i, { remove: true })} />
             </Tap>
 
-            {view.foodName !== null ? (
+            {plan.foodName !== null ? (
               <View style={s.amount}>
-                {view.quantityMode && item.quantity !== null && item.unit !== null ? (
+                {option !== null ? (
                   <Stepper
-                    value={formatQuantity(fix.quantity ?? item.quantity)}
-                    label={item.unit}
+                    value={plan.quantity === null ? '–' : formatQuantity(plan.quantity)}
+                    typeText={plan.quantity === null ? '' : String(plan.quantity)}
+                    label={option.label}
+                    onType={(text) => patch(i, { quantity: parseQuantity(text) })}
                     onStep={(d) => {
-                      const q = fix.quantity ?? item.quantity ?? 1
-                      const unit = item.unit ?? ''
-                      const step = HALF_UNITS.has(unit) || q <= 1 ? 0.5 : 1
-                      patch(i, { quantity: Math.max(step, q + d * step) })
+                      // A new amount starts at 1. Steps go down to a quarter, so small amounts are reachable by tapping.
+                      if (plan.quantity === null) return patch(i, { quantity: 1 })
+                      const q = plan.quantity
+                      const step = HALF_UNITS.has(option.unit ?? 'piece') || q <= 1 ? 0.5 : 1
+                      patch(i, { quantity: Math.max(MIN_QUANTITY, q + d * step) })
                     }}
                   />
-                ) : (
-                  <Stepper
-                    value={view.grams === null ? 'grams' : formatGrams(view.grams)}
-                    label="grams"
-                    onStep={(d) => {
-                      const g = view.grams ?? 100
-                      const step = g < 50 ? 5 : g < 200 ? 10 : 25
-                      patch(i, { grams: view.grams === null ? 100 : Math.min(5000, Math.max(step, g + d * step)) })
-                    }}
-                  />
-                )}
+                ) : null}
+                {showUnits ? (
+                  <View style={s.units}>
+                    {units.map((u) => {
+                      const on = option?.unit === u.unit
+                      return (
+                        <Tap
+                          key={u.unit === null ? 'count:null' : `unit:${u.unit}`}
+                          style={[s.chip, on && s.chipOn]}
+                          scale={0.97}
+                          onPress={() => patch(i, { unit: u.unit, quantity: plan.quantity ?? 1 })}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[s.chipText, on && s.chipTextOn]}>{u.label}</Text>
+                        </Tap>
+                      )
+                    })}
+                  </View>
+                ) : null}
+                {!plan.ready ? <Text style={s.why}>{`Pick an amount for ${item.text}`}</Text> : null}
               </View>
             ) : null}
 
@@ -240,7 +312,7 @@ export function DraftCard({
           variant="coral"
           style={s.grow}
           busy={busy === 'confirm'}
-          disabled={busy !== null || kept.length === 0 || missingFood}
+          disabled={busy !== null || kept.length === 0 || !ready}
           onPress={() => void confirm()}
         />
       </View>
@@ -332,7 +404,12 @@ const useStyles = themedStyles((t) => ({
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },
   metaText: { ...font('caption'), color: t.c.ink3 },
   itemKcal: { ...font('value'), color: t.c.ink },
-  amount: { flexDirection: 'row', marginTop: 10 },
+  amount: { marginTop: 10, gap: 8, alignItems: 'flex-start' },
+  units: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: { paddingVertical: 7, paddingHorizontal: 12, borderRadius: radii.sm, backgroundColor: t.c.card2 },
+  chipOn: { backgroundColor: t.c.ink },
+  chipText: { ...font('caption'), color: t.c.ink2 },
+  chipTextOn: { color: t.c.bg },
   dateNote: { marginTop: 10, gap: 8, alignItems: 'flex-start', paddingRight: 6 },
   picker: { marginTop: 12, paddingRight: 6 },
   ask: { ...font('value'), color: t.c.ink },
