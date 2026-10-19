@@ -211,7 +211,8 @@ export async function callOpenRouter(ctx: ActionCtx, userId: string, request: Ch
       const finishReason = isRecord(choice) ? choice.finish_reason : undefined;
       await settleCall(ctx, reservation.reservationId, request.model, readUsage(data.usage), estimatedInputTokens, estimatedOutputTokens, content, toolCalls);
       if (finishReason === "length") throw new Error("OpenRouter reply was cut off (finish_reason: length)");
-      if (content === null && toolCalls.length === 0) throw new Error("OpenRouter returned an empty reply");
+      if (message === undefined) throw new Error("OpenRouter returned a malformed reply");
+      // No text and no tool calls is a normal end of a tool loop. Callers that need text check for null.
       return { content, toolCalls };
     } finally {
       clearTimeout(timeout);
