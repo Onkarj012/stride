@@ -290,9 +290,11 @@ export async function editEntryAs(
     if (food._id !== head.foodId) {
       const oldFood = await ctx.db.get("foods", head.foodId);
       // Old photo rows predate the "photo" flag, so "estimated" alone on a non-estimate food means a photo.
-      const photoLike = head.flags.includes("photo") || (oldFood?.source !== "ai_estimate" && head.flags.includes("estimated"));
-      const estimated = photoLike || food.source === "ai_estimate";
-      content.flags = [...head.flags.filter((flag) => flag !== "estimated"), ...(estimated ? ["estimated"] : [])];
+      const legacyPhoto = oldFood?.source !== "ai_estimate" && head.flags.includes("estimated") && !head.flags.includes("photo");
+      const photo = head.flags.includes("photo") || legacyPhoto;
+      const estimated = photo || food.source === "ai_estimate";
+      const flags = legacyPhoto ? [...head.flags, "photo"] : head.flags;
+      content.flags = [...flags.filter((flag) => flag !== "estimated"), ...(estimated ? ["estimated"] : [])];
 
     }
     content.foodId = food._id;
