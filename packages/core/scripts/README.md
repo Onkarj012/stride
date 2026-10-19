@@ -13,6 +13,7 @@ pnpm --filter @stride/core data:import                       # FDC + exercises
 pnpm --filter @stride/core data:import fdc                   # FDC only
 pnpm --filter @stride/core data:import exercises             # exercises only
 pnpm --filter @stride/core data:import ifct ~/Downloads/ifct2017.csv
+pnpm --filter @stride/core data:import cofid ~/Downloads/cofid_proximates.csv ~/Downloads/cofid_inorganics.csv
 ```
 
 Downloads are cached in `packages/core/data/cache/`. Delete that folder to download again. Output goes to `packages/core/data/out/`. Both folders are gitignored.
@@ -22,13 +23,14 @@ Downloads are cached in `packages/core/data/cache/`. Delete that folder to downl
 | `fdc_foods.ndjson` | `foods` | USDA FDC SR Legacy (2018-04), Foundation (2026-04-30) and FNDDS survey (2024-10-31) |
 | `fdc_food_portions.ndjson` | `food_portions` | Same three FDC zips |
 | `ifct_foods.ndjson` | `foods` | Your local IFCT 2017 CSV |
+| `cofid_foods.ndjson` | `foods` | Your local CoFID 2021 proximates and inorganics CSVs |
 | `exercises.ndjson` | `exercises` | free-exercise-db, pinned commit |
 
 Each line is one JSON object. The types are `FoodRecord`, `FoodPortionRecord` and `ExerciseRecord` in `src/nutrition/types.ts`. Nutrients are per 100 g and unrounded.
 
 ## Load into Convex
 
-`packages/backend/scripts/load-foods.ts` reads the NDJSON files above and upserts them in batches of 200 through `npx convex run`. It loads `fdc_foods`, then `ifct_foods` if present, then `fdc_food_portions` and `exercises`. Rows are keyed on source and source id, so a rerun only writes what changed. Portions whose food is not loaded are counted as `missingFood` and skipped.
+`packages/backend/scripts/load-foods.ts` reads the NDJSON files above and upserts them in batches of 200 through `npx convex run`. It loads `fdc_foods`, then `ifct_foods` and `cofid_foods` if present, then `fdc_food_portions` and `exercises`. Rows are keyed on source and source id, so a rerun only writes what changed. Portions whose food is not loaded are counted as `missingFood` and skipped.
 
 ```sh
 pnpm --filter stride-backend data:load          # dev deployment from packages/backend/.env.local
@@ -73,6 +75,22 @@ Expected columns (any extra columns are ignored):
 | `na` | Sodium | g (converted to mg) |
 
 English (`E.`), Hindi (`H.`) and Marathi (`Mar.`) local names become aliases. Change `IFCT_ALIAS_LANGUAGES` in `ifct.ts` for others.
+
+## UK CoFID 2021
+
+The Composition of Foods Integrated Dataset 2021 from Public Health England (now OHID) is published under the Open Government Licence v3.0. Credit the source in any UI that shows these foods: "Contains public sector information licensed under the Open Government Licence v3.0."
+
+Get the data from https://www.gov.uk/government/publications/composition-of-foods-integrated-dataset-cofid. Export two sheets from the xlsx as CSV, keeping only the first header row:
+
+- "1.3 Proximates" → `cofid_proximates.csv`
+- "1.4 Inorganics" → `cofid_inorganics.csv`
+
+Columns are read by header name. The mapper needs these proximates columns: Food Code, Food Name, Group, Protein (g), Fat (g), Carbohydrate (g), Energy (kcal) (kcal), Total sugars (g), AOAC fibre (g), NSP (g). Sodium comes from the inorganics sheet, matched by food code.
+
+- "Tr" (trace) is 0. "N" (not determined) or an empty cell is unknown (null).
+- Energy, protein, fat and carbs are required. A food missing one is skipped and counted.
+- Fiber is AOAC fibre, else NSP.
+- Alcoholic drinks (CoFID group codes starting with `Q`) are left out, because CoFID gives them per 100 ml.
 
 ## Exercises
 

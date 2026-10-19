@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mapExercises } from "./exercises.ts";
 import { mapFdc } from "./fdc.ts";
 import { ifctAliases, mapIfct } from "./ifct.ts";
+import { mapCofid } from "./cofid.ts";
 import { csvRecords, parseCsv } from "./lib.ts";
 
 describe("parseCsv", () => {
@@ -163,5 +164,58 @@ describe("mapExercises", () => {
       level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: ["triceps"],
     }]);
     expect(JSON.stringify(exercises)).not.toContain("jpg");
+  });
+});
+
+describe("mapCofid", () => {
+  const COLUMNS = "Food Code,Food Name,Group,Energy (kcal) (kcal),Protein (g),Fat (g),Carbohydrate (g),Total sugars (g),AOAC fibre (g),NSP (g)";
+  // Synthetic rows in the CoFID layout. Column order is shuffled on purpose: lookup is by header name.
+  const proximates = [
+    "Group,Food Code,Food Name,Energy (kcal) (kcal),Protein (g),Fat (g),Carbohydrate (g),Total sugars (g),AOAC fibre (g),NSP (g)",
+    "AB,T-1,\"Test bean, cooked\",100,8,Tr,15,1.2,N,3.1",
+    "AB,T-2,Test seed,50,Tr,2,4,N,N,2.5",
+    "AB,T-3,Test nut,Tr,5,3,4,N,N,N",
+    "AB,T-4,Test leaf,20,1,1,1,,,",
+    "Q,T-5,Test beer,30,0.3,Tr,2.2,0.5,N,N",
+    "AB,T-6,Test gap,N,5,5,5,5,5,5",
+  ].join("\n");
+  const inorganics = [" ,Food Name,Sodium (mg),Potassium (mg)", " T-1 ,Test bean,240,900", "T-2,Test seed,N,1", "T-6,Test gap,9,9"].join("\n");
+
+  it("reads columns by header name, not position", () => {
+    const { foods } = mapCofid(proximates, inorganics);
+    expect(foods[0]).toMatchObject({ name: "Test bean, cooked", aliases: [], source: "cofid", sourceId: "T-1", verified: true });
+    expect(foods[0]?.per100g).toMatchObject({ kcal: 100, protein: 8, fat: 0, carbs: 15, sugar: 1.2 });
+  });
+
+  it("reads Tr as zero and N as unknown", () => {
+    const { foods } = mapCofid(proximates, inorganics);
+    expect(foods.find((f) => f.sourceId === "T-2")?.per100g).toMatchObject({ protein: 0, fat: 2, sugar: null, fiber: 2.5 });
+    expect(foods.find((f) => f.sourceId === "T-3")?.per100g).toMatchObject({ kcal: 0, protein: 5, fat: 3, sugar: null, fiber: null });
+  });
+
+  it("uses AOAC fibre, falls back to NSP, and is null when both are N", () => {
+    const { foods } = mapCofid(proximates, inorganics);
+    expect(foods.find((f) => f.sourceId === "T-1")?.per100g.fiber).toBe(3.1);
+    const onlyN = mapCofid(`${COLUMNS}\nT-7,Test,AB,10,1,1,1,1,N,N`, "");
+    expect(onlyN.foods[0]?.per100g.fiber).toBeNull();
+  });
+
+  it("joins sodium by trimmed food code and leaves it null when the code has N or no match", () => {
+    const { foods } = mapCofid(proximates, inorganics);
+    expect(foods.find((f) => f.sourceId === "T-1")?.per100g.sodiumMg).toBe(240);
+    expect(foods.find((f) => f.sourceId === "T-2")?.per100g.sodiumMg).toBeNull();
+    expect(foods.find((f) => f.sourceId === "T-4")?.per100g.sodiumMg).toBeNull();
+  });
+
+  it("skips alcoholic drinks (group Q) and foods missing kcal or a macro", () => {
+    const { foods, skippedFoods } = mapCofid(proximates, inorganics);
+    expect(foods.map((f) => f.sourceId)).toEqual(["T-1", "T-2", "T-3", "T-4"]);
+    expect(skippedFoods).toBe(1);
+    const missingKcal = mapCofid(`${COLUMNS}\nT-8,No energy,AB,N,1,1,1,,,`, "");
+    expect(missingKcal).toEqual({ foods: [], skippedFoods: 1 });
+  });
+
+  it("rejects a CSV without the expected columns", () => {
+    expect(() => mapCofid("Food Code,Food Name\nA,Rice\n", "")).toThrow(/missing columns/);
   });
 });

@@ -15,6 +15,7 @@ export const nutrientsValidator = v.object({
 export const foodSourceValidator = v.union(
   v.literal("fdc"),
   v.literal("ifct"),
+  v.literal("cofid"),
   v.literal("off"),
   v.literal("user"),
   v.literal("ai_estimate"),

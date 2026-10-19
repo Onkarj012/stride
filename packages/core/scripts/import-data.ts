@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { FoodPortionRecord, FoodRecord } from "../src/nutrition/types.ts";
+import { mapCofid } from "./cofid.ts";
 import { EXERCISES_URL, mapExercises } from "./exercises.ts";
 import { FDC_DATASETS, FDC_FILES, mapFdc } from "./fdc.ts";
 import { mapIfct } from "./ifct.ts";
 import { cachedDownload, unzip, writeNdjson } from "./lib.ts";
 
-const USAGE = `usage: pnpm --filter @stride/core data:import [fdc] [exercises] [ifct <path-to-ifct.csv>]
+const USAGE = `usage: pnpm --filter @stride/core data:import [fdc] [exercises] [ifct <ifct.csv>] [cofid <proximates.csv> <inorganics.csv>]
 With no arguments, runs fdc and exercises. Output goes to packages/core/data/out/.`;
 
 /** Downloads SR Legacy and Foundation, maps them and writes fdc_foods and fdc_food_portions. */
@@ -42,6 +43,13 @@ async function importIfct(csvPath: string): Promise<void> {
   console.log(`wrote ${await writeNdjson("ifct_foods.ndjson", result.foods)}`);
 }
 
+/** Maps the local CoFID 2021 proximates and inorganics CSVs and writes cofid_foods. Open Government Licence v3.0. */
+async function importCofid(proximatesPath: string, inorganicsPath: string): Promise<void> {
+  const result = mapCofid(await readFile(proximatesPath, "utf8"), await readFile(inorganicsPath, "utf8"));
+  console.log(`cofid: ${result.foods.length} foods (${result.skippedFoods} skipped)`);
+  console.log(`wrote ${await writeNdjson("cofid_foods.ndjson", result.foods)}`);
+}
+
 /** Parses arguments and runs the requested imports in order. */
 async function main(args: readonly string[]): Promise<void> {
   const steps = args.length === 0 ? ["fdc", "exercises"] : [...args];
@@ -55,6 +63,11 @@ async function main(args: readonly string[]): Promise<void> {
       const path = steps[++i];
       if (path === undefined) throw new Error(`ifct needs a CSV path\n${USAGE}`);
       await importIfct(resolve(userCwd, path));
+    } else if (step === "cofid") {
+      const proximates = steps[++i];
+      const inorganics = steps[++i];
+      if (proximates === undefined || inorganics === undefined) throw new Error(`cofid needs two CSV paths\n${USAGE}`);
+      await importCofid(resolve(userCwd, proximates), resolve(userCwd, inorganics));
     } else throw new Error(`unknown step "${step}"\n${USAGE}`);
   }
 }
