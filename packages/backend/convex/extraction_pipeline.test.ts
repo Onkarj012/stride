@@ -25,6 +25,8 @@ const HOMEMADE_PANEER: Nutrients = { kcal: 260, protein: 18, carbs: 4, fat: 19, 
 interface LlmReply {
   content?: string | null;
   toolCalls?: { name: string; args: Record<string, unknown> }[];
+  /** Answer with this HTTP status and no body, for failures such as 402. */
+  status?: number;
 }
 type RequestBody = Record<string, unknown>;
 
@@ -54,6 +56,7 @@ async function fakeFetch(input: string | URL | Request, init?: RequestInit): Pro
     if (!isRecord(body)) throw new Error("bad body");
     openRouterBodies.push(body);
     const reply = llm(body);
+    if (reply.status !== undefined) return new Response("{}", { status: reply.status });
     const toolCalls = (reply.toolCalls ?? []).map((call, i) => ({
       id: `call_${openRouterBodies.length}_${i}`,
       type: "function",
@@ -389,6 +392,17 @@ describe("D14 tool loop", () => {
     const result = await logText(user, "zzz unknown dish");
     expect(result.kind).toBe("draft");
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("Tool pass failed"), "provider down");
+    warn.mockRestore();
+  });
+
+  test("the app's OpenRouter account out of credits in the tool pass still leaves a draft", async () => {
+    const { t, user } = await setup();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    llm = (body) => (kind(body) === "extract" ? extraction([{ food: "zzz unknown dish" }]) : { status: 402 });
+    const result = await logText(user, "zzz unknown dish");
+    expect(result.kind).toBe("draft");
+    expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve"]);
+    expect(await entryRows(t)).toHaveLength(0);
     warn.mockRestore();
   });
 

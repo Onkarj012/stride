@@ -57,6 +57,8 @@ export const HISTORY_WINDOW = 20;
 const HISTORY_READ_FACTOR = 3;
 /** Most model calls in one chat turn. Each may run tools; the turn ends when the model stops calling them. */
 export const MAX_CHAT_ITERATIONS = 4;
+/** The reply when a turn ends with no text and nothing it did to show. */
+export const SORRY_REPLY = "Sorry, I couldn't finish that. Try again?";
 
 const MAX_SUBMISSION_ID_CHARS = 96;
 const MAX_TITLE_CHARS = 60;
@@ -1131,7 +1133,17 @@ async function runChatTurn(
     );
     if (reply.stopped) return stopped();
     if (reply.toolCalls.length === 0) {
-      return { reply: stream.text, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
+      // An empty first step has nothing to show, so it fails. After tools ran, their saved writes stand and the turn ends.
+      if (i === 0 && stream.text === "") throw new Error("OpenRouter returned an empty reply");
+      // With no streamed text, say what the tools did. A turn that only offered a Log this button points at it.
+      let reply = stream.text;
+      if (reply === "") {
+        if (notes.length > 0) reply = notes.join(" ");
+        else if (entryIds.length + draftIds.length > 0) reply = "Done.";
+        else if (offered !== undefined) reply = "Tap Log this to add it.";
+        else reply = SORRY_REPLY;
+      }
+      return { reply, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
     }
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
 
@@ -1176,7 +1188,7 @@ async function runChatTurn(
       toolCalls.push({ name: call.function.name, argsJson: call.function.arguments.slice(0, MAX_TOOL_RESULT_CHARS), resultJson: capJson(result) });
     }
   }
-  const fallback = notes.length === 0 ? "Sorry, I couldn't finish that. Try again?" : notes.join(" ");
+  const fallback = notes.length === 0 ? SORRY_REPLY : notes.join(" ");
   return {
     reply: [stream.text, fallback].filter((part) => part !== "").join("\n\n"),
     toolCalls,
