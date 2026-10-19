@@ -53,7 +53,10 @@ function planOf(item: DraftItem, fix: Fix, set: AmountSet | null): Plan {
   const foodName = fix.foodName ?? item.food?.name ?? null
   const foodChanged = fix.foodId !== undefined && fix.foodId !== item.food?._id
   const touched = foodChanged || fix.quantity !== undefined || fix.unit !== undefined
-  const quantity = fix.quantity !== undefined ? fix.quantity : item.quantity
+  // A recipe fraction shows the eaten part, so the card's quantity is the server's quantity times the scale.
+  const scale = item.portionScale ?? 1
+  const eaten = item.quantity === null ? null : item.quantity * scale
+  const quantity = fix.quantity !== undefined ? fix.quantity : eaten
   // Same unit the server reads from the draft. A unit that no longer converts for this food finds no option here.
   const selectedUnit = fix.unit !== undefined ? fix.unit : item.unit
   const normalizedUnit = selectedUnit === null ? null : normalizeUnit(selectedUnit)
@@ -74,9 +77,8 @@ function planOf(item: DraftItem, fix: Fix, set: AmountSet | null): Plan {
   if (option === null || quantity === null || quantity <= 0 || set === null) {
     return { foodName, touched, quantity, option, grams: null, kcal: null, protein: null, ready: false, payload: null }
   }
-  // A recipe fraction only survives as grams, so those are sent. Otherwise the server resolves quantity and unit itself.
-  const scale = item.portionScale ?? 1
-  const grams = quantity * option.gramsPerUnit * scale
+  // The quantity is already eaten, so no scale here. A recipe fraction is sent as grams because the server would rescale quantity and unit.
+  const grams = quantity * option.gramsPerUnit
   const nutrients = scaleNutrients(set.per100g, grams)
   const payload = item.portionScale === null ? { quantity, unit: option.unit } : { grams }
   return {
