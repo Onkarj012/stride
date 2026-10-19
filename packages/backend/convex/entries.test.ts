@@ -230,6 +230,29 @@ describe("revisions", () => {
     expect(head?.flags).toEqual(["estimated"]);
   });
 
+  test("a photo estimate keeps its estimated flag when edited onto a normal food", async () => {
+    const { t, user, dal } = await setup();
+    const estimate = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: DAL,
+        source: "ai_estimate",
+        sourceId: "user_a:ai:homemade dal",
+        verified: false,
+        ownerUserId: "user_a",
+      }),
+    );
+    const [id] = await user.mutation(api.entries.addEntries, {
+      submissionId: "add",
+      items: [{ foodId: estimate, grams: 100, source: "db", flags: ["photo", "estimated"] }],
+    });
+    const rev = await user.mutation(api.entries.editEntry, { submissionId: "edit", entryId: id, foodId: dal });
+    const head = await t.run((ctx) => ctx.db.get("entries", rev));
+    expect(head?.flags).toEqual(["photo", "estimated"]);
+  });
+
   test("undo restores the prior revision's content", async () => {
     const { t, user, rice } = await setup();
     const [id] = await user.mutation(api.entries.addEntries, {

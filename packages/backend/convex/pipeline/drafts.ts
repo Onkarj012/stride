@@ -315,6 +315,7 @@ export const confirmDraft = mutation({
         source: corrected && fix.foodId !== undefined ? "db" : entrySource(item.matchSource),
         confidence: corrected ? 1 : item.confidence ?? 1,
         flags: [
+          ...(item.fromPhoto === true ? ["photo"] : []),
           ...(item.fromPhoto === true || food.source === "ai_estimate" ? ["estimated"] : []),
           ...(item.cookingOil === true ? ["cooking_oil"] : []),
           ...(scale !== undefined && !corrected ? ["portion_scale"] : []),
