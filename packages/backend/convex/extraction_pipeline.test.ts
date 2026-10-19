@@ -858,7 +858,7 @@ describe("draft amounts: a food is only offered units it converts in", () => {
       return id;
     });
     const [set] = await user.query(api.pipeline.drafts.amountOptions, { items: [{ foodId: cookie, unit: null }] });
-    expect(set?.units).toContainEqual({ unit: "piece", label: "piece", gramsPerUnit: 5.6 });
+    expect(set?.units).toContainEqual({ unit: "piece", label: "pc", gramsPerUnit: 5.6 });
   });
 });
 

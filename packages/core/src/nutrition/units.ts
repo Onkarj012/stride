@@ -227,6 +227,16 @@ function headedPieceSeed(foodName: string): { grams: number; names: ReadonlySet<
   return { grams: first.grams, names: new Set(rows.flatMap((r) => r.keys.flatMap(tokenize)).map(pieceName)) };
 }
 
+/** Text for a unit on a chip or card. A piece names the food's piece ("roti"), or "pc" when the food has none. Other units stay as they are. */
+export function unitLabel(unit: string | null, foodName: string): string {
+  if (unit !== null && normalizeUnit(unit) !== PIECE_UNIT) return unit;
+  const seed = headedPieceSeed(foodName);
+  if (seed === null) return "pc";
+  // Prefer the name that is the food's own head word, so "Phulka roti" says "roti" and not "phulka".
+  const heads = headWords(foodName);
+  return [...seed.names].find((n) => heads.has(n)) ?? [...seed.names][0] ?? "pc";
+}
+
 /** Grams from the food's portion rows whose measure passes `matches`: null when none, or "conflict" when they disagree. */
 function portionGrams(portions: PortionContext["portions"], matches: (measure: string) => boolean): number | "conflict" | null {
   const grams = new Set(

@@ -6,6 +6,7 @@ import {
   PIECE_UNIT,
   scaleNutrients,
   type UserMeasure,
+  unitLabel,
 } from "@stride/core";
 import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -212,7 +213,7 @@ async function amountUnitsOf(
     const portion = resolveWithPortions(food, portions, 1, name, userMeasures);
     if (portion.status === "resolved") grams.set(unit, portion.grams);
   }
-  return [...grams].map(([unit, gramsPerUnit]) => ({ unit, label: unit ?? "count", gramsPerUnit }));
+  return [...grams].map(([unit, gramsPerUnit]) => ({ unit, label: unitLabel(unit, food.name), gramsPerUnit }));
 }
 
 /**

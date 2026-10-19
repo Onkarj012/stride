@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { HOUSEHOLD_VESSELS, MASS_UNITS_G, VOLUME_UNITS_ML } from "./household_measures.ts";
-import { densityFor, normalizeUnit, PORTION_CONFIDENCE, resolvePortion, type PortionResult, type UserMeasure } from "./units.ts";
+import { densityFor, normalizeUnit, PORTION_CONFIDENCE, resolvePortion, type PortionResult, unitLabel, type UserMeasure } from "./units.ts";
 
 /** Grams from a result that must be resolved. */
 function gramsOf(result: PortionResult): number {
@@ -371,5 +371,20 @@ describe("cup size", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea" }))).toBeCloseTo(110 * 1.01, 6);
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Masala chai" }))).toBeCloseTo(110 * 1.01, 6);
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Coffee" }))).toBeCloseTo(240 * 1.01, 6);
+  });
+});
+
+describe("unitLabel", () => {
+  it("names the piece for a food with a piece weight, and says pc for other foods", () => {
+    expect(unitLabel("piece", "Roti")).toBe("roti");
+    expect(unitLabel(null, "Roti")).toBe("roti");
+    expect(unitLabel("piece", "Phulka roti")).toBe("roti");
+    expect(unitLabel("piece", "Cookies, chocolate chip")).toBe("pc");
+    expect(unitLabel(null, "Cookies, chocolate chip")).toBe("pc");
+  });
+
+  it("returns any other unit unchanged", () => {
+    expect(unitLabel("ml", "Roti")).toBe("ml");
+    expect(unitLabel("cup", "Chai")).toBe("cup");
   });
 });
