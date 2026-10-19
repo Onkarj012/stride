@@ -337,3 +337,31 @@ describe("properties", () => {
     );
   });
 });
+
+describe("AI estimate portions", () => {
+  const chai = { foodName: "Masala chai", portions: [{ measure: "teacup", gramsPerMeasure: 104 }], skipSeedPieceWeights: true };
+
+  it("keeps the normal order: a saved teacup beats the estimate's row, and grams stay exact", () => {
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "teacup" }, { ...chai, userMeasures: [{ measure: "teacup", grams: 200 }] }))).toBe(200);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "teacup" }, chai))).toBe(104);
+    expect(gramsOf(resolvePortion({ quantity: 100, unit: "g" }, chai))).toBe(100);
+  });
+
+  it("a saved piece row answers a named count, and the seed is skipped", () => {
+    const paratha = { foodName: "Masala paratha", portions: [{ measure: "piece", gramsPerMeasure: 120 }] };
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, paratha))).toBe(160);
+    const estimate = { ...paratha, skipSeedPieceWeights: true };
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: "paratha" }, estimate))).toBe(240);
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, estimate))).toBe(240);
+  });
+
+  it("a slice of a whole-pizza estimate does not reuse its piece row", () => {
+    const pizza = { foodName: "Pizza", portions: [{ measure: "piece", gramsPerMeasure: 400 }], skipSeedPieceWeights: true };
+    expect(resolvePortion({ quantity: 2, unit: "slice" }, pizza)).toEqual({ status: "unresolved", reason: "food_specific_measure" });
+  });
+
+  it("a bare count of an estimate made from slices stays unresolved when it has no piece row", () => {
+    const paratha = { foodName: "Masala paratha", portions: [{ measure: "slice", gramsPerMeasure: 20 }], skipSeedPieceWeights: true };
+    expect(resolvePortion({ quantity: 2, unit: null }, paratha)).toEqual({ status: "unresolved", reason: "missing_piece_weight" });
+  });
+});

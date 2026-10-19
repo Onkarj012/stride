@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { MAX_TOOL_ITERATIONS } from "./pipeline/tools";
+import { estimateProblem, type Estimate, MAX_TOOL_ITERATIONS } from "./pipeline/tools";
 import { isRecord, OPENROUTER_CHAT_URL, PHOTO_MODEL, PIPELINE_MODEL } from "./pipeline/openrouter";
 import { UNDO_WINDOW_MS } from "./pipeline/resolve";
 import { AI_INPUT_LIMITS } from "./ai_guard";
@@ -923,5 +923,368 @@ describe("draft amounts: a food-name unit does not follow a food change", () => 
       user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, foodId: coffee }] }),
     ).rejects.toThrow(/cannot turn that amount/);
     expect(await entryRows(t)).toHaveLength(0);
+  });
+});
+
+describe("AI estimate checks", () => {
+  test("a chai estimate passes; macros that do not add up and a 600 g katori are refused", () => {
+    const chai: Estimate = { name: "Masala chai", grams: 110, kcal: 55, protein: 2.5, carbs: 7, fat: 2, assumptions: "Milk and sugar, cafe cup" };
+    expect(estimateProblem(chai, 1, "teacup")).toBeNull();
+    expect(estimateProblem({ ...chai, fat: 10 }, 1, "teacup")).toMatch(/add up/);
+    expect(estimateProblem({ ...chai, protein: 60, carbs: 50, fat: 10, kcal: 530 }, 1, "teacup")).toMatch(/cannot weigh more/);
+    expect(estimateProblem({ ...chai, grams: 600, kcal: 300, protein: 10, carbs: 40, fat: 10 }, 1, "katori")).toMatch(/fit one katori/);
+  });
+
+  test("a cup of dry oats at 0.34 g/ml passes", () => {
+    const oats: Estimate = { name: "Oats, dry", grams: 82, kcal: 319, protein: 13.2, carbs: 54.2, fat: 6.9, assumptions: "Rolled oats" };
+    expect(estimateProblem(oats, 1, "cup")).toBeNull();
+  });
+
+  test("grams must agree with an explicit mass or volume unit", () => {
+    const paneer: Estimate = { name: "Paneer", grams: 100, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Cubed" };
+    expect(estimateProblem(paneer, 100, "g")).toBeNull();
+    expect(estimateProblem({ ...paneer, grams: 150 }, 100, "g")).toMatch(/do not match 100 g/);
+    const milk: Estimate = { name: "Milk", grams: 600, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Whole" };
+    expect(estimateProblem(milk, 200, "ml")).toMatch(/do not match 200 ml/);
+  });
+});
+
+describe("AI estimate: an unmatched item becomes a private estimate on the draft", () => {
+  const CHAI_CALL = {
+    item_index: 0,
+    name: "Masala chai",
+    grams: 110,
+    kcal: 55,
+    protein_g: 2.5,
+    carbs_g: 7,
+    fat_g: 2,
+    assumptions: "Milk and sugar, cafe cup",
+  };
+
+  test("the estimate lands on the draft with its chip data and a private food row, and does not auto-commit", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const result = await logText(user, "a teacup of masala chai");
+
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve"]);
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]).toMatchObject({ aiEstimate: true, estimated: true, note: "Milk and sugar, cafe cup", grams: 110 });
+    expect(draft?.items[0]?.reasons).toContain("ai_estimate");
+
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    const estimates = foods.filter((food) => food.source === "ai_estimate");
+    expect(estimates).toHaveLength(1);
+    expect(estimates[0]).toMatchObject({ name: "Masala chai", ownerUserId: "user_a", verified: false });
+    expect(draft?.items[0]?.food?._id).toBe(estimates[0]?._id);
+  });
+
+  test("once confirmed, the same text auto-commits from memory with no model call", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const first = await logText(user, "a teacup of masala chai", "sub-1");
+    if (first.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: first.draftId });
+
+    const callsBefore = openRouterBodies.length;
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+    expect(second.kind).toBe("committed");
+    expect(openRouterBodies.slice(callsBefore).map(kind)).toEqual(["extract"]);
+    const rows = await entryRows(t);
+    expect(rows.at(-1)).toMatchObject({ source: "memory", grams: 110 });
+    expect(rows.at(-1)?.flags).toContain("estimated");
+  });
+
+  test("an estimate's own portion row sets the grams, so a seed piece weight cannot change them", async () => {
+    const { user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala paratha", quantity: 2 }])
+        : {
+            toolCalls: [
+              {
+                name: "estimate_food",
+                args: { item_index: 0, name: "Masala paratha", grams: 240, kcal: 600, protein_g: 12, carbs_g: 72, fat_g: 24, assumptions: "Plain, ghee brushed" },
+              },
+            ],
+          };
+    const result = await logText(user, "2 masala paratha");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.grams).toBe(240);
+  });
+
+  test("while a clear runs, an estimate writes no food row and the log fails", async () => {
+    const { t, user } = await setup();
+    await t.run((ctx) => ctx.db.insert("ledger_clears", { userId: "user_a" }));
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+
+    await expect(logText(user, "a teacup of masala chai")).rejects.toThrow(/being cleared/);
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(0);
+  });
+
+  test("a tool-picked estimate stays among the item's candidates, so the picker can offer it again", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : {
+            toolCalls: [
+              {
+                name: "estimate_food",
+                args: { item_index: 0, name: "Masala chai", grams: 110, kcal: 55, protein_g: 2.5, carbs_g: 7, fat_g: 2, assumptions: "Milk and sugar" },
+              },
+            ],
+          };
+    const result = await logText(user, "a teacup of masala chai");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const estimate = (await t.run((ctx) => ctx.db.query("foods").collect())).find((food) => food.source === "ai_estimate");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.candidates.map((food) => food._id)).toContain(estimate?._id);
+  });
+
+  test("a remembered estimate that lands on a draft stays among the item's candidates", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const first = await logText(user, "a teacup of masala chai", "sub-1");
+    if (first.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: first.draftId });
+
+    llm = () => extraction([{ food: "masala chai", quantity: 1, unit: "teacup", confidence: 0.5 }]);
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+    if (second.kind !== "draft") throw new Error("expected a draft");
+    const estimate = (await t.run((ctx) => ctx.db.query("foods").collect())).find((food) => food.source === "ai_estimate");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: second.draftId });
+    expect(draft?.items[0]?.candidates.map((food) => food._id)).toEqual([estimate?._id]);
+  });
+
+  test("two unconfirmed logs of the same estimate make one food row", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const first = await logText(user, "a teacup of masala chai", "sub-1");
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+
+    expect(first.kind).toBe("draft");
+    expect(second.kind).toBe("draft");
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(1);
+  });
+});
+
+describe("AI estimate identity and portions", () => {
+  test("two teacup chai estimates of different size make two rows, and the second draft shows its own amount", async () => {
+    const { t, user } = await setup();
+    const chai = (grams: number, kcal: number, protein: number, carbs: number, fat: number) => ({
+      item_index: 0,
+      name: "Masala chai",
+      grams,
+      kcal,
+      protein_g: protein,
+      carbs_g: carbs,
+      fat_g: fat,
+      assumptions: "Milk and sugar",
+    });
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: chai(110, 55, 2.5, 7, 2) }] };
+    await logText(user, "a teacup of masala chai", "sub-1");
+
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: chai(150, 120, 4, 14, 4) }] };
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+    if (second.kind !== "draft") throw new Error("expected a draft");
+
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: second.draftId });
+    expect(draft?.items[0]?.grams).toBe(150);
+    expect(draft?.items[0]?.preview?.kcal).toBeCloseTo(120, 6);
+    const rows = (await t.run((ctx) => ctx.db.query("foods").collect())).filter((food) => food.source === "ai_estimate");
+    expect(rows).toHaveLength(2);
+  });
+
+  test("two 200 g, 200 kcal shakes with different macros make two rows", async () => {
+    const { t, user } = await setup();
+    const shake = (protein: number, carbs: number, fat: number) => ({
+      item_index: 0,
+      name: "Protein shake",
+      grams: 200,
+      kcal: 200,
+      protein_g: protein,
+      carbs_g: carbs,
+      fat_g: fat,
+      assumptions: "Whey in milk",
+    });
+    for (const [submission, args] of [["sub-1", shake(20, 20, 2)], ["sub-2", shake(10, 35, 5)]] as const) {
+      llm = (body) =>
+        kind(body) === "extract"
+          ? extraction([{ food: "protein shake", quantity: 1 }])
+          : { toolCalls: [{ name: "estimate_food", args }] };
+      const result = await logText(user, "a protein shake", submission);
+      expect(result.kind).toBe("draft");
+    }
+    const rows = (await t.run((ctx) => ctx.db.query("foods").collect())).filter((food) => food.source === "ai_estimate");
+    expect(rows).toHaveLength(2);
+  });
+
+  test("a reused estimate keeps one piece row, so counts stated two ways never conflict", async () => {
+    const { t, user } = await setup();
+    const samosa = (quantity: number, grams: number, kcal: number, protein: number, carbs: number, fat: number) => ({
+      item_index: 0,
+      name: "Samosa",
+      grams,
+      kcal,
+      protein_g: protein,
+      carbs_g: carbs,
+      fat_g: fat,
+      assumptions: "Fried, potato filling",
+    });
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "samosa", quantity: 3, unit: "samosa" }])
+        : { toolCalls: [{ name: "estimate_food", args: samosa(3, 99, 297, 7.92, 39.6, 11.88) }] };
+    await logText(user, "3 samosa", "sub-1");
+
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "samosa", quantity: 1 }])
+        : { toolCalls: [{ name: "estimate_food", args: samosa(1, 33, 99, 2.64, 13.2, 3.96) }] };
+    const second = await logText(user, "1 samosa", "sub-2");
+    if (second.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: second.draftId });
+
+    const estimate = (await t.run((ctx) => ctx.db.query("foods").collect())).find((food) => food.source === "ai_estimate");
+    const portions = await t.run((ctx) => ctx.db.query("food_portions").collect());
+    expect(portions.filter((p) => p.foodId === estimate?._id).map((p) => p.measure)).toEqual(["piece"]);
+
+    llm = () => extraction([{ food: "samosa", quantity: 2 }]);
+    const third = await logText(user, "2 samosa", "sub-3");
+    expect(third.kind).toBe("committed");
+    expect((await entryRows(t)).at(-1)?.grams).toBeCloseTo(2 * 33, 6);
+  });
+
+  test("'Acai bowl' with unit bowl keeps a bowl row, and the draft resolves to its 200 g", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "acai bowl", quantity: 1, unit: "bowl" }])
+        : {
+            toolCalls: [
+              {
+                name: "estimate_food",
+                args: { item_index: 0, name: "Acai bowl", grams: 200, kcal: 200, protein_g: 3, carbs_g: 30, fat_g: 6, assumptions: "Banana, granola" },
+              },
+            ],
+          };
+    const result = await logText(user, "an acai bowl");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.grams).toBe(200);
+    const portions = await t.run((ctx) => ctx.db.query("food_portions").collect());
+    expect(portions.map((p) => [p.measure, p.description])).toEqual([["bowl", "bowl"]]);
+  });
+
+  test("an estimate saved with a unit that names the food answers a later bare count", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "samosa", quantity: 2, unit: "samosa" }])
+        : {
+            toolCalls: [
+              {
+                name: "estimate_food",
+                args: { item_index: 0, name: "Samosa", grams: 240, kcal: 600, protein_g: 14, carbs_g: 72, fat_g: 28, assumptions: "Fried, potato filling" },
+              },
+            ],
+          };
+    const first = await logText(user, "2 samosa", "sub-1");
+    if (first.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: first.draftId });
+
+    llm = () => extraction([{ food: "samosa", quantity: 2 }]);
+    const second = await logText(user, "2 samosa", "sub-2");
+    expect(second.kind).toBe("committed");
+    expect((await entryRows(t)).at(-1)).toMatchObject({ grams: 240 });
+  });
+});
+
+describe("AI estimate names keep non-Latin scripts apart", () => {
+  test("two Devanagari estimates make two food rows", async () => {
+    const { t, user } = await setup();
+    const callFor = (name: string) => ({
+      item_index: 0,
+      name,
+      grams: 150,
+      kcal: 200,
+      protein_g: 5,
+      carbs_g: 30,
+      fat_g: 6,
+      assumptions: "Home-style, one katori",
+    });
+    for (const [submission, name] of [["sub-1", "पोहा"], ["sub-2", "उपमा"]] as const) {
+      llm = (body) =>
+        kind(body) === "extract"
+          ? extraction([{ food: name, quantity: 1, unit: "katori" }])
+          : { toolCalls: [{ name: "estimate_food", args: callFor(name) }] };
+      const result = await logText(user, name, submission);
+      expect(result.kind).toBe("draft");
+    }
+    const rows = (await t.run((ctx) => ctx.db.query("foods").collect())).filter((food) => food.source === "ai_estimate");
+    expect(rows.map((food) => food.name).sort()).toEqual(["उपमा", "पोहा"]);
+  });
+});
+
+describe("saved foods are never crowded out by AI estimates", () => {
+  test("a user with 210 AI estimates still matches their own saved food", async () => {
+    const { t, user } = await setup();
+    const saved = await t.run(async (ctx) => {
+      for (let i = 0; i < 210; i++) {
+        await ctx.db.insert("foods", {
+          name: `Estimate ${i}`,
+          aliases: [],
+          searchText: `Estimate ${i}`,
+          per100g: RICE,
+          source: "ai_estimate",
+          sourceId: `user_a:ai:estimate ${i}`,
+          verified: false,
+          ownerUserId: "user_a",
+        });
+      }
+      return await ctx.db.insert("foods", {
+        name: "Homemade paneer",
+        aliases: [],
+        searchText: "Homemade paneer",
+        per100g: PANEER,
+        source: "user",
+        sourceId: "user_a:homemade-paneer",
+        verified: true,
+        ownerUserId: "user_a",
+      });
+    });
+    // The saved-food list has no search fallback, so it shows whether estimates crowd saved foods out.
+    expect((await user.query(api.foods_db.listUserFoods, {})).map((food) => food._id)).toContain(saved);
+    llm = () => extraction([{ food: "homemade paneer", quantity: 100, unit: "g" }]);
+    const result = await logText(user, "100 g homemade paneer");
+
+    expect(result.kind).toBe("committed");
+    expect((await entryRows(t)).at(-1)).toMatchObject({ foodId: saved, source: "db", grams: 100 });
   });
 });

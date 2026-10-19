@@ -32,7 +32,7 @@ export async function runPipeline(ctx: ActionCtx, userId: string, run: PipelineR
   });
   let picks: Pick[] = [];
   try {
-    picks = await runToolPass(ctx, userId, unresolved);
+    picks = await runToolPass(ctx, userId, unresolved, run.chatId);
   } catch (err) {
     // Structured errors (budget, rate limit, own key) are for the user. Anything else only skips the food picks.
     if (err instanceof ConvexError) throw err;

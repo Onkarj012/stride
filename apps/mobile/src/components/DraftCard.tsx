@@ -208,6 +208,8 @@ export function DraftCard({
         const showUnits = !plan.ready || editing === i
         const option = plan.option
         const units = sets?.[i]?.units ?? []
+        // The estimate chip and note describe the original estimate, so they hide once another food is picked.
+        const onEstimate = item.aiEstimate && (fix.foodId ?? item.food?._id) === item.food?._id
         return (
           <Animated.View key={i} entering={spring.delay(i * 70)} layout={LinearTransition.springify()} style={s.item}>
             <Tap
@@ -218,13 +220,17 @@ export function DraftCard({
               accessibilityLabel={`Change ${plan.foodName ?? item.text}`}
             >
               <View style={s.grow}>
-                <Text style={s.itemName}>{plan.foodName ?? `"${item.text}"`}</Text>
+                <View style={s.nameRow}>
+                  <Text style={s.itemName}>{plan.foodName ?? `"${item.text}"`}</Text>
+                  {onEstimate ? <Tag text="AI estimate" tone="est" /> : null}
+                </View>
+                {onEstimate && item.note ? <Text style={s.metaText}>{item.note}</Text> : null}
                 <View style={s.meta}>
                   <Text style={s.metaText}>
                     {metaOf(plan)}
                     {plan.protein !== null ? ` · ${Math.round(plan.protein)} g protein` : ''}
                   </Text>
-                  {item.estimated ? <Tag text="estimated" tone="est" /> : null}
+                  {item.fromPhoto && !onEstimate ? <Tag text="estimated" tone="est" /> : null}
                 </View>
               </View>
               <Text style={s.itemKcal}>{plan.kcal === null ? '–' : formatNumber(plan.kcal)}</Text>
@@ -401,6 +407,7 @@ const useStyles = themedStyles((t) => ({
   struck: { flex: 1, textDecorationLine: 'line-through', color: t.c.ink3 },
   itemTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   itemName: { ...font('bodyStrong'), color: t.c.ink },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },
   metaText: { ...font('caption'), color: t.c.ink3 },
   itemKcal: { ...font('value'), color: t.c.ink },

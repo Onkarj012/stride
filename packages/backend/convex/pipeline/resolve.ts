@@ -59,7 +59,8 @@ export type ItemReason =
   | "low_confidence"
   | "clamp_flag"
   | "invalid_date"
-  | "invalid_portion_scale";
+  | "invalid_portion_scale"
+  | "ai_estimate";
 
 /** The matcher's answer for one item text. */
 interface Match {
@@ -129,11 +130,11 @@ export async function activeLinkFood(ctx: Ctx, userId: string, key: string): Pro
   return null;
 }
 
-/** The caller's personal foods, bounded. */
+/** The caller's saved foods, bounded. AI estimates are not saved foods, so they are not listed. */
 export async function userFoodsOf(ctx: Ctx, userId: string): Promise<Doc<"foods">[]> {
   return await ctx.db
     .query("foods")
-    .withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId))
+    .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", userId).eq("source", "user"))
     .take(MAX_USER_FOODS);
 }
 
@@ -195,6 +196,25 @@ export async function portionsOf(ctx: Ctx, foodId: Id<"foods">): Promise<Doc<"fo
     .take(MAX_PORTION_ROWS);
 }
 
+/**
+ * Grams for a quantity and unit of one food, from already-loaded portion rows, in the core resolver's order.
+ * An AI estimate skips the seed piece weights, so its own rows decide its grams.
+ */
+export function resolveWithPortions(
+  food: Doc<"foods">,
+  portions: readonly Doc<"food_portions">[],
+  quantity: number,
+  unit: string | null,
+  userMeasures: UserMeasure[],
+): PortionResult {
+  return resolvePortion({ quantity, unit }, {
+    foodName: food.name,
+    portions,
+    userMeasures,
+    skipSeedPieceWeights: food.source === "ai_estimate",
+  });
+}
+
 /** Grams for a quantity and unit of one food, from its portions, the user's measures and the density tables. */
 export async function resolveFoodPortion(
   ctx: Ctx,
@@ -203,8 +223,7 @@ export async function resolveFoodPortion(
   unit: string | null,
   userMeasures: UserMeasure[],
 ): Promise<PortionResult> {
-  const portions = await portionsOf(ctx, food._id);
-  return resolvePortion({ quantity, unit }, { foodName: food.name, portions, userMeasures });
+  return resolveWithPortions(food, await portionsOf(ctx, food._id), quantity, unit, userMeasures);
 }
 
 /** True for a usable recipe fraction: above 0 and at most the whole recipe. */
@@ -255,7 +274,10 @@ export async function resolveItems(
     }
 
     const fromPhoto = inputKind === "photo" && item.fromPhoto;
-    if (fromPhoto) flags.push("estimated");
+    // An AI estimate stays on the draft the first time (tool pick), then auto-commits from memory with the flag.
+    const aiEstimate = match.food?.source === "ai_estimate";
+    if (aiEstimate && match.source === "tool") reasons.push("ai_estimate");
+    if (fromPhoto || aiEstimate) flags.push("estimated");
     if (item.cookingOil) flags.push("cooking_oil");
     const clamp = match.food !== null && portion.status === "resolved"
       ? clampFlags(portion.grams, scaleNutrients(match.food.per100g, portion.grams))
@@ -329,7 +351,7 @@ export async function draftLines(ctx: Ctx, draft: Doc<"drafts">): Promise<LogLin
       grams: item.grams ?? null,
       kcal: food !== null && item.grams !== undefined ? scaleNutrients(food.per100g, item.grams).kcal : null,
       reasons: item.reasons ?? [],
-      estimated: item.fromPhoto === true,
+      estimated: item.fromPhoto === true || food?.source === "ai_estimate",
     });
   }
   return lines;
@@ -502,7 +524,13 @@ export const commitLog = internalMutation({
         fromPhoto: r.fromPhoto,
         confidence: r.confidence,
         reasons: r.reasons,
-        candidateIds: r.candidates.map((food) => food._id),
+        // A matched estimate is offered again in the picker, since search does not show estimates.
+        candidateIds: [
+          ...r.candidates.map((food) => food._id),
+          ...(r.food !== null && r.food.source === "ai_estimate" && !r.candidates.some((food) => food._id === r.food?._id)
+            ? [r.food._id]
+            : []),
+        ],
       })),
     });
     const draft = await ctx.db.get("drafts", draftId);

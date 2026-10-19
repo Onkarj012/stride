@@ -57,6 +57,8 @@ export interface PortionContext {
   /** That food's `food_portions` rows. */
   portions?: readonly { measure: string; gramsPerMeasure: number }[];
   userMeasures?: readonly UserMeasure[];
+  /** Skips the PIECE_WEIGHTS seeds. A count then uses the food's own "piece" row, so an AI estimate's grams hold. */
+  skipSeedPieceWeights?: boolean;
 }
 
 /** How a resolved portion got its grams. */
@@ -196,6 +198,26 @@ function pieceName(name: string): string {
   return own(PIECE_ALIASES, name) ?? name;
 }
 
+/** Units that state an amount (mass, volume, vessels, the cup family). They never name a piece, even when the food name has the word. */
+const AMOUNT_UNITS: ReadonlySet<string> = new Set([
+  ...Object.keys(MASS_UNITS_G),
+  ...Object.keys(VOLUME_UNITS_ML),
+  ...Object.keys(HOUSEHOLD_VESSELS),
+  "cup",
+  "teacup",
+]);
+
+/**
+ * True when a unit names a piece of this food: every word of it appears in the food name, and it is not an amount unit.
+ * "paratha" names "Masala paratha", "slice" does not name "Pizza", and "bowl" does not name a piece of "Acai bowl".
+ */
+export function unitNamesFood(unit: string, foodName: string): boolean {
+  if (AMOUNT_UNITS.has(normalizeUnit(unit))) return false;
+  const nameTokens = new Set(tokenize(foodName).map(pieceName));
+  const unitTokens = tokenize(unit).map(pieceName);
+  return unitTokens.length > 0 && unitTokens.every((t) => nameTokens.has(t));
+}
+
 /** Seed for a food whose head word names a piece row: grams, and the piece names it answers to. Null when none. */
 function headedPieceSeed(foodName: string): { grams: number; names: ReadonlySet<string> } | null {
   const heads = headWords(foodName);
@@ -226,7 +248,7 @@ function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: Por
     if (explicitPiece === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
     if (explicitPiece !== null) return resolved(quantity * explicitPiece, PORTION_CONFIDENCE.foodPortion, "food_portion");
   }
-  const seed = headedPieceSeed(ctx.foodName);
+  const seed = ctx.skipSeedPieceWeights === true ? null : headedPieceSeed(ctx.foodName);
   if (seed !== null) {
     // A named unit must name this food's seed, so "roti" never counts a banana.
     if (rawUnit === PIECE_UNIT || tokenize(rawUnit).every((w) => seed.names.has(pieceName(w)))) {
@@ -235,7 +257,10 @@ function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: Por
     return { status: "unresolved", reason: "missing_piece_weight" };
   }
   if (rawUnit !== PIECE_UNIT) return { status: "unresolved", reason: "missing_piece_weight" };
-  const matches = isBare ? (measure: string) => COUNT_MEASURES.includes(measure) : (measure: string) => measure === PIECE_UNIT;
+  // An AI estimate has one piece row. Its other count rows ("slice") describe part of the food, so a bare count must not use them.
+  const matches = isBare && ctx.skipSeedPieceWeights !== true
+    ? (measure: string) => COUNT_MEASURES.includes(measure)
+    : (measure: string) => measure === PIECE_UNIT;
   const perCount = portionGrams(ctx.portions, matches);
   if (perCount === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
   if (perCount !== null) return resolved(quantity * perCount, PORTION_CONFIDENCE.foodPortion, "food_portion");
@@ -267,7 +292,7 @@ export function resolvePortion(
   const rawUnit = normalizeUnit(input.unit);
   const isBare = normalizeText(input.unit ?? "") === "";
   // "1 phulka" arrives with the food name as its unit; treat it as one piece of that food.
-  const unit = pieceWeightFor(rawUnit) !== null ? PIECE_UNIT : rawUnit;
+  const unit = ctx.skipSeedPieceWeights !== true && pieceWeightFor(rawUnit) !== null ? PIECE_UNIT : rawUnit;
 
   const directMeasureNames = new Set([rawUnit, unit]);
   if (unit === PIECE_UNIT) directMeasureNames.add(normalizeText(ctx.foodName));
@@ -324,6 +349,14 @@ export function resolvePortion(
       ? Math.min(base, PORTION_CONFIDENCE.userMeasure)
       : vessel !== undefined ? Math.min(base, PORTION_CONFIDENCE.householdVessel) : base;
     return resolved(quantity * mlPerUnit * density.gPerMl, confidence, "volume");
+  }
+
+  // With seeds skipped, a named unit takes the food's piece row only when the food name carries that unit.
+  // "2 slice" of a whole pizza must not reuse one piece row for each slice.
+  if (ctx.skipSeedPieceWeights === true && unit !== PIECE_UNIT && unitNamesFood(unit, ctx.foodName)) {
+    const piece = portionGrams(ctx.portions, (measure) => measure === PIECE_UNIT);
+    if (piece === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+    if (piece !== null) return resolved(quantity * piece, PORTION_CONFIDENCE.foodPortion, "food_portion");
   }
 
   if (unit === PIECE_UNIT) return pieceGrams(quantity, rawUnit, isBare, ctx);

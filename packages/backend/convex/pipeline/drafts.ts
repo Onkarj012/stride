@@ -4,7 +4,6 @@ import {
   isLocalDate,
   normalizeUnit,
   PIECE_UNIT,
-  resolvePortion,
   scaleNutrients,
   type UserMeasure,
 } from "@stride/core";
@@ -26,6 +25,7 @@ import {
   MAX_PAST_DAYS,
   portionsOf,
   resolveFoodPortion,
+  resolveWithPortions,
   userMeasuresOf,
   validScale,
   type LogResult,
@@ -66,6 +66,11 @@ const draftItemViewValidator = v.object({
   /** Recipe fraction applied to the grams, when valid. The card applies it to any amount the user picks. */
   portionScale: v.union(v.number(), v.null()),
   estimated: v.boolean(),
+  /** The item came from a photo. Separate from `estimated`, which also covers AI estimates. */
+  fromPhoto: v.boolean(),
+  /** The food is an AI estimate, so the card shows its chip and assumptions. */
+  aiEstimate: v.boolean(),
+  note: v.union(v.string(), v.null()),
   cookingOil: v.boolean(),
   candidates: v.array(v.object({ _id: v.id("foods"), name: v.string() })),
 });
@@ -142,7 +147,10 @@ export const getDraft = query({
         unresolved: item.unresolved ?? null,
         reasons: item.reasons ?? [],
         portionScale: item.portionScale !== undefined && validScale(item.portionScale) ? item.portionScale : null,
-        estimated: item.fromPhoto === true,
+        estimated: item.fromPhoto === true || food?.source === "ai_estimate",
+        fromPhoto: item.fromPhoto === true,
+        aiEstimate: food?.source === "ai_estimate",
+        note: food?.note ?? null,
         cookingOil: item.cookingOil === true,
         candidates,
       });
@@ -196,12 +204,12 @@ async function amountUnitsOf(
     ...userMeasures.map((m) => m.measure),
   ];
   const grams = new Map<string | null, number>();
-  const bareCount = resolvePortion({ quantity: 1, unit: null }, { foodName: food.name, portions, userMeasures });
+  const bareCount = resolveWithPortions(food, portions, 1, null, userMeasures);
   if (bareCount.status === "resolved") grams.set(null, bareCount.grams);
   for (const name of names) {
     const unit = normalizeUnit(name);
     if (grams.has(unit)) continue;
-    const portion = resolvePortion({ quantity: 1, unit: name }, { foodName: food.name, portions, userMeasures });
+    const portion = resolveWithPortions(food, portions, 1, name, userMeasures);
     if (portion.status === "resolved") grams.set(unit, portion.grams);
   }
   return [...grams].map(([unit, gramsPerUnit]) => ({ unit, label: unit ?? "count", gramsPerUnit }));
@@ -307,7 +315,7 @@ export const confirmDraft = mutation({
         source: corrected && fix.foodId !== undefined ? "db" : entrySource(item.matchSource),
         confidence: corrected ? 1 : item.confidence ?? 1,
         flags: [
-          ...(item.fromPhoto === true ? ["estimated"] : []),
+          ...(item.fromPhoto === true || food.source === "ai_estimate" ? ["estimated"] : []),
           ...(item.cookingOil === true ? ["cooking_oil"] : []),
           ...(scale !== undefined && !corrected ? ["portion_scale"] : []),
           ...(corrected ? ["user_corrected"] : []),
