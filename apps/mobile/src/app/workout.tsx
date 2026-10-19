@@ -19,6 +19,9 @@ import { newSubmissionId, plainError } from '@/lib/log'
 import { formatKg, formatSets, formatTonnage, type Exercise, type ExerciseId, type SessionDetail, type SessionId, type SetId } from '@/lib/strength'
 import { font, themedStyles } from '@/theme'
 
+// Exercises lined up by a repeat, per session. Survives leaving the screen but not an app restart (prototype; a server field would make it durable).
+const plannedBySession = new Map<SessionId, Exercise[]>()
+
 // Leaves the workout screen, falling back to Progress when it was opened directly.
 function leave() {
   if (router.canGoBack()) router.back()
@@ -41,8 +44,6 @@ function Workout() {
   const [browsing, setBrowsing] = useState(view === 'history')
   const open = useQuery(api.strength.activeSession, {})
   const [sessionId, setSessionId] = useState<SessionId | null>(null)
-  // Exercises lined up from a repeated workout, empty for a plain start.
-  const [plan, setPlan] = useState<Exercise[]>([])
   const [message, setMessage] = useState<ToastMessage | null>(null)
   const toastId = useRef(0)
   const undoRevision = useMutation(api.strength.undoRevision)
@@ -79,14 +80,14 @@ function Workout() {
       ) : active === null ? (
         <Start
           onStarted={(id, lined) => {
-            setPlan(lined)
+            plannedBySession.set(id, lined)
             setSessionId(id)
           }}
           onHistory={() => setBrowsing(true)}
           toast={toast}
         />
       ) : (
-        <Session key={active} sessionId={active} plan={plan} actions={{ toast, undoFor }} />
+        <Session key={active} sessionId={active} actions={{ toast, undoFor }} />
       )}
       <Toast message={message} onDone={toastDone} />
     </View>
@@ -182,41 +183,60 @@ function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId, pla
   )
 }
 
-// The three most recent finished workouts, each one tap from starting again. Hidden while loading or when there are none.
+// The three most recent finished workouts that have exercises, each one tap from starting again. Hidden while loading or when there are none.
 function RepeatSection({ disabled, onRepeat }: { disabled: boolean; onRepeat: (plan: Exercise[]) => void }) {
   const s = useStyles()
-  const { results, status } = usePaginatedQuery(api.strength.savedSessions, {}, { initialNumItems: 6 })
-  const finished = results.filter((session) => session.endedAt !== undefined).slice(0, 3)
-  if (status === 'LoadingFirstPage' || finished.length === 0) return null
+  const { results } = usePaginatedQuery(api.strength.savedSessions, {}, { initialNumItems: 6 })
+  // Whether each finished session has exercises, reported by its row once loaded.
+  const [hasExercises, setHasExercises] = useState<Record<string, boolean>>({})
+  const onResolve = useCallback((id: SessionId, has: boolean) => setHasExercises((m) => (m[id] === has ? m : { ...m, [id]: has })), [])
+  const finished = results.filter((session) => session.endedAt !== undefined)
+  const shown = new Set(finished.filter((session) => hasExercises[session._id] === true).slice(0, 3).map((session) => session._id))
   return (
-    <Animated.View entering={FadeInDown.springify()}>
-      <Text style={[s.eyebrow, s.repeatLabel]}>Repeat a recent workout</Text>
-      <View style={s.repeatCard}>
+    <View>
+      {shown.size > 0 ? <Text style={[s.eyebrow, s.repeatLabel]}>Repeat a recent workout</Text> : null}
+      <Animated.View entering={FadeInDown.springify()} style={shown.size > 0 ? s.repeatCard : undefined}>
         {finished.map((session) => (
-          <RepeatRow key={session._id} sessionId={session._id} name={session.name} localDate={session.localDate} disabled={disabled} onRepeat={onRepeat} />
+          <RepeatRow
+            key={session._id}
+            sessionId={session._id}
+            name={session.name}
+            localDate={session.localDate}
+            shown={shown.has(session._id)}
+            disabled={disabled}
+            onResolve={onResolve}
+            onRepeat={onRepeat}
+          />
         ))}
-      </View>
-    </Animated.View>
+      </Animated.View>
+    </View>
   )
 }
 
-// One finished workout: its name, day, exercises, and set count. Renders nothing when it has no exercises.
+// One finished workout: its name, day, exercises, and set count. Reports whether it has exercises, and renders only when shown.
 function RepeatRow({
   sessionId,
   name,
   localDate,
+  shown,
   disabled,
+  onResolve,
   onRepeat,
 }: {
   sessionId: SessionId
   name: string | undefined
   localDate: string
+  shown: boolean
   disabled: boolean
+  onResolve: (id: SessionId, hasExercises: boolean) => void
   onRepeat: (plan: Exercise[]) => void
 }) {
   const s = useStyles()
   const detail = useQuery(api.strength.sessionDetail, { sessionId })
-  if (detail === undefined || detail.exercises.length === 0) return null
+  useEffect(() => {
+    if (detail !== undefined) onResolve(sessionId, detail.exercises.length > 0)
+  }, [detail, sessionId, onResolve])
+  if (!shown || detail === undefined || detail.exercises.length === 0) return null
   const plan = detail.exercises.map((e) => e.exercise)
   const title = `${name ?? 'Workout'} · ${formatDayTitle(localDate)}`
   return (
@@ -230,7 +250,7 @@ function RepeatRow({
 }
 
 // A started session: live logging while open, the summary once finished. "Edit sets" reopens a finished one.
-function Session({ sessionId, plan, actions }: { sessionId: SessionId; plan: Exercise[]; actions: WorkoutActions }) {
+function Session({ sessionId, actions }: { sessionId: SessionId; actions: WorkoutActions }) {
   const detail = useQuery(api.strength.sessionDetail, { sessionId })
   const [editing, setEditing] = useState(false)
   if (detail === undefined)
@@ -240,7 +260,7 @@ function Session({ sessionId, plan, actions }: { sessionId: SessionId; plan: Exe
       </Page>
     )
   if (detail.session.endedAt !== undefined && !editing) return <Summary detail={detail} onEdit={() => setEditing(true)} />
-  return <Live detail={detail} plan={plan} actions={actions} onFinish={() => setEditing(false)} />
+  return <Live detail={detail} plan={plannedBySession.get(sessionId) ?? []} actions={actions} onFinish={() => setEditing(false)} />
 }
 
 // Elapsed time from a start to an end instant (default now) as m:ss or h:mm:ss. Only a live timer ticks, and only while the screen is focused.
@@ -289,6 +309,7 @@ function Live({ detail, plan, actions, onFinish }: { detail: SessionDetail; plan
     setFinishing(true)
     try {
       await endSession({ sessionId: detail.session._id })
+      plannedBySession.delete(detail.session._id)
       onFinish()
     } catch (err) {
       actions.toast({ title: "Couldn't finish the workout.", sub: plainError(err) })
