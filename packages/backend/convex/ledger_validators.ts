@@ -12,7 +12,13 @@ export const nutrientsValidator = v.object({
 });
 
 /** Where a food record's numbers come from (core `FoodSource`). */
-export const foodSourceValidator = v.union(v.literal("fdc"), v.literal("ifct"), v.literal("off"), v.literal("user"));
+export const foodSourceValidator = v.union(
+  v.literal("fdc"),
+  v.literal("ifct"),
+  v.literal("off"),
+  v.literal("user"),
+  v.literal("ai_estimate"),
+);
 
 /** Meal slot (core `MealSlot`, D16). */
 export const mealSlotValidator = v.union(

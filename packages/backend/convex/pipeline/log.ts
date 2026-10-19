@@ -32,7 +32,7 @@ export async function runPipeline(ctx: ActionCtx, userId: string, run: PipelineR
   });
   let picks: Pick[] = [];
   try {
-    picks = await runToolPass(ctx, userId, unresolved);
+    picks = await runToolPass(ctx, userId, unresolved, run.chatId);
   } catch (err) {
     // Structured errors (budget, rate limit, own key) are for the user. Out of AI credits and other failures only skip the picks.
     if (err instanceof ConvexError && err.data.code !== "AI_UNAVAILABLE") throw err;

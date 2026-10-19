@@ -82,11 +82,6 @@ export function RoundButton({
   )
 }
 
-// True when typed text reads as a finite number. Partial input like "80." counts.
-function readsAsNumber(text: string): boolean {
-  return text.trim() !== '' && Number.isFinite(Number(text.replace(',', '.')))
-}
-
 // Minus, value, plus in one pill, like the mock's meal-sheet stepper. Tap the value to type it when onType is set; a held button keeps stepping.
 export function Stepper({
   value,
@@ -104,15 +99,20 @@ export function Stepper({
   const s = useStyles()
   const [typing, setTyping] = useState<string | null>(null)
 
-  // Hands the typed text to the caller and goes back to showing the value.
+  // Stops editing after live text changes have already reached the caller.
   function commit() {
-    if (typing !== null) onType?.(typing)
     setTyping(null)
+  }
+
+  // Closes text entry before applying a step.
+  function step(direction: -1 | 1) {
+    setTyping(null)
+    onStep(direction)
   }
 
   return (
     <View style={s.step}>
-      <StepButton dir={-1} icon="minus" label={`Less ${label}`} onStep={onStep} />
+      <StepButton dir={-1} icon="minus" label={`Less ${label}`} onStep={step} />
       {typing === null ? (
         <Tap
           onPress={() => setTyping(typeText ?? value)}
@@ -128,8 +128,8 @@ export function Stepper({
           value={typing}
           onChangeText={(text) => {
             setTyping(text)
-            // Pushes each readable number up now, so a Save tapped while typing reads the new value.
-            if (readsAsNumber(text)) onType?.(text)
+            // Pushes every edit up, so the caller can disable Save while the text is empty or invalid.
+            onType?.(text)
           }}
           onSubmitEditing={commit}
           onBlur={commit}
@@ -141,7 +141,7 @@ export function Stepper({
           accessibilityLabel={`${label} value`}
         />
       )}
-      <StepButton dir={1} icon="plus" label={`More ${label}`} onStep={onStep} />
+      <StepButton dir={1} icon="plus" label={`More ${label}`} onStep={step} />
     </View>
   )
 }

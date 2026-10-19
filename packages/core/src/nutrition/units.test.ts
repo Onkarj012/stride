@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { HOUSEHOLD_VESSELS, MASS_UNITS_G, VOLUME_UNITS_ML } from "./household_measures.ts";
-import { densityFor, normalizeUnit, PORTION_CONFIDENCE, resolvePortion, type PortionResult } from "./units.ts";
+import { densityFor, normalizeUnit, PORTION_CONFIDENCE, resolvePortion, type PortionResult, type UserMeasure } from "./units.ts";
 
 /** Grams from a result that must be resolved. */
 function gramsOf(result: PortionResult): number {
@@ -65,14 +65,36 @@ describe("volume", () => {
     expect(resolvePortion({ quantity: 100, unit: "ml" }, { foodName: "Milk chocolate" })).toEqual({
       status: "unresolved", reason: "missing_density",
     });
+    expect(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Milk chocolate" })).toEqual({
+      status: "unresolved", reason: "missing_density",
+    });
+  });
+
+  it("reads the drink after a category word, and gives no density to a powder or mix", () => {
+    expect(densityFor("Beverages, tea, black, brewed")).toBe(1.01);
+    expect(densityFor("Beverages, coffee, brewed")).toBe(1.01);
+    expect(densityFor("Tea with milk")).toBe(1.01);
+    expect(densityFor("Beverages, coffee, instant, prepared with water")).toBeNull();
+    expect(densityFor("Coffee, instant, powder")).toBeNull();
+    expect(densityFor("Beverages, tea, instant, unsweetened, powder")).toBeNull();
+  });
+
+  it("gives no drink density to leaves, ground beans, creamer or bags", () => {
+    expect(densityFor("Tea, leaves")).toBeNull();
+    expect(densityFor("Beverages, coffee, ground")).toBeNull();
+    expect(densityFor("Coffee, creamer, non-dairy")).toBeNull();
+    expect(densityFor("Tea, bags")).toBeNull();
+    expect(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea, leaves" })).toEqual({
+      status: "unresolved", reason: "missing_density",
+    });
   });
 });
 
 describe("household measures", () => {
-  it("resolves a katori of dal as 150 ml at dal density, with household confidence", () => {
+  it("resolves a katori of dal as 150 ml at served-dal density, with household confidence", () => {
     const r = resolvePortion({ quantity: 1, unit: "katori" }, { foodName: "dal" });
     expect(r).toMatchObject({ status: "resolved", method: "volume", confidence: PORTION_CONFIDENCE.householdVessel });
-    expect(gramsOf(r)).toBeCloseTo(150 * 0.837, 6);
+    expect(gramsOf(r)).toBeCloseTo(150 * 1.01, 6);
   });
 
   it("resolves roti by count at 40 g", () => {
@@ -92,7 +114,7 @@ describe("household measures", () => {
 
   it("uses the user's own measure first", () => {
     const ctx = { foodName: "dal", userMeasures: [{ measure: "katori", ml: 200 }] };
-    expect(gramsOf(resolvePortion({ quantity: 1, unit: "katori" }, ctx))).toBeCloseTo(200 * 0.837, 6);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "katori" }, ctx))).toBeCloseTo(200 * 1.01, 6);
     const roti = { foodName: "roti", userMeasures: [{ measure: "roti", grams: 45 }] };
     expect(resolvePortion({ quantity: 2, unit: "roti" }, roti)).toMatchObject({ grams: 90, method: "user_measure" });
     expect(resolvePortion({ quantity: 2, unit: "piece" }, roti)).toMatchObject({ grams: 90, method: "user_measure" });
@@ -125,6 +147,147 @@ describe("household measures", () => {
     expect(resolvePortion({ quantity: 0, unit: "g" }, { foodName: "peanuts" })).toEqual({ status: "unresolved", reason: "invalid_quantity" });
     expect(resolvePortion({ quantity: Number.NaN, unit: "g" }, { foodName: "peanuts" })).toEqual({ status: "unresolved", reason: "invalid_quantity" });
     expect(resolvePortion({ quantity: 1, unit: "piece" }, { foodName: "biryani" })).toEqual({ status: "unresolved", reason: "missing_piece_weight" });
+  });
+});
+
+describe("counts and spoons", () => {
+  it("uses the food's count row for a count with no unit", () => {
+    const portions = [{ measure: "cookie", gramsPerMeasure: 5.6 }];
+    expect(resolvePortion({ quantity: 2, unit: null }, { foodName: "Biscuits, marie", portions })).toMatchObject({
+      status: "resolved", grams: 11.2, method: "food_portion",
+    });
+  });
+
+  it("stays unresolved when count rows disagree on grams", () => {
+    const portions = [{ measure: "cookie", gramsPerMeasure: 5.6 }, { measure: "biscuit", gramsPerMeasure: 8 }];
+    expect(resolvePortion({ quantity: 2, unit: null }, { foodName: "Biscuits, marie", portions })).toEqual({
+      status: "unresolved", reason: "conflicting_portions",
+    });
+  });
+
+  it("ignores a portion row whose label is not a count", () => {
+    const portions = [{ measure: "package", gramsPerMeasure: 200 }];
+    expect(resolvePortion({ quantity: 1, unit: null }, { foodName: "Biscuits, marie", portions })).toEqual({
+      status: "unresolved", reason: "missing_piece_weight",
+    });
+  });
+
+  it("uses the seed roti weight over a packaged 68 g piece row", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 68 }];
+    expect(resolvePortion({ quantity: 2, unit: null }, { foodName: "roti", portions })).toMatchObject({
+      grams: 80, method: "piece",
+    });
+  });
+
+  it("uses the food's exact piece row for an explicit piece unit", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 68 }];
+    expect(resolvePortion({ quantity: 2, unit: "piece" }, { foodName: "roti", portions })).toMatchObject({
+      grams: 136, method: "food_portion",
+    });
+  });
+
+  it("uses a saved count measure before the food's count row", () => {
+    const ctx = {
+      foodName: "Biscuits, marie",
+      portions: [{ measure: "cookie", gramsPerMeasure: 5.6 }],
+      userMeasures: [{ measure: "cookie", grams: 8 }],
+    };
+    expect(resolvePortion({ quantity: 2, unit: null }, ctx)).toMatchObject({
+      grams: 16, method: "user_measure",
+    });
+  });
+
+  it.each([
+    { userMeasures: [
+      { measure: "cookie", grams: 8 },
+      { measure: "slice", grams: 20 },
+    ] },
+    { userMeasures: [
+      { measure: "slice", grams: 20 },
+      { measure: "cookie", grams: 8 },
+    ] },
+  ] satisfies { userMeasures: UserMeasure[] }[])("rejects conflicting inferred saved count weights regardless of order", ({ userMeasures }) => {
+    expect(resolvePortion({ quantity: 2, unit: null }, {
+      foodName: "Biscuits, marie",
+      portions: [{ measure: "cookie", gramsPerMeasure: 5.6 }, { measure: "slice", gramsPerMeasure: 10 }],
+      userMeasures,
+    })).toEqual({ status: "unresolved", reason: "conflicting_portions" });
+  });
+
+  it.each(["piece", "Biscuits, marie"])("prefers direct saved %s measure over conflicting inferred counts", (measure) => {
+    expect(resolvePortion({ quantity: 2, unit: null }, {
+      foodName: "Biscuits, marie",
+      densityGPerMl: 1,
+      portions: [{ measure: "cookie", gramsPerMeasure: 5.6 }, { measure: "slice", gramsPerMeasure: 10 }],
+      userMeasures: [
+        { measure: "cookie", grams: 8 },
+        { measure: "slice", grams: 20 },
+        { measure, ml: 10 },
+      ],
+    })).toMatchObject({ status: "resolved", grams: 20, method: "volume" });
+  });
+
+  it("does not use ingredient alternatives as piece seed heads", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 90 }];
+    expect(resolvePortion({ quantity: 1, unit: null }, { foodName: "Turnover, apple or cherry", portions })).toMatchObject({
+      grams: 90, method: "food_portion",
+    });
+  });
+
+  it("reads a spoon as a 5 ml teaspoon", () => {
+    expect(resolvePortion({ quantity: 1, unit: "spoon" }, { foodName: "mystery", densityGPerMl: 1 })).toMatchObject({
+      grams: 5, method: "volume",
+    });
+  });
+
+  it("does not give a compound food the egg seed weight when egg is only a modifier", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 30 }];
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: null }, { foodName: "Bread, egg", portions }))).toBe(30);
+    const noodles = [{ measure: "piece", gramsPerMeasure: 60 }];
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, { foodName: "Egg noodles", portions: noodles }))).toBe(120);
+  });
+
+  it("uses an explicit piece row even when a different-weight slice row exists", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 5.6 }, { measure: "slice", gramsPerMeasure: 10 }];
+    expect(resolvePortion({ quantity: 2, unit: "piece" }, { foodName: "Biscuits, marie", portions })).toMatchObject({
+      grams: 11.2, method: "food_portion",
+    });
+  });
+
+  it("gives the phulka weight, not the roti weight or a packaged row, to 'Phulka roti'", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 68 }];
+    expect(resolvePortion({ quantity: 2, unit: "phulka" }, { foodName: "Phulka roti", portions })).toMatchObject({
+      grams: 60, method: "piece",
+    });
+  });
+
+  it("does not give a named unit like roti to another food", () => {
+    expect(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Beverages, coffee, instant, powder" })).toEqual({
+      status: "unresolved", reason: "missing_piece_weight",
+    });
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Roti" }))).toBe(40);
+  });
+
+  it("gives a flatbread second part the seed, but keeps a modifier like egg as the bread's own row", () => {
+    const portions = [{ measure: "piece", gramsPerMeasure: 68 }];
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, { foodName: "Bread, paratha", portions }))).toBe(160);
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, { foodName: "Bread, chapati, whole wheat", portions }))).toBe(80);
+    const egg = [{ measure: "piece", gramsPerMeasure: 30 }];
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, { foodName: "Bread, egg", portions: egg }))).toBe(60);
+  });
+
+  it("keeps 'brewed from grounds' drinks eligible for density, and blocks plain ground coffee", () => {
+    expect(densityFor("Coffee, brewed from grounds")).toBe(1.01);
+    expect(densityFor("Beverages, coffee, ground")).toBeNull();
+  });
+
+  it("counts a named unit only for the food's own seed, with aliases", () => {
+    expect(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Bananas, raw" })).toEqual({
+      status: "unresolved", reason: "missing_piece_weight",
+    });
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "banana" }, { foodName: "Bananas, raw" }))).toBe(118);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "chapati" }, { foodName: "Roti" }))).toBe(40);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "roti" }, { foodName: "Chapati" }))).toBe(40);
   });
 });
 
@@ -172,5 +335,33 @@ describe("properties", () => {
         expect(r.status).toBe("unresolved");
       }),
     );
+  });
+});
+
+describe("AI estimate portions", () => {
+  const chai = { foodName: "Masala chai", portions: [{ measure: "teacup", gramsPerMeasure: 104 }], skipSeedPieceWeights: true };
+
+  it("keeps the normal order: a saved teacup beats the estimate's row, and grams stay exact", () => {
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "teacup" }, { ...chai, userMeasures: [{ measure: "teacup", grams: 200 }] }))).toBe(200);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "teacup" }, chai))).toBe(104);
+    expect(gramsOf(resolvePortion({ quantity: 100, unit: "g" }, chai))).toBe(100);
+  });
+
+  it("a saved piece row answers a named count, and the seed is skipped", () => {
+    const paratha = { foodName: "Masala paratha", portions: [{ measure: "piece", gramsPerMeasure: 120 }] };
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, paratha))).toBe(160);
+    const estimate = { ...paratha, skipSeedPieceWeights: true };
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: "paratha" }, estimate))).toBe(240);
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, estimate))).toBe(240);
+  });
+
+  it("a slice of a whole-pizza estimate does not reuse its piece row", () => {
+    const pizza = { foodName: "Pizza", portions: [{ measure: "piece", gramsPerMeasure: 400 }], skipSeedPieceWeights: true };
+    expect(resolvePortion({ quantity: 2, unit: "slice" }, pizza)).toEqual({ status: "unresolved", reason: "food_specific_measure" });
+  });
+
+  it("a bare count of an estimate made from slices stays unresolved when it has no piece row", () => {
+    const paratha = { foodName: "Masala paratha", portions: [{ measure: "slice", gramsPerMeasure: 20 }], skipSeedPieceWeights: true };
+    expect(resolvePortion({ quantity: 2, unit: null }, paratha)).toEqual({ status: "unresolved", reason: "missing_piece_weight" });
   });
 });
