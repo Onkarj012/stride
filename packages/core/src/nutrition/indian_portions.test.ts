@@ -43,7 +43,10 @@ const PHRASES: readonly Phrase[] = [
   { phrase: "1 katori rice (no cooked/raw)", quantity: 1, unit: "katori", food: "rice", expected: { reason: "missing_density" } },
   { phrase: "1 glass milk", quantity: 1, unit: "glass", food: "milk", expected: { grams: 250 * 1.031 } },
   { phrase: "1 glass chaas", quantity: 1, unit: "glass", food: "chaas", expected: { reason: "missing_density" } },
-  { phrase: "1 cup chai", quantity: 1, unit: "cup", food: "chai", expected: { grams: 240 * 1.01 } },
+  { phrase: "1 cup chai", quantity: 1, unit: "cup", food: "chai", expected: { grams: 110 * 1.01 } },
+  { phrase: "1 teacup chai", quantity: 1, unit: "teacup", food: "chai", expected: { grams: 110 * 1.01 } },
+  { phrase: "1 glass chai", quantity: 1, unit: "glass", food: "chai", expected: { grams: 250 * 1.01 } },
+  { phrase: "1 cup coffee", quantity: 1, unit: "cup", food: "coffee", expected: { grams: 240 * 1.01 } },
   { phrase: "1 cup instant coffee powder", quantity: 1, unit: "cup", food: "Beverages, coffee, instant, powder", expected: { reason: "missing_density" } },
 
   // Fats and sugar: standard kitchen spoons with FDC densities.

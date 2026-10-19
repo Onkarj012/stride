@@ -365,3 +365,11 @@ describe("AI estimate portions", () => {
     expect(resolvePortion({ quantity: 2, unit: null }, paratha)).toEqual({ status: "unresolved", reason: "missing_piece_weight" });
   });
 });
+
+describe("cup size", () => {
+  it("a cup of tea or chai is a teacup, and other drinks keep the standard cup", () => {
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea" }))).toBeCloseTo(110 * 1.01, 6);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Masala chai" }))).toBeCloseTo(110 * 1.01, 6);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Coffee" }))).toBeCloseTo(240 * 1.01, 6);
+  });
+});

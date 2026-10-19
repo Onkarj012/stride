@@ -282,6 +282,13 @@ function resolved(grams: number, confidence: number, method: PortionMethod): Por
   return { status: "resolved", grams, confidence, method };
 }
 
+/** Ml for a cup. Chai and tea are served in a teacup, so they use the teacup size instead of the standard cup. */
+function cupMlFor(unit: string, foodName: string): number | undefined {
+  if (unit !== "cup") return undefined;
+  const isTea = tokenize(foodName).some((t) => t === "chai" || t === "tea");
+  return isTea ? HOUSEHOLD_VESSELS.teacup?.ml : undefined;
+}
+
 /** Turns `{quantity, unit}` from extraction into grams. Unknown units or missing data return `unresolved`, never a guess. */
 export function resolvePortion(
   input: { quantity: number; unit: string | null | undefined },
@@ -340,7 +347,7 @@ export function resolvePortion(
   }
 
   const vessel = own(HOUSEHOLD_VESSELS, unit);
-  const mlPerUnit = userMl ?? own(VOLUME_UNITS_ML, unit) ?? vessel?.ml;
+  const mlPerUnit = userMl ?? cupMlFor(unit, ctx.foodName) ?? own(VOLUME_UNITS_ML, unit) ?? vessel?.ml;
   if (mlPerUnit !== undefined) {
     const density = resolveDensity(ctx);
     if (density === null) return { status: "unresolved", reason: "missing_density" };

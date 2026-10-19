@@ -35,6 +35,7 @@ export const HOUSEHOLD_VESSELS: Readonly<Record<string, HouseholdVessel>> = {
   katori: { ml: 150, note: "Standard small steel katori. Same value as the previous Stride engine and plan 007 D10." },
   bowl: { ml: 250, note: "Medium serving bowl. Same value as the previous Stride engine." },
   glass: { ml: 250, note: "Common steel or glass tumbler for water, milk, lassi, chaas." },
+  teacup: { ml: 110, note: "Home chai or coffee cup. Owner's estimate, 100 to 120 ml. A cup of chai or tea uses this size." },
   ladle: { ml: 60, note: "Serving ladle (karchi) of dal or curry. Household estimate, owner-editable." },
 };
 
