@@ -3,9 +3,10 @@ import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeInDown, FadeOut, LinearTransition, ZoomIn } from 'react-native-reanimated'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
-import { nextTargets, repRange, type SetTarget } from '@stride/core'
+import { nextTargets, type RepRange, type SetTarget } from '@stride/core'
 import { radii } from '@stride/ui-tokens'
 import { newSubmissionId, plainError } from '@/lib/log'
+import { useRepBand } from '@/lib/repBands'
 import {
   MAX_KG,
   MAX_REPS,
@@ -38,8 +39,8 @@ export type WorkoutActions = {
 type Hint = { weightKg: number; reps: number }
 
 // Polo's one-line reason for today's targets, given the reps last session was planned at.
-function targetReason(targets: SetTarget[], lastReps: number, step: number): string {
-  if (targets.every((t) => t.reason === 'add-weight')) return `Every set hit ${repRange(lastReps).max}, so add ${formatKg(step)} kg.`
+function targetReason(targets: SetTarget[], band: RepRange, step: number): string {
+  if (targets.every((t) => t.reason === 'add-weight')) return `Every set hit ${band.max}, so add ${formatKg(step)} kg.`
   if (targets.some((t) => t.reason === 'add-rep')) return 'Same weight, one more rep where you can.'
   return 'Hold the weight and own these reps.'
 }
@@ -68,9 +69,10 @@ export function ExerciseBlock({
   const s = useStyles()
   const hints = useQuery(api.strength.exerciseHints, previousSets === undefined ? { sessionId, exerciseId: exercise._id } : 'skip')
   const previous = previousSets ?? hints?.previousSets ?? []
+  const band = useRepBand(exercise._id, previous)
   const limited = historyLimited || hints?.historyLimited === true
   const step = weightStep(exercise)
-  const targets = limited ? [] : nextTargets(previous, step)
+  const targets = limited || band === null ? [] : nextTargets(previous, step, band)
   const muscle = exercise.primaryMuscles[0]
   const last = sets.at(-1)
   const next = targets[sets.length] ?? last ?? previous.at(-1) ?? { weightKg: startingWeight(exercise), reps: 8 }
@@ -90,8 +92,10 @@ export function ExerciseBlock({
             ? ' '
             : limited
               ? 'Previous workout hints are unavailable for this history.'
+              : previous.length > 0 && band !== null
+              ? `Last time: ${formatSets(previous)}. Today: ${formatSets(targets)}. ${targetReason(targets, band, step)}`
               : previous.length > 0
-              ? `Last time: ${formatSets(previous)}. Today: ${formatSets(targets)}. ${targetReason(targets, previous[0]?.reps ?? 0, step)}`
+              ? `Last time: ${formatSets(previous)}.`
               : 'New lift. Start with a weight you can move for 8 clean reps.'}
         </Text>
       </View>

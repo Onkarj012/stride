@@ -31,30 +31,37 @@ export function repRange(reps: number): RepRange {
   return { min: 13, max: 20 };
 }
 
-/** Double progression: add reps until every top set hits the top of the range, then add weight. */
-export function nextTargets(previous: PlannedSet[], stepKg: number): SetTarget[] {
-  const first = previous[0];
-  if (first === undefined) return [];
+/** The band for the top-weight sets, from their highest reps so lighter warm-ups don't decide it. Null when there are no sets. */
+export function inferRange(previous: PlannedSet[]): RepRange | null {
+  if (previous.length === 0) return null;
+  const top = Math.max(...previous.map((set) => set.weightKg));
+  const topReps = Math.max(...previous.filter((set) => set.weightKg === top).map((set) => set.reps));
+  return repRange(topReps);
+}
+
+/** Double progression: add reps until every top set hits the top of the range, then add weight. Pass `range` to keep a band chosen earlier. */
+export function nextTargets(previous: PlannedSet[], stepKg: number, range?: RepRange): SetTarget[] {
+  const band = range ?? inferRange(previous);
+  if (band === null) return [];
 
   // Bodyweight sets have no load to add, so each set just gains a rep.
   if (previous.every((set) => set.weightKg === 0)) {
     return previous.map((set) => ({ weightKg: 0, reps: set.reps + 1, reason: "add-rep" }));
   }
 
-  const range = repRange(first.reps);
   const top = Math.max(...previous.map((set) => set.weightKg));
   const topSets = previous.filter((set) => set.weightKg === top);
 
-  if (topSets.every((set) => set.reps >= range.max)) {
+  if (topSets.every((set) => set.reps >= band.max)) {
     return previous.map((set) => ({
       weightKg: roundKg(set.weightKg + stepKg),
-      reps: range.min,
+      reps: band.min,
       reason: "add-weight",
     }));
   }
 
   return previous.map((set) =>
-    set.reps < range.max
+    set.reps < band.max
       ? { weightKg: set.weightKg, reps: set.reps + 1, reason: "add-rep" }
       : { weightKg: set.weightKg, reps: set.reps, reason: "repeat" },
   );

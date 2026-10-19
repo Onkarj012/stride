@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextTargets, repRange } from "./progression.ts";
+import { inferRange, nextTargets, repRange } from "./progression.ts";
 
 describe("nextTargets", () => {
   it("returns nothing without a previous session", () => {
@@ -55,6 +55,27 @@ describe("nextTargets", () => {
     expect(repRange(9)).toEqual({ min: 9, max: 12 });
     expect(repRange(12)).toEqual({ min: 9, max: 12 });
     expect(repRange(13)).toEqual({ min: 13, max: 20 });
+  });
+
+  it("keeps a passed band after a missed target instead of re-inferring a lower one", () => {
+    const missed = [5, 5, 5].map((reps) => ({ weightKg: 42.5, reps }));
+    expect(nextTargets(missed, 2.5, { min: 6, max: 8 })).toEqual(
+      missed.map(() => ({ weightKg: 42.5, reps: 6, reason: "add-rep" })),
+    );
+  });
+
+  it("infers the band from the top-weight sets, not a lighter warm-up", () => {
+    const previous = [
+      { weightKg: 20, reps: 10 },
+      { weightKg: 40, reps: 8 },
+      { weightKg: 40, reps: 8 },
+    ];
+    expect(inferRange(previous)).toEqual({ min: 6, max: 8 });
+    expect(nextTargets(previous, 2.5)).toEqual([
+      { weightKg: 22.5, reps: 6, reason: "add-weight" },
+      { weightKg: 42.5, reps: 6, reason: "add-weight" },
+      { weightKg: 42.5, reps: 6, reason: "add-weight" },
+    ]);
   });
 
   it("keeps the band stable across consecutive weight jumps", () => {
