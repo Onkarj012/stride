@@ -10,4 +10,5 @@ export * from "./energy/targets.ts";
 export * from "./energy/adaptive_tdee.ts";
 export * from "./energy/workout_burn.ts";
 export * from "./strength/e1rm.ts";
+export * from "./strength/progression.ts";
 export * from "./time/local_day.ts";

@@ -3,6 +3,7 @@ import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeInDown, FadeOut, LinearTransition, ZoomIn } from 'react-native-reanimated'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
+import { nextTargets, repRange, type SetTarget } from '@stride/core'
 import { radii } from '@stride/ui-tokens'
 import { newSubmissionId, plainError } from '@/lib/log'
 import {
@@ -36,6 +37,13 @@ export type WorkoutActions = {
 
 type Hint = { weightKg: number; reps: number }
 
+// Polo's one-line reason for today's targets, given the reps last session was planned at.
+function targetReason(targets: SetTarget[], lastReps: number, step: number): string {
+  if (targets.every((t) => t.reason === 'add-weight')) return `Every set hit ${repRange(lastReps).max}, so add ${formatKg(step)} kg.`
+  if (targets.some((t) => t.reason === 'add-rep')) return 'Same weight, one more rep where you can.'
+  return 'Hold the weight and own these reps.'
+}
+
 // One exercise of a live workout (mock #/workout): name, Polo's hint from last time, logged sets and the next set to log.
 export function ExerciseBlock({
   sessionId,
@@ -61,9 +69,12 @@ export function ExerciseBlock({
   const hints = useQuery(api.strength.exerciseHints, previousSets === undefined ? { sessionId, exerciseId: exercise._id } : 'skip')
   const previous = previousSets ?? hints?.previousSets ?? []
   const limited = historyLimited || hints?.historyLimited === true
+  const step = weightStep(exercise)
+  const targets = limited ? [] : nextTargets(previous, step)
   const muscle = exercise.primaryMuscles[0]
   const last = sets.at(-1)
-  const draft: Hint = last ?? previous[sets.length] ?? previous.at(-1) ?? { weightKg: startingWeight(exercise), reps: 8 }
+  const next = targets[sets.length] ?? last ?? previous.at(-1) ?? { weightKg: startingWeight(exercise), reps: 8 }
+  const draft: Hint = { weightKg: next.weightKg, reps: next.reps }
 
   return (
     <View>
@@ -80,7 +91,7 @@ export function ExerciseBlock({
             : limited
               ? 'Previous workout hints are unavailable for this history.'
               : previous.length > 0
-              ? `Last time: ${formatSets(previous)}.`
+              ? `Last time: ${formatSets(previous)}. Today: ${formatSets(targets)}. ${targetReason(targets, previous[0]?.reps ?? 0, step)}`
               : 'New lift. Start with a weight you can move for 8 clean reps.'}
         </Text>
       </View>
@@ -98,6 +109,7 @@ export function ExerciseBlock({
             exercise={exercise}
             number={sets.length + 1}
             hint={previous[sets.length]}
+            target={targets[sets.length]}
             start={draft}
             actions={actions}
           />
@@ -255,6 +267,7 @@ function DraftRow({
   exercise,
   number,
   hint,
+  target,
   start,
   actions,
 }: {
@@ -262,6 +275,7 @@ function DraftRow({
   exercise: Exercise
   number: number
   hint?: Hint
+  target?: SetTarget
   start: Hint
   actions: WorkoutActions
 }) {
@@ -301,7 +315,12 @@ function DraftRow({
         reps: value.reps,
         ...(rpe === null ? {} : { rpe }),
       })
-      actions.toast({ title: `Set ${number} logged`, sub: `${formatKg(value.weightKg)} kg × ${value.reps}`, undo: actions.undoFor(id) })
+      const hit = target !== undefined && value.weightKg >= target.weightKg && value.reps >= target.reps
+      actions.toast({
+        title: hit ? `Set ${number} logged · goal hit` : `Set ${number} logged`,
+        sub: `${formatKg(value.weightKg)} kg × ${value.reps}`,
+        undo: actions.undoFor(id),
+      })
     } catch (err) {
       actions.toast({ title: "Couldn't log that set.", sub: plainError(err) })
       setBusy(false)
@@ -314,7 +333,7 @@ function DraftRow({
         <View style={s.lead}>
           <Text style={s.no}>{number}</Text>
           <Text style={s.prev} numberOfLines={1}>
-            {hint ? `Last ${formatSet(hint)}` : ' '}
+            {target ? `Goal ${formatSet(target)}` : hint ? `Last ${formatSet(hint)}` : ' '}
           </Text>
         </View>
         <NumStep
