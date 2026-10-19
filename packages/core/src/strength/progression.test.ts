@@ -52,8 +52,18 @@ describe("nextTargets", () => {
     expect(repRange(5)).toEqual({ min: 3, max: 5 });
     expect(repRange(6)).toEqual({ min: 6, max: 8 });
     expect(repRange(8)).toEqual({ min: 6, max: 8 });
-    expect(repRange(9)).toEqual({ min: 8, max: 12 });
-    expect(repRange(12)).toEqual({ min: 8, max: 12 });
-    expect(repRange(13)).toEqual({ min: 12, max: 20 });
+    expect(repRange(9)).toEqual({ min: 9, max: 12 });
+    expect(repRange(12)).toEqual({ min: 9, max: 12 });
+    expect(repRange(13)).toEqual({ min: 13, max: 20 });
+  });
+
+  it("keeps the band stable across consecutive weight jumps", () => {
+    const cycle1 = nextTargets(Array.from({ length: 3 }, () => ({ weightKg: 40, reps: 12 })), 2.5);
+    expect(cycle1).toEqual(Array.from({ length: 3 }, () => ({ weightKg: 42.5, reps: 9, reason: "add-weight" })));
+    expect(nextTargets(cycle1, 2.5)[0]).toEqual({ weightKg: 42.5, reps: 10, reason: "add-rep" });
+
+    const cycle2 = nextTargets([{ weightKg: 40, reps: 8 }], 2.5);
+    expect(cycle2).toEqual([{ weightKg: 42.5, reps: 6, reason: "add-weight" }]);
+    expect(nextTargets(cycle2, 2.5)).toEqual([{ weightKg: 42.5, reps: 7, reason: "add-rep" }]);
   });
 });

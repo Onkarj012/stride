@@ -23,12 +23,12 @@ function roundKg(kg: number): number {
   return Math.round(kg * 100) / 100;
 }
 
-/** The rep band for a lift, picked from the reps last session was planned at. */
+/** The rep band for a lift, picked from the reps last session was planned at. Bands don't overlap, so a band's min plans back into the same band. */
 export function repRange(reps: number): RepRange {
   if (reps <= 5) return { min: 3, max: 5 };
   if (reps <= 8) return { min: 6, max: 8 };
-  if (reps <= 12) return { min: 8, max: 12 };
-  return { min: 12, max: 20 };
+  if (reps <= 12) return { min: 9, max: 12 };
+  return { min: 13, max: 20 };
 }
 
 /** Double progression: add reps until every top set hits the top of the range, then add weight. */
