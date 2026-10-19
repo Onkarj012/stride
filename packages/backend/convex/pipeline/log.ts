@@ -6,7 +6,7 @@ import { AI_INPUT_LIMITS, assertMaxChars } from "../ai_guard";
 import { mealSlotValidator } from "../ledger_validators";
 import { requireOwnUpload } from "../uploads";
 import { extractItems, type ExtractedItem } from "./extract";
-import { logResultValidator, type InputKind, type LogResult, type UnresolvedItem } from "./resolve";
+import { logResultValidator, type InputKind, type LogResult, type Pick, type UnresolvedItem } from "./resolve";
 import { runToolPass } from "./tools";
 import { transcribeAudio } from "./transcribe";
 
@@ -30,7 +30,14 @@ export async function runPipeline(ctx: ActionCtx, userId: string, run: PipelineR
     inputKind: run.inputKind,
     items: run.items,
   });
-  const picks = await runToolPass(ctx, userId, unresolved, run.chatId);
+  let picks: Pick[] = [];
+  try {
+    picks = await runToolPass(ctx, userId, unresolved, run.chatId);
+  } catch (err) {
+    // Structured errors (budget, rate limit, own key) are for the user. Anything else only skips the food picks.
+    if (err instanceof ConvexError) throw err;
+    console.warn("Tool pass failed; logging unresolved items", err instanceof Error ? err.message : String(err));
+  }
   return await ctx.runMutation(internal.pipeline.resolve.commitLog, {
     userId,
     submissionId: run.submissionId,
