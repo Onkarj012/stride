@@ -1054,6 +1054,24 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     expect(draft?.items[0]?.candidates.map((food) => food._id)).toContain(estimate?._id);
   });
 
+  test("a remembered estimate that lands on a draft stays among the item's candidates", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const first = await logText(user, "a teacup of masala chai", "sub-1");
+    if (first.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: first.draftId });
+
+    llm = () => extraction([{ food: "masala chai", quantity: 1, unit: "teacup", confidence: 0.5 }]);
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+    if (second.kind !== "draft") throw new Error("expected a draft");
+    const estimate = (await t.run((ctx) => ctx.db.query("foods").collect())).find((food) => food.source === "ai_estimate");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: second.draftId });
+    expect(draft?.items[0]?.candidates.map((food) => food._id)).toEqual([estimate?._id]);
+  });
+
   test("two unconfirmed logs of the same estimate make one food row", async () => {
     const { t, user } = await setup();
     llm = (body) =>
