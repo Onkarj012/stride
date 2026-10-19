@@ -196,7 +196,30 @@ describe("revisions", () => {
     expect(rows[3]?.deletedAt).toBeUndefined();
   });
 
-  test("editing an estimated entry onto a normal food drops the estimated flag", async () => {
+  test("editing an entry off an AI estimate onto a normal food drops the estimated flag", async () => {
+    const { t, user, dal } = await setup();
+    const estimate = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: DAL,
+        source: "ai_estimate",
+        sourceId: "user_a:ai:homemade dal",
+        verified: false,
+        ownerUserId: "user_a",
+      }),
+    );
+    const [id] = await user.mutation(api.entries.addEntries, {
+      submissionId: "add",
+      items: [{ foodId: estimate, grams: 100, source: "db", flags: ["estimated"] }],
+    });
+    const rev = await user.mutation(api.entries.editEntry, { submissionId: "edit", entryId: id, foodId: dal });
+    const head = await t.run((ctx) => ctx.db.get("entries", rev));
+    expect(head?.flags).toEqual([]);
+  });
+
+  test("a photo entry's estimated flag survives a change to another normal food", async () => {
     const { t, user, rice, dal } = await setup();
     const [id] = await user.mutation(api.entries.addEntries, {
       submissionId: "add",
@@ -204,7 +227,7 @@ describe("revisions", () => {
     });
     const rev = await user.mutation(api.entries.editEntry, { submissionId: "edit", entryId: id, foodId: dal });
     const head = await t.run((ctx) => ctx.db.get("entries", rev));
-    expect(head?.flags).toEqual([]);
+    expect(head?.flags).toEqual(["estimated"]);
   });
 
   test("undo restores the prior revision's content", async () => {
