@@ -371,8 +371,8 @@ async function nextLiveEvent(ctx: MutationCtx, event: LinkEvent): Promise<LinkEv
 
 /**
  * Undoes the food memory written when this entry's draft was confirmed. The newest live event for a key puts its rows
- * back. An older one is cut out of the history instead: the next event's saved "before" states skip over it, so
- * undoing that event later never brings this choice back. Each event is undone at most once.
+ * back. An older one is cut out of the history instead: the next live event takes over its saved "before" states, so
+ * undoing that event later restores what came before both. Each event is undone at most once.
  */
 async function revertFoodMemory(ctx: MutationCtx, userId: string, entry: Doc<"entries">): Promise<void> {
   const events = await ctx.db
@@ -380,7 +380,7 @@ async function revertFoodMemory(ctx: MutationCtx, userId: string, entry: Doc<"en
     .withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).eq("submissionId", entry.submissionId))
     .take(MAX_LINK_EVENTS);
   for (const event of events) {
-    if (event.undoneAt !== undefined || !event.entryIds.includes(entry._id)) continue;
+    if (event.undoneAt !== undefined || event.entryId !== entry._id) continue;
     const next = await nextLiveEvent(ctx, event);
     if (next === null) {
       for (const change of event.changes) await restoreLink(ctx, change.linkId, change.after, change.before);
@@ -389,13 +389,10 @@ async function revertFoodMemory(ctx: MutationCtx, userId: string, entry: Doc<"en
         const mine = event.changes.find((c) => c.linkId === later.linkId && later.before !== null && sameState(later.before, c.after));
         return mine === undefined ? later : { ...later, before: mine.before };
       });
-      await ctx.db.patch("food_link_events", next._id, { changes: spliced });
-      // Rows the next event never touched (it reads only active rows) still hold this event's write.
-      for (const change of event.changes) {
-        if (!next.changes.some((later) => later.linkId === change.linkId)) {
-          await restoreLink(ctx, change.linkId, change.after, change.before);
-        }
-      }
+      // Rows the next event never touched (it reads only active rows) still hold this event's write. The next event
+      // takes over putting them back, so an older choice can't come back while a newer one is live.
+      const untouched = event.changes.filter((change) => !next.changes.some((later) => later.linkId === change.linkId));
+      await ctx.db.patch("food_link_events", next._id, { changes: [...spliced, ...untouched] });
     }
     await ctx.db.patch("food_link_events", event._id, { undoneAt: Date.now() });
   }

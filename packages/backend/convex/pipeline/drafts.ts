@@ -100,11 +100,11 @@ async function requireVisibleFood(ctx: MutationCtx, userId: string, foodId: Id<"
   return food;
 }
 
-/** One confirmed choice: the memory key, its food, and the entries logged under it. */
+/** One confirmed item: its memory key, the food chosen, and the entry it was logged as. */
 interface ConfirmedLink {
   key: string;
   foodId: Id<"foods">;
-  entryIds: Id<"entries">[];
+  entryId: Id<"entries">;
 }
 
 /**
@@ -112,7 +112,7 @@ interface ConfirmedLink {
  * Every row change is recorded in one `food_link_events` row, so undoing the entries can put the rows back.
  */
 async function rememberLink(ctx: MutationCtx, userId: string, submissionId: string, link: ConfirmedLink): Promise<void> {
-  const { key, foodId, entryIds } = link;
+  const { key, foodId, entryId } = link;
   // Only active rows are read, so old rejected and deleted rows never crowd a newer choice out of the window.
   const rows = await ctx.db
     .query("food_links")
@@ -135,7 +135,7 @@ async function rememberLink(ctx: MutationCtx, userId: string, submissionId: stri
     const linkId = await ctx.db.insert("food_links", { userId, key, foodId, ...after });
     changes.push({ linkId, before: null, after });
   }
-  await ctx.db.insert("food_link_events", { userId, key, submissionId, entryIds, changes });
+  await ctx.db.insert("food_link_events", { userId, key, submissionId, entryId, changes });
 }
 
 /** The fields of a memory row that a confirmation changes and an undo restores. */
@@ -143,21 +143,13 @@ function linkState(row: Doc<"food_links">): Doc<"food_link_events">["changes"][n
   return { status: row.status, uses: row.uses, updatedAt: row.updatedAt };
 }
 
-/** Groups confirmed items by memory key, in order. The last food named for a key wins, as it did row by row. */
+/** Pairs each confirmed item with its entry, skipping texts with no memory key. Each gets its own event, so undo is per entry. */
 function confirmedLinks(items: { text: string; foodId: Id<"foods"> }[], entryIds: Id<"entries">[]): ConfirmedLink[] {
-  const byKey = new Map<string, ConfirmedLink>();
-  for (const [index, item] of items.entries()) {
+  return items.flatMap((item, index) => {
     const key = linkKey(item.text);
     const entryId = entryIds[index];
-    if (key === "" || entryId === undefined) continue;
-    const link = byKey.get(key);
-    if (link === undefined) byKey.set(key, { key, foodId: item.foodId, entryIds: [entryId] });
-    else {
-      link.foodId = item.foodId;
-      link.entryIds.push(entryId);
-    }
-  }
-  return [...byKey.values()];
+    return key === "" || entryId === undefined ? [] : [{ key, foodId: item.foodId, entryId }];
+  });
 }
 
 /** One draft for its card, with preview nutrients computed from `foods` × grams. Values are unrounded; the app rounds for display. */

@@ -676,13 +676,48 @@ describe("undo takes back the food memory a confirmation wrote", () => {
           userId: "user_a",
           key: "ghar ka paneer",
           submissionId: `old-${i}`,
-          entryIds: [],
+          entryId,
           changes: [],
           undoneAt: 1,
         });
       }
     });
     await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId });
+    expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
+  });
+
+  test("an older choice stays replaced while the newer one is live, even after a forget", async () => {
+    const { t, user, foods } = await setup();
+    await t.run((ctx) =>
+      ctx.db.insert("food_links", { userId: "user_a", key: "ghar ka paneer", foodId: foods.biryani, status: "active", uses: 4, updatedAt: 1 }),
+    );
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g", confidence: 0.3 }]);
+    const [older] = await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    await confirmAs(user, "100 g ghar ka paneer", "sub-2", [foods.tikka]);
+    if (older === undefined) throw new Error("expected an entry");
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId: older });
+    const active = await user.query(api.pipeline.drafts.listFoodLinks, {});
+    expect(active.map((l) => l.foodId)).toEqual([foods.tikka]);
+
+    const [tikka] = active;
+    if (tikka === undefined) throw new Error("expected a memory");
+    await user.mutation(api.pipeline.drafts.forgetFoodLink, { linkId: tikka._id });
+    expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
+  });
+
+  test("two items with the same text in one log each undo only their own choice", async () => {
+    const { user, foods } = await setup();
+    llm = () =>
+      extraction([
+        { food: "ghar ka paneer", quantity: 100, unit: "g" },
+        { food: "ghar ka paneer", quantity: 100, unit: "g" },
+      ]);
+    const [first, second] = await confirmAs(user, "paneer twice", "sub-1", [foods.paneer, foods.tikka]);
+    if (first === undefined || second === undefined) throw new Error("expected two entries");
+
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-2", entryId: second });
+    expect((await user.query(api.pipeline.drafts.listFoodLinks, {})).map((l) => l.foodId)).toEqual([foods.paneer]);
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId: first });
     expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
   });
 

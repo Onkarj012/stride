@@ -567,12 +567,12 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_userId_and_status_and_key", ["userId", "status", "key"]),
 
-  // Append-only: one draft confirmation's change to the memory for one key. Undoing the logged entry puts the rows back.
+  // Append-only: one confirmed draft item's change to the memory for its key. Undoing the logged entry puts the rows back.
   food_link_events: defineTable({
     userId: v.string(),
     key: v.string(),
     submissionId: v.string(), // the confirmed draft's, shared by its entries
-    entryIds: v.array(v.id("entries")), // entries logged under this key
+    entryId: v.id("entries"), // the entry this item was logged as
     changes: v.array(
       v.object({
         linkId: v.id("food_links"),
