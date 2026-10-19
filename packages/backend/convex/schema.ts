@@ -3,6 +3,8 @@ import { v } from "convex/values";
 import {
   createdByValidator,
   entrySourceValidator,
+  foodLinkStateValidator,
+  foodLinkStatusValidator,
   foodSourceValidator,
   inputKindValidator,
   matchSourceValidator,
@@ -560,10 +562,28 @@ export default defineSchema({
     userId: v.string(),
     key: v.string(), // canonical tokens of the item text, e.g. "roti"
     foodId: v.id("foods"),
-    status: v.union(v.literal("active"), v.literal("rejected"), v.literal("deleted")),
+    status: foodLinkStatusValidator,
     uses: v.number(),
     updatedAt: v.number(),
   }).index("by_userId_and_status_and_key", ["userId", "status", "key"]),
+
+  // Append-only: one draft confirmation's change to the memory for one key. Undoing the logged entry puts the rows back.
+  food_link_events: defineTable({
+    userId: v.string(),
+    key: v.string(),
+    submissionId: v.string(), // the confirmed draft's, shared by its entries
+    entryIds: v.array(v.id("entries")), // entries logged under this key
+    changes: v.array(
+      v.object({
+        linkId: v.id("food_links"),
+        before: v.union(foodLinkStateValidator, v.null()), // null: the confirmation created the row
+        after: foodLinkStateValidator,
+      }),
+    ),
+    undoneAt: v.optional(v.number()),
+  })
+    .index("by_userId_and_key", ["userId", "key"])
+    .index("by_userId_and_submissionId", ["userId", "submissionId"]),
 
   // A user's own OpenRouter key. Never returned to the client; the app only sees whether one is set and its last 4 characters.
   user_api_keys: defineTable({

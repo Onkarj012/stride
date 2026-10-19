@@ -562,6 +562,134 @@ describe("HANDOFF #7: rejected or deleted memories are never used", () => {
   });
 });
 
+describe("undo takes back the food memory a confirmation wrote", () => {
+  type User = ReturnType<TestConvex<typeof schema>["withIdentity"]>;
+
+  /** Logs text that lands on a draft and confirms it with the given food per item. Returns the confirmed entry ids. */
+  async function confirmAs(user: User, text: string, submissionId: string, foodIds: Id<"foods">[]): Promise<Id<"entries">[]> {
+    const draft = await logText(user, text, submissionId);
+    if (draft.kind !== "draft") throw new Error("expected a draft");
+    const result = await user.mutation(api.pipeline.drafts.confirmDraft, {
+      draftId: draft.draftId,
+      corrections: foodIds.map((foodId, index) => ({ index, foodId, grams: 100 })),
+    });
+    if (result.kind !== "committed") throw new Error("expected entries");
+    return result.entryIds;
+  }
+
+  /** Every memory row, by food. */
+  async function links(t: TestConvex<typeof schema>) {
+    return await t.run((ctx) => ctx.db.query("food_links").take(50));
+  }
+
+  test("undoing the log removes the memory it created, so the text asks again", async () => {
+    const { t, user, foods } = await setup();
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g" }]);
+    const [entryId] = await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    if (entryId === undefined) throw new Error("expected an entry");
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId });
+
+    expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
+    expect((await links(t)).map((l) => l.status)).toEqual(["deleted"]);
+    expect((await logText(user, "100 g ghar ka paneer", "sub-2")).kind).toBe("draft");
+  });
+
+  test("undoing a replacement restores the old memory exactly", async () => {
+    const { t, user, foods } = await setup();
+    await t.run((ctx) =>
+      ctx.db.insert("food_links", { userId: "user_a", key: "ghar ka paneer", foodId: foods.tikka, status: "active", uses: 3, updatedAt: 1 }),
+    );
+    // The remembered tikka would auto-log, so a low-confidence amount keeps this log on a draft.
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g", confidence: 0.3 }]);
+    const [entryId] = await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    if (entryId === undefined) throw new Error("expected an entry");
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId });
+
+    const rows = await links(t);
+    expect(rows.find((l) => l.foodId === foods.tikka)).toMatchObject({ status: "active", uses: 3, updatedAt: 1 });
+    expect(rows.find((l) => l.foodId === foods.paneer)?.status).toBe("deleted");
+  });
+
+  test("undoing an older log keeps a later confirmation for the same text", async () => {
+    const { t, user, foods } = await setup();
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g", confidence: 0.3 }]);
+    const [older] = await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    await confirmAs(user, "100 g ghar ka paneer", "sub-2", [foods.tikka]);
+    if (older === undefined) throw new Error("expected an entry");
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId: older });
+
+    const active = await user.query(api.pipeline.drafts.listFoodLinks, {});
+    expect(active.map((l) => l.foodId)).toEqual([foods.tikka]);
+    expect((await links(t)).find((l) => l.foodId === foods.paneer)?.status).toBe("rejected");
+  });
+
+  test("undoing the newer log after the older one leaves the older choice", async () => {
+    const { user, foods } = await setup();
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g", confidence: 0.3 }]);
+    await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    const [newer] = await confirmAs(user, "100 g ghar ka paneer", "sub-2", [foods.tikka]);
+    if (newer === undefined) throw new Error("expected an entry");
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-2", entryId: newer });
+
+    const active = await user.query(api.pipeline.drafts.listFoodLinks, {});
+    expect(active.map((l) => ({ foodId: l.foodId, uses: l.uses }))).toEqual([{ foodId: foods.paneer, uses: 1 }]);
+  });
+
+  test("each item of a multi-item log rolls its own memory back once", async () => {
+    const { t, user, foods } = await setup();
+    llm = () =>
+      extraction([
+        { food: "ghar ka paneer", quantity: 100, unit: "g" },
+        { food: "maa ki biryani", quantity: 100, unit: "g" },
+      ]);
+    const [paneerEntry, biryaniEntry] = await confirmAs(user, "paneer and biryani", "sub-1", [foods.paneer, foods.biryani]);
+    if (paneerEntry === undefined || biryaniEntry === undefined) throw new Error("expected two entries");
+
+    const paneerGone = await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId: paneerEntry });
+    expect((await user.query(api.pipeline.drafts.listFoodLinks, {})).map((l) => l.foodId)).toEqual([foods.biryani]);
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-2", entryId: biryaniEntry });
+    expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
+
+    // Undoing the undo brings the entry back but not the memory, and a retried undo changes nothing.
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-3", entryId: paneerGone });
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId: paneerEntry });
+    expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
+    const events = await t.run((ctx) => ctx.db.query("food_link_events").take(10));
+    expect(events).toHaveLength(2);
+    expect(events.every((e) => e.undoneAt !== undefined)).toBe(true);
+  });
+
+  test("a memory the user forgot after logging stays forgotten when the log is undone", async () => {
+    const { t, user, foods } = await setup();
+    await t.run((ctx) =>
+      ctx.db.insert("food_links", { userId: "user_a", key: "ghar ka paneer", foodId: foods.tikka, status: "active", uses: 2, updatedAt: 1 }),
+    );
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g", confidence: 0.3 }]);
+    const [entryId] = await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    if (entryId === undefined) throw new Error("expected an entry");
+    const [link] = await user.query(api.pipeline.drafts.listFoodLinks, {});
+    if (link === undefined) throw new Error("expected a memory");
+    await user.mutation(api.pipeline.drafts.forgetFoodLink, { linkId: link._id });
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-1", entryId });
+
+    const rows = await links(t);
+    expect(rows.find((l) => l.foodId === foods.paneer)?.status).toBe("deleted");
+    expect(rows.find((l) => l.foodId === foods.tikka)).toMatchObject({ status: "active", uses: 2 });
+  });
+
+  test("undoing an auto-logged entry leaves the memory that logged it", async () => {
+    const { user, foods } = await setup();
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g" }]);
+    await confirmAs(user, "100 g ghar ka paneer", "sub-1", [foods.paneer]);
+    const auto = await logText(user, "100 g ghar ka paneer", "sub-2");
+    if (auto.kind !== "committed") throw new Error("expected an auto-log");
+    const [entryId] = auto.entryIds;
+    if (entryId === undefined) throw new Error("expected an entry");
+    await user.mutation(api.entries.undoRevision, { submissionId: "undo-2", entryId });
+    expect((await user.query(api.pipeline.drafts.listFoodLinks, {})).map((l) => l.foodId)).toEqual([foods.paneer]);
+  });
+});
+
 describe("HANDOFF #8: personal foods resolve before generic records", () => {
   test("'200 g paneer' logs the user's homemade paneer, not the generic record", async () => {
     const { t, user, foods } = await setup();

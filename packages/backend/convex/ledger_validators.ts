@@ -81,3 +81,9 @@ export const matchSourceValidator = v.union(
   v.literal("db"),
   v.literal("tool"),
 );
+
+/** Whether a food memory row is used, replaced by a newer choice, or forgotten. */
+export const foodLinkStatusValidator = v.union(v.literal("active"), v.literal("rejected"), v.literal("deleted"));
+
+/** The fields a draft confirmation changes on a `food_links` row. Undo compares and restores them. */
+export const foodLinkStateValidator = v.object({ status: foodLinkStatusValidator, uses: v.number(), updatedAt: v.number() });
