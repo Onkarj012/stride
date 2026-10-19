@@ -2,7 +2,16 @@ import { useState } from 'react'
 import { ScrollView, Text, View } from 'react-native'
 import Animated, { LinearTransition } from 'react-native-reanimated'
 import { motion, radii } from '@stride/ui-tokens'
-import { THALI_ITEMS, THALI_PRESETS, thaliQuantity, thaliText, type ThaliCounts, type ThaliGroup, type ThaliItem } from '@/lib/thali'
+import {
+  MAX_THALI_FOODS,
+  THALI_ITEMS,
+  THALI_PRESETS,
+  thaliQuantity,
+  thaliText,
+  type ThaliCounts,
+  type ThaliGroup,
+  type ThaliItem,
+} from '@/lib/thali'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button } from './Controls'
 import { Tap } from './Tap'
@@ -14,11 +23,25 @@ export function ThaliPicker({ onLog, onCancel }: { onLog: (text: string) => void
   const t = useTheme()
   const s = useStyles()
   const [counts, setCounts] = useState<ThaliCounts>({})
+  // Set when a tap would add a food past the extraction limit; cleared by any other change.
+  const [full, setFull] = useState(false)
   const text = thaliText(counts)
 
-  // Adds one step to an item, or takes one away and stops at zero.
+  // Adds one step to an item, or takes one away and stops at zero. A new food is refused once the plate is full.
   function bump(item: ThaliItem, direction: 1 | -1) {
+    const foods = Object.values(counts).filter((n) => n > 0).length
+    if (direction === 1 && (counts[item.id] ?? 0) === 0 && foods >= MAX_THALI_FOODS) {
+      setFull(true)
+      return
+    }
+    setFull(false)
     setCounts((c) => ({ ...c, [item.id]: Math.max(0, (c[item.id] ?? 0) + direction * item.step) }))
+  }
+
+  // Replaces the plate with a preset.
+  function applyPreset(next: ThaliCounts) {
+    setFull(false)
+    setCounts(next)
   }
 
   return (
@@ -29,7 +52,7 @@ export function ThaliPicker({ onLog, onCancel }: { onLog: (text: string) => void
             key={preset.name}
             style={s.chip}
             scale={motion.press.cardScale}
-            onPress={() => setCounts(preset.counts)}
+            onPress={() => applyPreset(preset.counts)}
             accessibilityRole="button"
             accessibilityLabel={`Preset ${preset.name}`}
           >
@@ -67,6 +90,7 @@ export function ThaliPicker({ onLog, onCancel }: { onLog: (text: string) => void
 
       <View style={s.preview}>
         {text ? <Text style={s.previewText}>{text}</Text> : <Text style={s.previewEmpty}>Tap what's on your plate.</Text>}
+        {full ? <Text style={s.previewCap}>That's the most I can log at once. Log this plate, then add the rest.</Text> : null}
       </View>
       <View style={s.row}>
         <Button label="Back" variant="ghost" onPress={onCancel} />
@@ -105,5 +129,6 @@ const useStyles = themedStyles((t) => ({
   },
   previewText: { ...font('bodyStrong'), lineHeight: 22, color: t.c.ink },
   previewEmpty: { ...font('caption'), color: t.c.ink3 },
+  previewCap: { ...font('caption'), color: t.c.ink3, marginTop: 8 },
   row: { flexDirection: 'row', gap: 8, marginTop: 14 },
 }))

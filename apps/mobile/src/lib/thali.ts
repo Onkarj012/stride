@@ -8,6 +8,9 @@ function item(name: string, group: ThaliGroup, unit: ThaliUnit, step: number): T
   return { id: name.toLowerCase().replace(/ /g, '-'), name, unit, step, group }
 }
 
+// Most foods one plate may hold. Mirrors MAX_EXTRACTED_ITEMS in packages/backend/convex/pipeline/extract.ts.
+export const MAX_THALI_FOODS = 20
+
 export const THALI_ITEMS: ThaliItem[] = [
   item('roti', 'Breads', 'piece', 1),
   item('phulka', 'Breads', 'piece', 1),
