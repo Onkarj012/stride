@@ -373,6 +373,10 @@ describe("cup size", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Coffee" }))).toBeCloseTo(240 * 1.01, 6);
   });
 
+  it("dry tea leaves keep the standard cup even with a density given", () => {
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea, leaves", densityGPerMl: 0.4 }))).toBeCloseTo(96, 6);
+  });
+
   it("a dry or oily product named tea keeps the standard cup", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea seed oil", densityGPerMl: 1 }))).toBe(240);
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea, hot, with milk", densityGPerMl: 1 }))).toBe(110);
@@ -398,5 +402,25 @@ describe("unitLabel", () => {
   it("returns any other unit unchanged", () => {
     expect(unitLabel("ml", "Roti")).toBe("ml");
     expect(unitLabel("cup", "Chai")).toBe("cup");
+  });
+});
+
+describe("named rows beat the bread seeds", () => {
+  it("a stuffed naan's own naan row answers 1 naan, and without it the stuffed name stays unresolved", () => {
+    const row = { foodName: "Stuffed naan", portions: [{ measure: "naan", gramsPerMeasure: 125 }] };
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "naan" }, row))).toBe(125);
+    expect(resolvePortion({ quantity: 1, unit: "naan" }, { foodName: "Stuffed naan" })).toEqual({
+      status: "unresolved",
+      reason: "missing_piece_weight",
+    });
+  });
+
+  it("an amritsari kulcha's own kulcha row answers 1 kulcha, and without it the amritsari name stays unresolved", () => {
+    const row = { foodName: "Amritsari kulcha", portions: [{ measure: "kulcha", gramsPerMeasure: 150 }] };
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "kulcha" }, row))).toBe(150);
+    expect(resolvePortion({ quantity: 1, unit: "kulcha" }, { foodName: "Amritsari kulcha" })).toEqual({
+      status: "unresolved",
+      reason: "missing_piece_weight",
+    });
   });
 });

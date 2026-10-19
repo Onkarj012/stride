@@ -293,7 +293,10 @@ function resolved(grams: number, confidence: number, method: PortionMethod): Por
 }
 
 /** Words that make a "tea" food a dry, oily or leafy product rather than a drink. */
-const NOT_A_DRINK_WORDS: ReadonlySet<string> = new Set(["oil", "seed", "leaves", "leaf", "powder", "dry", "bag", "masala"]);
+// Built through tokenize so "leaves" matches the singular "leave" that the food name's tokens become.
+const NOT_A_DRINK_WORDS: ReadonlySet<string> = new Set(
+  ["oil", "seed", "leaves", "leaf", "powder", "dry", "bag", "masala"].flatMap(tokenize),
+);
 
 /** True when a food is a prepared chai or tea drink: its head word is chai or tea, and no dry or oily word appears. */
 function isPreparedTea(foodName: string): boolean {
@@ -354,6 +357,13 @@ export function resolvePortion(
   }
   if (userMeasure && "grams" in userMeasure && userMeasure.grams > 0) {
     return resolved(quantity * userMeasure.grams, PORTION_CONFIDENCE.userMeasure, "user_measure");
+  }
+
+  // A food's own row for the literal name ("naan" = 125 g) beats a piece seed that the name was normalized from.
+  if (unit !== rawUnit) {
+    const named = portionGrams(ctx.portions, (measure) => measure === rawUnit);
+    if (named === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+    if (named !== null) return resolved(quantity * named, PORTION_CONFIDENCE.foodPortion, "food_portion");
   }
 
   const gramsPerMass = own(MASS_UNITS_G, unit);

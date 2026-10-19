@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { motion } from "motion/react";
 import { useMutation, useQuery } from "convex/react";
-import { unitLabel } from "@stride/core";
 import { api } from "@convex/_generated/api";
 import { useToast } from "@/components/Toast";
 import { formatDayLabel } from "@/lib/date";
@@ -52,7 +51,7 @@ function formatQuantity(q: number): string {
 function amountText(item: DraftItem, fix: Fix, view: ReturnType<typeof viewOf>): string {
   if (view.grams === null) return view.foodName === null ? "not matched yet" : "";
   if (!view.changedFood && fix.grams === undefined && item.quantity !== null && item.unit !== null) {
-    return `${formatQuantity(item.quantity)} ${unitLabel(item.unit, item.food?.name ?? item.text)}`;
+    return `${formatQuantity(item.quantity)} ${item.unit === "piece" ? "pc" : item.unit}`;
   }
   return `${Math.round(view.grams * 10) / 10} g`;
 }
