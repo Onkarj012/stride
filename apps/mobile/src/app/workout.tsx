@@ -41,6 +41,8 @@ function Workout() {
   const [browsing, setBrowsing] = useState(view === 'history')
   const open = useQuery(api.strength.activeSession, {})
   const [sessionId, setSessionId] = useState<SessionId | null>(null)
+  // Exercises lined up from a repeated workout, empty for a plain start.
+  const [plan, setPlan] = useState<Exercise[]>([])
   const [message, setMessage] = useState<ToastMessage | null>(null)
   const toastId = useRef(0)
   const undoRevision = useMutation(api.strength.undoRevision)
@@ -75,9 +77,16 @@ function Workout() {
           <Thinking label="Opening your workout…" />
         </Page>
       ) : active === null ? (
-        <Start onStarted={setSessionId} onHistory={() => setBrowsing(true)} toast={toast} />
+        <Start
+          onStarted={(id, lined) => {
+            setPlan(lined)
+            setSessionId(id)
+          }}
+          onHistory={() => setBrowsing(true)}
+          toast={toast}
+        />
       ) : (
-        <Session key={active} sessionId={active} actions={{ toast, undoFor }} />
+        <Session key={active} sessionId={active} plan={plan} actions={{ toast, undoFor }} />
       )}
       <Toast message={message} onDone={toastDone} />
     </View>
@@ -135,19 +144,20 @@ function Page({ children, overlay }: { children: ReactNode; overlay?: ReactNode 
   )
 }
 
-// Nothing open today: a friendly start card. Starting goes straight to the exercise picker.
-function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId) => void; onHistory: () => void; toast: WorkoutActions['toast'] }) {
+// Nothing open today: a friendly start card. Starting goes straight to the exercise picker, or to a repeated workout's exercises.
+function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId, plan: Exercise[]) => void; onHistory: () => void; toast: WorkoutActions['toast'] }) {
   const s = useStyles()
   const startSession = useMutation(api.strength.startSession)
   const [busy, setBusy] = useState(false)
   // Kept across retries so a resend after a dropped reply starts one session.
   const submissionId = useRef(newSubmissionId())
 
-  // Creates today's session on the server.
-  async function start() {
+  // Creates today's session on the server, lining up the given exercises (none for a plain start).
+  async function start(plan: Exercise[]) {
     setBusy(true)
     try {
-      onStarted(await startSession({ submissionId: submissionId.current }))
+      onStarted(await startSession({ submissionId: submissionId.current }), plan)
+      if (plan.length > 0) toast({ title: "Same again. Let's go.", sub: `${plan.length} exercises lined up.` })
     } catch (err) {
       toast({ title: "Couldn't start the workout.", sub: plainError(err) })
       setBusy(false)
@@ -164,15 +174,63 @@ function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId) => 
         <Text style={s.eyebrowCenter}>Workout</Text>
         <Text style={s.bigTitle}>Ready to lift?</Text>
         <Text style={s.body}>Pick an exercise and log each set as you go. Last session's numbers show up as hints.</Text>
-        <Button label="Start workout" icon="play" variant="coral" size="block" busy={busy} onPress={() => void start()} style={s.startButton} />
+        <Button label="Start workout" icon="play" variant="coral" size="block" busy={busy} onPress={() => void start([])} style={s.startButton} />
         <Button label="Saved workouts" variant="ghost" size="block" onPress={onHistory} style={s.startButton} />
       </Animated.View>
+      <RepeatSection disabled={busy} onRepeat={(plan) => void start(plan)} />
     </Page>
   )
 }
 
+// The three most recent finished workouts, each one tap from starting again. Hidden while loading or when there are none.
+function RepeatSection({ disabled, onRepeat }: { disabled: boolean; onRepeat: (plan: Exercise[]) => void }) {
+  const s = useStyles()
+  const { results, status } = usePaginatedQuery(api.strength.savedSessions, {}, { initialNumItems: 6 })
+  const finished = results.filter((session) => session.endedAt !== undefined).slice(0, 3)
+  if (status === 'LoadingFirstPage' || finished.length === 0) return null
+  return (
+    <Animated.View entering={FadeInDown.springify()}>
+      <Text style={[s.eyebrow, s.repeatLabel]}>Repeat a recent workout</Text>
+      <View style={s.repeatCard}>
+        {finished.map((session) => (
+          <RepeatRow key={session._id} sessionId={session._id} name={session.name} localDate={session.localDate} disabled={disabled} onRepeat={onRepeat} />
+        ))}
+      </View>
+    </Animated.View>
+  )
+}
+
+// One finished workout: its name, day, exercises, and set count. Renders nothing when it has no exercises.
+function RepeatRow({
+  sessionId,
+  name,
+  localDate,
+  disabled,
+  onRepeat,
+}: {
+  sessionId: SessionId
+  name: string | undefined
+  localDate: string
+  disabled: boolean
+  onRepeat: (plan: Exercise[]) => void
+}) {
+  const s = useStyles()
+  const detail = useQuery(api.strength.sessionDetail, { sessionId })
+  if (detail === undefined || detail.exercises.length === 0) return null
+  const plan = detail.exercises.map((e) => e.exercise)
+  const title = `${name ?? 'Workout'} · ${formatDayTitle(localDate)}`
+  return (
+    <Tap style={s.repeatRow} disabled={disabled} onPress={() => onRepeat(plan)} accessibilityRole="button" accessibilityLabel={`Repeat ${title}`}>
+      <Text style={s.repeatTitle}>{title}</Text>
+      <Text style={s.repeatMeta} numberOfLines={1}>
+        {`${plan.map((e) => e.name).join(', ')} · ${detail.summary.setCount} sets`}
+      </Text>
+    </Tap>
+  )
+}
+
 // A started session: live logging while open, the summary once finished. "Edit sets" reopens a finished one.
-function Session({ sessionId, actions }: { sessionId: SessionId; actions: WorkoutActions }) {
+function Session({ sessionId, plan, actions }: { sessionId: SessionId; plan: Exercise[]; actions: WorkoutActions }) {
   const detail = useQuery(api.strength.sessionDetail, { sessionId })
   const [editing, setEditing] = useState(false)
   if (detail === undefined)
@@ -182,7 +240,7 @@ function Session({ sessionId, actions }: { sessionId: SessionId; actions: Workou
       </Page>
     )
   if (detail.session.endedAt !== undefined && !editing) return <Summary detail={detail} onEdit={() => setEditing(true)} />
-  return <Live detail={detail} actions={actions} onFinish={() => setEditing(false)} />
+  return <Live detail={detail} plan={plan} actions={actions} onFinish={() => setEditing(false)} />
 }
 
 // Elapsed time from a start to an end instant (default now) as m:ss or h:mm:ss. Only a live timer ticks, and only while the screen is focused.
@@ -208,13 +266,13 @@ function Elapsed({ since, until, style }: { since: number; until?: number; style
 }
 
 // Live session: timer and Finish (or Done when editing a finished one), progress bar, the current exercise's sets, and the session list.
-function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: WorkoutActions; onFinish: () => void }) {
+function Live({ detail, plan, actions, onFinish }: { detail: SessionDetail; plan: Exercise[]; actions: WorkoutActions; onFinish: () => void }) {
   const s = useStyles()
   const endSession = useMutation(api.strength.endSession)
   const ended = detail.session.endedAt !== undefined
-  const [picked, setPicked] = useState<Exercise[]>([])
-  const [currentId, setCurrentId] = useState<ExerciseId | null>(null)
-  const [picking, setPicking] = useState(detail.exercises.length === 0)
+  const [picked, setPicked] = useState<Exercise[]>(plan)
+  const [currentId, setCurrentId] = useState<ExerciseId | null>(plan[0]?._id ?? null)
+  const [picking, setPicking] = useState(detail.exercises.length === 0 && plan.length === 0)
   const [finishing, setFinishing] = useState(false)
 
   // Exercises with saved sets, then ones picked this session that have none yet.
@@ -421,6 +479,11 @@ const useStyles = themedStyles((t) => ({
     boxShadow: t.shadow.card,
   },
   startButton: { marginTop: 18 },
+  repeatLabel: { marginTop: 28, marginBottom: 4 },
+  repeatCard: { paddingHorizontal: 16, backgroundColor: t.c.card, borderRadius: radii.card, boxShadow: t.shadow.card },
+  repeatRow: { paddingVertical: 12, gap: 3 },
+  repeatTitle: { ...font('bodyStrong'), color: t.c.ink },
+  repeatMeta: { ...font('caption'), color: t.c.ink3 },
   upnext: { marginTop: 28 },
   upnextLabel: { marginBottom: 4 },
   upRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 2, borderBottomWidth: 1, borderBottomColor: t.c.line },
