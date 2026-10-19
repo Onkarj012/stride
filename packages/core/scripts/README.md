@@ -14,7 +14,10 @@ pnpm --filter @stride/core data:import fdc                   # FDC only
 pnpm --filter @stride/core data:import exercises             # exercises only
 pnpm --filter @stride/core data:import ifct ~/Downloads/ifct2017.csv
 pnpm --filter @stride/core data:import cofid ~/Downloads/cofid_proximates.csv ~/Downloads/cofid_inorganics.csv
+pnpm --filter @stride/core data:import indian                # after fdc and cofid
 ```
+
+Run `fdc`, then `cofid`, then `indian`. The `indian` step reads the fdc and cofid output, so it must come after them. A rerun of `indian` is safe. It rewrites the same aliases.
 
 Downloads are cached in `packages/core/data/cache/`. Delete that folder to download again. Output goes to `packages/core/data/out/`. Both folders are gitignored.
 
@@ -24,13 +27,15 @@ Downloads are cached in `packages/core/data/cache/`. Delete that folder to downl
 | `fdc_food_portions.ndjson` | `food_portions` | Same three FDC zips |
 | `ifct_foods.ndjson` | `foods` | Your local IFCT 2017 CSV |
 | `cofid_foods.ndjson` | `foods` | Your local CoFID 2021 proximates and inorganics CSVs |
+| `stride_foods.ndjson` | `foods` | Own recipe rows (`indian` step) |
+| `stride_food_portions.ndjson` | `food_portions` | Household portions of the own rows (`indian` step) |
 | `exercises.ndjson` | `exercises` | free-exercise-db, pinned commit |
 
 Each line is one JSON object. The types are `FoodRecord`, `FoodPortionRecord` and `ExerciseRecord` in `src/nutrition/types.ts`. Nutrients are per 100 g and unrounded.
 
 ## Load into Convex
 
-`packages/backend/scripts/load-foods.ts` reads the NDJSON files above and upserts them in batches of 200 through `npx convex run`. It loads `fdc_foods`, then `ifct_foods` and `cofid_foods` if present, then `fdc_food_portions` and `exercises`. Rows are keyed on source and source id, so a rerun only writes what changed. Portions whose food is not loaded are counted as `missingFood` and skipped.
+`packages/backend/scripts/load-foods.ts` reads the NDJSON files above and upserts them in batches of 200 through `npx convex run`. It loads `fdc_foods`, then `ifct_foods`, `cofid_foods` and `stride_foods` if present, then `fdc_food_portions`, `stride_food_portions` and `exercises`. Rows are keyed on source and source id, so a rerun only writes what changed. Portions whose food is not loaded are counted as `missingFood` and skipped.
 
 ```sh
 pnpm --filter stride-backend data:load          # dev deployment from packages/backend/.env.local
@@ -99,3 +104,12 @@ Columns are read by header name. The mapper needs these proximates columns: Food
 ## Indian household measures
 
 The seed is committed code, not an import: `src/nutrition/household_measures.ts`. It holds katori, bowl, glass, ladle, cup and spoon volumes, piece weights for roti, chapati and phulka, food densities, and a source note on every value. Users override any of them through `user_measures`.
+
+## Indian names and own rows
+
+The `indian` step in `import-data.ts` does two things. It writes no file of its own.
+
+- Adds aliases and two renames to public rows. The table is `CURATED` in `indian_foods.ts`. Examples: "dal" and "toor dal" on CoFID pigeon pea dahl, "roti" on the FNDDS chappatti row. The FNDDS "Dal" row is renamed to "Dal, US recipe with butter oil", and "Buttermilk" to "Buttermilk, cultured, US style", so the names stay free.
+- Builds four own rows from CoFID ingredients: sweet and unsweet chai, Indian coffee with milk, and chaas. Each row has a household portion. These are estimates and the recipe is in the code comments.
+
+Every curated alias is checked against every row's name and aliases, using the matcher's `canonicalTokens`. A collision or a missing listed row stops the step and prints both rows. `ifct_foods.ndjson` is read for this check when it exists, but not rewritten.

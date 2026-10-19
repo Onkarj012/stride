@@ -16,6 +16,7 @@ export const foodSourceValidator = v.union(
   v.literal("fdc"),
   v.literal("ifct"),
   v.literal("cofid"),
+  v.literal("stride"),
   v.literal("off"),
   v.literal("user"),
   v.literal("ai_estimate"),
