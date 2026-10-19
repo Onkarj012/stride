@@ -292,11 +292,23 @@ function resolved(grams: number, confidence: number, method: PortionMethod): Por
   return { status: "resolved", grams, confidence, method };
 }
 
-/** Ml for a cup. Chai and tea are served in a teacup, so they use the teacup size instead of the standard cup. */
-function cupMlFor(unit: string, foodName: string): number | undefined {
-  if (unit !== "cup") return undefined;
-  const isTea = tokenize(foodName).some((t) => t === "chai" || t === "tea");
-  return isTea ? HOUSEHOLD_VESSELS.teacup?.ml : undefined;
+/** Words that make a "tea" food a dry, oily or leafy product rather than a drink. */
+const NOT_A_DRINK_WORDS: ReadonlySet<string> = new Set(["oil", "seed", "leaves", "leaf", "powder", "dry", "bag", "masala"]);
+
+/** True when a food is a prepared chai or tea drink: its head word is chai or tea, and no dry or oily word appears. */
+function isPreparedTea(foodName: string): boolean {
+  const head = headToken(foodName);
+  if (head !== "chai" && head !== "tea") return false;
+  return !tokenize(foodName).some((t) => NOT_A_DRINK_WORDS.has(t));
+}
+
+/** Ml for a cup of prepared tea, which is served in a teacup. The user's saved teacup beats the household size. */
+function teacupMlFor(unit: string, foodName: string, userMeasures: readonly UserMeasure[]): number | undefined {
+  if (unit !== "cup" || !isPreparedTea(foodName)) return undefined;
+  for (const m of userMeasures) {
+    if (normalizeUnit(m.measure) === "teacup" && "ml" in m && m.ml > 0) return m.ml;
+  }
+  return HOUSEHOLD_VESSELS.teacup?.ml;
 }
 
 /** Turns `{quantity, unit}` from extraction into grams. Unknown units or missing data return `unresolved`, never a guess. */
@@ -357,7 +369,7 @@ export function resolvePortion(
   }
 
   const vessel = own(HOUSEHOLD_VESSELS, unit);
-  const mlPerUnit = userMl ?? cupMlFor(unit, ctx.foodName) ?? own(VOLUME_UNITS_ML, unit) ?? vessel?.ml;
+  const mlPerUnit = userMl ?? teacupMlFor(unit, ctx.foodName, userMeasures) ?? own(VOLUME_UNITS_ML, unit) ?? vessel?.ml;
   if (mlPerUnit !== undefined) {
     const density = resolveDensity(ctx);
     if (density === null) return { status: "unresolved", reason: "missing_density" };

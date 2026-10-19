@@ -369,8 +369,20 @@ describe("AI estimate portions", () => {
 describe("cup size", () => {
   it("a cup of tea or chai is a teacup, and other drinks keep the standard cup", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea" }))).toBeCloseTo(110 * 1.01, 6);
-    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Masala chai" }))).toBeCloseTo(110 * 1.01, 6);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Chai" }))).toBeCloseTo(110 * 1.01, 6);
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Coffee" }))).toBeCloseTo(240 * 1.01, 6);
+  });
+
+  it("a dry or oily product named tea keeps the standard cup", () => {
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea seed oil", densityGPerMl: 1 }))).toBe(240);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea, hot, with milk", densityGPerMl: 1 }))).toBe(110);
+  });
+
+  it("the user's saved teacup beats the household size, and a saved cup beats both", () => {
+    const teacup = { foodName: "Chai", densityGPerMl: 1, userMeasures: [{ measure: "teacup", ml: 150 }] };
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, teacup))).toBe(150);
+    const withCup = { ...teacup, userMeasures: [{ measure: "teacup", ml: 150 }, { measure: "cup", ml: 200 }] };
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, withCup))).toBe(200);
   });
 });
 

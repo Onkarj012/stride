@@ -213,7 +213,21 @@ async function amountUnitsOf(
     const portion = resolveWithPortions(food, portions, 1, name, userMeasures);
     if (portion.status === "resolved") grams.set(unit, portion.grams);
   }
-  return [...grams].map(([unit, gramsPerUnit]) => ({ unit, label: unitLabel(unit, food.name), gramsPerUnit }));
+  const units = [...grams].map(([unit, gramsPerUnit]) => ({ unit, gramsPerUnit }));
+  const labels = unitChipLabels(units, food.name);
+  return units.map((unit, i) => ({ ...unit, label: labels[i] ?? "pc" }));
+}
+
+/**
+ * Chip labels for one food's units, unique within the list. A bare count keeps the food's piece name and an explicit
+ * piece becomes "pc". Labels that still repeat get the grams, so two chips never look alike while logging different weights.
+ */
+function unitChipLabels(units: readonly { unit: string | null; gramsPerUnit: number }[], foodName: string): string[] {
+  const hasBare = units.some(({ unit }) => unit === null);
+  const first = units.map(({ unit }) => (unit === PIECE_UNIT && hasBare ? "pc" : unitLabel(unit, foodName)));
+  return first.map((label, i) =>
+    first.filter((other) => other === label).length > 1 ? `${label} (${Math.round((units[i]?.gramsPerUnit ?? 0) * 10) / 10} g)` : label,
+  );
 }
 
 /**
