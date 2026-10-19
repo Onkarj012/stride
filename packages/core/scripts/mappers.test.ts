@@ -61,6 +61,55 @@ describe("mapFdc", () => {
   });
 });
 
+describe("mapFdc with FNDDS rows", () => {
+  // Real values from the 2024-10-31 survey zip (Dal fdc_id 2707427, Cappuccino 2710472), trimmed to the nutrients used.
+  const files = new Map([
+    ["food.csv", [
+      '"fdc_id","data_type","description","food_category_id","publication_date"',
+      '"2707427","survey_fndds_food","Dal","2802","2022-10-28"',
+      '"2710472","survey_fndds_food","Coffee, Cappuccino","7302","2022-10-28"',
+    ].join("\n")],
+    ["nutrient.csv", [
+      '"id","name","unit_name","nutrient_nbr","rank"',
+      '"1003","Protein","G","203","600.0"',
+      '"1004","Total lipid (fat)","G","204","800.0"',
+      '"1005","Carbohydrate, by difference","G","205","1110.0"',
+      '"1008","Energy","KCAL","208","300.0"',
+    ].join("\n")],
+    ["food_nutrient.csv", [
+      '"id","fdc_id","nutrient_id","amount"',
+      '"1","2707427","208","145"', '"2","2707427","203","8.6"', '"3","2707427","204","4.31"', '"4","2707427","205","19.17"',
+      '"5","2710472","208","27"', '"6","2710472","203","1.71"', '"7","2710472","204","0.99"', '"8","2710472","205","2.75"',
+    ].join("\n")],
+    ["food_portion.csv", [
+      '"id","fdc_id","seq_num","amount","measure_unit_id","portion_description","modifier","gram_weight"',
+      '"310953","2710472","1","","9999","1 fl oz","30000","30.0"',
+      '"310954","2710472","4","","9999","Quantity not specified","90000","360.0"',
+      '"310955","2710472","5","","9999","1 cup (8 fl oz)","10215","240.0"',
+      '"310956","2710472","6","","9999","1 small","62015","360.0"',
+    ].join("\n")],
+  ]);
+  const result = mapFdc(files, "survey_fndds_food");
+
+  it("reads legacy nutrient numbers through nutrient.csv", () => {
+    expect(result.skippedFoods).toBe(0);
+    expect(result.foods.map((f) => [f.name, f.per100g.kcal, f.per100g.protein, f.per100g.fat, f.per100g.carbs])).toEqual([
+      ["Dal", 145, 8.6, 4.31, 19.17],
+      ["Coffee, Cappuccino", 27, 1.71, 0.99, 2.75],
+    ]);
+    expect(result.foods[0]).toMatchObject({ source: "fdc", sourceId: "2707427", verified: true });
+  });
+
+  it("names portions by measure and drops numeric modifiers and unspecified quantities", () => {
+    expect(result.portions).toEqual([
+      { source: "fdc", sourceId: "2710472", measure: "fl oz", description: "1 fl oz", gramsPerMeasure: 30 },
+      { source: "fdc", sourceId: "2710472", measure: "cup", description: "1 cup (8 fl oz)", gramsPerMeasure: 240 },
+      { source: "fdc", sourceId: "2710472", measure: "small", description: "1 small", gramsPerMeasure: 360 },
+    ]);
+    expect(result.skippedPortions).toBe(1);
+  });
+});
+
 describe("mapIfct", () => {
   const header = "code,name,scie,lang,grup,enerc,protcnt,fatce,choavldf,fibtg,fsugar,na";
   const csv = [

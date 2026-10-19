@@ -19,8 +19,8 @@ Downloads are cached in `packages/core/data/cache/`. Delete that folder to downl
 
 | Output file | Table | Source |
 |---|---|---|
-| `fdc_foods.ndjson` | `foods` | USDA FDC SR Legacy (2018-04) and Foundation (2026-04-30) |
-| `fdc_food_portions.ndjson` | `food_portions` | Same two FDC zips |
+| `fdc_foods.ndjson` | `foods` | USDA FDC SR Legacy (2018-04), Foundation (2026-04-30) and FNDDS survey (2024-10-31) |
+| `fdc_food_portions.ndjson` | `food_portions` | Same three FDC zips |
 | `ifct_foods.ndjson` | `foods` | Your local IFCT 2017 CSV |
 | `exercises.ndjson` | `exercises` | free-exercise-db, pinned commit |
 
@@ -39,14 +39,15 @@ It needs the schema deployed first (`pnpm dev:convex` or `npx convex deploy`). C
 
 ## USDA FoodData Central
 
-`fdc.ts` downloads the official CSV zips listed at https://fdc.nal.usda.gov/download-datasets. When USDA publishes a new Foundation release, update the URL in `FDC_DATASETS`. SR Legacy is frozen at 2018-04.
+`fdc.ts` downloads the official CSV zips listed at https://fdc.nal.usda.gov/download-datasets. When USDA publishes a new Foundation release, update the URL in `FDC_DATASETS`. SR Legacy is frozen at 2018-04. FNDDS (the survey foods behind the What We Eat in America dietary survey) is the 2024-10-31 release.
 
 What gets mapped:
 
+- FNDDS food rows use USDA's legacy nutrient numbers (e.g. 208 for energy). `nutrient.csv` maps them to FDC ids, so the same code reads all three zips.
 - Energy comes from nutrient 1008, then Atwater specific (2048), then Atwater general (2047), then kJ (1062) ÷ 4.184. Foundation foods often lack 1008.
 - Protein 1003, fat 1004 (else 1085), carbs 1005 (else 1050), fiber 1079, sugar 2000 (else 1063), sodium 1093 in mg.
 - A food missing kcal, protein, carbs or fat is skipped and counted. Fiber, sugar and sodium may be null.
-- Portions become grams per one measure (`gram_weight ÷ amount`). Foundation lists one row per lab sample, so samples of the same measure are averaged. Yield pairs and mass units (oz, lb) are skipped, since the resolver handles mass itself.
+- Portions become grams per one measure (`gram_weight ÷ amount`). Foundation lists one row per lab sample, so samples of the same measure are averaged. Yield pairs and mass units (oz, lb) are skipped, since the resolver handles mass itself. FNDDS numeric modifier codes are dropped from labels, and its "Quantity not specified" rows are skipped.
 
 FDC data is public domain (CC0).
 
