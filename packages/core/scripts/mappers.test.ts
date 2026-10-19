@@ -101,6 +101,27 @@ describe("mapFdc with FNDDS rows", () => {
     expect(result.foods[0]).toMatchObject({ source: "fdc", sourceId: "2707427", verified: true });
   });
 
+  it("skips portions whose measure no one can type, numbers, guideline, individual and surface", () => {
+    const untypeable = mapFdc(
+      new Map([
+        ["food.csv", '"fdc_id","data_type","description"\n"9","survey_fndds_food","Test"'],
+        ["food_nutrient.csv", '"fdc_id","nutrient_id","amount"\n"9","1008","100"\n"9","1003","1"\n"9","1004","1"\n"9","1005","1"'],
+        ["food_portion.csv", [
+          '"id","fdc_id","amount","measure_unit_id","portion_description","modifier","gram_weight"',
+          '"1","9","","9999","4","10001","40.0"',
+          '"2","9","","9999","5.3 oz","10002","50.0"',
+          '"3","9","","9999","guideline amount per meal","10003","60.0"',
+          '"4","9","","9999","individual","10004","70.0"',
+          '"5","9","","9999","1 surface inch","10005","80.0"',
+          '"6","9","","9999","1 slice","10006","30.0"',
+        ].join("\n")],
+      ]),
+      "survey_fndds_food",
+    );
+    expect(untypeable.portions.map((p) => p.measure)).toEqual(["slice"]);
+    expect(untypeable.skippedPortions).toBe(5);
+  });
+
   it("names portions by measure and drops numeric modifiers and unspecified quantities", () => {
     expect(result.portions).toEqual([
       { source: "fdc", sourceId: "2710472", measure: "fl oz", description: "1 fl oz", gramsPerMeasure: 30 },

@@ -83,11 +83,13 @@ export function fdcNutrients(values: ReadonlyMap<number, number>): Nutrients | n
 
 /** Two-word measures kept whole; every other label is reduced to its first word. */
 const TWO_WORD_MEASURES = new Set(["fl oz", "nlea serving", "extra large", "extra small"]);
+/** Measures no one can type ("guideline", "individual", "surface" inch). Bare numbers are skipped separately. */
+const UNTYPEABLE_MEASURES = new Set(["guideline", "individual", "surface"]);
 
 /** Measure name of a portion label: "cup, chopped" → "cup", "1 cup (8 fl oz)" → "cup", "serving 1 roll" → "serving", "fl oz" stays. */
 function measureOf(label: string): string {
   const words = (label.split(/[,(]/)[0] ?? "").trim().toLowerCase().split(/\s+/);
-  if (/^\d/.test(words[0] ?? "")) words.shift();
+  if (words.length > 1 && /^\d/.test(words[0] ?? "")) words.shift();
   const pair = words.slice(0, 2).join(" ");
   return normalizeUnit(TWO_WORD_MEASURES.has(pair) ? pair : (words[0] ?? ""));
 }
@@ -145,6 +147,8 @@ export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): Fd
     if (
       SKIPPED_MEASURE_UNIT_IDS.has(unitId) ||
       portionDescription === UNSPECIFIED_PORTION ||
+      UNTYPEABLE_MEASURES.has(measure) ||
+      /^[\d.]+$/.test(measure) ||
       label === "" ||
       grams === null ||
       grams <= 0 ||
