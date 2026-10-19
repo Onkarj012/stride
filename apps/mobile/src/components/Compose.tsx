@@ -31,6 +31,7 @@ import { DraftCard } from './DraftCard'
 import { useLog } from './LogProvider'
 import { Polo, type PoloMood } from './Polo'
 import { Tap } from './Tap'
+import { ThaliPicker } from './ThaliPicker'
 
 export type ComposeMode = 'text' | 'voice' | 'photo' | 'barcode'
 
@@ -44,6 +45,7 @@ type Phase =
   | { kind: 'voice' }
   | { kind: 'photo' }
   | { kind: 'barcode' }
+  | { kind: 'thali' }
   | { kind: 'working'; label: string; photoUri?: string }
   | { kind: 'committed'; lines: LogLine[] }
   | { kind: 'draft'; draftId: DraftId }
@@ -214,7 +216,13 @@ export function Compose({
         <Polo size={46} mood={mood} hop={hops} />
         <View style={s.headText}>
           <Text style={s.headTitle}>
-            {phase.kind === 'photo' ? 'Show me the plate.' : phase.kind === 'barcode' ? 'Scan the pack.' : 'What did you have?'}
+            {phase.kind === 'photo'
+              ? 'Show me the plate.'
+              : phase.kind === 'barcode'
+                ? 'Scan the pack.'
+                : phase.kind === 'thali'
+                  ? "What's on the plate?"
+                  : 'What did you have?'}
           </Text>
           <Text style={s.slot}>
             Logging to <Text style={s.slotName}>{slot}</Text> · {clock}
@@ -242,6 +250,7 @@ export function Compose({
             <RoundButton icon="cam" label="Photo" tone="card" size={46} onPress={() => go({ kind: 'photo' })} />
             <RoundButton icon="mic" label="Voice" tone="card" size={46} onPress={() => go({ kind: 'voice' })} />
             <RoundButton icon="barcode" label="Scan a barcode" tone="card" size={46} onPress={() => go({ kind: 'barcode' })} />
+            <Button label="Thali" variant="ghost" size="sm" onPress={() => go({ kind: 'thali' })} />
             <View style={s.grow} />
             <Button label="Log it" variant="coral" icon="up" iconAfter onPress={() => submitText()} />
           </View>
@@ -283,6 +292,16 @@ export function Compose({
       ) : null}
       {phase.kind === 'barcode' ? (
         <BarcodeScanner onCode={(code) => void submitCode(code)} onCancel={() => go({ kind: 'input' })} />
+      ) : null}
+
+      {phase.kind === 'thali' ? (
+        <ThaliPicker
+          onLog={(thali) => {
+            setText(thali)
+            submitText(thali)
+          }}
+          onCancel={() => go({ kind: 'input' })}
+        />
       ) : null}
 
       {phase.kind === 'working' ? (
