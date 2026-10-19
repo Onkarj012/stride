@@ -721,6 +721,22 @@ describe("undo takes back the food memory a confirmation wrote", () => {
     expect(await user.query(api.pipeline.drafts.listFoodLinks, {})).toEqual([]);
   });
 
+  test("alternating choices undone one by one keep each event's history bounded", async () => {
+    const { t, user, foods } = await setup();
+    llm = () => extraction([{ food: "ghar ka paneer", quantity: 100, unit: "g", confidence: 0.3 }]);
+    const picks = [foods.paneer, foods.tikka, foods.biryani];
+    let previous: Id<"entries"> | undefined;
+    // Each log is two AI calls, so 9 logs stay under the 20-per-5-minutes guard.
+    for (let i = 0; i < 9; i++) {
+      const [entryId] = await confirmAs(user, "100 g ghar ka paneer", `sub-${i}`, [picks[i % 3] ?? foods.paneer]);
+      if (previous !== undefined) await user.mutation(api.entries.undoRevision, { submissionId: `undo-${i}`, entryId: previous });
+      previous = entryId;
+    }
+    const events = await t.run((ctx) => ctx.db.query("food_link_events").take(50));
+    expect(Math.max(...events.map((e) => e.changes.length))).toBeLessThanOrEqual(30);
+    expect((await user.query(api.pipeline.drafts.listFoodLinks, {})).map((l) => l.foodId)).toEqual([picks[8 % 3]]);
+  });
+
   test("each item of a multi-item log rolls its own memory back once", async () => {
     const { t, user, foods } = await setup();
     llm = () =>

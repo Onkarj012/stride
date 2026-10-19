@@ -339,8 +339,13 @@ export const deleteEntry = mutation({
   },
 });
 
-/** Most memory events one confirmation can write: one per item key. */
+/** Most memory events one confirmation can write: one per item. */
 const MAX_LINK_EVENTS = 50;
+/**
+ * Most row changes one event keeps. A confirmation writes at most 11; the rest are carried from cancelled events.
+ * Past this, the oldest carried rows are dropped and simply stay as they are.
+ */
+const MAX_EVENT_CHANGES = 30;
 
 type LinkEvent = Doc<"food_link_events">;
 /** Food memory fields compared and restored on undo. */
@@ -392,7 +397,9 @@ async function revertFoodMemory(ctx: MutationCtx, userId: string, entry: Doc<"en
       // Rows the next event never touched (it reads only active rows) still hold this event's write. The next event
       // takes over putting them back, so an older choice can't come back while a newer one is live.
       const untouched = event.changes.filter((change) => !next.changes.some((later) => later.linkId === change.linkId));
-      await ctx.db.patch("food_link_events", next._id, { changes: [...spliced, ...untouched] });
+      // The next event's own changes come first and carried ones after, oldest last, so the cap drops the oldest.
+      const changes = [...spliced, ...untouched].slice(0, MAX_EVENT_CHANGES);
+      await ctx.db.patch("food_link_events", next._id, { changes });
     }
     await ctx.db.patch("food_link_events", event._id, { undoneAt: Date.now() });
   }
