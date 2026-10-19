@@ -287,6 +287,9 @@ export async function editEntryAs(
   const content = contentOf(head);
   if (grams !== undefined || foodId !== undefined) {
     const food = await requireFood(ctx, foodId ?? head.foodId, userId);
+    if (food._id !== head.foodId) {
+      content.flags = [...head.flags.filter((flag) => flag !== "estimated"), ...(food.source === "ai_estimate" ? ["estimated"] : [])];
+    }
     content.foodId = food._id;
     content.foodName = food.name;
     content.grams = grams ?? head.grams;

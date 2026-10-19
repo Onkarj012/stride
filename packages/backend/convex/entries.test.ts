@@ -196,6 +196,17 @@ describe("revisions", () => {
     expect(rows[3]?.deletedAt).toBeUndefined();
   });
 
+  test("editing an estimated entry onto a normal food drops the estimated flag", async () => {
+    const { t, user, rice, dal } = await setup();
+    const [id] = await user.mutation(api.entries.addEntries, {
+      submissionId: "add",
+      items: [{ foodId: rice, grams: 100, source: "db", flags: ["estimated"] }],
+    });
+    const rev = await user.mutation(api.entries.editEntry, { submissionId: "edit", entryId: id, foodId: dal });
+    const head = await t.run((ctx) => ctx.db.get("entries", rev));
+    expect(head?.flags).toEqual([]);
+  });
+
   test("undo restores the prior revision's content", async () => {
     const { t, user, rice } = await setup();
     const [id] = await user.mutation(api.entries.addEntries, {

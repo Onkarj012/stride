@@ -295,10 +295,10 @@ export function resolvePortion(
   const unit = ctx.skipSeedPieceWeights !== true && pieceWeightFor(rawUnit) !== null ? PIECE_UNIT : rawUnit;
 
   const directMeasureNames = new Set([rawUnit, unit]);
-  if (unit === PIECE_UNIT) directMeasureNames.add(normalizeText(ctx.foodName));
+  if (unit === PIECE_UNIT || (ctx.skipSeedPieceWeights === true && unitNamesFood(unit, ctx.foodName))) directMeasureNames.add(normalizeText(ctx.foodName));
   const userMeasures = ctx.userMeasures ?? [];
   let userMeasure = userMeasures.find((m) => directMeasureNames.has(normalizeUnit(m.measure)));
-  if (isBare) {
+  if (isBare && ctx.skipSeedPieceWeights !== true) {
     const inferredMeasureNames = new Set<string>();
     for (const portion of ctx.portions ?? []) {
       const measure = normalizeUnit(portion.measure);
