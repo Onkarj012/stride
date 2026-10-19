@@ -250,10 +250,17 @@ export function Compose({
             <RoundButton icon="cam" label="Photo" tone="card" size={46} onPress={() => go({ kind: 'photo' })} />
             <RoundButton icon="mic" label="Voice" tone="card" size={46} onPress={() => go({ kind: 'voice' })} />
             <RoundButton icon="barcode" label="Scan a barcode" tone="card" size={46} onPress={() => go({ kind: 'barcode' })} />
-            <Button label="Thali" variant="ghost" size="sm" onPress={() => go({ kind: 'thali' })} />
             <View style={s.grow} />
             <Button label="Log it" variant="coral" icon="up" iconAfter onPress={() => submitText()} />
           </View>
+          <Tap
+            style={[s.chip, s.thaliEntry]}
+            scale={motion.press.cardScale}
+            onPress={() => go({ kind: 'thali' })}
+            accessibilityRole="button"
+          >
+            <Text style={s.chipText}>Build a thali</Text>
+          </Tap>
           {phase.kind === 'empty' ? (
             <Text style={s.note}>I didn't catch any food there. Try "2 roti and dal".</Text>
           ) : (
@@ -474,6 +481,7 @@ const useStyles = themedStyles((t) => ({
   bar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
   chipsLabel: { ...font('label'), color: t.c.ink3, marginTop: 16, marginBottom: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  thaliEntry: { marginTop: 14, alignSelf: 'flex-start' },
   chip: {
     paddingVertical: 9,
     paddingHorizontal: 14,
