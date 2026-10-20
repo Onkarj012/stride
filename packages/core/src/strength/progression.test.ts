@@ -46,6 +46,12 @@ describe("nextTargets", () => {
     ]);
   });
 
+  it("keeps reps above the band's max when the weight cap blocks a raise", () => {
+    expect(nextTargets([{ weightKg: 1000, reps: 12 }], 2.5, { min: 6, max: 8 }, 1000)).toEqual([
+      { weightKg: 1000, reps: 12, reason: "at-limit" },
+    ]);
+  });
+
   it("adds a rep to bodyweight sets and keeps the weight at zero", () => {
     expect(nextTargets([{ weightKg: 0, reps: 10 }], 2.5)).toEqual([{ weightKg: 0, reps: 11, reason: "add-rep" }]);
   });

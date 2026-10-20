@@ -57,7 +57,7 @@ export function nextTargets(previous: PlannedSet[], stepKg: number, range?: RepR
       const weightKg = Math.min(maxKg, roundKg(set.weightKg + stepKg));
       // Past the weight cap no heavier weight can be logged, so the reps stay where they were.
       if (weightKg <= set.weightKg) {
-        return { weightKg, reps: Math.min(set.reps, band.max), reason: "at-limit" };
+        return { weightKg, reps: set.reps, reason: "at-limit" };
       }
       return { weightKg, reps: band.min, reason: "add-weight" };
     });
