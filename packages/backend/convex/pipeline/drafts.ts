@@ -101,22 +101,56 @@ async function requireVisibleFood(ctx: MutationCtx, userId: string, foodId: Id<"
   return food;
 }
 
-/** Remembers that this text means this food. Older memories for the text that point elsewhere become rejected. */
-async function rememberLink(ctx: MutationCtx, userId: string, text: string, foodId: Id<"foods">): Promise<void> {
-  const key = linkKey(text);
-  if (key === "") return;
+/** One confirmed item: its memory key, the food chosen, and the entry it was logged as. */
+interface ConfirmedLink {
+  key: string;
+  foodId: Id<"foods">;
+  entryId: Id<"entries">;
+}
+
+/**
+ * Remembers that this key means this food. Older memories for the key that point elsewhere become rejected.
+ * Every row change is recorded in one `food_link_events` row, so undoing the entries can put the rows back.
+ */
+async function rememberLink(ctx: MutationCtx, userId: string, submissionId: string, link: ConfirmedLink): Promise<void> {
+  const { key, foodId, entryId } = link;
   // Only active rows are read, so old rejected and deleted rows never crowd a newer choice out of the window.
   const rows = await ctx.db
     .query("food_links")
     .withIndex("by_userId_and_status_and_key", (q) => q.eq("userId", userId).eq("status", "active").eq("key", key))
     .take(10);
   const now = Date.now();
+  const changes: Doc<"food_link_events">["changes"] = [];
   for (const row of rows) {
-    if (row.foodId !== foodId) await ctx.db.patch("food_links", row._id, { status: "rejected", updatedAt: now });
+    if (row.foodId === foodId) continue;
+    await ctx.db.patch("food_links", row._id, { status: "rejected", updatedAt: now });
+    changes.push({ linkId: row._id, before: linkState(row), after: { status: "rejected", uses: row.uses, updatedAt: now } });
   }
   const same = rows.find((row) => row.foodId === foodId);
-  if (same !== undefined) await ctx.db.patch("food_links", same._id, { status: "active", uses: same.uses + 1, updatedAt: now });
-  else await ctx.db.insert("food_links", { userId, key, foodId, status: "active", uses: 1, updatedAt: now });
+  if (same !== undefined) {
+    const after = { status: "active" as const, uses: same.uses + 1, updatedAt: now };
+    await ctx.db.patch("food_links", same._id, after);
+    changes.push({ linkId: same._id, before: linkState(same), after });
+  } else {
+    const after = { status: "active" as const, uses: 1, updatedAt: now };
+    const linkId = await ctx.db.insert("food_links", { userId, key, foodId, ...after });
+    changes.push({ linkId, before: null, after });
+  }
+  await ctx.db.insert("food_link_events", { userId, key, submissionId, entryId, changes });
+}
+
+/** The fields of a memory row that a confirmation changes and an undo restores. */
+function linkState(row: Doc<"food_links">): Doc<"food_link_events">["changes"][number]["after"] {
+  return { status: row.status, uses: row.uses, updatedAt: row.updatedAt };
+}
+
+/** Pairs each confirmed item with its entry, skipping texts with no memory key. Each gets its own event, so undo is per entry. */
+function confirmedLinks(items: { text: string; foodId: Id<"foods"> }[], entryIds: Id<"entries">[]): ConfirmedLink[] {
+  return items.flatMap((item, index) => {
+    const key = linkKey(item.text);
+    const entryId = entryIds[index];
+    return key === "" || entryId === undefined ? [] : [{ key, foodId: item.foodId, entryId }];
+  });
 }
 
 /** One draft for its card, with preview nutrients computed from `foods` × grams. Values are unrounded; the app rounds for display. */
@@ -345,12 +379,13 @@ export const confirmDraft = mutation({
       throw new ConvexError({ code: "DRAFT_EMPTY", message: "Nothing left to log. Discard the draft instead." });
     }
 
-    await insertEntries(ctx, userId, draft.submissionId, entries, {
+    const entryIds = await insertEntries(ctx, userId, draft.submissionId, entries, {
       createdBy: "user",
       ...(draft.chatId === undefined ? {} : { chatId: draft.chatId }),
       ...(draft.messageId === undefined ? {} : { messageId: draft.messageId }),
     });
-    for (const link of links) await rememberLink(ctx, userId, link.text, link.foodId);
+    // `links` and `entries` are pushed together, so link i is entry i.
+    for (const link of confirmedLinks(links, entryIds)) await rememberLink(ctx, userId, draft.submissionId, link);
     await ctx.db.patch("drafts", draft._id, { status: "committed", resolvedAt: Date.now() });
     const result = await committedResult(ctx, userId, draft.submissionId);
     if (result === null) throw new Error("Confirmed entries are missing");
