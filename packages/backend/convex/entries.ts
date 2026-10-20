@@ -287,6 +287,16 @@ export async function editEntryAs(
   const content = contentOf(head);
   if (grams !== undefined || foodId !== undefined) {
     const food = await requireFood(ctx, foodId ?? head.foodId, userId);
+    if (food._id !== head.foodId) {
+      const oldFood = await ctx.db.get("foods", head.foodId);
+      // Old photo rows predate the "photo" flag, so "estimated" alone on a non-estimate food means a photo.
+      const legacyPhoto = oldFood?.source !== "ai_estimate" && head.flags.includes("estimated") && !head.flags.includes("photo");
+      const photo = head.flags.includes("photo") || legacyPhoto;
+      const estimated = photo || food.source === "ai_estimate";
+      const flags = legacyPhoto ? [...head.flags, "photo"] : head.flags;
+      content.flags = [...flags.filter((flag) => flag !== "estimated"), ...(estimated ? ["estimated"] : [])];
+
+    }
     content.foodId = food._id;
     content.foodName = food.name;
     content.grams = grams ?? head.grams;
@@ -339,7 +349,76 @@ export const deleteEntry = mutation({
   },
 });
 
-/** Reverts an entry's latest change by writing a revision equal to the one before it. Undoing an add deletes it. */
+/** Most memory events one confirmation can write: one per item. */
+const MAX_LINK_EVENTS = 50;
+/**
+ * Most row changes one event keeps. A confirmation writes at most 11; the rest are carried from cancelled events.
+ * Past this, the oldest carried rows are dropped and simply stay as they are.
+ */
+const MAX_EVENT_CHANGES = 30;
+
+type LinkEvent = Doc<"food_link_events">;
+/** Food memory fields compared and restored on undo. */
+type LinkState = LinkEvent["changes"][number]["after"];
+
+/** True when two memory states match field for field. */
+function sameState(a: LinkState, b: LinkState): boolean {
+  return a.status === b.status && a.uses === b.uses && a.updatedAt === b.updatedAt;
+}
+
+/** Puts a row back to `before` if it still holds `after`, so a later choice or a forget is never overwritten. */
+async function restoreLink(ctx: MutationCtx, linkId: Id<"food_links">, after: LinkState, before: LinkState | null): Promise<void> {
+  const row = await ctx.db.get("food_links", linkId);
+  if (row === null || !sameState(row, after)) return;
+  if (before === null) await ctx.db.patch("food_links", row._id, { status: "deleted", updatedAt: Date.now() });
+  else await ctx.db.patch("food_links", row._id, before);
+}
+
+/** The oldest live event for the event's key written after it, or null when the event is the newest live one. */
+async function nextLiveEvent(ctx: MutationCtx, event: LinkEvent): Promise<LinkEvent | null> {
+  return await ctx.db
+    .query("food_link_events")
+    .withIndex("by_userId_and_key_and_undoneAt", (q) =>
+      q.eq("userId", event.userId).eq("key", event.key).eq("undoneAt", undefined).gt("_creationTime", event._creationTime),
+    )
+    .first();
+}
+
+/**
+ * Undoes the food memory written when this entry's draft was confirmed. The newest live event for a key puts its rows
+ * back. An older one is cut out of the history instead: the next live event takes over its saved "before" states, so
+ * undoing that event later restores what came before both. Each event is undone at most once.
+ */
+async function revertFoodMemory(ctx: MutationCtx, userId: string, entry: Doc<"entries">): Promise<void> {
+  const events = await ctx.db
+    .query("food_link_events")
+    .withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).eq("submissionId", entry.submissionId))
+    .take(MAX_LINK_EVENTS);
+  for (const event of events) {
+    if (event.undoneAt !== undefined || event.entryId !== entry._id) continue;
+    const next = await nextLiveEvent(ctx, event);
+    if (next === null) {
+      for (const change of event.changes) await restoreLink(ctx, change.linkId, change.after, change.before);
+    } else {
+      const spliced = next.changes.map((later) => {
+        const mine = event.changes.find((c) => c.linkId === later.linkId && later.before !== null && sameState(later.before, c.after));
+        return mine === undefined ? later : { ...later, before: mine.before };
+      });
+      // Rows the next event never touched (it reads only active rows) still hold this event's write. The next event
+      // takes over putting them back, so an older choice can't come back while a newer one is live.
+      const untouched = event.changes.filter((change) => !next.changes.some((later) => later.linkId === change.linkId));
+      // The next event's own changes come first and carried ones after, oldest last, so the cap drops the oldest.
+      const changes = [...spliced, ...untouched].slice(0, MAX_EVENT_CHANGES);
+      await ctx.db.patch("food_link_events", next._id, { changes });
+    }
+    await ctx.db.patch("food_link_events", event._id, { undoneAt: Date.now() });
+  }
+}
+
+/**
+ * Reverts an entry's latest change by writing a revision equal to the one before it. Undoing an add deletes it and
+ * takes back the food memory its draft confirmation wrote.
+ */
 export const undoRevision = mutation({
   args: { submissionId: v.string(), entryId: v.id("entries") },
   returns: v.id("entries"),
@@ -351,6 +430,7 @@ export const undoRevision = mutation({
     let content: EntryContent;
     if (head.supersedes === undefined) {
       content = { ...contentOf(head), deletedAt: Date.now() };
+      await revertFoodMemory(ctx, userId, head);
     } else {
       const previous = await ctx.db.get("entries", head.supersedes);
       if (previous === null) throw new Error("Previous revision is missing");

@@ -3,7 +3,7 @@ import type { FoodPortionRecord, FoodRecord, Nutrients } from "../src/nutrition/
 import { normalizeUnit } from "../src/nutrition/units.ts";
 import { csvRecords, num } from "./lib.ts";
 
-/** Official FoodData Central CSV downloads, listed at https://fdc.nal.usda.gov/download-datasets (checked 2026-10-06). */
+/** Official FoodData Central CSV downloads, listed at https://fdc.nal.usda.gov/download-datasets (checked 2026-10-19). */
 export const FDC_DATASETS = [
   {
     dataType: "sr_legacy_food",
@@ -13,10 +13,14 @@ export const FDC_DATASETS = [
     dataType: "foundation_food",
     url: "https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_foundation_food_csv_2026-04-30.zip",
   },
+  {
+    dataType: "survey_fndds_food",
+    url: "https://fdc.nal.usda.gov/fdc-datasets/FoodData_Central_survey_food_csv_2024-10-31.zip",
+  },
 ] as const;
 
 /** CSV files read from each FDC zip. */
-export const FDC_FILES = ["food.csv", "food_nutrient.csv", "food_portion.csv", "measure_unit.csv"] as const;
+export const FDC_FILES = ["food.csv", "food_nutrient.csv", "food_portion.csv", "measure_unit.csv", "nutrient.csv"] as const;
 
 /**
  * FDC nutrient ids, in order of preference. Foundation foods often lack 1008 and report Atwater energy instead.
@@ -38,6 +42,8 @@ const WANTED_NUTRIENTS = new Set<number>(Object.values(FDC_NUTRIENTS).flat());
 /** Measure units that describe yield pairs or drippings, not something you eat by the measure. */
 const SKIPPED_MEASURE_UNIT_IDS = new Set(["1010", "1011", "1012"]);
 const UNDETERMINED_UNIT_ID = "9999";
+/** FNDDS placeholder portion with no real measure. Its gram weight is a guess, so it is skipped. */
+const UNSPECIFIED_PORTION = "Quantity not specified";
 
 /** Mapped rows plus counts of what was dropped and why. */
 export interface FdcResult {
@@ -77,10 +83,24 @@ export function fdcNutrients(values: ReadonlyMap<number, number>): Nutrients | n
 
 /** Two-word measures kept whole; every other label is reduced to its first word. */
 const TWO_WORD_MEASURES = new Set(["fl oz", "nlea serving", "extra large", "extra small"]);
+/** Measures no one can type ("guideline", "individual", "surface" inch). Bare numbers are skipped separately. */
+const UNTYPEABLE_MEASURES = new Set(["guideline", "individual", "surface"]);
 
-/** Measure name of a portion label: "cup, chopped" → "cup", "serving 1 roll" → "serving", "fl oz" stays. */
+/** Quantity at the start of a label and the text after it: "5 balls" → 5, "1/2 slice" → 0.5, "1 1/2 cups" → 1.5. Null when there is none. */
+function leadingQuantity(text: string): { value: number; rest: string } | null {
+  const match = /^(?:(\d+) )?(\d+)\/(\d+)(?=\s|$)|^(\d+(?:\.\d+)?)(?=\s|$)/.exec(text);
+  if (match === null) return null;
+  const rest = text.slice(match[0].length).trim();
+  if (match[4] !== undefined) return { value: Number(match[4]), rest };
+  const denominator = Number(match[3]);
+  if (denominator === 0) return null;
+  return { value: Number(match[1] ?? 0) + Number(match[2]) / denominator, rest };
+}
+
+/** Measure name of a portion label: "cup, chopped" → "cup", "1 cup (8 fl oz)" → "cup", "serving 1 roll" → "serving", "fl oz" stays. */
 function measureOf(label: string): string {
-  const words = (label.split(/[,(]/)[0] ?? "").trim().toLowerCase().split(/\s+/);
+  const text = (label.split(/[,(]/)[0] ?? "").trim().toLowerCase();
+  const words = (leadingQuantity(text)?.rest ?? text).split(/\s+/);
   const pair = words.slice(0, 2).join(" ");
   return normalizeUnit(TWO_WORD_MEASURES.has(pair) ? pair : (words[0] ?? ""));
 }
@@ -91,10 +111,13 @@ export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): Fd
   const foodRows = read("food.csv").filter((f) => f["data_type"] === dataType);
   const ids = new Set(foodRows.map((f) => f["fdc_id"] ?? ""));
 
+  // FNDDS food_nutrient rows use the legacy nutrient number ("208"), not the FDC id (1008); nutrient.csv maps one to the other.
+  const idByNumber = new Map(read("nutrient.csv").map((n) => [n["nutrient_nbr"] ?? "", Number(n["id"])]));
   const values = new Map<string, Map<number, number>>();
   for (const row of read("food_nutrient.csv")) {
     const id = row["fdc_id"] ?? "";
-    const nutrient = Number(row["nutrient_id"]);
+    const cell = row["nutrient_id"] ?? "";
+    const nutrient = WANTED_NUTRIENTS.has(Number(cell)) ? Number(cell) : (idByNumber.get(cell) ?? NaN);
     const amount = num(row["amount"]);
     if (!ids.has(id) || !WANTED_NUTRIENTS.has(nutrient) || amount === null || amount < 0) continue;
     let perFood = values.get(id);
@@ -123,13 +146,35 @@ export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): Fd
     const id = row["fdc_id"] ?? "";
     if (!kept.has(id)) continue;
     const unitId = row["measure_unit_id"] ?? "";
-    const amount = num(row["amount"]) ?? 1;
     const grams = num(row["gram_weight"]);
     const unitName = unitId === UNDETERMINED_UNIT_ID ? "" : (unitNames.get(unitId) ?? "");
-    const detail = [row["modifier"], row["portion_description"]].map((s) => (s ?? "").trim()).filter(Boolean).join(", ");
+    // FNDDS modifiers are numeric codes (e.g. "10205"), not words, so they are dropped.
+    const modifier = (row["modifier"] ?? "").trim();
+    const portionDescription = (row["portion_description"] ?? "").trim();
+    const detail = [/^\d+$/.test(modifier) ? "" : modifier, portionDescription].filter(Boolean).join(", ");
+    const source = unitName || detail;
+    const amountCell = num(row["amount"]);
+    const leading = leadingQuantity(source);
+    // A label that starts with a number we cannot read ("1-2 pieces") has no safe measure.
+    const unreadable = /^\d/.test(source) && leading === null;
+    const bareNumber = leading !== null && leading.rest === "";
+    // With no amount, the leading quantity says how many the gram weight covers.
+    const amount = amountCell ?? leading?.value ?? 1;
     const label = [unitName, detail].filter(Boolean).join(", ");
-    const measure = measureOf(unitName || detail);
-    if (SKIPPED_MEASURE_UNIT_IDS.has(unitId) || label === "" || grams === null || grams <= 0 || amount <= 0 || Object.hasOwn(MASS_UNITS_G, measure)) {
+    const measure = measureOf(source);
+    if (
+      SKIPPED_MEASURE_UNIT_IDS.has(unitId) ||
+      portionDescription === UNSPECIFIED_PORTION ||
+      UNTYPEABLE_MEASURES.has(measure) ||
+      /^[\d.]+$/.test(measure) ||
+      bareNumber ||
+      unreadable ||
+      label === "" ||
+      grams === null ||
+      grams <= 0 ||
+      amount <= 0 ||
+      Object.hasOwn(MASS_UNITS_G, measure)
+    ) {
       skippedPortions++;
       continue;
     }

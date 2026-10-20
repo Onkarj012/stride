@@ -1,5 +1,5 @@
 /** Where a food record's numbers come from. Mirrors the `foods.source` column in plan 007 section 3.2. */
-export type FoodSource = "fdc" | "ifct" | "off" | "user" | "ai_estimate";
+export type FoodSource = "fdc" | "ifct" | "cofid" | "stride" | "off" | "user" | "ai_estimate";
 
 /**
  * Nutrients for 100 g of a food, or for an actual amount once scaled.

@@ -132,6 +132,42 @@ async function remaining(t: TestConvex<typeof schema>) {
   });
 }
 
+/** Adds one live entry and one food memory event for both seeded users. */
+async function seedLinkEvents(t: TestConvex<typeof schema>, linkId: Id<"food_links">) {
+  await t.run(async (ctx) => {
+    const link = await ctx.db.get(linkId);
+    if (link === null) throw new Error("seeded link missing");
+    for (const userId of ["user_a", "user_b"]) {
+      const entryId = await ctx.db.insert("entries", {
+        userId,
+        localDate: "2026-10-05",
+        timeZone: "Asia/Kolkata",
+        slot: "lunch",
+        loggedAt: 1,
+        foodId: link.foodId,
+        foodName: "Paneer",
+        grams: 100,
+        nutrients: { kcal: 265, protein: 18, carbs: 1, fat: 21, fiber: null, sugar: null, sodiumMg: null },
+        source: "db",
+        confidence: 1,
+        flags: [],
+        revision: 1,
+        op: "add",
+        status: "live",
+        createdBy: "ai",
+        submissionId: `${userId}:e0`,
+      });
+      await ctx.db.insert("food_link_events", {
+        userId,
+        key: "paneer",
+        submissionId: `${userId}:d0`,
+        entryId,
+        changes: [{ linkId, before: null, after: { status: "active", uses: 1, updatedAt: 1 } }],
+      });
+    }
+  });
+}
+
 describe("clearAllData", () => {
   test("removes every restart table's rows and files for the caller, across batches, and nothing else", async () => {
     vi.useFakeTimers();
@@ -155,6 +191,15 @@ describe("clearAllData", () => {
       foods: ["shared", "user_b"],
       files: 1,
     });
+  });
+
+  test("removes the caller's food memory events and keeps another user's", async () => {
+    vi.useFakeTimers();
+    const { t, a, user } = await setup();
+    await seedLinkEvents(t, a.linkId);
+    await user.mutation(api.users.clearAllData, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run((ctx) => ctx.db.query("food_link_events").take(10))).map((row) => row.userId)).toEqual(["user_b"]);
   });
 
   test("removes the live text row of a reply streaming while the clear runs, and keeps another user's", async () => {
@@ -287,6 +332,14 @@ describe("exportAllData", () => {
     expect(data.tdee_snapshots.map((s) => s.estimateKcal)).toEqual([2400]);
     expect(data.user_settings.map((settings) => settings.calorieTarget)).toEqual([{ kcal: 2200, source: "adaptive", appliedLocalDate: "2026-10-05" }]);
     expect(Object.values(data.truncated).every((flag) => !flag)).toBe(true);
+  });
+
+  test("includes the caller's food memory events only", async () => {
+    const { t, a, user } = await setup();
+    await seedLinkEvents(t, a.linkId);
+    const data = await user.query(api.users.exportAllData, {});
+    expect(data.food_link_events.map((e) => e.userId)).toEqual(["user_a"]);
+    expect(data.truncated.food_link_events).toBe(false);
   });
 
   test("caps a long table and marks it truncated", async () => {

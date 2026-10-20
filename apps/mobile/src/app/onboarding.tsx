@@ -33,6 +33,7 @@ import {
   HoldOnboardingContext,
   clamp,
   clampNote,
+  hasTargetRoom,
   deviceUnits,
   type Activity,
   type DietType,
@@ -97,7 +98,7 @@ function answered(step: StepId, form: Form): boolean {
   if (step === 'diet') return form.dietTypes.length > 0
   if (step === 'target') {
     if (form.goal === null || form.goal === 'maintain') return true
-    return targetOnSide(form.goal, form.targetWeightKg ?? defaultTargetKg(form.goal, form.weightKg), form.weightKg)
+    return hasTargetRoom(form.goal, form.weightKg) && targetOnSide(form.goal, form.targetWeightKg ?? defaultTargetKg(form.goal, form.weightKg), form.weightKg)
   }
   return true
 }
@@ -231,6 +232,7 @@ function Onboarding() {
               weightKg={form.weightKg}
               units={units}
               onChange={(v) => patch({ targetWeightKg: v.targetWeightKg, pace: v.pace })}
+              onMaintain={() => patch({ goal: 'maintain', targetWeightKg: null })}
             />
           </Question>
         )
@@ -422,3 +424,5 @@ const useStyles = themedStyles((t) => ({
   note: { ...font('secondary'), color: t.c.ink2, textAlign: 'center', marginTop: 18 },
   revealLead: { ...font('secondary'), color: t.c.ink3, textAlign: 'center', marginTop: 10, maxWidth: 300 },
 }))
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError'

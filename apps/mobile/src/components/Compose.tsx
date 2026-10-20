@@ -28,9 +28,10 @@ import { font, themedStyles, useTheme } from '@/theme'
 import { BarcodeScanner, PhotoCapture, ScanningPhoto, VoiceCapture } from './Capture'
 import { Button, RoundButton, Stepper, Tag, Thinking } from './Controls'
 import { DraftCard } from './DraftCard'
-import { useLog } from './LogProvider'
+import { useLog } from './useLog'
 import { Polo, type PoloMood } from './Polo'
 import { Tap } from './Tap'
+import { ThaliPicker } from './ThaliPicker'
 
 export type ComposeMode = 'text' | 'voice' | 'photo' | 'barcode'
 
@@ -44,6 +45,7 @@ type Phase =
   | { kind: 'voice' }
   | { kind: 'photo' }
   | { kind: 'barcode' }
+  | { kind: 'thali' }
   | { kind: 'working'; label: string; photoUri?: string }
   | { kind: 'committed'; lines: LogLine[] }
   | { kind: 'draft'; draftId: DraftId }
@@ -214,7 +216,13 @@ export function Compose({
         <Polo size={46} mood={mood} hop={hops} />
         <View style={s.headText}>
           <Text style={s.headTitle}>
-            {phase.kind === 'photo' ? 'Show me the plate.' : phase.kind === 'barcode' ? 'Scan the pack.' : 'What did you have?'}
+            {phase.kind === 'photo'
+              ? 'Show me the plate.'
+              : phase.kind === 'barcode'
+                ? 'Scan the pack.'
+                : phase.kind === 'thali'
+                  ? "What's on the plate?"
+                  : 'What did you have?'}
           </Text>
           <Text style={s.slot}>
             Logging to <Text style={s.slotName}>{slot}</Text> · {clock}
@@ -245,6 +253,14 @@ export function Compose({
             <View style={s.grow} />
             <Button label="Log it" variant="coral" icon="up" iconAfter onPress={() => submitText()} />
           </View>
+          <Tap
+            style={[s.chip, s.thaliEntry]}
+            scale={motion.press.cardScale}
+            onPress={() => go({ kind: 'thali' })}
+            accessibilityRole="button"
+          >
+            <Text style={s.chipText}>Build a thali</Text>
+          </Tap>
           {phase.kind === 'empty' ? (
             <Text style={s.note}>I didn't catch any food there. Try "2 roti and dal".</Text>
           ) : (
@@ -283,6 +299,16 @@ export function Compose({
       ) : null}
       {phase.kind === 'barcode' ? (
         <BarcodeScanner onCode={(code) => void submitCode(code)} onCancel={() => go({ kind: 'input' })} />
+      ) : null}
+
+      {phase.kind === 'thali' ? (
+        <ThaliPicker
+          onLog={(thali) => {
+            setText(thali)
+            submitText(thali)
+          }}
+          onCancel={() => go({ kind: 'input' })}
+        />
       ) : null}
 
       {phase.kind === 'working' ? (
@@ -455,6 +481,7 @@ const useStyles = themedStyles((t) => ({
   bar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
   chipsLabel: { ...font('label'), color: t.c.ink3, marginTop: 16, marginBottom: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  thaliEntry: { marginTop: 14, alignSelf: 'flex-start' },
   chip: {
     paddingVertical: 9,
     paddingHorizontal: 14,

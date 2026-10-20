@@ -7,24 +7,21 @@ import { KCAL_PER_KG } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
 import { formatNumber } from '@/lib/format'
 import { SUMMARY_DAYS } from '@/lib/log'
+import { LB_PER_KG, kgLabel, savedUnits, signedRateLabel } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles } from '@/theme'
 import { Button, Thinking } from './Controls'
-import { useLog } from './LogProvider'
+import { useLog } from './useLog'
 import { Polo } from './Polo'
-
-// "−0.40 kg a week" with a real minus sign.
-export function formatRate(kgPerWeek: number): string {
-  const sign = kgPerWeek < -0.005 ? '−' : kgPerWeek > 0.005 ? '+' : ''
-  return `${sign}${Math.abs(kgPerWeek).toFixed(2)} kg a week`
-}
 
 // How the daily burn is worked out (mock #/tdee), or the one-time "burn estimate ready" milestone (mock #/milestone).
 export function BurnSheet({ milestone, onClose }: { milestone: boolean; onClose: () => void }) {
   const s = useStyles()
   const today = useLocalToday()
   const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS, localDate: today })
-  if (summary === undefined) return <Thinking label="Opening your burn…" />
+  const profile = useQuery(api.progress_v2.profile, {})
+  const units = savedUnits(profile?.units)
+  if (summary === undefined || profile === undefined) return <Thinking label="Opening your burn…" />
   const { snapshot, weeklyRateKg, target } = summary
   if (snapshot === null)
     return (
@@ -65,13 +62,14 @@ export function BurnSheet({ milestone, onClose }: { milestone: boolean; onClose:
 
       <Text style={s.p}>
         Stride compares what you ate with how your trend weight moved over the last{' '}
-        <Text style={s.strong}>{snapshot.windowDays} days</Text>. A kilo of body weight is about{' '}
-        {formatNumber(KCAL_PER_KG)} kcal, so the gap between the two is what your body burned.
+        <Text style={s.strong}>{snapshot.windowDays} days</Text>. A {units === 'metric' ? 'kilo' : 'pound'} of body weight is about{' '}
+        {formatNumber(Math.round(units === 'metric' ? KCAL_PER_KG : KCAL_PER_KG / LB_PER_KG))} kcal, so the gap between the two is
+        what your body burned.
       </Text>
       {weeklyRateKg !== null ? (
         <Text style={s.p}>
-          Your trend is at <Text style={s.strong}>{snapshot.trendKg.toFixed(1)} kg</Text>, moving{' '}
-          <Text style={s.strong}>{formatRate(weeklyRateKg)}</Text>.
+          Your trend is at <Text style={s.strong}>{kgLabel(snapshot.trendKg, units)}</Text>, moving{' '}
+          <Text style={s.strong}>{signedRateLabel(weeklyRateKg, units)}</Text>.
         </Text>
       ) : null}
       {target ? (

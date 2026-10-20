@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 import Svg, { Circle } from 'react-native-svg'
 import { useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import { api } from 'stride-backend/convex/_generated/api'
 import { radii } from '@stride/ui-tokens'
 import { dateOf, daysIn, shiftMonth, weekdayOf, type Month } from '@stride/core'
 import { Button, RoundButton, Thinking } from '@/components/Controls'
-import { useLog } from '@/components/LogProvider'
+import { useLog } from '@/components/useLog'
 import { MealRow, groupMeals } from '@/components/Meals'
 import { Polo } from '@/components/Polo'
 import { Screen, ScreenTitle } from '@/components/Screen'
@@ -18,6 +19,9 @@ import { font, themedStyles, useTheme } from '@/theme'
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 const RING = 2 * Math.PI * 10
+
+type DayTotals = FunctionReturnType<typeof api.day_totals.dayTotals>
+type DayEntries = FunctionReturnType<typeof api.entries.entriesForDay>
 
 // Log tab (mock #/week): a month of day rings, then the chosen day's meals and totals.
 export default function LogScreen() {
@@ -139,16 +143,21 @@ function DayDetail({ date, today }: { date: string; today: string }) {
   const { compose, openMeal } = useLog()
   const totals = useQuery(api.day_totals.dayTotals, { localDate: date })
   const entries = useQuery(api.entries.entriesForDay, { localDate: date })
-  const isToday = date === today
+  // Keep the last loaded day on screen while another one loads, with its own date so the labels match its data.
+  const kept = useRef<{ date: string; totals: DayTotals; entries: DayEntries } | undefined>(undefined)
+  if (totals !== undefined && entries !== undefined) kept.current = { date, totals, entries }
+  const loaded = kept.current
 
-  if (totals === undefined || entries === undefined) return <Thinking label="Opening that day…" />
-  const meals = groupMeals(entries)
+  if (loaded === undefined) return <Thinking label="Opening that day…" />
+  const shown = loaded.date
+  const isToday = shown === today
+  const meals = groupMeals(loaded.entries)
 
   if (meals.length === 0)
     return (
       <View style={[s.card, s.emptyCard]}>
         <Polo size={48} hop={1} />
-        <Text style={s.eyebrowCenter}>{isToday ? 'Today' : formatDayTitle(date)}</Text>
+        <Text style={s.eyebrowCenter}>{isToday ? 'Today' : formatDayTitle(shown)}</Text>
         <Text style={s.emptyBody}>
           {isToday
             ? 'Nothing yet today.'
@@ -161,14 +170,14 @@ function DayDetail({ date, today }: { date: string; today: string }) {
   return (
     <View style={s.detail}>
       <View style={s.detailHead}>
-        <Text style={s.detailTitle}>{isToday ? 'Today' : formatDayTitle(date)}</Text>
+        <Text style={s.detailTitle}>{isToday ? 'Today' : formatDayTitle(shown)}</Text>
         <Text style={s.detailTotal}>
-          {formatNumber(totals.nutrients.kcal)} kcal · {Math.round(totals.nutrients.protein)} g P
+          {formatNumber(loaded.totals.nutrients.kcal)} kcal · {Math.round(loaded.totals.nutrients.protein)} g P
         </Text>
       </View>
       <View style={[s.card, s.mealsCard]}>
         {meals.map((meal, i) => (
-          <MealRow key={meal.slot} meal={meal} first={i === 0} onPress={() => openMeal(date, meal.slot)} />
+          <MealRow key={meal.slot} meal={meal} first={i === 0} onPress={() => openMeal(shown, meal.slot)} />
         ))}
       </View>
     </View>

@@ -3,6 +3,7 @@ import { FlatList, ScrollView, Text, View, type StyleProp, type TextStyle } from
 import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { router, useIsFocused, useLocalSearchParams } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import type { FunctionReturnType } from 'convex/server'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout, radii } from '@stride/ui-tokens'
@@ -18,6 +19,13 @@ import { formatDayTitle, formatNumber } from '@/lib/format'
 import { newSubmissionId, plainError } from '@/lib/log'
 import { formatKg, formatSets, formatTonnage, type Exercise, type ExerciseId, type SessionDetail, type SessionId, type SetId } from '@/lib/strength'
 import { font, themedStyles } from '@/theme'
+
+// An exercise lined up by a repeat, with the set count it had last time as its target.
+type Planned = { exercise: Exercise; sets: number }
+type RecentWorkout = FunctionReturnType<typeof api.strength.recentWorkouts>[number]
+
+// Exercises lined up by a repeat, per session. Survives leaving the screen but not an app restart (prototype; a server field would make it durable).
+const plannedBySession = new Map<SessionId, Planned[]>()
 
 // Leaves the workout screen, falling back to Progress when it was opened directly.
 function leave() {
@@ -75,7 +83,14 @@ function Workout() {
           <Thinking label="Opening your workout…" />
         </Page>
       ) : active === null ? (
-        <Start onStarted={setSessionId} onHistory={() => setBrowsing(true)} toast={toast} />
+        <Start
+          onStarted={(id, lined) => {
+            plannedBySession.set(id, lined)
+            setSessionId(id)
+          }}
+          onHistory={() => setBrowsing(true)}
+          toast={toast}
+        />
       ) : (
         <Session key={active} sessionId={active} actions={{ toast, undoFor }} />
       )}
@@ -135,19 +150,20 @@ function Page({ children, overlay }: { children: ReactNode; overlay?: ReactNode 
   )
 }
 
-// Nothing open today: a friendly start card. Starting goes straight to the exercise picker.
-function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId) => void; onHistory: () => void; toast: WorkoutActions['toast'] }) {
+// Nothing open today: a friendly start card. Starting goes straight to the exercise picker, or to a repeated workout's exercises.
+function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId, plan: Planned[]) => void; onHistory: () => void; toast: WorkoutActions['toast'] }) {
   const s = useStyles()
   const startSession = useMutation(api.strength.startSession)
   const [busy, setBusy] = useState(false)
   // Kept across retries so a resend after a dropped reply starts one session.
   const submissionId = useRef(newSubmissionId())
 
-  // Creates today's session on the server.
-  async function start() {
+  // Creates today's session on the server, lining up the given exercises (none for a plain start).
+  async function start(plan: Planned[]) {
     setBusy(true)
     try {
-      onStarted(await startSession({ submissionId: submissionId.current }))
+      onStarted(await startSession({ submissionId: submissionId.current }), plan)
+      if (plan.length > 0) toast({ title: "Same again. Let's go.", sub: `${plan.length} exercises lined up.` })
     } catch (err) {
       toast({ title: "Couldn't start the workout.", sub: plainError(err) })
       setBusy(false)
@@ -164,10 +180,44 @@ function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId) => 
         <Text style={s.eyebrowCenter}>Workout</Text>
         <Text style={s.bigTitle}>Ready to lift?</Text>
         <Text style={s.body}>Pick an exercise and log each set as you go. Last session's numbers show up as hints.</Text>
-        <Button label="Start workout" icon="play" variant="coral" size="block" busy={busy} onPress={() => void start()} style={s.startButton} />
+        <Button label="Start workout" icon="play" variant="coral" size="block" busy={busy} onPress={() => void start([])} style={s.startButton} />
         <Button label="Saved workouts" variant="ghost" size="block" onPress={onHistory} style={s.startButton} />
       </Animated.View>
+      <RepeatSection disabled={busy} onRepeat={(plan) => void start(plan)} />
     </Page>
+  )
+}
+
+// The three most recent finished workouts that have exercises, each one tap from starting again. Hidden while loading or when there are none.
+function RepeatSection({ disabled, onRepeat }: { disabled: boolean; onRepeat: (plan: Planned[]) => void }) {
+  const s = useStyles()
+  const workouts = useQuery(api.strength.recentWorkouts, { limit: 3 })
+  if (workouts === undefined || workouts.length === 0) return null
+  return (
+    <View>
+      <Text style={[s.eyebrow, s.repeatLabel]}>Repeat a recent workout</Text>
+      <Animated.View entering={FadeInDown.springify()} style={s.repeatCard}>
+        {workouts.map((workout) => (
+          <RepeatRow key={workout.sessionId} workout={workout} disabled={disabled} onRepeat={onRepeat} />
+        ))}
+      </Animated.View>
+    </View>
+  )
+}
+
+// One recent workout: its name, day, exercises, and set count. Repeating lines up each exercise with its set count as the target.
+function RepeatRow({ workout, disabled, onRepeat }: { workout: RecentWorkout; disabled: boolean; onRepeat: (plan: Planned[]) => void }) {
+  const s = useStyles()
+  const plan = workout.exercises.map((e) => ({ exercise: e.exercise, sets: e.sets }))
+  const setCount = plan.reduce((total, e) => total + e.sets, 0)
+  const title = `${workout.name ?? 'Workout'} · ${formatDayTitle(workout.localDate)}`
+  return (
+    <Tap style={s.repeatRow} disabled={disabled} onPress={() => onRepeat(plan)} accessibilityRole="button" accessibilityLabel={`Repeat ${title}`}>
+      <Text style={s.repeatTitle}>{title}</Text>
+      <Text style={s.repeatMeta} numberOfLines={1}>
+        {`${plan.map((e) => e.exercise.name).join(', ')} · ${setCount} sets`}
+      </Text>
+    </Tap>
   )
 }
 
@@ -182,7 +232,7 @@ function Session({ sessionId, actions }: { sessionId: SessionId; actions: Workou
       </Page>
     )
   if (detail.session.endedAt !== undefined && !editing) return <Summary detail={detail} onEdit={() => setEditing(true)} />
-  return <Live detail={detail} actions={actions} onFinish={() => setEditing(false)} />
+  return <Live detail={detail} plan={plannedBySession.get(sessionId) ?? []} actions={actions} onFinish={() => setEditing(false)} />
 }
 
 // Elapsed time from a start to an end instant (default now) as m:ss or h:mm:ss. Only a live timer ticks, and only while the screen is focused.
@@ -208,19 +258,21 @@ function Elapsed({ since, until, style }: { since: number; until?: number; style
 }
 
 // Live session: timer and Finish (or Done when editing a finished one), progress bar, the current exercise's sets, and the session list.
-function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: WorkoutActions; onFinish: () => void }) {
+function Live({ detail, plan, actions, onFinish }: { detail: SessionDetail; plan: Planned[]; actions: WorkoutActions; onFinish: () => void }) {
   const s = useStyles()
   const endSession = useMutation(api.strength.endSession)
   const ended = detail.session.endedAt !== undefined
-  const [picked, setPicked] = useState<Exercise[]>([])
-  const [currentId, setCurrentId] = useState<ExerciseId | null>(null)
-  const [picking, setPicking] = useState(detail.exercises.length === 0)
+  const [picked, setPicked] = useState<Exercise[]>(plan.map((p) => p.exercise))
+  const [currentId, setCurrentId] = useState<ExerciseId | null>(plan[0]?.exercise._id ?? null)
+  const [picking, setPicking] = useState(detail.exercises.length === 0 && plan.length === 0)
   const [finishing, setFinishing] = useState(false)
+  // Set counts from the repeated workout, keyed by exercise.
+  const targets = new Map(plan.map((p) => [p.exercise._id, p.sets]))
 
   // Exercises with saved sets, then ones picked this session that have none yet.
   const list = [
-    ...detail.exercises.map((e) => ({ exercise: e.exercise, sets: e.sets })),
-    ...picked.filter((p) => !detail.exercises.some((e) => e.exercise._id === p._id)).map((exercise) => ({ exercise, sets: [] })),
+    ...detail.exercises.map((e) => ({ exercise: e.exercise, sets: e.sets, target: targets.get(e.exercise._id) })),
+    ...picked.filter((p) => !detail.exercises.some((e) => e.exercise._id === p._id)).map((exercise) => ({ exercise, sets: [], target: targets.get(exercise._id) })),
   ]
   const current = list.find((e) => e.exercise._id === currentId) ?? list.at(-1)
   const currentIndex = current ? list.indexOf(current) : -1
@@ -231,6 +283,7 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
     setFinishing(true)
     try {
       await endSession({ sessionId: detail.session._id })
+      plannedBySession.delete(detail.session._id)
       onFinish()
     } catch (err) {
       actions.toast({ title: "Couldn't finish the workout.", sub: plainError(err) })
@@ -277,6 +330,7 @@ function Live({ detail, actions, onFinish }: { detail: SessionDetail; actions: W
           previousSets={currentDetail?.previousSets}
           historyLimited={currentDetail?.historyLimited ?? false}
           position={`${currentIndex + 1} of ${list.length}`}
+          target={current.target}
           finished={ended}
           actions={actions}
         />
@@ -421,6 +475,11 @@ const useStyles = themedStyles((t) => ({
     boxShadow: t.shadow.card,
   },
   startButton: { marginTop: 18 },
+  repeatLabel: { marginTop: 28, marginBottom: 4 },
+  repeatCard: { paddingHorizontal: 16, backgroundColor: t.c.card, borderRadius: radii.card, boxShadow: t.shadow.card },
+  repeatRow: { paddingVertical: 12, gap: 3 },
+  repeatTitle: { ...font('bodyStrong'), color: t.c.ink },
+  repeatMeta: { ...font('caption'), color: t.c.ink3 },
   upnext: { marginTop: 28 },
   upnextLabel: { marginBottom: 4 },
   upRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 2, borderBottomWidth: 1, borderBottomColor: t.c.line },
@@ -453,3 +512,5 @@ const useStyles = themedStyles((t) => ({
   holding: { ...font('calloutStrong'), color: t.c.ink3 },
   doneButton: { marginTop: 18 },
 }))
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError'

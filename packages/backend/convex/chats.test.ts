@@ -210,8 +210,10 @@ describe("multi-chat (D12)", () => {
 
   test("a retry after a failed turn reports its saved entries instead of asking the model again", async () => {
     const { t, user, chatId, foods } = await setup();
-    // Attempt 1 fails at its first model call (an empty reply throws) after a write under its key was saved.
-    llm = () => ({});
+    // Attempt 1 fails at its first model call (the upstream request throws) after a write under its key was saved.
+    llm = () => {
+      throw new Error("upstream 500");
+    };
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "had 2 rotis" })).rejects.toThrow();
     await user.mutation(api.entries.addEntries, {
       submissionId: "m1:edit_entry:0:0",
@@ -262,7 +264,9 @@ describe("multi-chat (D12)", () => {
   test("a voice retry reuses the saved transcript instead of paying Groq again", async () => {
     const { t, user, chatId } = await setup();
     const audio = { data: btoa("fake audio bytes"), mimeType: "audio/webm" };
-    llm = () => ({});
+    llm = () => {
+      throw new Error("upstream 500");
+    };
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "v1", audio })).rejects.toThrow();
     expect(groqCalls).toBe(1);
 
@@ -397,6 +401,35 @@ describe("chat corrections (D8)", () => {
     expect((await user.query(api.day_totals.dayTotals, {})).nutrients.kcal).toBe(238);
   });
 
+  test("edit_entry onto an AI estimate marks the new revision estimated", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const estimate = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: DAL,
+        source: "ai_estimate",
+        sourceId: "user_a:ai:homemade dal",
+        verified: false,
+        ownerUserId: "user_a",
+      }),
+    );
+    const [original] = await user.mutation(api.entries.addEntries, {
+      submissionId: "e1",
+      items: [{ foodId: foods.chapati, grams: 80, source: "db" }],
+    });
+    if (original === undefined) throw new Error("no entry");
+    llm = (body) =>
+      afterToolResult(body)
+        ? { content: "Changed it." }
+        : { toolCalls: [{ name: "edit_entry", args: { entry_id: original, food_id: estimate } }] };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "it was dal" });
+
+    const rows = await entryRows(t);
+    expect(rows[1]).toMatchObject({ op: "edit", foodId: estimate, flags: ["estimated"] });
+  });
+
   test("an empty step after a tool ran ends the turn with that tool's note, and the entry the tool wrote is kept", async () => {
     const { t, user, chatId, foods } = await setup();
     const [original] = await user.mutation(api.entries.addEntries, {
@@ -426,6 +459,15 @@ describe("chat corrections (D8)", () => {
 
     expect(turn.reply).toBe(SORRY_REPLY);
     expect(turn.entryIds).toEqual([]);
+    expect(await entryRows(t)).toHaveLength(0);
+  });
+
+  test("an empty first step replies with the sorry line and does not throw", async () => {
+    const { t, user, chatId } = await setup();
+    llm = () => ({});
+    const turn = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" });
+
+    expect(turn.reply).toBe(SORRY_REPLY);
     expect(await entryRows(t)).toHaveLength(0);
   });
 
@@ -995,7 +1037,9 @@ describe("review fixes", () => {
     llm = (body) =>
       afterToolResult(body) ? { content: "Updated." } : { toolCalls: [{ name: "edit_entry", args: { entry_id: entry, quantity: 3, unit: null } }] };
     const first = await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "3 rotis" });
-    llm = () => ({});
+    llm = () => {
+      throw new Error("upstream 500");
+    };
     await expect(user.action(api.chats.regenerate, { chatId })).rejects.toThrow();
     const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
     const failed = page.page.find((m) => m.role === "assistant");
@@ -1088,7 +1132,9 @@ describe("coach sees the profile (10f)", () => {
 
   test("retrying an older failed question sends history that ends at that question", async () => {
     const { user, chatId } = await setup();
-    llm = () => ({});
+    llm = () => {
+      throw new Error("upstream 500");
+    };
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "a", text: "question A" })).rejects.toThrow();
     llm = () => ({ content: "Answer B." });
     await user.action(api.chats.sendMessage, { chatId, submissionId: "b", text: "question B" });

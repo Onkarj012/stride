@@ -51,7 +51,7 @@ function formatQuantity(q: number): string {
 function amountText(item: DraftItem, fix: Fix, view: ReturnType<typeof viewOf>): string {
   if (view.grams === null) return view.foodName === null ? "not matched yet" : "";
   if (!view.changedFood && fix.grams === undefined && item.quantity !== null && item.unit !== null) {
-    return `${formatQuantity(item.quantity)} ${item.unit}`;
+    return `${formatQuantity(item.quantity)} ${item.unit === "piece" ? "pc" : item.unit}`;
   }
   return `${Math.round(view.grams * 10) / 10} g`;
 }

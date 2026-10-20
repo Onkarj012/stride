@@ -60,6 +60,7 @@ export function ExerciseBlock({
   previousSets,
   historyLimited,
   position,
+  target,
   finished,
   actions,
 }: {
@@ -69,6 +70,8 @@ export function ExerciseBlock({
   previousSets?: Hint[]
   historyLimited: boolean
   position: string
+  // Set count from a repeated workout, shown as progress toward it.
+  target?: number
   // A finished workout can be corrected but not extended, so the new-set row is hidden.
   finished: boolean
   actions: WorkoutActions
@@ -91,6 +94,7 @@ export function ExerciseBlock({
       <Text style={s.eyebrow}>
         {position}
         {muscle ? ` · ${muscleName(muscle)}` : ''}
+        {target === undefined ? '' : ` · ${sets.length} of ${target} sets`}
       </Text>
       <Text style={s.exname}>{exercise.name}</Text>
       <View style={s.hint}>

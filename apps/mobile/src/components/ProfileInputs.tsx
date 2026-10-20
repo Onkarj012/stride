@@ -12,6 +12,8 @@ import {
   daysLabel,
   deviceUnits,
   dobFromTyped,
+  hasTargetRoom,
+  kgLabel,
   rateLabel,
   round1,
   stepCm,
@@ -27,7 +29,7 @@ import {
   type Units,
 } from '@/lib/profile'
 import { font, themedStyles, useTheme } from '@/theme'
-import { RoundButton } from './Controls'
+import { Button, RoundButton } from './Controls'
 import { Icon } from './Icon'
 import { Tap } from './Tap'
 
@@ -45,9 +47,10 @@ function parseNumber(text: string): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null
 }
 
-// Keeps a target on the far side of today's weight, 0.1 kg short of it, as the server requires.
+// Keeps a target on the far side of today's weight, 0.1 kg short of it, as the server requires, and inside the allowed weights.
 function boundTarget(kg: number, goal: 'lose' | 'gain', weightKg: number): number {
-  return goal === 'lose' ? Math.min(kg, round1(weightKg - 0.1)) : Math.max(kg, round1(weightKg + 0.1))
+  const bounded = goal === 'lose' ? Math.min(kg, round1(weightKg - 0.1)) : Math.max(kg, round1(weightKg + 0.1))
+  return clamp(bounded, WEIGHT_KG.min, WEIGHT_KG.max)
 }
 
 // Rounds a height in cm and keeps it inside the bounds.
@@ -399,19 +402,21 @@ export const PACES: Choice<Pace>[] = [
   { value: 'fast', label: 'Fast' },
 ]
 
-// Target weight, kept on the far side of the current weight, then the pace that gets there.
+// Target weight, kept on the far side of the current weight, then the pace that gets there. With no room for a target, offers maintain instead.
 export function TargetPaceInput({
   value,
   onChange,
   goal,
   weightKg,
   units = deviceUnits(),
+  onMaintain,
 }: {
   value: TargetValue
   onChange: (v: TargetValue) => void
   goal: 'lose' | 'gain'
   weightKg: number
   units?: Units
+  onMaintain?: () => void
 }) {
   const s = useStyles()
   const unit = weightUnit(units)
@@ -425,6 +430,15 @@ export function TargetPaceInput({
     if (n === null) return
     onChange({ ...value, targetWeightKg: boundTarget(clamp(weightToKg(n, units), WEIGHT_KG.min, WEIGHT_KG.max), goal, weightKg) })
   }
+  if (!hasTargetRoom(goal, weightKg))
+    return (
+      <View>
+        <Text style={s.note}>
+          At {kgLabel(weightKg, units)}, Stride can't set a {goal === 'lose' ? 'lower' : 'higher'} target. Pick maintain instead.
+        </Text>
+        {onMaintain ? <Button label="Switch to maintain" variant="ghost" size="sm" onPress={onMaintain} /> : null}
+      </View>
+    )
   const options = PACES.map((p) => ({ ...p, detail: rateLabel(PACE_KG_PER_WEEK[goal][p.value], units) }))
   return (
     <View>

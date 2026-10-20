@@ -35,6 +35,7 @@ export const HOUSEHOLD_VESSELS: Readonly<Record<string, HouseholdVessel>> = {
   katori: { ml: 150, note: "Standard small steel katori. Same value as the previous Stride engine and plan 007 D10." },
   bowl: { ml: 250, note: "Medium serving bowl. Same value as the previous Stride engine." },
   glass: { ml: 250, note: "Common steel or glass tumbler for water, milk, lassi, chaas." },
+  teacup: { ml: 110, note: "Home chai or coffee cup. Owner's estimate, 100 to 120 ml. A cup of chai or tea uses this size." },
   ladle: { ml: 60, note: "Serving ladle (karchi) of dal or curry. Household estimate, owner-editable." },
 };
 
@@ -50,7 +51,7 @@ export const PIECE_UNIT = "piece";
 
 /** Normalized measure labels that count whole items. A bare count ("2 cookies") can use a food's row with one of these. */
 export const COUNT_MEASURES: readonly string[] = [
-  PIECE_UNIT, "biscuit", "cookie", "cracker", "slice", "bar", "roti", "chapati", "phulka", "paratha", "idli", "dosa", "puri",
+  PIECE_UNIT, "biscuit", "cookie", "cracker", "slice", "bar", "roti", "chapati", "phulka", "paratha", "naan", "kulcha", "bhatura", "idli", "dosa", "puri",
 ];
 
 /** Grams for one piece of a food, matched when every key token appears in the food name and no excluded token does. */
@@ -69,6 +70,9 @@ export const PIECE_WEIGHTS: readonly PieceWeight[] = [
   { keys: ["phulka", "roti"], grams: 30, note: "Phulka named as a roti. Same 30 g as the phulka row, and more specific than the roti row." },
   { keys: ["phulka", "chapati"], grams: 30, note: "Phulka named as a chapati. Same 30 g as the phulka row, and more specific than the chapati row." },
   { keys: ["paratha"], excludes: ["aloo"], grams: 80, note: "Plain layered paratha. Previous Stride engine value. Stuffed parathas are not covered." },
+  { keys: ["naan"], excludes: ["stuffed", "keema", "paneer", "aloo"], grams: 90, note: "Plain naan, one medium piece. Household estimate, owner-editable. Stuffed naans are not covered." },
+  { keys: ["kulcha"], excludes: ["stuffed", "amritsari", "aloo", "paneer"], grams: 80, note: "Plain kulcha, one piece. Household estimate, owner-editable. Stuffed kulchas are not covered." },
+  { keys: ["bhatura"], grams: 65, note: "One medium bhatura. Household estimate, owner-editable." },
   { keys: ["idli"], grams: 40, note: "One medium idli. Previous Stride engine value." },
   { keys: ["egg"], grams: 50, note: "One large egg without shell, FDC 171287 portion 'large'." },
   { keys: ["banana"], excludes: ["chip", "bread", "cake", "muffin", "shake", "smoothie", "halwa", "pudding", "custard", "fritter", "split", "juice", "puree", "dried", "frozen", "canned", "peeled", "sliced", "mashed", "chopped", "small", "large", "big", "mini", "baby", "extra", "jumbo"], grams: 118, note: "One medium banana, FDC 173944 (SR Legacy) household measure, 7 to 7 7/8 in long." },
@@ -93,7 +97,7 @@ export interface DensityEntry {
 }
 
 /** Dry forms of a drink that are not the drink: powders, mixes, leaves, ground beans, bags, creamers and syrups. */
-const BEVERAGE_EXCLUDES: readonly string[] = [
+export const BEVERAGE_EXCLUDES: readonly string[] = [
   "powder", "instant", "dry", "dried", "granules", "mix", "concentrate", "leaves", "ground", "bags", "creamer", "whitener", "beans", "syrup",
 ];
 
