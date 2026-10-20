@@ -40,6 +40,12 @@ describe("nextTargets", () => {
     ]);
   });
 
+  it("holds the reps at the weight cap instead of asking for weight it can't log", () => {
+    expect(nextTargets([{ weightKg: 1000, reps: 8 }], 2.5, undefined, 1000)).toEqual([
+      { weightKg: 1000, reps: 8, reason: "at-limit" },
+    ]);
+  });
+
   it("adds a rep to bodyweight sets and keeps the weight at zero", () => {
     expect(nextTargets([{ weightKg: 0, reps: 10 }], 2.5)).toEqual([{ weightKg: 0, reps: 11, reason: "add-rep" }]);
   });

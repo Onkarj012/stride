@@ -4,8 +4,8 @@ export interface PlannedSet {
   reps: number;
 }
 
-/** Why a target differs from last session's set. */
-export type ProgressionReason = "add-weight" | "add-rep" | "repeat";
+/** Why a target differs from last session's set. `at-limit` means the weight cap stopped the weight step, so the reps are held. */
+export type ProgressionReason = "add-weight" | "add-rep" | "repeat" | "at-limit";
 
 /** A planned set and the reason it changed from last time. */
 export interface SetTarget extends PlannedSet {
@@ -39,8 +39,8 @@ export function inferRange(previous: PlannedSet[]): RepRange | null {
   return repRange(topReps);
 }
 
-/** Double progression: add reps until every top set hits the top of the range, then add weight. Pass `range` to keep a band chosen earlier. */
-export function nextTargets(previous: PlannedSet[], stepKg: number, range?: RepRange): SetTarget[] {
+/** Double progression: add reps until every top set hits the top of the range, then add weight. Pass `range` to keep a band chosen earlier, and `maxKg` to stop at the heaviest loadable weight. */
+export function nextTargets(previous: PlannedSet[], stepKg: number, range?: RepRange, maxKg = Infinity): SetTarget[] {
   const band = range ?? inferRange(previous);
   if (band === null) return [];
 
@@ -53,11 +53,14 @@ export function nextTargets(previous: PlannedSet[], stepKg: number, range?: RepR
   const topSets = previous.filter((set) => set.weightKg === top);
 
   if (topSets.every((set) => set.reps >= band.max)) {
-    return previous.map((set) => ({
-      weightKg: roundKg(set.weightKg + stepKg),
-      reps: band.min,
-      reason: "add-weight",
-    }));
+    return previous.map((set) => {
+      const weightKg = Math.min(maxKg, roundKg(set.weightKg + stepKg));
+      // Past the weight cap no heavier weight can be logged, so the reps stay where they were.
+      if (weightKg <= set.weightKg) {
+        return { weightKg, reps: Math.min(set.reps, band.max), reason: "at-limit" };
+      }
+      return { weightKg, reps: band.min, reason: "add-weight" };
+    });
   }
 
   return previous.map((set) =>

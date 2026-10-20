@@ -25,20 +25,26 @@ function parseBand(raw: string | null): RepRange | null {
 // The rep band for one exercise, scoped to the signed-in user. Loads the saved band, or saves one inferred from `previous` the first time.
 // Without a user id it reads and writes nothing and returns the inferred band. Null while loading or with no history.
 export function useRepBand(userId: string | null | undefined, exerciseId: string, previous: PlannedSet[]): RepRange | null {
-  // undefined while loading; null when nothing is saved.
+  // undefined while loading; null when nothing is saved or the read failed.
   const [stored, setStored] = useState<RepRange | null | undefined>(undefined)
+  // True when the read failed. The saved band is unknown then, so nothing may be written over it.
+  const [readFailed, setReadFailed] = useState(false)
   const signedIn = userId ? userId : null
 
   useEffect(() => {
     if (signedIn === null) return
     let cancelled = false
     setStored(undefined)
+    setReadFailed(false)
     SecureStore.getItemAsync(bandKey(signedIn, exerciseId))
       .then((raw) => {
         if (!cancelled) setStored(parseBand(raw))
       })
       .catch(() => {
-        if (!cancelled) setStored(null)
+        if (!cancelled) {
+          setReadFailed(true)
+          setStored(null)
+        }
       })
     return () => {
       cancelled = true
@@ -50,11 +56,11 @@ export function useRepBand(userId: string | null | undefined, exerciseId: string
   const inferredMax = inferred?.max
 
   useEffect(() => {
-    if (signedIn === null || inferredMin === undefined || inferredMax === undefined) return
+    if (signedIn === null || readFailed || inferredMin === undefined || inferredMax === undefined) return
     const band = { min: inferredMin, max: inferredMax }
     setStored(band)
     void SecureStore.setItemAsync(bandKey(signedIn, exerciseId), JSON.stringify(band)).catch(() => undefined)
-  }, [signedIn, exerciseId, inferredMin, inferredMax])
+  }, [signedIn, exerciseId, readFailed, inferredMin, inferredMax])
 
   if (signedIn === null) return inferRange(previous)
   if (stored === undefined) return null

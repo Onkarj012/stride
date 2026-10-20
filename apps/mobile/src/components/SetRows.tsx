@@ -39,13 +39,14 @@ export type WorkoutActions = {
 
 type Hint = { weightKg: number; reps: number }
 
-// Caps a generated target at the backend's kg and rep limits so the draft can always be logged.
+// Caps a generated target's reps at the backend's limit so the draft can always be logged.
 function withinLimits(target: SetTarget): SetTarget {
-  return { ...target, weightKg: Math.min(MAX_KG, target.weightKg), reps: Math.min(MAX_REPS, target.reps) }
+  return { ...target, reps: Math.min(MAX_REPS, target.reps) }
 }
 
 // Polo's one-line reason for today's targets, given the reps last session was planned at.
 function targetReason(targets: SetTarget[], band: RepRange, step: number): string {
+  if (targets.some((t) => t.reason === 'at-limit')) return 'At the weight limit. Hold the reps.'
   if (targets.every((t) => t.reason === 'add-weight')) return `Every set hit ${band.max}, so add ${formatKg(step)} kg.`
   if (targets.some((t) => t.reason === 'add-rep')) return 'Same weight, one more rep where you can.'
   return 'Hold the weight and own these reps.'
@@ -79,7 +80,7 @@ export function ExerciseBlock({
   const band = useRepBand(userId, exercise._id, previous)
   const limited = historyLimited || hints?.historyLimited === true
   const step = weightStep(exercise)
-  const targets = limited || band === null ? [] : nextTargets(previous, step, band).map(withinLimits)
+  const targets = limited || band === null ? [] : nextTargets(previous, step, band, MAX_KG).map(withinLimits)
   const muscle = exercise.primaryMuscles[0]
   const last = sets.at(-1)
   const next = targets[sets.length] ?? last ?? previous.at(-1) ?? { weightKg: startingWeight(exercise), reps: 8 }
