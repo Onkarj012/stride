@@ -62,7 +62,8 @@ export type ItemReason =
   | "invalid_date"
   | "invalid_portion_scale"
   | "ai_estimate"
-  | "sugar_double_count";
+  | "sugar_double_count"
+  | "sugar_separate";
 
 /** The matcher's answer for one item text. */
 interface Match {
@@ -238,6 +239,8 @@ const BEVERAGE_TERMS = [
   "cold drink", "nimbu pani", "sharbat", "frappe", "smoothie",
 ];
 const SUGAR_TERMS = ["sugar", "shakkar", "cheeni", "jaggery", "gur", "honey", "sweetener"];
+/** Names that say the drink or sweetener has no added sugar. "sugar-free" splits into "sugar" and "free". */
+const NOT_SWEET_TERMS = ["free", "unsweetened", "diet"];
 
 /** True when a name has one of the terms as whole words, so "tea" matches "Tea, black" but not "steak". */
 function namesTerm(names: readonly string[], terms: readonly string[]): boolean {
@@ -247,13 +250,29 @@ function namesTerm(names: readonly string[], terms: readonly string[]): boolean 
   });
 }
 
-/** Indexes of sweet drinks whose sugar may be counted twice, because another item in the same input is sugar. */
-export function sugarDoubleCountIndexes(items: readonly { names: readonly string[]; sugarPer100g: number | null }[]): number[] {
-  const drinks = items.flatMap((item, i) =>
-    item.sugarPer100g !== null && item.sugarPer100g > 0 && namesTerm(item.names, BEVERAGE_TERMS) ? [i] : [],
-  );
-  const separateSugar = items.some((item, i) => namesTerm(item.names, SUGAR_TERMS) && drinks.some((d) => d !== i));
-  return separateSugar ? drinks : [];
+/** A sweet drink: a beverage name with sugar in the DB row, and no "unsweetened", "sugar-free" or "diet" in the name. */
+function isSweetDrink(item: SugarCandidate): boolean {
+  return item.sugarPer100g !== null && item.sugarPer100g > 0 && namesTerm(item.names, BEVERAGE_TERMS) && !namesTerm(item.names, NOT_SWEET_TERMS);
+}
+
+/** A standalone sweetener: a sugar name with no beverage word and no "free", "unsweetened" or "diet". */
+function isStandaloneSugar(names: readonly string[]): boolean {
+  return namesTerm(names, SUGAR_TERMS) && !namesTerm(names, BEVERAGE_TERMS) && !namesTerm(names, NOT_SWEET_TERMS);
+}
+
+/** One item's names (what was typed and the matched food) and the sugar per 100 g of its matched food. */
+export interface SugarCandidate {
+  names: readonly string[];
+  sugarPer100g: number | null;
+}
+
+/**
+ * Sweet drinks and standalone sugar items in one input, when both exist. Empty lists mean no possible double count.
+ */
+export function sugarOverlap(items: readonly SugarCandidate[]): { drinks: number[]; sugars: number[] } {
+  const drinks = items.flatMap((item, i) => (isSweetDrink(item) ? [i] : []));
+  const sugars = items.flatMap((item, i) => (isStandaloneSugar(item.names) ? [i] : []));
+  return drinks.length > 0 && sugars.length > 0 ? { drinks, sugars } : { drinks: [], sugars: [] };
 }
 
 /** Matches, resolves and gates every item. Runs in a query for the preview and again in the commit mutation. */
@@ -338,16 +357,15 @@ export async function resolveItems(
     r.confidence = gated.confidence;
     r.reasons = [...gated.reasons, ...r.reasons];
   });
-  const doubled = new Set(
-    sugarDoubleCountIndexes(
-      resolved.map((r) => ({
-        names: r.food === null ? [r.item.food] : [r.item.food, r.food.name],
-        sugarPer100g: r.food?.per100g.sugar ?? null,
-      })),
-    ),
+  const overlap = sugarOverlap(
+    resolved.map((r) => ({
+      names: r.food === null ? [r.item.food] : [r.item.food, r.food.name],
+      sugarPer100g: r.food?.per100g.sugar ?? null,
+    })),
   );
   resolved.forEach((r, i) => {
-    if (doubled.has(i)) r.reasons.push("sugar_double_count");
+    if (overlap.drinks.includes(i)) r.reasons.push("sugar_double_count");
+    if (overlap.sugars.includes(i)) r.reasons.push("sugar_separate");
   });
   const commit = gate.decision === "commit" && resolved.every((r) => r.reasons.length === 0);
   return { resolved, commit };

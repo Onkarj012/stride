@@ -222,7 +222,7 @@ describe("sugar double count warning", () => {
     expect(result.kind).toBe("draft");
     if (result.kind !== "draft") return;
     const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
-    expect(draft?.items.map((item) => item.reasons)).toEqual([["sugar_double_count"], []]);
+    expect(draft?.items.map((item) => item.reasons)).toEqual([["sugar_double_count"], ["sugar_separate"]]);
     expect(draft?.items.map((item) => item.grams)).toEqual([100, 5]);
   });
 
@@ -257,6 +257,30 @@ describe("sugar double count warning", () => {
 
     expect(result.kind).toBe("committed");
     expect(result.lines.every((line) => line.reasons.length === 0)).toBe(true);
+  });
+
+  test("a sugar word inside a drink name is not a separate sugar item", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Tea with sugar", aliases: [], searchText: "Tea with sugar", per100g: { ...RICE, sugar: 5 }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Coffee", aliases: [], searchText: "Coffee", per100g: { ...RICE, sugar: 5 }, source: "fdc", sourceId: "9", verified: true });
+    });
+    llm = () => extraction([{ food: "tea with sugar", quantity: 100, unit: "g" }, { food: "coffee", quantity: 100, unit: "g" }]);
+    const result = await logText(user, "tea with sugar and coffee");
+
+    expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
+  });
+
+  test("a sugar-free drink with a sugar-free sweetener name gives no warning", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Cola", aliases: [], searchText: "Cola", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar-free cola", aliases: [], searchText: "Sugar-free cola", per100g: { ...RICE, sugar: 0 }, source: "fdc", sourceId: "9", verified: true });
+    });
+    llm = () => extraction([{ food: "cola", quantity: 330, unit: "g" }, { food: "sugar-free cola", quantity: 330, unit: "g" }]);
+    const result = await logText(user, "cola and sugar-free cola");
+
+    expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
   });
 });
 

@@ -145,6 +145,8 @@ export function DraftCard({
     return sum === null || k === null || k === undefined ? null : sum + k
   }, 0)
   const photo = draft.inputKind === 'photo'
+  // The overlap warning holds only while a separate sugar item is still kept.
+  const sugarKept = kept.some((i) => draft.items[i]?.reasons.includes('sugar_separate') === true)
 
   // Sends the fixes. The server turns quantity and unit into grams itself, so it checks every amount too.
   async function confirm() {
@@ -227,7 +229,7 @@ export function DraftCard({
                   {onEstimate ? <Tag text="AI estimate" tone="est" /> : null}
                 </View>
                 {onEstimate && item.note ? <Text style={s.metaText}>{item.note}</Text> : null}
-                {item.reasons.includes('sugar_double_count') ? (
+                {item.reasons.includes('sugar_double_count') && sugarKept && (fix.foodId === undefined || fix.foodId === item.food?._id) ? (
                   <Text style={s.why}>This drink may already include sugar. Check the drink or remove the separate sugar.</Text>
                 ) : null}
                 <View style={s.meta}>
