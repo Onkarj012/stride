@@ -399,6 +399,12 @@ describe("cup size", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Milk with tea", densityGPerMl: 1 }))).toBe(240);
   });
 
+  it("instant or dried tea keeps the standard cup", () => {
+    for (const foodName of ["Tea, instant, unsweetened", "Tea, dried"]) {
+      expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName, densityGPerMl: 0.5 }))).toBe(120);
+    }
+  });
+
   it("a saved cup still wins over a saved teacup", () => {
     const withCup = { foodName: "Chai", densityGPerMl: 1, userMeasures: [{ measure: "teacup", ml: 150 }, { measure: "cup", ml: 200 }] };
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, withCup))).toBe(200);

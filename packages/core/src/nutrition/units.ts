@@ -1,4 +1,5 @@
 import {
+  BEVERAGE_EXCLUDES,
   COUNT_MEASURES,
   DENSITIES,
   type DensityEntry,
@@ -295,7 +296,7 @@ function resolved(grams: number, confidence: number, method: PortionMethod): Por
 /** Words that make a "tea" food a dry, oily or leafy product rather than a drink. */
 // Built through tokenize so "leaves" matches the singular "leave" that the food name's tokens become.
 const NOT_A_DRINK_WORDS: ReadonlySet<string> = new Set(
-  ["oil", "seed", "leaves", "leaf", "powder", "dry", "bag", "mix"].flatMap(tokenize),
+  [...BEVERAGE_EXCLUDES, "oil", "seed", "leaf", "bag"].flatMap(tokenize),
 );
 
 /** True when a food is a prepared chai or tea drink: its head word is chai or tea, and no dry or oily word appears. */

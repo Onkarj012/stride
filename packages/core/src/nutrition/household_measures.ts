@@ -97,7 +97,7 @@ export interface DensityEntry {
 }
 
 /** Dry forms of a drink that are not the drink: powders, mixes, leaves, ground beans, bags, creamers and syrups. */
-const BEVERAGE_EXCLUDES: readonly string[] = [
+export const BEVERAGE_EXCLUDES: readonly string[] = [
   "powder", "instant", "dry", "dried", "granules", "mix", "concentrate", "leaves", "ground", "bags", "creamer", "whitener", "beans", "syrup",
 ];
 
