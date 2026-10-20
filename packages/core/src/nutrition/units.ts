@@ -357,7 +357,9 @@ export function resolvePortion(
   }
 
   // A food's own row for the literal name ("naan" = 125 g) beats a piece seed that the name was normalized from.
-  if (unit !== rawUnit) {
+  // A saved volume for the measure still wins, as it does for every other food row.
+  const hasSavedMl = userMeasure !== undefined && "ml" in userMeasure && userMeasure.ml > 0;
+  if (unit !== rawUnit && !hasSavedMl) {
     const named = portionGrams(ctx.portions, (measure) => measure === rawUnit);
     if (named === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
     if (named !== null) return resolved(quantity * named, PORTION_CONFIDENCE.foodPortion, "food_portion");

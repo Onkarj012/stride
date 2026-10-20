@@ -387,6 +387,11 @@ describe("cup size", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Chai", portions: [{ measure: "teacup", gramsPerMeasure: 130 }] }))).toBe(130);
   });
 
+  it("a saved volume for a bread beats the food's named row", () => {
+    const roti = { foodName: "Roti", densityGPerMl: 1, userMeasures: [{ measure: "roti", ml: 45 }], portions: [{ measure: "roti", gramsPerMeasure: 50 }] };
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "roti" }, roti))).toBe(45);
+  });
+
   it("a saved cup still wins over a saved teacup", () => {
     const withCup = { foodName: "Chai", densityGPerMl: 1, userMeasures: [{ measure: "teacup", ml: 150 }, { measure: "cup", ml: 200 }] };
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, withCup))).toBe(200);
