@@ -983,13 +983,34 @@ describe("photo amounts are estimates for review", () => {
     expect(result.lines[0]?.grams).toBeNull();
   });
 
-  test("a photo quantity in ml keeps its amount, since the cap is per unit", async () => {
+  test("image amounts keep ml and plural household units, since the caps are per unit", async () => {
     const { t, user } = await setup();
-    llm = () => extraction([{ food: "dal, cooked", quantity: 250, unit: "ml", fromPhoto: true, amountFromImage: true }]);
+    const image = { fromPhoto: true, amountFromImage: true };
+    llm = () => extraction([
+      { food: "dal, cooked", quantity: 250, unit: "ml", ...image },
+      { food: "rice, white, cooked", quantity: 2, unit: "cups", ...image },
+      { food: "roti", quantity: 3, unit: "pieces", ...image },
+      { food: "lassi", quantity: 2, unit: "glasses", ...image },
+      { food: "dal", quantity: 2, unit: "bowls", ...image },
+      { food: "paneer", quantity: 2, unit: "plates", ...image },
+      { food: "rice", quantity: 2, unit: "katoris", ...image },
+      { food: "oil, sunflower", quantity: 2, unit: "tbsps", ...image },
+      { food: "chapati", quantity: 2, unit: "slices", ...image },
+    ]);
     const result = await user.action(api.pipeline.log.logInput, { submissionId: "p-ml", input: { kind: "photo", storageId: await uploadPhoto(t, user) } });
     if (result.kind !== "draft") throw new Error("expected a draft");
     const draft = await t.run((ctx) => ctx.db.get("drafts", result.draftId));
-    expect(draft?.items[0]).toMatchObject({ quantity: 250, unit: "ml" });
+    expect(draft?.items.map((item) => [item.quantity, item.unit])).toEqual([
+      [250, "ml"],
+      [2, "cup"],
+      [3, "piece"],
+      [2, "glass"],
+      [2, "bowl"],
+      [2, "plate"],
+      [2, "katori"],
+      [2, "tbsp"],
+      [2, "slice"],
+    ]);
   });
 
   test("a caption amount in grams is kept as stated and is not an image estimate", async () => {
