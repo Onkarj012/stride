@@ -7,6 +7,7 @@ import { callOpenRouter, isRecord, PHOTO_MODEL, PIPELINE_MODEL, type ContentPart
 /** Most items one log may hold. Matches the extraction schema's `maxItems`. */
 export const MAX_EXTRACTED_ITEMS = 20;
 const MAX_FOOD_CHARS = 120;
+const MAX_PHOTO_QUANTITY = 20;
 const EXTRACTION_MAX_TOKENS = 1_200;
 
 /**
@@ -15,7 +16,7 @@ const EXTRACTION_MAX_TOKENS = 1_200;
  */
 export const extractedItemValidator = v.object({
   food: v.string(),
-  quantity: v.number(),
+  quantity: v.union(v.number(), v.null()),
   unit: v.union(v.string(), v.null()),
   slot: v.union(mealSlotValidator, v.null()),
   date: v.union(v.string(), v.null()),
@@ -33,7 +34,10 @@ export const ITEM_JSON_SCHEMA: { [key: string]: JsonValue } = {
   required: ["food", "quantity", "unit", "slot", "date", "fromPhoto", "portionScale", "cookingOil", "confidence"],
   properties: {
     food: { type: "string", description: "Food as the user named it, singular, no amount. e.g. 'roti', 'dal tadka'." },
-    quantity: { type: "number", description: "Amount the user stated. 1 when they gave none." },
+    quantity: {
+      type: ["number", "null"],
+      description: "Amount the user stated, or the amount you see in a photo. 1 when text gives none. null when a photo amount is unclear.",
+    },
     unit: {
       type: ["string", "null"],
       description: "Unit as stated: g, ml, cup, katori, bowl, piece, tbsp, slice... null for a bare count like '2 rotis'.",
@@ -65,15 +69,28 @@ export const EXTRACTION_RESPONSE_FORMAT: { [key: string]: JsonValue } = {
   },
 };
 
-/** Rules every extraction and chat turn follows. The model parses; the server finds grams and nutrients. */
-export const PARSE_RULES = [
-  "Split the input into separate foods. Use the user's words for each food.",
+const TEXT_AMOUNT_RULES = [
   "Never output grams you inferred, calories, protein, carbs or fat. Only the amount and unit the user said.",
   "If the user gives no amount, use quantity 1 and unit null.",
-  "For part of a recipe ('a quarter of the 1 kg biryani') give the whole recipe amount and set portionScale.",
-  "Only list cooking oil, ghee or butter when the user names it. Never add oil they did not mention.",
-  "Leave slot and date null unless the user says them. Today and the current slot are given below.",
-].join("\n");
+];
+
+/** Photos may estimate a visible amount as a household unit. Grams and nutrients stay out of the output. */
+const PHOTO_AMOUNT_RULES = [
+  "Never output grams, calories, protein, carbs or fat.",
+  "For a visible portion, give the amount you see as quantity and one unit from: ml, cup, glass, katori, bowl, tsp, tbsp, piece, plate, slice.",
+  "If the amount is hidden or unclear, use quantity null and unit null.",
+];
+
+/** Rules every extraction and chat turn follows. The model parses; the server finds grams and nutrients. */
+export function parseRules(photo: boolean): string {
+  return [
+    "Split the input into separate foods. Use the user's words for each food.",
+    ...(photo ? PHOTO_AMOUNT_RULES : TEXT_AMOUNT_RULES),
+    "For part of a recipe ('a quarter of the 1 kg biryani') give the whole recipe amount and set portionScale.",
+    "Only list cooking oil, ghee or butter when the user names it. Never add oil they did not mention.",
+    "Leave slot and date null unless the user says them. Today and the current slot are given below.",
+  ].join("\n");
+}
 
 /** What the extractor reads: text, and an image URL for photo logs. */
 export interface ExtractionInput {
@@ -87,7 +104,7 @@ export interface ExtractionInput {
 function systemPrompt(input: ExtractionInput): string {
   return [
     "You extract foods from a meal log for a nutrition tracker.",
-    PARSE_RULES,
+    parseRules(input.imageUrl !== undefined),
     `Today is ${input.today}. The current meal slot is ${input.slot}.`,
     input.imageUrl === undefined ? "" : "A photo is attached. Mark foods seen in it with fromPhoto true.",
   ].join("\n");
@@ -118,10 +135,17 @@ export async function extractItems(ctx: ActionCtx, userId: string, input: Extrac
     throw new Error("Extraction did not return JSON");
   }
   if (!isRecord(parsed) || !Array.isArray(parsed.items)) throw new Error("Extraction JSON has no items array");
-  return parsed.items.slice(0, MAX_EXTRACTED_ITEMS).flatMap((raw) => {
+  const items = parsed.items.slice(0, MAX_EXTRACTED_ITEMS).flatMap((raw) => {
     const item = parseItem(raw);
     return item === null ? [] : [item];
   });
+  return input.imageUrl === undefined ? items : items.map(clampPhotoAmount);
+}
+
+/** A photo amount outside 0 to MAX_PHOTO_QUANTITY is not trusted: quantity and unit become null so the draft asks. */
+function clampPhotoAmount(item: ExtractedItem): ExtractedItem {
+  if (!item.fromPhoto || (item.quantity !== null && item.quantity > 0 && item.quantity <= MAX_PHOTO_QUANTITY)) return item;
+  return { ...item, quantity: null, unit: null };
 }
 
 const SLOTS: readonly MealSlot[] = ["breakfast", "lunch", "snack", "dinner"];
@@ -139,7 +163,7 @@ export function parseItem(raw: unknown): ExtractedItem | null {
   if (!isRecord(raw) || typeof raw.food !== "string") return null;
   const food = raw.food.trim().slice(0, MAX_FOOD_CHARS);
   if (food === "") return null;
-  const quantity = typeof raw.quantity === "number" && Number.isFinite(raw.quantity) ? raw.quantity : 1;
+  const quantity = raw.quantity === null ? null : typeof raw.quantity === "number" && Number.isFinite(raw.quantity) ? raw.quantity : 1;
   const unit = typeof raw.unit === "string" && raw.unit.trim() !== "" ? raw.unit.trim().slice(0, 40) : null;
   const scale = raw.portionScale ?? raw.portion_scale;
   const confidence = typeof raw.confidence === "number" && Number.isFinite(raw.confidence)

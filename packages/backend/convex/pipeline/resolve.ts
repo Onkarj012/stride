@@ -60,7 +60,8 @@ export type ItemReason =
   | "clamp_flag"
   | "invalid_date"
   | "invalid_portion_scale"
-  | "ai_estimate";
+  | "ai_estimate"
+  | "photo_amount";
 
 /** The matcher's answer for one item text. */
 interface Match {
@@ -255,7 +256,7 @@ export async function resolveItems(
     const reasons: ItemReason[] = [];
     const flags: string[] = [];
     let portion: PortionResult = { status: "unresolved", reason: "invalid_quantity" };
-    if (match.food !== null) {
+    if (match.food !== null && item.quantity !== null) {
       portion = await resolveFoodPortion(ctx, match.food, item.quantity, item.unit, userMeasures);
       if (item.portionScale !== null) {
         if (!validScale(item.portionScale)) reasons.push("invalid_portion_scale");
@@ -274,6 +275,8 @@ export async function resolveItems(
     }
 
     const fromPhoto = inputKind === "photo" && item.fromPhoto;
+    // A photo amount is the model's estimate, so it always waits for the user's review.
+    if (fromPhoto && item.unit !== null) reasons.push("photo_amount");
     // An AI estimate stays on the draft the first time (tool pick), then auto-commits from memory with the flag.
     const aiEstimate = match.food?.source === "ai_estimate";
     if (aiEstimate && match.source === "tool") reasons.push("ai_estimate");
@@ -417,7 +420,7 @@ export const logContext = internalQuery({
 export const unresolvedItemValidator = v.object({
   index: v.number(),
   food: v.string(),
-  quantity: v.number(),
+  quantity: v.union(v.number(), v.null()),
   unit: v.union(v.string(), v.null()),
   candidates: v.array(v.object({ foodId: v.id("foods"), name: v.string() })),
 });
@@ -507,7 +510,7 @@ export const commitLog = internalMutation({
       ...links,
       items: resolved.map((r) => ({
         text: r.item.food,
-        quantity: r.item.quantity,
+        ...(r.item.quantity === null ? {} : { quantity: r.item.quantity }),
         ...(r.item.unit === null ? {} : { unit: r.item.unit }),
         // Defaults are fixed now, so a later confirm cannot move the meal to the confirm-time day or slot.
         slot: r.item.slot ?? today.slot,

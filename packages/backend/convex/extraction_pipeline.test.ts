@@ -936,6 +936,65 @@ describe("idempotency and budget", () => {
   });
 });
 
+/** Stores a photo the caller uploaded, and returns its storage id. */
+async function uploadPhoto(t: TestConvex<typeof schema>, user: ReturnType<TestConvex<typeof schema>["withIdentity"]>) {
+  const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
+  await user.mutation(internal.uploads.registerStoredUpload, { storageId });
+  return storageId;
+}
+
+describe("photo amounts are estimates for review", () => {
+  test("the photo prompt allows household units, while the text prompt still forbids inferred amounts", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "roti", quantity: 2, fromPhoto: true }]);
+    await user.action(api.pipeline.log.logInput, { submissionId: "p-prompt", input: { kind: "photo", storageId: await uploadPhoto(t, user) } });
+    const photoPrompt = JSON.stringify(openRouterBodies[0]?.messages);
+    expect(photoPrompt).toContain("one unit from: ml, cup, glass, katori");
+    expect(photoPrompt).toContain("Never output grams, calories");
+    expect(photoPrompt).not.toContain("Never output grams you inferred");
+
+    llm = () => extraction([{ food: "roti", quantity: 2 }]);
+    await logText(user, "2 rotis", "txt-prompt");
+    const textPrompt = JSON.stringify(openRouterBodies.at(-1)?.messages);
+    expect(textPrompt).toContain("Never output grams you inferred");
+    expect(textPrompt).not.toContain("one unit from");
+  });
+
+  test("a photo item with an estimated amount always drafts and keeps the estimated badge", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "roti", quantity: 2, unit: "piece", fromPhoto: true }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p-draft", input: { kind: "photo", storageId: await uploadPhoto(t, user) } });
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await t.run((ctx) => ctx.db.get("drafts", result.draftId));
+    expect(draft?.items[0]?.reasons).toContain("photo_amount");
+    expect(result.lines[0]).toMatchObject({ grams: 80, estimated: true });
+    expect(await entryRows(t)).toEqual([]);
+  });
+
+  test("a photo quantity outside 0 to 20 becomes null, so the draft asks for an amount", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "paneer tikka", quantity: 50, unit: "plate", fromPhoto: true }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p-range", input: { kind: "photo", storageId: await uploadPhoto(t, user) } });
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await t.run((ctx) => ctx.db.get("drafts", result.draftId));
+    expect(draft?.items[0]).toMatchObject({ text: "paneer tikka" });
+    expect(draft?.items[0]?.quantity).toBeUndefined();
+    expect(draft?.items[0]?.unit).toBeUndefined();
+    expect(result.lines[0]?.grams).toBeNull();
+  });
+
+  test("correcting the quantity of a photo estimate recomputes grams from the tables", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "roti", quantity: 1, unit: "piece", fromPhoto: true }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p-fix", input: { kind: "photo", storageId: await uploadPhoto(t, user) } });
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId, corrections: [{ index: 0, quantity: 3 }] });
+    const [row] = await entryRows(t);
+    expect(row?.grams).toBeCloseTo(120, 9);
+    await expectComputedFromFoods(t);
+  });
+});
+
 describe("photo and voice input", () => {
   test("photo items use the photo model and are flagged estimated", async () => {
     const { t, user, foods } = await setup();
