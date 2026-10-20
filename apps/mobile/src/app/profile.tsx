@@ -245,7 +245,7 @@ function FieldForm({ field, saved, units, onDone }: { field: EditableField; save
       goal={targetSide(draft.goal)}
       weightKg={draft.weightKg}
       units={units}
-      onMaintain={field === 'goal' ? () => patch({ goal: 'maintain' }) : undefined}
+      onMaintain={() => patch({ goal: 'maintain' })}
     />
   )
 
@@ -361,7 +361,7 @@ function patchFor(field: Exclude<EditableField, 'name' | 'weight'>, d: Draft): U
     case 'diet':
       return { dietTypes: d.dietTypes }
     case 'target':
-      return { targetWeightKg: d.targetWeightKg, pace: d.pace }
+      return d.goal === 'maintain' ? { goal: 'maintain' } : { targetWeightKg: d.targetWeightKg, pace: d.pace }
     case 'training':
       return { trainingDaysPerWeek: d.trainingDays }
   }

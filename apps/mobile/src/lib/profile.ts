@@ -79,10 +79,9 @@ export function signedRateLabel(kgPerWeek: number, units: Units): string {
   return `${sign}${rateLabel(Math.abs(kgPerWeek), units)}`
 }
 
-// Whether a target 0.1 kg past today's weight, in the goal's direction, still fits inside the allowed weights.
+// Whether an allowed target exists on the goal's side of today's weight: above the floor to lose, below the ceiling to gain.
 export function hasTargetRoom(goal: 'lose' | 'gain', weightKg: number): boolean {
-  const target = round1(goal === 'lose' ? weightKg - 0.1 : weightKg + 0.1)
-  return target >= WEIGHT_KG.min && target <= WEIGHT_KG.max
+  return goal === 'lose' ? weightKg > WEIGHT_KG.min : weightKg < WEIGHT_KG.max
 }
 
 // One step of weight (0.1 kg or 1 lb), returned in kg.

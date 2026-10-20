@@ -21,7 +21,7 @@ export function BurnSheet({ milestone, onClose }: { milestone: boolean; onClose:
   const summary = useQuery(api.progress_v2.summary, { rangeDays: SUMMARY_DAYS, localDate: today })
   const profile = useQuery(api.progress_v2.profile, {})
   const units = savedUnits(profile?.units)
-  if (summary === undefined) return <Thinking label="Opening your burn…" />
+  if (summary === undefined || profile === undefined) return <Thinking label="Opening your burn…" />
   const { snapshot, weeklyRateKg, target } = summary
   if (snapshot === null)
     return (

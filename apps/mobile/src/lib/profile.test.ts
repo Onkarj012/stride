@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dobFromTyped, splitName, startTargetKg, stepDate, stepKg } from './profile'
+import { dobFromTyped, hasTargetRoom, splitName, startTargetKg, stepDate, stepKg } from './profile'
 
 // Native module that cannot load in Node. None of the tested functions call it.
 vi.mock('expo-localization', () => ({ getLocales: () => [] }))
@@ -65,6 +65,14 @@ describe('startTargetKg', () => {
 
   it('clamps the start target to the 30 kg floor', () => {
     expect(startTargetKg('lose', undefined, 32)).toBe(30)
+  })
+})
+
+describe('hasTargetRoom', () => {
+  it('finds room on the goal side even when the weight is outside the allowed range', () => {
+    expect(hasTargetRoom('gain', 25)).toBe(true)
+    expect(hasTargetRoom('lose', 25)).toBe(false)
+    expect(hasTargetRoom('lose', 30)).toBe(false)
   })
 })
 
