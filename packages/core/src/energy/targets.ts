@@ -94,3 +94,6 @@ export function scaleMacroTargets(kcal: number | null, reference: DailyTargets):
     fatG: Math.round(reference.fatG * ratio),
   };
 }
+
+/** The app's daily macro reference at the default calorie target. */
+export const DEFAULT_MACRO_REFERENCE: DailyTargets = { kcal: 1890, proteinG: 110, carbsG: 215, fatG: 60 };

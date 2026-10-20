@@ -9,7 +9,7 @@ import { motion, radii } from '@stride/ui-tokens'
 import { useBurnMilestone } from '@/components/BurnSheet'
 import { Tag, Thinking } from '@/components/Controls'
 import { Icon } from '@/components/Icon'
-import { useLog } from '@/components/LogProvider'
+import { useLog } from '@/components/useLog'
 import { Polo } from '@/components/Polo'
 import { Screen, ScreenTitle } from '@/components/Screen'
 import { StrengthSection } from '@/components/StrengthSection'
@@ -17,7 +17,7 @@ import { Tap } from '@/components/Tap'
 import { WeightChart, type WeightPoint } from '@/components/WeightChart'
 import { formatDayTitle, formatNumber, weekdayOf } from '@/lib/format'
 import { SUMMARY_DAYS } from '@/lib/log'
-import { kgLabel, rateLabel, savedUnits, weightNumber, weightUnit, type Units } from '@/lib/profile'
+import { kgLabel, savedUnits, signedRateLabel, weightNumber, weightUnit, type Units } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 
@@ -117,12 +117,6 @@ function spanText(days: number): string {
   return `in ${Math.round(days / 7)} weeks`
 }
 
-// Weekly rate with a sign and the user's unit, e.g. "−0.45 kg a week".
-function rateText(kgPerWeek: number, units: Units): string {
-  const sign = kgPerWeek < -0.005 ? '−' : kgPerWeek > 0.005 ? '+' : ''
-  return `${sign}${rateLabel(Math.abs(kgPerWeek), units)}`
-}
-
 // Weight trend card: latest trend, change over the range, weekly rate and the chart.
 function WeightCard({ summary, range, units }: { summary: Summary; range: number; units: Units }) {
   const s = useStyles()
@@ -142,6 +136,8 @@ function WeightCard({ summary, range, units }: { summary: Summary; range: number
 
   const change = last.trendKg - first.trendKg
   const covered = daysBetween(first.localDate, last.localDate)
+  const changeText = weightNumber(Math.abs(change), units)
+  const changeSign = Number(changeText) === 0 ? '' : change < 0 ? '−' : '+'
   return (
     <View style={s.card}>
       <Text style={s.eyebrow}>Weight trend</Text>
@@ -155,11 +151,11 @@ function WeightCard({ summary, range, units }: { summary: Summary; range: number
         ) : (
           <>
             <Text style={s.deltaStrong}>
-              {change < -0.05 ? '−' : change > 0.05 ? '+' : ''}
-              {weightNumber(Math.abs(change), units)} {weightUnit(units)}
+              {changeSign}
+              {changeText} {weightUnit(units)}
             </Text>{' '}
             {spanText(covered)}
-            {weeklyRateKg !== null ? ` · ${rateText(weeklyRateKg, units)}` : ''}
+            {weeklyRateKg !== null ? ` · ${signedRateLabel(weeklyRateKg, units)}` : ''}
           </>
         )}
       </Text>

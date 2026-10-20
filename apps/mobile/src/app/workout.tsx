@@ -453,3 +453,5 @@ const useStyles = themedStyles((t) => ({
   holding: { ...font('calloutStrong'), color: t.c.ink3 },
   doneButton: { marginTop: 18 },
 }))
+
+export { RouteError as ErrorBoundary } from '@/components/RouteError'

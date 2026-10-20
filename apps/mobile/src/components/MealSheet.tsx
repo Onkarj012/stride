@@ -9,7 +9,7 @@ import { SLOTS, SLOT_NAMES, newSubmissionId, plainError, type EntryId, type Entr
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button, RoundButton, Stepper, Thinking } from './Controls'
-import { useLog } from './LogProvider'
+import { useLog } from './useLog'
 import { groupMeals } from './Meals'
 import { Tap } from './Tap'
 
