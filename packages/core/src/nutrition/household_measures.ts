@@ -96,9 +96,9 @@ export interface DensityEntry {
   note: string;
 }
 
-/** Dry forms of a drink that are not the drink: powders, mixes, leaves, ground beans, bags, creamers and syrups. */
+/** Forms of a drink that are not the drink: powders, mixes, leaves, ground beans, bags, creamers, syrups and soy drinks named like tea. */
 export const BEVERAGE_EXCLUDES: readonly string[] = [
-  "powder", "instant", "dry", "dried", "granules", "mix", "concentrate", "leaves", "ground", "bags", "creamer", "whitener", "beans", "syrup",
+  "powder", "instant", "dry", "dried", "granules", "mix", "concentrate", "leaves", "ground", "bags", "creamer", "whitener", "beans", "syrup", "soymilk", "soy",
 ];
 
 /** Densities for volume-to-mass conversion. Longest key match wins, so "cooked rice" beats a plain "rice" key. */
