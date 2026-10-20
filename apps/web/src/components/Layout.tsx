@@ -3,7 +3,7 @@ import { NavLink } from "react-router-dom";
 import { motion } from "motion/react";
 import { useClerk, useUser } from "@clerk/react";
 import { CalendarDays, LogOut, TrendingUp } from "lucide-react";
-import { StrideMark, smoothSpring } from "@/components/ui";
+import { Eyebrow, StrideMark, smoothSpring } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -66,6 +66,21 @@ export function Layout({ children }: { children: ReactNode }) {
           >
             <LogOut className="size-[18px]" strokeWidth={1.9} />
           </button>
+        </div>
+        <div className="mt-4 space-y-1.5 px-3">
+          <Eyebrow>Food data</Eyebrow>
+          <p className="type-caption text-ink3">
+            IFCT 2017 (NIN, India), USDA FoodData Central, UK CoFID 2021, Open Food Facts (ODbL). Contains public sector information licensed under the{" "}
+            <a
+              href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2 hover:text-ink2"
+            >
+              Open Government Licence v3.0
+            </a>
+            .
+          </p>
         </div>
       </aside>
       <main className="min-w-0 flex-1">
