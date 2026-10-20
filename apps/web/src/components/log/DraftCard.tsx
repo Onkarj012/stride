@@ -79,6 +79,8 @@ export function DraftCard({ draftId, today, pageDate }: { draftId: DraftId; toda
 
   const views = draft.items.map((item, i) => viewOf(item, fixes[i] ?? {}));
   const kept = draft.items.map((_, i) => i).filter((i) => fixes[i]?.remove !== true);
+  // Client-side advisory only: a changed food hides the warning, and the card does not re-run the sugar rules.
+  const sugarKept = draft.items.some((other, j) => kept.includes(j) && !views[j]?.changedFood && other.reasons.includes("sugar_separate"));
   const missingFood = kept.some((i) => views[i]?.foodName === null);
   const total = kept.reduce<number | null>((sum, i) => {
     const kcal = views[i]?.kcal;
@@ -194,6 +196,9 @@ export function DraftCard({ draftId, today, pageDate }: { draftId: DraftId; toda
                     {destination ? <span>{destination}</span> : null}
                     {item.estimated ? <Tag tone="est">est.</Tag> : null}
                   </div>
+                  {item.reasons.includes("sugar_double_count") && sugarKept && !view.changedFood ? (
+                    <p className="mt-0.5 type-caption text-ink3">This drink may already include sugar. Check the drink or remove the separate sugar.</p>
+                  ) : null}
                 </div>
                 <span className="shrink-0 type-value tabular-nums">{view.kcal === null ? "–" : Math.round(view.kcal).toLocaleString()}</span>
               </div>

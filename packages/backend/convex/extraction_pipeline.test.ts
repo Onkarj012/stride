@@ -276,9 +276,32 @@ describe("sugar double count warning", () => {
     await t.run(async (ctx) => {
       await ctx.db.insert("foods", { name: "Cola", aliases: [], searchText: "Cola", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "8", verified: true });
       await ctx.db.insert("foods", { name: "Sugar-free cola", aliases: [], searchText: "Sugar-free cola", per100g: { ...RICE, sugar: 0 }, source: "fdc", sourceId: "9", verified: true });
+      await ctx.db.insert("foods", { name: "Iced tea, no added sugar", aliases: [], searchText: "Iced tea, no added sugar", per100g: { ...RICE, sugar: 5 }, source: "fdc", sourceId: "10", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "11", verified: true });
     });
-    llm = () => extraction([{ food: "cola", quantity: 330, unit: "g" }, { food: "sugar-free cola", quantity: 330, unit: "g" }]);
-    const result = await logText(user, "cola and sugar-free cola");
+    llm = () =>
+      extraction([
+        { food: "cola", quantity: 330, unit: "g" },
+        { food: "sugar-free cola", quantity: 330, unit: "g" },
+        { food: "iced tea, no added sugar", quantity: 200, unit: "g" },
+        { food: "sugar", quantity: 5, unit: "g" },
+      ]);
+    const result = await logText(user, "cola, sugar-free cola, iced tea and sugar");
+
+    // Only the sweet cola warns. The sugar-free cola and the no-added-sugar iced tea do not.
+    expect(result.lines[0]?.reasons).toContain("sugar_double_count");
+    expect(result.lines[1]?.reasons).not.toContain("sugar_double_count");
+    expect(result.lines[2]?.reasons).not.toContain("sugar_double_count");
+  });
+
+  test("a solid food with a drink word, such as tea biscuits, is not a sweet drink", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Tea biscuits", aliases: [], searchText: "Tea biscuits", per100g: { ...RICE, sugar: 20 }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "9", verified: true });
+    });
+    llm = () => extraction([{ food: "tea biscuits", quantity: 50, unit: "g" }, { food: "sugar", quantity: 5, unit: "g" }]);
+    const result = await logText(user, "tea biscuits with sugar");
 
     expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
   });

@@ -241,8 +241,11 @@ const BEVERAGE_TERMS = [
 const SUGAR_ITEMS = new Set(
   ["sugar", "white sugar", "brown sugar", "shakkar", "cheeni", "jaggery", "gur", "honey", "sweetener"].map(normalizeText),
 );
-/** Phrases that say the drink has no added sugar. Checked as whole phrases, so "caffeine-free" does not count. */
-const NOT_SWEET_PHRASES = ["sugar free", "no sugar", "zero sugar", "without sugar", "unsweetened", "diet"];
+/** Phrases that rule out a sweet drink: no added sugar, or a solid food that has a drink word. Whole phrases only. */
+const NOT_SWEET_PHRASES = [
+  "sugar free", "no sugar", "no added sugar", "without sugar", "without added sugar", "zero sugar", "unsweetened", "diet",
+  "biscuit", "cookie", "cake", "ice cream", "kulfi", "candy", "chocolate", "toffee", "bar", "powder", "granules", "mix",
+];
 
 /** True when a name has one of the phrases as whole words, so "tea" matches "Tea, black" but not "steak". */
 function namesPhrase(names: readonly string[], phrases: readonly string[]): boolean {
