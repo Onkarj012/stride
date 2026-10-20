@@ -717,7 +717,7 @@ describe("photo and voice input", () => {
     expect(openRouterBodies[0]?.model).toBe(PHOTO_MODEL);
     expect(JSON.stringify(openRouterBodies[0]?.messages)).toContain("image_url");
     const [row] = await entryRows(t);
-    expect(row).toMatchObject({ foodId: foods.chapati, flags: ["estimated"] });
+    expect(row).toMatchObject({ foodId: foods.chapati, flags: ["photo", "estimated"] });
     expect(result.lines[0]?.estimated).toBe(true);
   });
 

@@ -287,6 +287,16 @@ export async function editEntryAs(
   const content = contentOf(head);
   if (grams !== undefined || foodId !== undefined) {
     const food = await requireFood(ctx, foodId ?? head.foodId, userId);
+    if (food._id !== head.foodId) {
+      const oldFood = await ctx.db.get("foods", head.foodId);
+      // Old photo rows predate the "photo" flag, so "estimated" alone on a non-estimate food means a photo.
+      const legacyPhoto = oldFood?.source !== "ai_estimate" && head.flags.includes("estimated") && !head.flags.includes("photo");
+      const photo = head.flags.includes("photo") || legacyPhoto;
+      const estimated = photo || food.source === "ai_estimate";
+      const flags = legacyPhoto ? [...head.flags, "photo"] : head.flags;
+      content.flags = [...flags.filter((flag) => flag !== "estimated"), ...(estimated ? ["estimated"] : [])];
+
+    }
     content.foodId = food._id;
     content.foodName = food.name;
     content.grams = grams ?? head.grams;

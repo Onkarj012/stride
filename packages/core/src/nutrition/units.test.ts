@@ -364,6 +364,30 @@ describe("AI estimate portions", () => {
     const paratha = { foodName: "Masala paratha", portions: [{ measure: "slice", gramsPerMeasure: 20 }], skipSeedPieceWeights: true };
     expect(resolvePortion({ quantity: 2, unit: null }, paratha)).toEqual({ status: "unresolved", reason: "missing_piece_weight" });
   });
+
+  it("a bare count ignores a saved measure named like a count unit", () => {
+    const paratha = { foodName: "Masala paratha", portions: [{ measure: "slice", gramsPerMeasure: 20 }], skipSeedPieceWeights: true, userMeasures: [{ measure: "slice", grams: 30 }] };
+    expect(resolvePortion({ quantity: 2, unit: null }, paratha)).toEqual({ status: "unresolved", reason: "missing_piece_weight" });
+  });
+
+  it("a bare count of an estimate uses only its piece row", () => {
+    const paratha = { foodName: "Masala paratha", portions: [{ measure: "piece", gramsPerMeasure: 120 }, { measure: "slice", gramsPerMeasure: 20 }], skipSeedPieceWeights: true, userMeasures: [{ measure: "slice", grams: 30 }] };
+    expect(gramsOf(resolvePortion({ quantity: 2, unit: null }, paratha))).toBe(240);
+  });
+
+  it("a saved measure named after an estimate food answers its unit", () => {
+    const paratha = { foodName: "Masala paratha", portions: [{ measure: "piece", gramsPerMeasure: 120 }], skipSeedPieceWeights: true, userMeasures: [{ measure: "Masala paratha", grams: 90 }] };
+    expect(resolvePortion({ quantity: 2, unit: "paratha" }, paratha)).toEqual({ status: "resolved", grams: 180, confidence: PORTION_CONFIDENCE.userMeasure, method: "user_measure" });
+  });
+
+  it("a saved measure for the exact unit beats one saved under the food name, in either order", () => {
+    const named = { measure: "Masala paratha", grams: 90 };
+    const exact = { measure: "paratha", grams: 45 };
+    for (const userMeasures of [[named, exact], [exact, named]]) {
+      const paratha = { foodName: "Masala paratha", skipSeedPieceWeights: true, userMeasures };
+      expect(resolvePortion({ quantity: 2, unit: "paratha" }, paratha)).toEqual({ status: "resolved", grams: 90, confidence: PORTION_CONFIDENCE.userMeasure, method: "user_measure" });
+    }
+  });
 });
 
 describe("cup size", () => {
