@@ -300,7 +300,8 @@ const NOT_A_DRINK_WORDS: ReadonlySet<string> = new Set(
 
 /** True when a food is a prepared chai or tea drink: its head word is chai or tea, and no dry or oily word appears. */
 function isPreparedTea(foodName: string): boolean {
-  const head = headToken(foodName);
+  // "Tea with milk" names its drink before "with", so the head word comes from that part.
+  const head = headToken(foodName.split(/\s+with(?:out)?\s+/i)[0] ?? foodName);
   if (head !== "chai" && head !== "tea") return false;
   return !tokenize(foodName).some((t) => NOT_A_DRINK_WORDS.has(t));
 }

@@ -392,6 +392,13 @@ describe("cup size", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "roti" }, roti))).toBe(45);
   });
 
+  it("tea or chai named with a trailing \"with\" still uses the teacup", () => {
+    for (const foodName of ["Tea with milk", "Chai with milk and sugar", "Tea without sugar"]) {
+      expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName, densityGPerMl: 1 }))).toBe(110);
+    }
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Milk with tea", densityGPerMl: 1 }))).toBe(240);
+  });
+
   it("a saved cup still wins over a saved teacup", () => {
     const withCup = { foodName: "Chai", densityGPerMl: 1, userMeasures: [{ measure: "teacup", ml: 150 }, { measure: "cup", ml: 200 }] };
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, withCup))).toBe(200);
