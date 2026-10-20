@@ -132,6 +132,33 @@ describe("mapFdc with FNDDS rows", () => {
   });
 });
 
+describe("mapFdc with a quantity in a FNDDS label and no amount", () => {
+  const files = new Map([
+    ["food.csv", '"fdc_id","data_type","description"\n"9","survey_fndds_food","Test"'],
+    ["food_nutrient.csv", '"fdc_id","nutrient_id","amount"\n"9","1008","100"\n"9","1003","1"\n"9","1004","1"\n"9","1005","1"'],
+    ["food_portion.csv", [
+      '"id","fdc_id","amount","measure_unit_id","portion_description","modifier","gram_weight"',
+      '"1","9","","9999","5 balls","","41"',
+      '"2","9","","9999","1/2 slice","","48"',
+      '"3","9","","9999","1 1/2 cups","","90"',
+      '"4","9","","9999","1-2 pieces","","30"',
+    ].join("\n")],
+  ]);
+  const result = mapFdc(files, "survey_fndds_food");
+
+  it("divides the gram weight by the leading quantity, so grams are per one unit", () => {
+    expect(result.portions.map((p) => [p.measure, p.gramsPerMeasure])).toEqual([
+      ["ball", 8.2],
+      ["slice", 96],
+      ["cup", 60],
+    ]);
+  });
+
+  it("skips a label whose leading number it cannot read", () => {
+    expect(result.skippedPortions).toBe(1);
+  });
+});
+
 describe("mapIfct", () => {
   const header = "code,name,scie,lang,grup,enerc,protcnt,fatce,choavldf,fibtg,fsugar,na";
   const csv = [

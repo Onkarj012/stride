@@ -86,10 +86,21 @@ const TWO_WORD_MEASURES = new Set(["fl oz", "nlea serving", "extra large", "extr
 /** Measures no one can type ("guideline", "individual", "surface" inch). Bare numbers are skipped separately. */
 const UNTYPEABLE_MEASURES = new Set(["guideline", "individual", "surface"]);
 
+/** Quantity at the start of a label and the text after it: "5 balls" → 5, "1/2 slice" → 0.5, "1 1/2 cups" → 1.5. Null when there is none. */
+function leadingQuantity(text: string): { value: number; rest: string } | null {
+  const match = /^(?:(\d+) )?(\d+)\/(\d+)(?=\s|$)|^(\d+(?:\.\d+)?)(?=\s|$)/.exec(text);
+  if (match === null) return null;
+  const rest = text.slice(match[0].length).trim();
+  if (match[4] !== undefined) return { value: Number(match[4]), rest };
+  const denominator = Number(match[3]);
+  if (denominator === 0) return null;
+  return { value: Number(match[1] ?? 0) + Number(match[2]) / denominator, rest };
+}
+
 /** Measure name of a portion label: "cup, chopped" → "cup", "1 cup (8 fl oz)" → "cup", "serving 1 roll" → "serving", "fl oz" stays. */
 function measureOf(label: string): string {
-  const words = (label.split(/[,(]/)[0] ?? "").trim().toLowerCase().split(/\s+/);
-  if (words.length > 1 && /^\d/.test(words[0] ?? "")) words.shift();
+  const text = (label.split(/[,(]/)[0] ?? "").trim().toLowerCase();
+  const words = (leadingQuantity(text)?.rest ?? text).split(/\s+/);
   const pair = words.slice(0, 2).join(" ");
   return normalizeUnit(TWO_WORD_MEASURES.has(pair) ? pair : (words[0] ?? ""));
 }
@@ -135,20 +146,29 @@ export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): Fd
     const id = row["fdc_id"] ?? "";
     if (!kept.has(id)) continue;
     const unitId = row["measure_unit_id"] ?? "";
-    const amount = num(row["amount"]) ?? 1;
     const grams = num(row["gram_weight"]);
     const unitName = unitId === UNDETERMINED_UNIT_ID ? "" : (unitNames.get(unitId) ?? "");
     // FNDDS modifiers are numeric codes (e.g. "10205"), not words, so they are dropped.
     const modifier = (row["modifier"] ?? "").trim();
     const portionDescription = (row["portion_description"] ?? "").trim();
     const detail = [/^\d+$/.test(modifier) ? "" : modifier, portionDescription].filter(Boolean).join(", ");
+    const source = unitName || detail;
+    const amountCell = num(row["amount"]);
+    const leading = leadingQuantity(source);
+    // A label that starts with a number we cannot read ("1-2 pieces") has no safe measure.
+    const unreadable = /^\d/.test(source) && leading === null;
+    const bareNumber = leading !== null && leading.rest === "";
+    // With no amount, the leading quantity says how many the gram weight covers.
+    const amount = amountCell ?? leading?.value ?? 1;
     const label = [unitName, detail].filter(Boolean).join(", ");
-    const measure = measureOf(unitName || detail);
+    const measure = measureOf(source);
     if (
       SKIPPED_MEASURE_UNIT_IDS.has(unitId) ||
       portionDescription === UNSPECIFIED_PORTION ||
       UNTYPEABLE_MEASURES.has(measure) ||
       /^[\d.]+$/.test(measure) ||
+      bareNumber ||
+      unreadable ||
       label === "" ||
       grams === null ||
       grams <= 0 ||

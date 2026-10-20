@@ -28,7 +28,7 @@ Downloads are cached in `packages/core/data/cache/`. Delete that folder to downl
 | `ifct_foods.ndjson` | `foods` | Your local IFCT 2017 CSV |
 | `cofid_foods.ndjson` | `foods` | Your local CoFID 2021 proximates and inorganics CSVs |
 | `stride_foods.ndjson` | `foods` | Own recipe rows (`indian` step) |
-| `stride_food_portions.ndjson` | `food_portions` | Household portions of the own rows (`indian` step) |
+| `stride_food_portions.ndjson` | `food_portions` | Household portions of the own rows and the curated dal rows (`indian` step) |
 | `exercises.ndjson` | `exercises` | free-exercise-db, pinned commit |
 
 Each line is one JSON object. The types are `FoodRecord`, `FoodPortionRecord` and `ExerciseRecord` in `src/nutrition/types.ts`. Nutrients are per 100 g and unrounded.
@@ -109,7 +109,7 @@ The seed is committed code, not an import: `src/nutrition/household_measures.ts`
 
 The `indian` step in `import-data.ts` does two things. It writes no file of its own.
 
-- Adds aliases and two renames to public rows. The table is `CURATED` in `indian_foods.ts`. Examples: "dal" and "toor dal" on CoFID pigeon pea dahl, "roti" on the FNDDS chappatti row. The FNDDS "Dal" row is renamed to "Dal, US recipe with butter oil", and "Buttermilk" to "Buttermilk, cultured, US style", so the names stay free.
+- Adds aliases and two renames to public rows, and katori and bowl portions to the dal rows. The table is `CURATED` in `indian_foods.ts`. Examples: "dal" and "toor dal" on CoFID pigeon pea dahl, "roti" on the FNDDS chappatti row. The FNDDS "Dal" row is renamed to "Dal, US recipe with butter oil", and "Buttermilk" to "Buttermilk, cultured, US style", so the names stay free. The dal portions use the dal density, since the name's head word does not match the density seed.
 - Builds four own rows from CoFID ingredients: sweet and unsweet chai, Indian coffee with milk, and chaas. Each row has a household portion. These are estimates and the recipe is in the code comments.
 
 Every curated alias is checked against every row's name and aliases, using the matcher's `canonicalTokens`. A collision or a missing listed row stops the step and prints both rows. `ifct_foods.ndjson` is read for this check when it exists, but not rewritten.

@@ -6,7 +6,7 @@ import { mapCofid } from "./cofid.ts";
 import { EXERCISES_URL, mapExercises } from "./exercises.ts";
 import { FDC_DATASETS, FDC_FILES, mapFdc } from "./fdc.ts";
 import { mapIfct } from "./ifct.ts";
-import { applyCurated, strideFoods } from "./indian_foods.ts";
+import { applyCurated, curatedPortions, strideFoods } from "./indian_foods.ts";
 import { cachedDownload, OUT_DIR, unzip, writeNdjson } from "./lib.ts";
 
 const USAGE = `usage: pnpm --filter @stride/core data:import [fdc] [exercises] [ifct <ifct.csv>] [cofid <proximates.csv> <inorganics.csv>] [indian]
@@ -85,7 +85,8 @@ async function importIndian(): Promise<void> {
   console.log(`wrote ${await writeNdjson("fdc_foods.ndjson", bySource("fdc"))}`);
   console.log(`wrote ${await writeNdjson("cofid_foods.ndjson", bySource("cofid"))}`);
   console.log(`wrote ${await writeNdjson("stride_foods.ndjson", stride.foods)}`);
-  console.log(`wrote ${await writeNdjson("stride_food_portions.ndjson", stride.portions)}`);
+  const portions = [...curatedPortions(), ...stride.portions];
+  console.log(`wrote ${await writeNdjson("stride_food_portions.ndjson", portions)}`);
 }
 
 /** Parses arguments and runs the requested imports in order. */

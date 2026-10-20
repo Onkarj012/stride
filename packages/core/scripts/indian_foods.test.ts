@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FoodRecord } from "../src/nutrition/types.ts";
-import { applyCurated, CURATED, strideFoods } from "./indian_foods.ts";
+import { densityFor, resolvePortion } from "../src/nutrition/units.ts";
+import { applyCurated, CURATED, curatedPortions, strideFoods } from "./indian_foods.ts";
 
 const NUTRIENTS = { kcal: 100, protein: 1, carbs: 1, fat: 1, fiber: null, sugar: null, sodiumMg: null };
 
@@ -23,8 +24,13 @@ describe("strideFoods", () => {
   it("computes recipe kcal per 100 g from the spec ingredients, within 1 kcal", () => {
     expect(kcalOf("Chai, milk tea with sugar")).toBeCloseTo(65.5, 0);
     expect(kcalOf("Chai, milk tea without sugar")).toBeCloseTo(38, 0);
-    expect(kcalOf("Coffee with milk")).toBeCloseTo(62, 0);
+    expect(kcalOf("Coffee, with milk")).toBeCloseTo(62, 0);
     expect(kcalOf("Chaas")).toBeCloseTo(21, 0);
+  });
+
+  it("gives the coffee row coffee's density, not sugar's", () => {
+    const coffee = strideFoods().foods.find((f) => f.sourceId === "coffee-milk-sweet");
+    expect(densityFor(coffee?.name ?? "")).toBe(1.01);
   });
 
   it("marks own rows as stride, verified, with one teacup, cup or glass portion each", () => {
@@ -67,5 +73,11 @@ describe("applyCurated", () => {
   it("throws when a listed row is missing", () => {
     const withoutDahl = fixture().filter((f) => f.sourceId !== "15-780");
     expect(() => applyCurated(withoutDahl)).toThrow(/cofid:15-780/);
+  });
+
+  it("resolves 1 katori of the curated dal row through its own portion", () => {
+    const dal = "Curry, pigeon pea dahl, with vegetable oil, homemade";
+    const portions = curatedPortions().filter((p) => p.sourceId === "15-780");
+    expect(resolvePortion({ quantity: 1, unit: "katori" }, { foodName: dal, portions })).toMatchObject({ status: "resolved", grams: 152 });
   });
 });

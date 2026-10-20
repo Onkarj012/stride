@@ -1,11 +1,31 @@
 import { canonicalTokens } from "../src/nutrition/match.ts";
 import type { FoodPortionRecord, FoodRecord, FoodSource, Nutrients } from "../src/nutrition/types.ts";
+import { resolvePortion } from "../src/nutrition/units.ts";
 
-/** Aliases and renames for public rows, so Indian and everyday names resolve. Keyed by source and source id. */
-export const CURATED: readonly { source: FoodSource; sourceId: string; aliases: readonly string[]; rename?: string }[] = [
-  { source: "cofid", sourceId: "15-780", aliases: ["dal", "toor dal", "tur dal", "arhar dal", "dal tadka", "dal fry"] },
-  { source: "cofid", sourceId: "15-768", aliases: ["moong dal", "mung dal"] },
-  { source: "cofid", sourceId: "15-760", aliases: ["masoor dal"] },
+/** A household portion of a curated public row. The source and source id come from the row. */
+type CuratedPortion = Omit<FoodPortionRecord, "source" | "sourceId">;
+
+/** Grams of one katori or bowl of dal, as the resolver computes it (vessel ml times the "dal" density seed, rounded). */
+function dalPortion(measure: string): CuratedPortion {
+  const r = resolvePortion({ quantity: 1, unit: measure }, { foodName: "dal" });
+  if (r.status !== "resolved") throw new Error(`no ${measure} of dal: ${r.reason}`);
+  return { measure, description: `${measure}, home`, gramsPerMeasure: Math.round(r.grams) };
+}
+
+/** Katori and bowl portions for the curated dal rows. */
+const DAL_PORTIONS: readonly CuratedPortion[] = [dalPortion("katori"), dalPortion("bowl")];
+
+/** Aliases, renames and household portions for public rows, so Indian and everyday names resolve. Keyed by source and source id. */
+export const CURATED: readonly {
+  source: FoodSource;
+  sourceId: string;
+  aliases: readonly string[];
+  rename?: string;
+  portions?: readonly CuratedPortion[];
+}[] = [
+  { source: "cofid", sourceId: "15-780", aliases: ["dal", "toor dal", "tur dal", "arhar dal", "dal tadka", "dal fry"], portions: DAL_PORTIONS },
+  { source: "cofid", sourceId: "15-768", aliases: ["moong dal", "mung dal"], portions: DAL_PORTIONS },
+  { source: "cofid", sourceId: "15-760", aliases: ["masoor dal"], portions: DAL_PORTIONS },
   // The US FNDDS "Dal" row moves aside so "dal" can match the CoFID row.
   { source: "fdc", sourceId: "2707427", aliases: [], rename: "Dal, US recipe with butter oil" },
   { source: "cofid", sourceId: "15-627", aliases: ["bhindi sabzi", "bhindi", "bhindi masala", "okra sabzi"] },
@@ -77,7 +97,7 @@ const STRIDE_RECIPES: readonly Recipe[] = [
   },
   {
     sourceId: "coffee-milk-sweet",
-    name: "Coffee with milk and sugar, Indian style",
+    name: "Coffee, with milk and sugar, Indian style",
     aliases: ["coffee", "milk coffee", "filter coffee", "nescafe", "coffee with milk"],
     parts: [{ food: INGREDIENTS.milk, grams: 103 }, { food: INGREDIENTS.instantCoffee, grams: 2 }, { food: INGREDIENTS.sugar, grams: 8.4 }],
     cookedGrams: 160,
@@ -186,4 +206,9 @@ export function applyCurated(foods: readonly FoodRecord[]): FoodRecord[] {
   const checked = out.filter((f) => touched.has(f) || f.source === "stride");
   checkAliasCollisions(checked, out);
   return out;
+}
+
+/** Household portions of the curated public rows, as `food_portions` rows. */
+export function curatedPortions(): FoodPortionRecord[] {
+  return CURATED.flatMap((c) => (c.portions ?? []).map((p) => ({ source: c.source, sourceId: c.sourceId, ...p })));
 }
