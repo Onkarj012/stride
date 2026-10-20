@@ -104,7 +104,6 @@ const RESOLVE_PROMPT = [
 const ESTIMATE_VESSEL_ML: Readonly<Partial<Record<string, number>>> = {
   ...Object.fromEntries(Object.entries(HOUSEHOLD_VESSELS).map(([unit, vessel]) => [unit, vessel.ml])),
   cup: 240,
-  teacup: 110,
 };
 
 /** Dedupe key for an estimate's name. Unicode-safe, so Devanagari names stay distinct. */

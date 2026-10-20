@@ -717,7 +717,7 @@ describe("photo and voice input", () => {
     expect(openRouterBodies[0]?.model).toBe(PHOTO_MODEL);
     expect(JSON.stringify(openRouterBodies[0]?.messages)).toContain("image_url");
     const [row] = await entryRows(t);
-    expect(row).toMatchObject({ foodId: foods.chapati, flags: ["estimated"] });
+    expect(row).toMatchObject({ foodId: foods.chapati, flags: ["photo", "estimated"] });
     expect(result.lines[0]?.estimated).toBe(true);
   });
 
@@ -858,7 +858,7 @@ describe("draft amounts: a food is only offered units it converts in", () => {
       return id;
     });
     const [set] = await user.query(api.pipeline.drafts.amountOptions, { items: [{ foodId: cookie, unit: null }] });
-    expect(set?.units).toContainEqual({ unit: "piece", label: "piece", gramsPerUnit: 5.6 });
+    expect(set?.units).toContainEqual({ unit: "piece", label: "pc (5.6 g)", gramsPerUnit: 5.6 });
   });
 });
 
@@ -883,6 +883,25 @@ describe("draft amounts: bare counts keep their resolver meaning", () => {
     });
     expect(bare?.units.find((unit) => unit.unit === null)?.gramsPerUnit).toBe(40);
     expect(piece?.units.find((unit) => unit.unit === "piece")?.gramsPerUnit).toBe(68);
+  });
+
+  test("bare roti and explicit piece get different chip labels when they weigh different amounts", async () => {
+    const { t, user, foods } = await setup();
+    await t.run((ctx) =>
+      ctx.db.insert("food_portions", {
+        foodId: foods.chapati,
+        source: "fdc",
+        measure: "piece",
+        description: "piece",
+        gramsPerMeasure: 68,
+      }),
+    );
+
+    const [set] = await user.query(api.pipeline.drafts.amountOptions, { items: [{ foodId: foods.chapati, unit: null }] });
+    const bare = set?.units.find((unit) => unit.unit === null)?.label;
+    const piece = set?.units.find((unit) => unit.unit === "piece")?.label;
+    expect(bare).toBe("roti");
+    expect(piece).toBe("pc");
   });
 
   test("changing a bare roti count to three confirms 120 g", async () => {

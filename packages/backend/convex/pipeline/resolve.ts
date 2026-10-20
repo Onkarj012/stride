@@ -277,6 +277,7 @@ export async function resolveItems(
     // An AI estimate stays on the draft the first time (tool pick), then auto-commits from memory with the flag.
     const aiEstimate = match.food?.source === "ai_estimate";
     if (aiEstimate && match.source === "tool") reasons.push("ai_estimate");
+    if (fromPhoto) flags.push("photo");
     if (fromPhoto || aiEstimate) flags.push("estimated");
     if (item.cookingOil) flags.push("cooking_oil");
     const clamp = match.food !== null && portion.status === "resolved"
