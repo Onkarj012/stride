@@ -244,7 +244,7 @@ const SUGAR_ITEMS = new Set(
 /** Phrases that rule out a sweet drink: no added sugar, or a solid food that has a drink word. Whole phrases only. */
 const NOT_SWEET_PHRASES = [
   "sugar free", "no sugar", "no added sugar", "without sugar", "without added sugar", "zero sugar", "unsweetened", "diet",
-  "biscuit", "cookie", "cake", "ice cream", "kulfi", "candy", "chocolate", "toffee", "bar", "powder", "granules", "mix",
+  "biscuit", "cookie", "cake", "ice cream", "kulfi", "candy", "toffee", "bar", "powder", "granules", "mix",
 ];
 
 /** True when a name has one of the phrases as whole words, so "tea" matches "Tea, black" but not "steak". */
@@ -261,10 +261,11 @@ function isSweetDrink(item: SugarCandidate): boolean {
   return item.sugarPer100g !== null && item.sugarPer100g > 0 && namesPhrase(names, BEVERAGE_TERMS) && !namesPhrase(names, NOT_SWEET_PHRASES);
 }
 
-/** A standalone sweetener: the whole typed item, or the matched food's first segment ("Sugars, granulated"), is a sugar word. */
+/** A standalone sweetener: a sugar word as the whole typed item or the matched food's first segment, and the matched food has sugar (or is unmatched). */
 function isStandaloneSugar(item: SugarCandidate): boolean {
   const segment = item.foodName?.split(",")[0] ?? "";
-  return SUGAR_ITEMS.has(normalizeText(item.text)) || SUGAR_ITEMS.has(normalizeText(segment));
+  const named = SUGAR_ITEMS.has(normalizeText(item.text)) || SUGAR_ITEMS.has(normalizeText(segment));
+  return named && (item.foodName === null || (item.sugarPer100g ?? 0) > 0);
 }
 
 /** One item's typed text, its matched food name (null when unmatched), and the sugar per 100 g of its matched food. */

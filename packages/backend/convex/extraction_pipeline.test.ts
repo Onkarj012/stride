@@ -309,13 +309,20 @@ describe("sugar double count warning", () => {
   test("a dish with honey in its name is not a standalone sweetener", async () => {
     const { t, user } = await setup();
     await teaAndSugar(t, 5);
-    await t.run((ctx) =>
-      ctx.db.insert("foods", { name: "Honey roasted peanuts", aliases: [], searchText: "Honey roasted peanuts", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "10", verified: true }),
-    );
-    llm = () => extraction([{ food: "tea", quantity: 100, unit: "g" }, { food: "honey roasted peanuts", quantity: 50, unit: "g" }]);
-    const result = await logText(user, "tea and honey roasted peanuts");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Honey roasted peanuts", aliases: [], searchText: "Honey roasted peanuts", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "10", verified: true });
+      await ctx.db.insert("foods", { name: "Sweetener", aliases: [], searchText: "Sweetener", per100g: { ...RICE, sugar: 0 }, source: "fdc", sourceId: "11", verified: true });
+    });
+    llm = () =>
+      extraction([
+        { food: "tea", quantity: 100, unit: "g" },
+        { food: "honey roasted peanuts", quantity: 50, unit: "g" },
+        { food: "sweetener", quantity: 1, unit: "g" },
+      ]);
+    const result = await logText(user, "tea, honey roasted peanuts and a sweetener");
 
     expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
+    expect(result.lines[0]?.reasons).not.toContain("sugar_separate");
   });
 
   test("caffeine-free cola with a separate sugar item still warns", async () => {
@@ -324,10 +331,19 @@ describe("sugar double count warning", () => {
       await ctx.db.insert("foods", { name: "Caffeine-free cola", aliases: [], searchText: "Caffeine-free cola", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "8", verified: true });
       await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "9", verified: true });
     });
-    llm = () => extraction([{ food: "caffeine-free cola", quantity: 330, unit: "g" }, { food: "sugar", quantity: 5, unit: "g" }]);
-    const result = await logText(user, "caffeine-free cola with sugar");
+    await t.run((ctx) =>
+      ctx.db.insert("foods", { name: "Chocolate milkshake", aliases: [], searchText: "Chocolate milkshake", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "12", verified: true }),
+    );
+    llm = () =>
+      extraction([
+        { food: "caffeine-free cola", quantity: 330, unit: "g" },
+        { food: "sugar", quantity: 5, unit: "g" },
+        { food: "chocolate milkshake", quantity: 300, unit: "g" },
+      ]);
+    const result = await logText(user, "caffeine-free cola with sugar and a chocolate milkshake");
 
     expect(result.lines[0]?.reasons).toContain("sugar_double_count");
+    expect(result.lines[2]?.reasons).toContain("sugar_double_count");
   });
 });
 
