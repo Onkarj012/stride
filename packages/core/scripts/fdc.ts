@@ -44,6 +44,11 @@ const SKIPPED_MEASURE_UNIT_IDS = new Set(["1010", "1011", "1012"]);
 const UNDETERMINED_UNIT_ID = "9999";
 /** FNDDS placeholder portion with no real measure. Its gram weight is a guess, so it is skipped. */
 const UNSPECIFIED_PORTION = "Quantity not specified";
+/** Gram weights outside this range are conversion errors or whole dishes, not one measure. */
+const MIN_PORTION_GRAMS = 0.5;
+const MAX_PORTION_GRAMS = 2000;
+/** FNDDS wording that adds nothing to a label: "serving (1 NLEA serving - about 4 crackers)" becomes "serving (about 4 crackers)". */
+const NLEA_WORDING = / ?\(1 NLEA serving\)| ?1 NLEA serving( - )?/;
 
 /** Mapped rows plus counts of what was dropped and why. */
 export interface FdcResult {
@@ -105,6 +110,17 @@ function measureOf(label: string): string {
   return normalizeUnit(TWO_WORD_MEASURES.has(pair) ? pair : (words[0] ?? ""));
 }
 
+/** True when a finished portion would make a confusing or wrong unit chip. */
+function isOddPortion(label: string, gramsPerMeasure: number): boolean {
+  return (
+    gramsPerMeasure < MIN_PORTION_GRAMS ||
+    gramsPerMeasure > MAX_PORTION_GRAMS ||
+    /^[\d\s]+$/.test(label) ||
+    /calorie/i.test(label) ||
+    label.includes(UNSPECIFIED_PORTION)
+  );
+}
+
 /** Maps one extracted FDC CSV set to `foods` and `food_portions` rows for the given data type. */
 export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): FdcResult {
   const read = (name: string) => csvRecords(files.get(name) ?? "");
@@ -151,7 +167,7 @@ export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): Fd
     // FNDDS modifiers are numeric codes (e.g. "10205"), not words, so they are dropped.
     const modifier = (row["modifier"] ?? "").trim();
     const portionDescription = (row["portion_description"] ?? "").trim();
-    const detail = [/^\d+$/.test(modifier) ? "" : modifier, portionDescription].filter(Boolean).join(", ");
+    const detail = [/^\d+$/.test(modifier) ? "" : modifier, portionDescription].filter(Boolean).join(", ").replace(NLEA_WORDING, "");
     const source = unitName || detail;
     const amountCell = num(row["amount"]);
     const leading = leadingQuantity(source);
@@ -164,7 +180,6 @@ export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): Fd
     const measure = measureOf(source);
     if (
       SKIPPED_MEASURE_UNIT_IDS.has(unitId) ||
-      portionDescription === UNSPECIFIED_PORTION ||
       UNTYPEABLE_MEASURES.has(measure) ||
       /^[\d.]+$/.test(measure) ||
       bareNumber ||
@@ -184,10 +199,12 @@ export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): Fd
     group.grams.push(grams / amount);
     grouped.set(key, group);
   }
-  const portions = [...grouped.values()].map(({ record, grams }) => ({
+  const averaged = [...grouped.values()].map(({ record, grams }) => ({
     ...record,
     gramsPerMeasure: grams.reduce((s, g) => s + g, 0) / grams.length,
   }));
+  const portions = averaged.filter((p) => !isOddPortion(p.description, p.gramsPerMeasure));
+  skippedPortions += averaged.length - portions.length;
 
   return { foods, portions, skippedFoods, skippedPortions };
 }

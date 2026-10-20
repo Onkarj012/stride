@@ -157,6 +157,29 @@ describe("mapFdc with a quantity in a FNDDS label and no amount", () => {
   it("skips a label whose leading number it cannot read", () => {
     expect(result.skippedPortions).toBe(1);
   });
+
+  it("drops odd measures and keeps a portion whose NLEA wording is stripped", () => {
+    const odd = mapFdc(
+      new Map([
+        ["food.csv", '"fdc_id","data_type","description"\n"9","survey_fndds_food","Test"'],
+        ["food_nutrient.csv", '"fdc_id","nutrient_id","amount"\n"9","1008","100"\n"9","1003","1"\n"9","1004","1"\n"9","1005","1"'],
+        ["food_portion.csv", [
+          '"id","fdc_id","amount","measure_unit_id","portion_description","modifier","gram_weight"',
+          '"1","9","","9999","1 serving","","0.1"',
+          '"2","9","","9999","1 melon","","4518"',
+          '"3","9","","9999","","serving (1 NLEA serving - about 4 crackers)","30"',
+          '"4","9","","9999","1 100-calorie package (3 cakes)","","32"',
+          '"5","9","","9999","2 1 4","","10"',
+          '"6","9","","9999","Quantity not specified, if appetizer","","115"',
+        ].join("\n")],
+      ]),
+      "survey_fndds_food",
+    );
+    expect(odd.portions).toEqual([
+      { source: "fdc", sourceId: "9", measure: "serving", description: "serving (about 4 crackers)", gramsPerMeasure: 30 },
+    ]);
+    expect(odd.skippedPortions).toBe(5);
+  });
 });
 
 describe("mapIfct", () => {
