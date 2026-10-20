@@ -289,6 +289,45 @@ describe("exportAllData", () => {
     expect(Object.values(data.truncated).every((flag) => !flag)).toBe(true);
   });
 
+  test("includes the caller's food memory events only", async () => {
+    const { t, a, user } = await setup();
+    await t.run(async (ctx) => {
+      const link = await ctx.db.get(a.linkId);
+      if (link === null) throw new Error("seeded link missing");
+      for (const userId of ["user_a", "user_b"]) {
+        const entryId = await ctx.db.insert("entries", {
+          userId,
+          localDate: "2026-10-05",
+          timeZone: "Asia/Kolkata",
+          slot: "lunch",
+          loggedAt: 1,
+          foodId: link.foodId,
+          foodName: "Paneer",
+          grams: 100,
+          nutrients: { kcal: 265, protein: 18, carbs: 1, fat: 21, fiber: null, sugar: null, sodiumMg: null },
+          source: "db",
+          confidence: 1,
+          flags: [],
+          revision: 1,
+          op: "add",
+          status: "live",
+          createdBy: "ai",
+          submissionId: `${userId}:e0`,
+        });
+        await ctx.db.insert("food_link_events", {
+          userId,
+          key: "paneer",
+          submissionId: `${userId}:d0`,
+          entryId,
+          changes: [{ linkId: a.linkId, before: null, after: { status: "active", uses: 1, updatedAt: 1 } }],
+        });
+      }
+    });
+    const data = await user.query(api.users.exportAllData, {});
+    expect(data.food_link_events.map((e) => e.userId)).toEqual(["user_a"]);
+    expect(data.truncated.food_link_events).toBe(false);
+  });
+
   test("caps a long table and marks it truncated", async () => {
     const { user } = await setup(EXPORT_MESSAGE_LIMIT);
     const data = await user.query(api.users.exportAllData, {});
