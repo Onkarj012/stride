@@ -261,6 +261,12 @@ function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: Por
   }
   const seed = ctx.skipSeedPieceWeights === true ? null : headedPieceSeed(ctx.foodName);
   if (seed !== null) {
+    // A bare count uses the food's own row for the seed's name ("naan" = 125 g) before the seed.
+    if (isBare) {
+      const named = portionGrams(ctx.portions, (measure) => seed.names.has(pieceName(measure)));
+      if (named === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+      if (named !== null) return resolved(quantity * named, PORTION_CONFIDENCE.foodPortion, "food_portion");
+    }
     // A named unit must name this food's seed, so "roti" never counts a banana.
     if (rawUnit === PIECE_UNIT || tokenize(rawUnit).every((w) => seed.names.has(pieceName(w)))) {
       return resolved(quantity * seed.grams, PORTION_CONFIDENCE.pieceTable, "piece");
