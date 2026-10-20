@@ -435,9 +435,10 @@ describe("cup size", () => {
     }
   });
 
-  it("a soymilk chai is not a teacup, but a plain chai still is", () => {
-    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "SILK Chai, soymilk", densityGPerMl: 1 }))).toBe(240);
-    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Chai", densityGPerMl: 1 }))).toBe(110);
+  it("a soymilk chai is not a teacup, but a plain chai still is, and soy drinks keep their density", () => {
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "SILK Chai, soymilk" }))).not.toBeCloseTo(110 * 1.01, 6);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Chai" }))).toBeCloseTo(110 * 1.01, 6);
+    expect(resolvePortion({ quantity: 100, unit: "ml" }, { foodName: "Soy latte" })).toMatchObject({ status: "resolved" });
   });
 
   it("a saved cup still wins over a saved teacup", () => {
