@@ -3,6 +3,7 @@ import { FlatList, ScrollView, Text, View, type StyleProp, type TextStyle } from
 import Animated, { FadeIn, FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { router, useIsFocused, useLocalSearchParams } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import type { FunctionReturnType } from 'convex/server'
 import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout, radii } from '@stride/ui-tokens'
@@ -19,8 +20,12 @@ import { newSubmissionId, plainError } from '@/lib/log'
 import { formatKg, formatSets, formatTonnage, type Exercise, type ExerciseId, type SessionDetail, type SessionId, type SetId } from '@/lib/strength'
 import { font, themedStyles } from '@/theme'
 
+// An exercise lined up by a repeat, with the set count it had last time as its target.
+type Planned = { exercise: Exercise; sets: number }
+type RecentWorkout = FunctionReturnType<typeof api.strength.recentWorkouts>[number]
+
 // Exercises lined up by a repeat, per session. Survives leaving the screen but not an app restart (prototype; a server field would make it durable).
-const plannedBySession = new Map<SessionId, Exercise[]>()
+const plannedBySession = new Map<SessionId, Planned[]>()
 
 // Leaves the workout screen, falling back to Progress when it was opened directly.
 function leave() {
@@ -146,7 +151,7 @@ function Page({ children, overlay }: { children: ReactNode; overlay?: ReactNode 
 }
 
 // Nothing open today: a friendly start card. Starting goes straight to the exercise picker, or to a repeated workout's exercises.
-function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId, plan: Exercise[]) => void; onHistory: () => void; toast: WorkoutActions['toast'] }) {
+function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId, plan: Planned[]) => void; onHistory: () => void; toast: WorkoutActions['toast'] }) {
   const s = useStyles()
   const startSession = useMutation(api.strength.startSession)
   const [busy, setBusy] = useState(false)
@@ -154,7 +159,7 @@ function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId, pla
   const submissionId = useRef(newSubmissionId())
 
   // Creates today's session on the server, lining up the given exercises (none for a plain start).
-  async function start(plan: Exercise[]) {
+  async function start(plan: Planned[]) {
     setBusy(true)
     try {
       onStarted(await startSession({ submissionId: submissionId.current }), plan)
@@ -184,66 +189,33 @@ function Start({ onStarted, onHistory, toast }: { onStarted: (id: SessionId, pla
 }
 
 // The three most recent finished workouts that have exercises, each one tap from starting again. Hidden while loading or when there are none.
-function RepeatSection({ disabled, onRepeat }: { disabled: boolean; onRepeat: (plan: Exercise[]) => void }) {
+function RepeatSection({ disabled, onRepeat }: { disabled: boolean; onRepeat: (plan: Planned[]) => void }) {
   const s = useStyles()
-  const { results } = usePaginatedQuery(api.strength.savedSessions, {}, { initialNumItems: 6 })
-  // Whether each finished session has exercises, reported by its row once loaded.
-  const [hasExercises, setHasExercises] = useState<Record<string, boolean>>({})
-  const onResolve = useCallback((id: SessionId, has: boolean) => setHasExercises((m) => (m[id] === has ? m : { ...m, [id]: has })), [])
-  const finished = results.filter((session) => session.endedAt !== undefined)
-  const shown = new Set(finished.filter((session) => hasExercises[session._id] === true).slice(0, 3).map((session) => session._id))
+  const workouts = useQuery(api.strength.recentWorkouts, { limit: 3 })
+  if (workouts === undefined || workouts.length === 0) return null
   return (
     <View>
-      {shown.size > 0 ? <Text style={[s.eyebrow, s.repeatLabel]}>Repeat a recent workout</Text> : null}
-      <Animated.View entering={FadeInDown.springify()} style={shown.size > 0 ? s.repeatCard : undefined}>
-        {finished.map((session) => (
-          <RepeatRow
-            key={session._id}
-            sessionId={session._id}
-            name={session.name}
-            localDate={session.localDate}
-            shown={shown.has(session._id)}
-            disabled={disabled}
-            onResolve={onResolve}
-            onRepeat={onRepeat}
-          />
+      <Text style={[s.eyebrow, s.repeatLabel]}>Repeat a recent workout</Text>
+      <Animated.View entering={FadeInDown.springify()} style={s.repeatCard}>
+        {workouts.map((workout) => (
+          <RepeatRow key={workout.sessionId} workout={workout} disabled={disabled} onRepeat={onRepeat} />
         ))}
       </Animated.View>
     </View>
   )
 }
 
-// One finished workout: its name, day, exercises, and set count. Reports whether it has exercises, and renders only when shown.
-function RepeatRow({
-  sessionId,
-  name,
-  localDate,
-  shown,
-  disabled,
-  onResolve,
-  onRepeat,
-}: {
-  sessionId: SessionId
-  name: string | undefined
-  localDate: string
-  shown: boolean
-  disabled: boolean
-  onResolve: (id: SessionId, hasExercises: boolean) => void
-  onRepeat: (plan: Exercise[]) => void
-}) {
+// One recent workout: its name, day, exercises, and set count. Repeating lines up each exercise with its set count as the target.
+function RepeatRow({ workout, disabled, onRepeat }: { workout: RecentWorkout; disabled: boolean; onRepeat: (plan: Planned[]) => void }) {
   const s = useStyles()
-  const detail = useQuery(api.strength.sessionDetail, { sessionId })
-  useEffect(() => {
-    if (detail !== undefined) onResolve(sessionId, detail.exercises.length > 0)
-  }, [detail, sessionId, onResolve])
-  if (!shown || detail === undefined || detail.exercises.length === 0) return null
-  const plan = detail.exercises.map((e) => e.exercise)
-  const title = `${name ?? 'Workout'} · ${formatDayTitle(localDate)}`
+  const plan = workout.exercises.map((e) => ({ exercise: e.exercise, sets: e.sets }))
+  const setCount = plan.reduce((total, e) => total + e.sets, 0)
+  const title = `${workout.name ?? 'Workout'} · ${formatDayTitle(workout.localDate)}`
   return (
     <Tap style={s.repeatRow} disabled={disabled} onPress={() => onRepeat(plan)} accessibilityRole="button" accessibilityLabel={`Repeat ${title}`}>
       <Text style={s.repeatTitle}>{title}</Text>
       <Text style={s.repeatMeta} numberOfLines={1}>
-        {`${plan.map((e) => e.name).join(', ')} · ${detail.summary.setCount} sets`}
+        {`${plan.map((e) => e.exercise.name).join(', ')} · ${setCount} sets`}
       </Text>
     </Tap>
   )
@@ -286,19 +258,21 @@ function Elapsed({ since, until, style }: { since: number; until?: number; style
 }
 
 // Live session: timer and Finish (or Done when editing a finished one), progress bar, the current exercise's sets, and the session list.
-function Live({ detail, plan, actions, onFinish }: { detail: SessionDetail; plan: Exercise[]; actions: WorkoutActions; onFinish: () => void }) {
+function Live({ detail, plan, actions, onFinish }: { detail: SessionDetail; plan: Planned[]; actions: WorkoutActions; onFinish: () => void }) {
   const s = useStyles()
   const endSession = useMutation(api.strength.endSession)
   const ended = detail.session.endedAt !== undefined
-  const [picked, setPicked] = useState<Exercise[]>(plan)
-  const [currentId, setCurrentId] = useState<ExerciseId | null>(plan[0]?._id ?? null)
+  const [picked, setPicked] = useState<Exercise[]>(plan.map((p) => p.exercise))
+  const [currentId, setCurrentId] = useState<ExerciseId | null>(plan[0]?.exercise._id ?? null)
   const [picking, setPicking] = useState(detail.exercises.length === 0 && plan.length === 0)
   const [finishing, setFinishing] = useState(false)
+  // Set counts from the repeated workout, keyed by exercise.
+  const targets = new Map(plan.map((p) => [p.exercise._id, p.sets]))
 
   // Exercises with saved sets, then ones picked this session that have none yet.
   const list = [
-    ...detail.exercises.map((e) => ({ exercise: e.exercise, sets: e.sets })),
-    ...picked.filter((p) => !detail.exercises.some((e) => e.exercise._id === p._id)).map((exercise) => ({ exercise, sets: [] })),
+    ...detail.exercises.map((e) => ({ exercise: e.exercise, sets: e.sets, target: targets.get(e.exercise._id) })),
+    ...picked.filter((p) => !detail.exercises.some((e) => e.exercise._id === p._id)).map((exercise) => ({ exercise, sets: [], target: targets.get(exercise._id) })),
   ]
   const current = list.find((e) => e.exercise._id === currentId) ?? list.at(-1)
   const currentIndex = current ? list.indexOf(current) : -1
@@ -356,6 +330,7 @@ function Live({ detail, plan, actions, onFinish }: { detail: SessionDetail; plan
           previousSets={currentDetail?.previousSets}
           historyLimited={currentDetail?.historyLimited ?? false}
           position={`${currentIndex + 1} of ${list.length}`}
+          target={current.target}
           finished={ended}
           actions={actions}
         />

@@ -12,6 +12,8 @@ const MAX_SESSION_SETS = 200;
 const MAX_HISTORY_SETS = 1000;
 const RECENT_SET_SCAN = 200;
 const RECENT_EXERCISE_LIMIT = 6;
+const RECENT_WORKOUT_SCAN = 30;
+const MAX_RECENT_WORKOUTS = 5;
 type RevisionOp = Infer<typeof revisionOpValidator>;
 type SessionCache = Map<Id<"workout_sessions">, Doc<"workout_sessions"> | null>;
 type SetContent = Pick<Doc<"sets">, "sessionId" | "exerciseId" | "setIndex" | "weightKg" | "reps" | "rpe" | "deletedAt">;
@@ -334,6 +336,29 @@ export const recentExercises = query({
     }
     // Map keeps first-seen order and sort is stable, so ties keep the newest-set scan order.
     return [...latestWorkout].sort((a, b) => b[1] - a[1]).slice(0, RECENT_EXERCISE_LIMIT).map(([exerciseId]) => exerciseId);
+  },
+});
+
+/** Lists the newest finished workouts that have sets, with each exercise's set count, scanning at most 30 sessions. */
+export const recentWorkouts = query({
+  args: { limit: v.number() },
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > MAX_RECENT_WORKOUTS) throw new Error(`limit must be an integer within 1-${MAX_RECENT_WORKOUTS}`);
+    const sessions = await ctx.db.query("workout_sessions").withIndex("by_userId_and_deletedAt_and_startedAt", (q) => q.eq("userId", userId).eq("deletedAt", undefined)).order("desc").take(RECENT_WORKOUT_SCAN);
+    const workouts = [];
+    for (const session of sessions) {
+      if (workouts.length >= args.limit) break;
+      if (session.endedAt === undefined) continue;
+      const sets = await sessionSets(ctx, session._id, userId);
+      if (sets.length === 0) continue;
+      const counts = new Map<Id<"exercises">, number>();
+      for (const set of sets) counts.set(set.exerciseId, (counts.get(set.exerciseId) ?? 0) + 1);
+      const exercises = [];
+      for (const [exerciseId, count] of counts) exercises.push({ exercise: await requireExercise(ctx, exerciseId), sets: count });
+      workouts.push({ sessionId: session._id, name: session.name, localDate: session.localDate, exercises });
+    }
+    return workouts;
   },
 });
 
