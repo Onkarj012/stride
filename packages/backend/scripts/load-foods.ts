@@ -8,6 +8,8 @@ const OUT_DIR = fileURLToPath(new URL("../../core/data/out/", import.meta.url));
 const BACKEND_DIR = fileURLToPath(new URL("..", import.meta.url));
 /** Rows per `convex run` call. Keeps each call far under the 500-row cap and the command-line size limit. */
 const BATCH_SIZE = 200;
+/** Deletes the portions listed in a NDJSON file. Off unless passed, so a normal load never deletes. */
+const PRUNE_FLAG = "--prune-portions";
 
 /** One NDJSON file and the internal mutation that loads it. Order matters: portions need their foods first. */
 const STEPS = [
@@ -37,8 +39,34 @@ function tally(totals: Map<string, number>, output: string): void {
   }
 }
 
-/** Loads every NDJSON file in order through `npx convex run`. Extra args (e.g. `--prod`) pass through to it. */
-function main(passthrough: readonly string[]): void {
+/** Sends rows to one internal mutation in batches through `npx convex run` and prints the summed counts. */
+function sendBatches(label: string, fn: string, arg: string, rows: unknown[], passthrough: readonly string[]): void {
+  const totals = new Map<string, number>();
+  for (let start = 0; start < rows.length; start += BATCH_SIZE) {
+    const batch = rows.slice(start, start + BATCH_SIZE);
+    const output = execFileSync("npx", ["convex", "run", fn, JSON.stringify({ [arg]: batch }), ...passthrough], {
+      cwd: BACKEND_DIR,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    tally(totals, output);
+    process.stdout.write(`\r${label}: ${Math.min(start + BATCH_SIZE, rows.length)}/${rows.length}`);
+  }
+  console.log(`\n${label}: ${[...totals].map(([k, n]) => `${k} ${n}`).join(", ")}`);
+}
+
+/** Pulls `--prune-portions <file>` out of the args. Everything else passes through to `convex run`. */
+function parseArgs(argv: readonly string[]): { prunePath: string | null; passthrough: string[] } {
+  const at = argv.indexOf(PRUNE_FLAG);
+  if (at === -1) return { prunePath: null, passthrough: [...argv] };
+  const prunePath = argv[at + 1];
+  if (prunePath === undefined || prunePath.startsWith("--")) throw new Error(`${PRUNE_FLAG} needs a file path`);
+  return { prunePath, passthrough: [...argv.slice(0, at), ...argv.slice(at + 2)] };
+}
+
+/** Loads every NDJSON file in order. With `--prune-portions <file>`, also deletes the portions listed in that file. */
+function main(argv: readonly string[]): void {
+  const { prunePath, passthrough } = parseArgs(argv);
   for (const step of STEPS) {
     const path = join(OUT_DIR, step.file);
     if (!existsSync(path)) {
@@ -46,20 +74,11 @@ function main(passthrough: readonly string[]): void {
       console.log(`skip ${step.file} (not found)`);
       continue;
     }
-    const rows = readNdjson(path);
-    const totals = new Map<string, number>();
-    for (let start = 0; start < rows.length; start += BATCH_SIZE) {
-      const batch = rows.slice(start, start + BATCH_SIZE);
-      const output = execFileSync(
-        "npx",
-        ["convex", "run", step.fn, JSON.stringify({ [step.arg]: batch }), ...passthrough],
-        { cwd: BACKEND_DIR, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
-      );
-      tally(totals, output);
-      process.stdout.write(`\r${step.file}: ${Math.min(start + BATCH_SIZE, rows.length)}/${rows.length}`);
-    }
-    console.log(`\n${step.file}: ${[...totals].map(([k, n]) => `${k} ${n}`).join(", ")}`);
+    sendBatches(step.file, step.fn, step.arg, readNdjson(path), passthrough);
   }
+  if (prunePath === null) return;
+  if (!existsSync(prunePath)) throw new Error(`${prunePath} is missing. Run pnpm --filter @stride/core data:import fdc first.`);
+  sendBatches(prunePath, "foods_db:deleteFoodPortions", "portions", readNdjson(prunePath), passthrough);
 }
 
 try {
