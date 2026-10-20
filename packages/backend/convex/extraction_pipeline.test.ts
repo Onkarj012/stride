@@ -1000,6 +1000,24 @@ describe("photo amounts are estimates for review", () => {
     expect(result.kind).toBe("committed");
   });
 
+  test("a caption amount in grams spelled out is kept as stated", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "paneer", quantity: 100, unit: "grams", fromPhoto: true, amountFromImage: false }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p-grams", input: { kind: "photo", storageId: await uploadPhoto(t, user), text: "100 grams paneer" } });
+    expect(result.lines[0]?.grams).toBe(100);
+  });
+
+  test("an image estimate in ounces is refused, so the amount becomes null and the draft asks", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "paneer", quantity: 8, unit: "oz", fromPhoto: true, amountFromImage: true }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p-oz", input: { kind: "photo", storageId: await uploadPhoto(t, user) } });
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await t.run((ctx) => ctx.db.get("drafts", result.draftId));
+    expect(draft?.items[0]?.quantity).toBeUndefined();
+    expect(draft?.items[0]?.unit).toBeUndefined();
+    expect(result.lines[0]?.grams).toBeNull();
+  });
+
   test("a photo-estimated bare count always drafts", async () => {
     const { t, user } = await setup();
     llm = () => extraction([{ food: "roti", quantity: 2, fromPhoto: true, amountFromImage: true }]);

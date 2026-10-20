@@ -1,4 +1,4 @@
-import type { MealSlot } from "@stride/core";
+import { normalizeUnit, type MealSlot } from "@stride/core";
 import { v, type Infer } from "convex/values";
 import type { ActionCtx } from "../_generated/server";
 import { mealSlotValidator } from "../ledger_validators";
@@ -7,8 +7,9 @@ import { callOpenRouter, isRecord, PHOTO_MODEL, PIPELINE_MODEL, type ContentPart
 /** Most items one log may hold. Matches the extraction schema's `maxItems`. */
 export const MAX_EXTRACTED_ITEMS = 20;
 const MAX_FOOD_CHARS = 120;
-/** Largest quantity a photo item may carry, per unit. Units not listed use `MAX_HOUSEHOLD_QUANTITY`. */
-const MAX_PHOTO_QUANTITY_BY_UNIT: Readonly<Partial<Record<string, number>>> = { ml: 2000, g: 2000, kg: 2000 };
+/** Units the model may estimate from a photo, after `normalizeUnit`. A bare count (null unit) is also allowed. */
+const IMAGE_UNITS: ReadonlySet<string> = new Set(["ml", "cup", "glass", "katori", "bowl", "tsp", "tbsp", "piece", "plate", "slice"]);
+const MAX_IMAGE_ML = 2000;
 const MAX_HOUSEHOLD_QUANTITY = 20;
 const EXTRACTION_MAX_TOKENS = 1_200;
 
@@ -151,14 +152,14 @@ export async function extractItems(ctx: ActionCtx, userId: string, input: Extrac
   return input.imageUrl === undefined ? items : items.map(clampPhotoAmount);
 }
 
-/** A photo amount must be positive, within its unit's cap, and never grams from the image. Otherwise quantity and unit become null so the draft asks. */
+/** An image estimate must use an allowed unit (or none) within its cap. Anything else nulls the amount so the draft asks. Caption amounts pass through. */
 function clampPhotoAmount(item: ExtractedItem): ExtractedItem {
-  if (!item.fromPhoto) return item;
-  const unit = item.unit?.trim().toLowerCase() ?? null;
-  const gramsFromImage = item.amountFromImage && (unit === "g" || unit === "kg");
-  const max = unit === null ? MAX_HOUSEHOLD_QUANTITY : (MAX_PHOTO_QUANTITY_BY_UNIT[unit] ?? MAX_HOUSEHOLD_QUANTITY);
-  const valid = item.quantity !== null && item.quantity > 0 && item.quantity <= max && !gramsFromImage;
-  return valid ? item : { ...item, quantity: null, unit: null };
+  if (!item.fromPhoto || !item.amountFromImage) return item;
+  const unit = item.unit === null ? null : normalizeUnit(item.unit);
+  if (unit !== null && !IMAGE_UNITS.has(unit)) return { ...item, quantity: null, unit: null };
+  const max = unit === "ml" ? MAX_IMAGE_ML : MAX_HOUSEHOLD_QUANTITY;
+  const valid = item.quantity !== null && item.quantity > 0 && item.quantity <= max;
+  return valid ? { ...item, unit } : { ...item, quantity: null, unit: null };
 }
 
 const SLOTS: readonly MealSlot[] = ["breakfast", "lunch", "snack", "dinner"];
