@@ -43,6 +43,23 @@ const EXERCISES: ExerciseRecord[] = [
   },
 ];
 
+test("deleteFoodPortions removes only the listed food + description rows", async () => {
+  const t = convexTest(schema, modules);
+  await t.mutation(internal.foods_db.upsertFoods, { foods: FOODS });
+  await t.mutation(internal.foods_db.upsertFoodPortions, {
+    portions: [...PORTIONS, { source: "fdc", sourceId: "168878", measure: "tbsp", description: "tbsp", gramsPerMeasure: 15 }],
+  });
+  const pruned = await t.mutation(internal.foods_db.deleteFoodPortions, {
+    portions: [
+      { source: "fdc", sourceId: "168878", measure: "tbsp", description: "tbsp", gramsPerMeasure: 15 },
+      { source: "fdc", sourceId: "999999", measure: "cup", description: "cup", gramsPerMeasure: 100 },
+    ],
+  });
+  expect(pruned).toEqual({ deleted: 1, absent: 0, missingFood: 1 });
+  const left = await t.run((ctx) => ctx.db.query("food_portions").collect());
+  expect(left.map((row) => row.description)).toEqual(["cup"]);
+});
+
 test("food, portion and exercise upserts are idempotent on source ids", async () => {
   const t = convexTest(schema, modules);
   expect(await t.mutation(internal.foods_db.upsertFoods, { foods: FOODS })).toEqual({ inserted: 2, updated: 0, unchanged: 0 });
