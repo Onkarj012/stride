@@ -280,7 +280,7 @@ describe("clearAllData", () => {
         userId: "user_a",
         submissionId: "l1",
         inputKind: "text",
-        items: [{ food: "rice", quantity: 1, unit: "cup", slot: null, date: null, fromPhoto: false, portionScale: null, cookingOil: false, confidence: 1 }],
+        items: [{ food: "rice", quantity: 1, unit: "cup", slot: null, date: null, fromPhoto: false, amountFromImage: false, portionScale: null, cookingOil: false, confidence: 1 }],
         picks: [{ index: 0, foodId: sharedFood }],
       }),
     ).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
@@ -308,7 +308,7 @@ describe("clearAllData", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     // The model reply lands only now, after the marker is gone.
-    const item = { food: "rice", quantity: 1, unit: "cup", slot: null, date: null, fromPhoto: false, portionScale: null, cookingOil: false, confidence: 1 };
+    const item = { food: "rice", quantity: 1, unit: "cup", slot: null, date: null, fromPhoto: false, amountFromImage: false, portionScale: null, cookingOil: false, confidence: 1 };
     const late = { userId: "user_a", inputKind: "chat" as const, items: [item], picks: [{ index: 0, foodId: sharedFood }] };
     await expect(t.mutation(internal.pipeline.resolve.commitLog, { ...late, submissionId: "m0:log", chatId: a.chatId, messageId })).rejects.toThrow(/Chat not found/);
     await expect(t.mutation(internal.pipeline.resolve.commitLog, { ...late, submissionId: "m0:log2", messageId })).rejects.toThrow(/Message not found/);
