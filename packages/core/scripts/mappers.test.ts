@@ -244,7 +244,7 @@ describe("mapCofid", () => {
   it("uses AOAC fibre, falls back to NSP, and is null when both are N", () => {
     const { foods } = mapCofid(proximates, inorganics);
     expect(foods.find((f) => f.sourceId === "T-1")?.per100g.fiber).toBe(3.1);
-    const onlyN = mapCofid(`${COLUMNS}\nT-7,Test,AB,10,1,1,1,1,N,N`, "");
+    const onlyN = mapCofid(`${COLUMNS}\nT-7,Test,AB,10,1,1,1,1,N,N`, inorganics);
     expect(onlyN.foods[0]?.per100g.fiber).toBeNull();
   });
 
@@ -259,11 +259,16 @@ describe("mapCofid", () => {
     const { foods, skippedFoods } = mapCofid(proximates, inorganics);
     expect(foods.map((f) => f.sourceId)).toEqual(["T-1", "T-2", "T-3", "T-4"]);
     expect(skippedFoods).toBe(1);
-    const missingKcal = mapCofid(`${COLUMNS}\nT-8,No energy,AB,N,1,1,1,,,`, "");
+    const missingKcal = mapCofid(`${COLUMNS}\nT-8,No energy,AB,N,1,1,1,,,`, inorganics);
     expect(missingKcal).toEqual({ foods: [], skippedFoods: 1 });
   });
 
   it("rejects a CSV without the expected columns", () => {
-    expect(() => mapCofid("Food Code,Food Name\nA,Rice\n", "")).toThrow(/missing columns/);
+    expect(() => mapCofid("Food Code,Food Name\nA,Rice\n", inorganics)).toThrow(/missing columns/);
+  });
+
+  it("rejects an inorganics sheet without a sodium column, so sodium is never wiped silently", () => {
+    expect(() => mapCofid(proximates, proximates)).toThrow(/Sodium \(mg\)/);
+    expect(() => mapCofid(proximates, "")).toThrow(/Sodium \(mg\)/);
   });
 });

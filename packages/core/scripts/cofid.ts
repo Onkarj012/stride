@@ -35,11 +35,14 @@ function nutrient(cell: string | undefined): number | null {
   return value !== null && value >= 0 ? value : null;
 }
 
-/** Sodium in mg for each food code, read from the inorganics sheet. */
+/** Sodium in mg for each food code, read from the inorganics sheet. Throws when the sheet has no code or sodium column. */
 function sodiumByCode(inorganicsCsv: string): Map<string, number | null> {
-  return new Map(
-    csvRecords(inorganicsCsv).map((row) => [(row[" "] ?? row["Food Code"] ?? "").trim(), nutrient(row[SODIUM_COLUMN])]),
-  );
+  const rows = csvRecords(inorganicsCsv);
+  const first = rows[0];
+  if (first === undefined || !(SODIUM_COLUMN in first) || !(" " in first || "Food Code" in first)) {
+    throw new Error(`CoFID inorganics CSV needs a food code column and "${SODIUM_COLUMN}"`);
+  }
+  return new Map(rows.map((row) => [(row[" "] ?? row["Food Code"] ?? "").trim(), nutrient(row[SODIUM_COLUMN])]));
 }
 
 /** Maps the CoFID 2021 proximates and inorganics sheets, as CSV with only the first header row, to `foods` rows. Throws when a proximates column is missing. */
