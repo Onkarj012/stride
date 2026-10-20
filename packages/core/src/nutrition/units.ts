@@ -1,4 +1,5 @@
 import {
+  BEVERAGE_EXCLUDES,
   COUNT_MEASURES,
   DENSITIES,
   type DensityEntry,
@@ -227,6 +228,16 @@ function headedPieceSeed(foodName: string): { grams: number; names: ReadonlySet<
   return { grams: first.grams, names: new Set(rows.flatMap((r) => r.keys.flatMap(tokenize)).map(pieceName)) };
 }
 
+/** Text for a unit on a chip or card. A piece names the food's piece ("roti"), or "pc" when the food has none. Other units stay as they are. */
+export function unitLabel(unit: string | null, foodName: string): string {
+  if (unit !== null && normalizeUnit(unit) !== PIECE_UNIT) return unit;
+  const seed = headedPieceSeed(foodName);
+  if (seed === null) return "pc";
+  // Prefer the name that is the food's own head word, so "Phulka roti" says "roti" and not "phulka".
+  const heads = headWords(foodName);
+  return [...seed.names].find((n) => heads.has(n)) ?? [...seed.names][0] ?? "pc";
+}
+
 /** Grams from the food's portion rows whose measure passes `matches`: null when none, or "conflict" when they disagree. */
 function portionGrams(portions: PortionContext["portions"], matches: (measure: string) => boolean): number | "conflict" | null {
   const grams = new Set(
@@ -250,6 +261,12 @@ function pieceGrams(quantity: number, rawUnit: string, isBare: boolean, ctx: Por
   }
   const seed = ctx.skipSeedPieceWeights === true ? null : headedPieceSeed(ctx.foodName);
   if (seed !== null) {
+    // A bare count uses the food's own row for the seed's name ("naan" = 125 g) before the seed.
+    if (isBare) {
+      const named = portionGrams(ctx.portions, (measure) => seed.names.has(pieceName(measure)));
+      if (named === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+      if (named !== null) return resolved(quantity * named, PORTION_CONFIDENCE.foodPortion, "food_portion");
+    }
     // A named unit must name this food's seed, so "roti" never counts a banana.
     if (rawUnit === PIECE_UNIT || tokenize(rawUnit).every((w) => seed.names.has(pieceName(w)))) {
       return resolved(quantity * seed.grams, PORTION_CONFIDENCE.pieceTable, "piece");
@@ -282,6 +299,21 @@ function resolved(grams: number, confidence: number, method: PortionMethod): Por
   return { status: "resolved", grams, confidence, method };
 }
 
+/** Words that make a "tea" food a dry, oily or leafy product rather than a drink. */
+// Built through tokenize so "leaves" matches the singular "leave" that the food name's tokens become.
+const NOT_A_DRINK_WORDS: ReadonlySet<string> = new Set(
+  [...BEVERAGE_EXCLUDES, "oil", "seed", "leaf", "bag"].flatMap(tokenize),
+);
+
+/** True when a food is a prepared chai or tea drink: its head word is chai or tea, and no dry or oily word appears. */
+function isPreparedTea(foodName: string): boolean {
+  // "Tea with milk" names its drink before "with", so the head word comes from that part.
+  const head = headToken(foodName.split(/\s+with(?:out)?\s+/i)[0] ?? foodName);
+  if (head !== "chai" && head !== "tea") return false;
+  return !tokenize(foodName).some((t) => NOT_A_DRINK_WORDS.has(t));
+}
+
+
 /** Turns `{quantity, unit}` from extraction into grams. Unknown units or missing data return `unresolved`, never a guess. */
 export function resolvePortion(
   input: { quantity: number; unit: string | null | undefined },
@@ -289,6 +321,11 @@ export function resolvePortion(
 ): PortionResult {
   const { quantity } = input;
   if (!Number.isFinite(quantity) || quantity <= 0) return { status: "unresolved", reason: "invalid_quantity" };
+  // A cup of prepared tea is a teacup, unless the user or the food names its own cup. Then it resolves exactly as a teacup.
+  const hasOwnCup = [...(ctx.userMeasures ?? []), ...(ctx.portions ?? [])].some((m) => normalizeUnit(m.measure) === "cup");
+  if (normalizeUnit(input.unit) === "cup" && !hasOwnCup && isPreparedTea(ctx.foodName)) {
+    return resolvePortion({ quantity, unit: "teacup" }, ctx);
+  }
   const rawUnit = normalizeUnit(input.unit);
   const isBare = normalizeText(input.unit ?? "") === "";
   // "1 phulka" arrives with the food name as its unit; treat it as one piece of that food.
@@ -330,6 +367,15 @@ export function resolvePortion(
   }
   if (userMeasure && "grams" in userMeasure && userMeasure.grams > 0) {
     return resolved(quantity * userMeasure.grams, PORTION_CONFIDENCE.userMeasure, "user_measure");
+  }
+
+  // A food's own row for the literal name ("naan" = 125 g) beats a piece seed that the name was normalized from.
+  // A saved volume for the measure still wins, as it does for every other food row.
+  const hasSavedMl = userMeasure !== undefined && "ml" in userMeasure && userMeasure.ml > 0;
+  if (unit !== rawUnit && !hasSavedMl) {
+    const named = portionGrams(ctx.portions, (measure) => measure === rawUnit);
+    if (named === "conflict") return { status: "unresolved", reason: "conflicting_portions" };
+    if (named !== null) return resolved(quantity * named, PORTION_CONFIDENCE.foodPortion, "food_portion");
   }
 
   const gramsPerMass = own(MASS_UNITS_G, unit);

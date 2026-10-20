@@ -1133,9 +1133,7 @@ async function runChatTurn(
     );
     if (reply.stopped) return stopped();
     if (reply.toolCalls.length === 0) {
-      // An empty first step has nothing to show, so it fails. After tools ran, their saved writes stand and the turn ends.
-      if (i === 0 && stream.text === "") throw new Error("OpenRouter returned an empty reply");
-      // With no streamed text, say what the tools did. A turn that only offered a Log this button points at it.
+      // With no streamed text, say what the tools did. A turn that only offered a Log this button points at it. An empty first step gets the sorry line.
       let reply = stream.text;
       if (reply === "") {
         if (notes.length > 0) reply = notes.join(" ");
