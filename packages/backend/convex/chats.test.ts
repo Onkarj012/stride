@@ -397,6 +397,35 @@ describe("chat corrections (D8)", () => {
     expect((await user.query(api.day_totals.dayTotals, {})).nutrients.kcal).toBe(238);
   });
 
+  test("edit_entry onto an AI estimate marks the new revision estimated", async () => {
+    const { t, user, chatId, foods } = await setup();
+    const estimate = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: DAL,
+        source: "ai_estimate",
+        sourceId: "user_a:ai:homemade dal",
+        verified: false,
+        ownerUserId: "user_a",
+      }),
+    );
+    const [original] = await user.mutation(api.entries.addEntries, {
+      submissionId: "e1",
+      items: [{ foodId: foods.chapati, grams: 80, source: "db" }],
+    });
+    if (original === undefined) throw new Error("no entry");
+    llm = (body) =>
+      afterToolResult(body)
+        ? { content: "Changed it." }
+        : { toolCalls: [{ name: "edit_entry", args: { entry_id: original, food_id: estimate } }] };
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "it was dal" });
+
+    const rows = await entryRows(t);
+    expect(rows[1]).toMatchObject({ op: "edit", foodId: estimate, flags: ["estimated"] });
+  });
+
   test("an empty step after a tool ran ends the turn with that tool's note, and the entry the tool wrote is kept", async () => {
     const { t, user, chatId, foods } = await setup();
     const [original] = await user.mutation(api.entries.addEntries, {
