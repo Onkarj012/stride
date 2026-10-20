@@ -238,31 +238,36 @@ const BEVERAGE_TERMS = [
   "chai", "tea", "coffee", "cappuccino", "latte", "lassi", "milkshake", "shake", "juice", "cola", "soda",
   "cold drink", "nimbu pani", "sharbat", "frappe", "smoothie",
 ];
-const SUGAR_TERMS = ["sugar", "shakkar", "cheeni", "jaggery", "gur", "honey", "sweetener"];
-/** Names that say the drink or sweetener has no added sugar. "sugar-free" splits into "sugar" and "free". */
-const NOT_SWEET_TERMS = ["free", "unsweetened", "diet"];
+const SUGAR_ITEMS = new Set(
+  ["sugar", "white sugar", "brown sugar", "shakkar", "cheeni", "jaggery", "gur", "honey", "sweetener"].map(normalizeText),
+);
+/** Phrases that say the drink has no added sugar. Checked as whole phrases, so "caffeine-free" does not count. */
+const NOT_SWEET_PHRASES = ["sugar free", "no sugar", "zero sugar", "without sugar", "unsweetened", "diet"];
 
-/** True when a name has one of the terms as whole words, so "tea" matches "Tea, black" but not "steak". */
-function namesTerm(names: readonly string[], terms: readonly string[]): boolean {
+/** True when a name has one of the phrases as whole words, so "tea" matches "Tea, black" but not "steak". */
+function namesPhrase(names: readonly string[], phrases: readonly string[]): boolean {
   return names.some((name) => {
     const padded = ` ${normalizeText(name)} `;
-    return terms.some((term) => padded.includes(` ${normalizeText(term)} `));
+    return phrases.some((phrase) => padded.includes(` ${normalizeText(phrase)} `));
   });
 }
 
-/** A sweet drink: a beverage name with sugar in the DB row, and no "unsweetened", "sugar-free" or "diet" in the name. */
+/** A sweet drink: a beverage name with sugar in the DB row, and no "sugar free", "unsweetened" or "diet" in the name. */
 function isSweetDrink(item: SugarCandidate): boolean {
-  return item.sugarPer100g !== null && item.sugarPer100g > 0 && namesTerm(item.names, BEVERAGE_TERMS) && !namesTerm(item.names, NOT_SWEET_TERMS);
+  const names = [item.text, ...(item.foodName === null ? [] : [item.foodName])];
+  return item.sugarPer100g !== null && item.sugarPer100g > 0 && namesPhrase(names, BEVERAGE_TERMS) && !namesPhrase(names, NOT_SWEET_PHRASES);
 }
 
-/** A standalone sweetener: a sugar name with no beverage word and no "free", "unsweetened" or "diet". */
-function isStandaloneSugar(names: readonly string[]): boolean {
-  return namesTerm(names, SUGAR_TERMS) && !namesTerm(names, BEVERAGE_TERMS) && !namesTerm(names, NOT_SWEET_TERMS);
+/** A standalone sweetener: the whole typed item, or the matched food's first segment ("Sugars, granulated"), is a sugar word. */
+function isStandaloneSugar(item: SugarCandidate): boolean {
+  const segment = item.foodName?.split(",")[0] ?? "";
+  return SUGAR_ITEMS.has(normalizeText(item.text)) || SUGAR_ITEMS.has(normalizeText(segment));
 }
 
-/** One item's names (what was typed and the matched food) and the sugar per 100 g of its matched food. */
+/** One item's typed text, its matched food name (null when unmatched), and the sugar per 100 g of its matched food. */
 export interface SugarCandidate {
-  names: readonly string[];
+  text: string;
+  foodName: string | null;
   sugarPer100g: number | null;
 }
 
@@ -271,7 +276,7 @@ export interface SugarCandidate {
  */
 export function sugarOverlap(items: readonly SugarCandidate[]): { drinks: number[]; sugars: number[] } {
   const drinks = items.flatMap((item, i) => (isSweetDrink(item) ? [i] : []));
-  const sugars = items.flatMap((item, i) => (isStandaloneSugar(item.names) ? [i] : []));
+  const sugars = items.flatMap((item, i) => (isStandaloneSugar(item) ? [i] : []));
   return drinks.length > 0 && sugars.length > 0 ? { drinks, sugars } : { drinks: [], sugars: [] };
 }
 
@@ -359,7 +364,8 @@ export async function resolveItems(
   });
   const overlap = sugarOverlap(
     resolved.map((r) => ({
-      names: r.food === null ? [r.item.food] : [r.item.food, r.food.name],
+      text: r.item.food,
+      foodName: r.food?.name ?? null,
       sugarPer100g: r.food?.per100g.sugar ?? null,
     })),
   );
