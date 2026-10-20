@@ -198,6 +198,68 @@ describe("gate: auto-commit vs draft", () => {
   });
 });
 
+describe("sugar double count warning", () => {
+  /** Adds a "Tea" food with the given sugar per 100 g, and a "Sugar" food, to a backend. */
+  async function teaAndSugar(t: TestConvex<typeof schema>, teaSugar: number): Promise<void> {
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Tea", aliases: [], searchText: "Tea", per100g: { ...RICE, sugar: teaSugar }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "9", verified: true });
+    });
+  }
+
+  /** Two items in one log: 100 g of tea, then 5 g of sugar. */
+  const teaWithSugar = [
+    { food: "tea", quantity: 100, unit: "g" },
+    { food: "sugar", quantity: 5, unit: "g" },
+  ];
+
+  test("a sweetened drink with a separate sugar item stays a draft, with the warning on the drink only", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 5);
+    llm = () => extraction(teaWithSugar);
+    const result = await logText(user, "tea with sugar");
+
+    expect(result.kind).toBe("draft");
+    if (result.kind !== "draft") return;
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items.map((item) => item.reasons)).toEqual([["sugar_double_count"], []]);
+    expect(draft?.items.map((item) => item.grams)).toEqual([100, 5]);
+  });
+
+  test("an unsweetened drink with sugar commits with no warning", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 0);
+    llm = () => extraction(teaWithSugar);
+    const result = await logText(user, "tea with sugar");
+
+    expect(result.kind).toBe("committed");
+    expect(result.lines.every((line) => line.reasons.length === 0)).toBe(true);
+    expect(await entryRows(t)).toHaveLength(2);
+  });
+
+  test("confirming the sweetened draft as it is keeps both entries", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 5);
+    llm = () => extraction(teaWithSugar);
+    const result = await logText(user, "tea with sugar");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+
+    const confirmed = await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId });
+    expect(confirmed.kind).toBe("committed");
+    expect(await entryRows(t)).toHaveLength(2);
+  });
+
+  test("a drink alone gives no warning", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 5);
+    llm = () => extraction([{ food: "tea", quantity: 100, unit: "g" }]);
+    const result = await logText(user, "tea");
+
+    expect(result.kind).toBe("committed");
+    expect(result.lines.every((line) => line.reasons.length === 0)).toBe(true);
+  });
+});
+
 describe("line kcal stays unrounded until the app displays it", () => {
   test("lines of 100.4 and 200.4 kcal come back unrounded, and their sum rounds to 301", async () => {
     const { t, user } = await setup();

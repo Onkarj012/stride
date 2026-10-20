@@ -227,6 +227,9 @@ export function DraftCard({
                   {onEstimate ? <Tag text="AI estimate" tone="est" /> : null}
                 </View>
                 {onEstimate && item.note ? <Text style={s.metaText}>{item.note}</Text> : null}
+                {item.reasons.includes('sugar_double_count') ? (
+                  <Text style={s.why}>This drink may already include sugar. Check the drink or remove the separate sugar.</Text>
+                ) : null}
                 <View style={s.meta}>
                   <Text style={s.metaText}>
                     {metaOf(plan)}
