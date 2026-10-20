@@ -386,6 +386,23 @@ test("recentExercises ranks by workout time, so editing an old set does not move
   expect(await user.query(api.strength.recentExercises, {})).toEqual([row, exerciseId]);
 });
 
+test("recentWorkouts skips empty and open sessions and respects the limit", async () => {
+  const { user, sessionId, exerciseId } = await setup();
+  await user.mutation(api.strength.addSet, { submissionId: "bench-1", sessionId, exerciseId, weightKg: 60, reps: 8 });
+  await user.mutation(api.strength.addSet, { submissionId: "bench-2", sessionId, exerciseId, weightKg: 60, reps: 6 });
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });
+  const empty = await user.mutation(api.strength.startSession, { submissionId: "empty", startedAt: START + 86_400_000 });
+  await user.mutation(api.strength.endSession, { sessionId: empty, endedAt: START + 86_460_000 });
+  const newest = await user.mutation(api.strength.startSession, { submissionId: "newest", startedAt: START + 172_800_000 });
+  await user.mutation(api.strength.addSet, { submissionId: "newest-bench", sessionId: newest, exerciseId, weightKg: 62, reps: 5 });
+  await user.mutation(api.strength.endSession, { sessionId: newest, endedAt: START + 172_860_000 });
+  const open = await user.mutation(api.strength.startSession, { submissionId: "open", startedAt: START + 259_200_000 });
+  await user.mutation(api.strength.addSet, { submissionId: "open-bench", sessionId: open, exerciseId, weightKg: 62, reps: 5 });
+  expect((await user.query(api.strength.recentWorkouts, { limit: 5 })).map((w) => [w.sessionId, w.exercises.map((e) => e.sets)])).toEqual([[newest, [1]], [sessionId, [2]]]);
+  expect((await user.query(api.strength.recentWorkouts, { limit: 1 })).map((w) => w.sessionId)).toEqual([newest]);
+  await expect(user.query(api.strength.recentWorkouts, { limit: 6 })).rejects.toThrow(/limit/);
+});
+
 test("saved workouts page through older sessions and reopen finished sets for edits", async () => {
   const { t, user, sessionId, setId } = await withSet();
   await user.mutation(api.strength.endSession, { sessionId, endedAt: START + 60_000 });
