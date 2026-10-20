@@ -7,7 +7,9 @@ import { callOpenRouter, isRecord, PHOTO_MODEL, PIPELINE_MODEL, type ContentPart
 /** Most items one log may hold. Matches the extraction schema's `maxItems`. */
 export const MAX_EXTRACTED_ITEMS = 20;
 const MAX_FOOD_CHARS = 120;
-const MAX_PHOTO_QUANTITY = 20;
+/** Largest quantity a photo item may carry, per unit. Units not listed use `MAX_HOUSEHOLD_QUANTITY`. */
+const MAX_PHOTO_QUANTITY_BY_UNIT: Readonly<Partial<Record<string, number>>> = { ml: 2000, g: 2000, kg: 2000 };
+const MAX_HOUSEHOLD_QUANTITY = 20;
 const EXTRACTION_MAX_TOKENS = 1_200;
 
 /**
@@ -21,6 +23,8 @@ export const extractedItemValidator = v.object({
   slot: v.union(mealSlotValidator, v.null()),
   date: v.union(v.string(), v.null()),
   fromPhoto: v.boolean(),
+  /** True when the model estimated this amount from the image. False when the user's text stated it. */
+  amountFromImage: v.boolean(),
   portionScale: v.union(v.number(), v.null()),
   cookingOil: v.boolean(),
   confidence: v.number(),
@@ -31,7 +35,7 @@ export type ExtractedItem = Infer<typeof extractedItemValidator>;
 export const ITEM_JSON_SCHEMA: { [key: string]: JsonValue } = {
   type: "object",
   additionalProperties: false,
-  required: ["food", "quantity", "unit", "slot", "date", "fromPhoto", "portionScale", "cookingOil", "confidence"],
+  required: ["food", "quantity", "unit", "slot", "date", "fromPhoto", "amountFromImage", "portionScale", "cookingOil", "confidence"],
   properties: {
     food: { type: "string", description: "Food as the user named it, singular, no amount. e.g. 'roti', 'dal tadka'." },
     quantity: {
@@ -45,6 +49,10 @@ export const ITEM_JSON_SCHEMA: { [key: string]: JsonValue } = {
     slot: { type: ["string", "null"], enum: ["breakfast", "lunch", "snack", "dinner", null] },
     date: { type: ["string", "null"], description: "YYYY-MM-DD only when the user names another day. Else null." },
     fromPhoto: { type: "boolean", description: "True only for items seen in an attached photo." },
+    amountFromImage: {
+      type: "boolean",
+      description: "True only when you estimated the amount from the photo. False when the user's text stated it.",
+    },
     portionScale: {
       type: ["number", "null"],
       description: "Fraction eaten of a whole recipe amount, e.g. 0.25 for 'a quarter of a 1 kg biryani'. Else null.",
@@ -74,11 +82,12 @@ const TEXT_AMOUNT_RULES = [
   "If the user gives no amount, use quantity 1 and unit null.",
 ];
 
-/** Photos may estimate a visible amount as a household unit. Grams and nutrients stay out of the output. */
+/** Photos: the user's stated amounts pass through as written. Only an amount estimated from the image is a household unit. */
 const PHOTO_AMOUNT_RULES = [
-  "Never output grams, calories, protein, carbs or fat.",
-  "For a visible portion, give the amount you see as quantity and one unit from: ml, cup, glass, katori, bowl, tsp, tbsp, piece, plate, slice.",
-  "If the amount is hidden or unclear, use quantity null and unit null.",
+  "Never output calories, protein, carbs or fat.",
+  "If the text states an amount ('10 g butter', '2 roti'), use it exactly as stated, in any unit, and set amountFromImage false.",
+  "If you estimate an amount from the image, set amountFromImage true, give the amount you see as quantity and one unit from: ml, cup, glass, katori, bowl, tsp, tbsp, piece, plate, slice. Never grams for an image estimate.",
+  "If an amount in the image is hidden or unclear, use quantity null and unit null.",
 ];
 
 /** Rules every extraction and chat turn follows. The model parses; the server finds grams and nutrients. */
@@ -142,10 +151,14 @@ export async function extractItems(ctx: ActionCtx, userId: string, input: Extrac
   return input.imageUrl === undefined ? items : items.map(clampPhotoAmount);
 }
 
-/** A photo amount outside 0 to MAX_PHOTO_QUANTITY is not trusted: quantity and unit become null so the draft asks. */
+/** A photo amount must be positive, within its unit's cap, and never grams from the image. Otherwise quantity and unit become null so the draft asks. */
 function clampPhotoAmount(item: ExtractedItem): ExtractedItem {
-  if (!item.fromPhoto || (item.quantity !== null && item.quantity > 0 && item.quantity <= MAX_PHOTO_QUANTITY)) return item;
-  return { ...item, quantity: null, unit: null };
+  if (!item.fromPhoto) return item;
+  const unit = item.unit?.trim().toLowerCase() ?? null;
+  const gramsFromImage = item.amountFromImage && (unit === "g" || unit === "kg");
+  const max = unit === null ? MAX_HOUSEHOLD_QUANTITY : (MAX_PHOTO_QUANTITY_BY_UNIT[unit] ?? MAX_HOUSEHOLD_QUANTITY);
+  const valid = item.quantity !== null && item.quantity > 0 && item.quantity <= max && !gramsFromImage;
+  return valid ? item : { ...item, quantity: null, unit: null };
 }
 
 const SLOTS: readonly MealSlot[] = ["breakfast", "lunch", "snack", "dinner"];
@@ -176,6 +189,7 @@ export function parseItem(raw: unknown): ExtractedItem | null {
     slot: isSlot(raw.slot) ? raw.slot : null,
     date: typeof raw.date === "string" ? raw.date : null,
     fromPhoto: raw.fromPhoto === true,
+    amountFromImage: raw.amountFromImage === true,
     portionScale: typeof scale === "number" && Number.isFinite(scale) ? scale : null,
     cookingOil: raw.cookingOil === true || raw.cooking_oil === true,
     confidence,

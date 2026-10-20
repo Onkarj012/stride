@@ -275,8 +275,8 @@ export async function resolveItems(
     }
 
     const fromPhoto = inputKind === "photo" && item.fromPhoto;
-    // A photo amount is the model's estimate, so it always waits for the user's review.
-    if (fromPhoto && item.unit !== null) reasons.push("photo_amount");
+    // An amount the model read from the image always waits for the user's review, bare counts included.
+    if (fromPhoto && item.amountFromImage) reasons.push("photo_amount");
     // An AI estimate stays on the draft the first time (tool pick), then auto-commits from memory with the flag.
     const aiEstimate = match.food?.source === "ai_estimate";
     if (aiEstimate && match.source === "tool") reasons.push("ai_estimate");
