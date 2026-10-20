@@ -78,6 +78,7 @@ export function ThaliPicker({ onLog, onCancel }: { onLog: (text: string) => void
                   onLongPress={() => bump(item, -1)}
                   accessibilityRole="button"
                   accessibilityLabel={`${item.name[0].toUpperCase()}${item.name.slice(1)}, ${n}`}
+                  accessibilityHint="Hold to take one off"
                 >
                   <Text style={[s.chipText, { color: on ? t.c.bg : t.c.ink }]}>{item.name}</Text>
                   {on ? <Text style={[s.badge, { color: t.c.bg }]}>{badge}</Text> : null}
@@ -87,6 +88,8 @@ export function ThaliPicker({ onLog, onCancel }: { onLog: (text: string) => void
           </Animated.View>
         </View>
       ))}
+
+      {text ? <Text style={s.hint}>Hold a dish to take one off</Text> : null}
 
       <View style={s.preview}>
         {text ? <Text style={s.previewText}>{text}</Text> : <Text style={s.previewEmpty}>Tap what's on your plate.</Text>}
@@ -105,6 +108,7 @@ const useStyles = themedStyles((t) => ({
   presets: { flexDirection: 'row', gap: 8, marginTop: 16, paddingRight: 4 },
   chipsLabel: { ...font('label'), color: t.c.ink3, marginTop: 16, marginBottom: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  hint: { ...font('caption'), color: t.c.ink3, marginTop: 16 },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
