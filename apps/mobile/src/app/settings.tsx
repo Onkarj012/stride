@@ -28,7 +28,7 @@ const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ]
 const DELETE_WORD = 'DELETE'
-const FOOD_CREDITS = 'Food data: IFCT 2017 (NIN, India), USDA FoodData Central, Open Food Facts (ODbL).'
+const FOOD_CREDITS = 'Food data: IFCT 2017 (NIN, India), USDA FoodData Central, UK CoFID 2021, Open Food Facts (ODbL). Contains public sector information licensed under the Open Government Licence v3.0.'
 
 // Settings route. Units, theme, data, account and about. Each change saves on its own.
 export default function SettingsScreen() {

@@ -13,7 +13,10 @@ const BATCH_SIZE = 200;
 const STEPS = [
   { file: "fdc_foods.ndjson", fn: "foods_db:upsertFoods", arg: "foods", required: true },
   { file: "ifct_foods.ndjson", fn: "foods_db:upsertFoods", arg: "foods", required: false },
+  { file: "cofid_foods.ndjson", fn: "foods_db:upsertFoods", arg: "foods", required: false },
+  { file: "stride_foods.ndjson", fn: "foods_db:upsertFoods", arg: "foods", required: false },
   { file: "fdc_food_portions.ndjson", fn: "foods_db:upsertFoodPortions", arg: "portions", required: true },
+  { file: "stride_food_portions.ndjson", fn: "foods_db:upsertFoodPortions", arg: "portions", required: false },
   { file: "exercises.ndjson", fn: "foods_db:upsertExercises", arg: "exercises", required: true },
 ] as const;
 
