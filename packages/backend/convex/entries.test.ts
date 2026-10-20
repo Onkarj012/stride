@@ -196,6 +196,87 @@ describe("revisions", () => {
     expect(rows[3]?.deletedAt).toBeUndefined();
   });
 
+  test("editing an entry off an AI estimate onto a normal food drops the estimated flag", async () => {
+    const { t, user, dal } = await setup();
+    const estimate = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: DAL,
+        source: "ai_estimate",
+        sourceId: "user_a:ai:homemade dal",
+        verified: false,
+        ownerUserId: "user_a",
+      }),
+    );
+    const [id] = await user.mutation(api.entries.addEntries, {
+      submissionId: "add",
+      items: [{ foodId: estimate, grams: 100, source: "db", flags: ["estimated"] }],
+    });
+    const rev = await user.mutation(api.entries.editEntry, { submissionId: "edit", entryId: id, foodId: dal });
+    const head = await t.run((ctx) => ctx.db.get("entries", rev));
+    expect(head?.flags).toEqual([]);
+  });
+
+  test("a photo entry's estimated flag survives a change to another normal food", async () => {
+    const { t, user, rice, dal } = await setup();
+    const [id] = await user.mutation(api.entries.addEntries, {
+      submissionId: "add",
+      items: [{ foodId: rice, grams: 100, source: "db", flags: ["estimated"] }],
+    });
+    const rev = await user.mutation(api.entries.editEntry, { submissionId: "edit", entryId: id, foodId: dal });
+    const head = await t.run((ctx) => ctx.db.get("entries", rev));
+    expect(head?.flags).toEqual(["photo", "estimated"]);
+  });
+
+  test("a photo estimate keeps its estimated flag when edited onto a normal food", async () => {
+    const { t, user, dal } = await setup();
+    const estimate = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: DAL,
+        source: "ai_estimate",
+        sourceId: "user_a:ai:homemade dal",
+        verified: false,
+        ownerUserId: "user_a",
+      }),
+    );
+    const [id] = await user.mutation(api.entries.addEntries, {
+      submissionId: "add",
+      items: [{ foodId: estimate, grams: 100, source: "db", flags: ["photo", "estimated"] }],
+    });
+    const rev = await user.mutation(api.entries.editEntry, { submissionId: "edit", entryId: id, foodId: dal });
+    const head = await t.run((ctx) => ctx.db.get("entries", rev));
+    expect(head?.flags).toEqual(["photo", "estimated"]);
+  });
+
+  test("a legacy photo entry keeps its photo and estimated flags through a chain of food edits", async () => {
+    const { t, user, rice, dal } = await setup();
+    const estimate = await t.run((ctx) =>
+      ctx.db.insert("foods", {
+        name: "Homemade dal",
+        aliases: [],
+        searchText: "Homemade dal",
+        per100g: DAL,
+        source: "ai_estimate",
+        sourceId: "user_a:ai:homemade dal",
+        verified: false,
+        ownerUserId: "user_a",
+      }),
+    );
+    const [id] = await user.mutation(api.entries.addEntries, {
+      submissionId: "add",
+      items: [{ foodId: rice, grams: 100, source: "db", flags: ["estimated"] }],
+    });
+    const toEstimate = await user.mutation(api.entries.editEntry, { submissionId: "e1", entryId: id, foodId: estimate });
+    const toDal = await user.mutation(api.entries.editEntry, { submissionId: "e2", entryId: toEstimate, foodId: dal });
+    const head = await t.run((ctx) => ctx.db.get("entries", toDal));
+    expect(head?.flags).toEqual(["photo", "estimated"]);
+  });
+
   test("undo restores the prior revision's content", async () => {
     const { t, user, rice } = await setup();
     const [id] = await user.mutation(api.entries.addEntries, {
