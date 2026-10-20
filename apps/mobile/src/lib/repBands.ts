@@ -3,8 +3,8 @@ import * as SecureStore from 'expo-secure-store'
 import { inferRange, type PlannedSet, type RepRange } from '@stride/core'
 
 // Stored on this device only. A server-side field would make the band durable across devices.
-function bandKey(exerciseId: string): string {
-  return `stride.band.${exerciseId}`
+function bandKey(userId: string, exerciseId: string): string {
+  return `stride.band.${userId}.${exerciseId}`
 }
 
 // Reads a saved band, ignoring anything that isn't two sane integers.
@@ -22,17 +22,18 @@ function parseBand(raw: string | null): RepRange | null {
   }
 }
 
-// The rep band for one exercise. Loads the saved band, or saves one inferred from `previous` the first time.
-// Returns null while loading or when there is no history to infer from.
-export function useRepBand(exerciseId: string, previous: PlannedSet[]): RepRange | null {
-  const key = bandKey(exerciseId)
+// The rep band for one exercise, scoped to the signed-in user. Loads the saved band, or saves one inferred from `previous` the first time.
+// Without a user id it reads and writes nothing and returns the inferred band. Null while loading or with no history.
+export function useRepBand(userId: string | null | undefined, exerciseId: string, previous: PlannedSet[]): RepRange | null {
   // undefined while loading; null when nothing is saved.
   const [stored, setStored] = useState<RepRange | null | undefined>(undefined)
+  const signedIn = userId ? userId : null
 
   useEffect(() => {
+    if (signedIn === null) return
     let cancelled = false
     setStored(undefined)
-    SecureStore.getItemAsync(key)
+    SecureStore.getItemAsync(bandKey(signedIn, exerciseId))
       .then((raw) => {
         if (!cancelled) setStored(parseBand(raw))
       })
@@ -42,19 +43,20 @@ export function useRepBand(exerciseId: string, previous: PlannedSet[]): RepRange
     return () => {
       cancelled = true
     }
-  }, [key])
+  }, [signedIn, exerciseId])
 
   const inferred = stored === null ? inferRange(previous) : null
   const inferredMin = inferred?.min
   const inferredMax = inferred?.max
 
   useEffect(() => {
-    if (inferredMin === undefined || inferredMax === undefined) return
+    if (signedIn === null || inferredMin === undefined || inferredMax === undefined) return
     const band = { min: inferredMin, max: inferredMax }
     setStored(band)
-    void SecureStore.setItemAsync(key, JSON.stringify(band)).catch(() => undefined)
-  }, [key, inferredMin, inferredMax])
+    void SecureStore.setItemAsync(bandKey(signedIn, exerciseId), JSON.stringify(band)).catch(() => undefined)
+  }, [signedIn, exerciseId, inferredMin, inferredMax])
 
+  if (signedIn === null) return inferRange(previous)
   if (stored === undefined) return null
   return stored ?? inferred
 }

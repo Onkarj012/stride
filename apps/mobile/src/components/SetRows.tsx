@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeInDown, FadeOut, LinearTransition, ZoomIn } from 'react-native-reanimated'
+import { useAuth } from '@clerk/expo'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { nextTargets, type RepRange, type SetTarget } from '@stride/core'
@@ -38,6 +39,11 @@ export type WorkoutActions = {
 
 type Hint = { weightKg: number; reps: number }
 
+// Caps a generated target at the backend's kg and rep limits so the draft can always be logged.
+function withinLimits(target: SetTarget): SetTarget {
+  return { ...target, weightKg: Math.min(MAX_KG, target.weightKg), reps: Math.min(MAX_REPS, target.reps) }
+}
+
 // Polo's one-line reason for today's targets, given the reps last session was planned at.
 function targetReason(targets: SetTarget[], band: RepRange, step: number): string {
   if (targets.every((t) => t.reason === 'add-weight')) return `Every set hit ${band.max}, so add ${formatKg(step)} kg.`
@@ -69,10 +75,11 @@ export function ExerciseBlock({
   const s = useStyles()
   const hints = useQuery(api.strength.exerciseHints, previousSets === undefined ? { sessionId, exerciseId: exercise._id } : 'skip')
   const previous = previousSets ?? hints?.previousSets ?? []
-  const band = useRepBand(exercise._id, previous)
+  const { userId } = useAuth()
+  const band = useRepBand(userId, exercise._id, previous)
   const limited = historyLimited || hints?.historyLimited === true
   const step = weightStep(exercise)
-  const targets = limited || band === null ? [] : nextTargets(previous, step, band)
+  const targets = limited || band === null ? [] : nextTargets(previous, step, band).map(withinLimits)
   const muscle = exercise.primaryMuscles[0]
   const last = sets.at(-1)
   const next = targets[sets.length] ?? last ?? previous.at(-1) ?? { weightKg: startingWeight(exercise), reps: 8 }
