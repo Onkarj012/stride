@@ -377,6 +377,21 @@ describe("cup size", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea, leaves", densityGPerMl: 0.4 }))).toBeCloseTo(96, 6);
   });
 
+  it("masala chai and masala tea are drinks, so they use the teacup", () => {
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Masala chai", densityGPerMl: 1 }))).toBe(110);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Masala tea", densityGPerMl: 1 }))).toBe(110);
+  });
+
+  it("a cup of chai resolves as a teacup: saved teacup grams, then the food's teacup row, then the seed", () => {
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Chai", userMeasures: [{ measure: "teacup", grams: 150 }] }))).toBe(150);
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Chai", portions: [{ measure: "teacup", gramsPerMeasure: 130 }] }))).toBe(130);
+  });
+
+  it("a saved cup still wins over a saved teacup", () => {
+    const withCup = { foodName: "Chai", densityGPerMl: 1, userMeasures: [{ measure: "teacup", ml: 150 }, { measure: "cup", ml: 200 }] };
+    expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, withCup))).toBe(200);
+  });
+
   it("a dry or oily product named tea keeps the standard cup", () => {
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea seed oil", densityGPerMl: 1 }))).toBe(240);
     expect(gramsOf(resolvePortion({ quantity: 1, unit: "cup" }, { foodName: "Tea, hot, with milk", densityGPerMl: 1 }))).toBe(110);

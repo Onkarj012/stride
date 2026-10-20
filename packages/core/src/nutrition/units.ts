@@ -295,7 +295,7 @@ function resolved(grams: number, confidence: number, method: PortionMethod): Por
 /** Words that make a "tea" food a dry, oily or leafy product rather than a drink. */
 // Built through tokenize so "leaves" matches the singular "leave" that the food name's tokens become.
 const NOT_A_DRINK_WORDS: ReadonlySet<string> = new Set(
-  ["oil", "seed", "leaves", "leaf", "powder", "dry", "bag", "masala"].flatMap(tokenize),
+  ["oil", "seed", "leaves", "leaf", "powder", "dry", "bag", "mix"].flatMap(tokenize),
 );
 
 /** True when a food is a prepared chai or tea drink: its head word is chai or tea, and no dry or oily word appears. */
@@ -305,14 +305,6 @@ function isPreparedTea(foodName: string): boolean {
   return !tokenize(foodName).some((t) => NOT_A_DRINK_WORDS.has(t));
 }
 
-/** Ml for a cup of prepared tea, which is served in a teacup. The user's saved teacup beats the household size. */
-function teacupMlFor(unit: string, foodName: string, userMeasures: readonly UserMeasure[]): number | undefined {
-  if (unit !== "cup" || !isPreparedTea(foodName)) return undefined;
-  for (const m of userMeasures) {
-    if (normalizeUnit(m.measure) === "teacup" && "ml" in m && m.ml > 0) return m.ml;
-  }
-  return HOUSEHOLD_VESSELS.teacup?.ml;
-}
 
 /** Turns `{quantity, unit}` from extraction into grams. Unknown units or missing data return `unresolved`, never a guess. */
 export function resolvePortion(
@@ -321,6 +313,11 @@ export function resolvePortion(
 ): PortionResult {
   const { quantity } = input;
   if (!Number.isFinite(quantity) || quantity <= 0) return { status: "unresolved", reason: "invalid_quantity" };
+  // A cup of prepared tea is a teacup, unless the user or the food names its own cup. Then it resolves exactly as a teacup.
+  const hasOwnCup = [...(ctx.userMeasures ?? []), ...(ctx.portions ?? [])].some((m) => normalizeUnit(m.measure) === "cup");
+  if (normalizeUnit(input.unit) === "cup" && !hasOwnCup && isPreparedTea(ctx.foodName)) {
+    return resolvePortion({ quantity, unit: "teacup" }, ctx);
+  }
   const rawUnit = normalizeUnit(input.unit);
   const isBare = normalizeText(input.unit ?? "") === "";
   // "1 phulka" arrives with the food name as its unit; treat it as one piece of that food.
@@ -379,7 +376,7 @@ export function resolvePortion(
   }
 
   const vessel = own(HOUSEHOLD_VESSELS, unit);
-  const mlPerUnit = userMl ?? teacupMlFor(unit, ctx.foodName, userMeasures) ?? own(VOLUME_UNITS_ML, unit) ?? vessel?.ml;
+  const mlPerUnit = userMl ?? own(VOLUME_UNITS_ML, unit) ?? vessel?.ml;
   if (mlPerUnit !== undefined) {
     const density = resolveDensity(ctx);
     if (density === null) return { status: "unresolved", reason: "missing_density" };
