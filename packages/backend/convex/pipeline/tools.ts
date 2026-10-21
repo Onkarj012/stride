@@ -411,7 +411,9 @@ async function estimate(
 ): Promise<JsonValue> {
   const index = args.item_index;
   const item = typeof index === "number" && !picks.has(index) ? open.get(index) : undefined;
-  if (typeof index !== "number" || item === undefined) return { ok: false, error: "item_index is not an unresolved item" };
+  if (typeof index !== "number" || item === undefined || item.quantity === null) {
+    return { ok: false, error: "item_index is not an unresolved item with an amount" };
+  }
   const parsed = parseEstimate(args);
   if (parsed === null) return { ok: false, error: "name, grams, kcal, protein_g, carbs_g, fat_g and assumptions are required" };
   const problem = estimateProblem(parsed, item.quantity, item.unit);

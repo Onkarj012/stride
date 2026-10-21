@@ -13,10 +13,11 @@ const USAGE = `usage: pnpm --filter @stride/core data:import [fdc] [exercises] [
 With no arguments, runs fdc and exercises. Output goes to packages/core/data/out/.
 Run in this order: fdc, cofid, indian. indian reads the fdc and cofid output, so it must come after them.`;
 
-/** Downloads SR Legacy and Foundation, maps them and writes fdc_foods and fdc_food_portions. */
+/** Downloads SR Legacy and Foundation, maps them and writes fdc_foods, fdc_food_portions and the dropped portions. */
 async function importFdc(): Promise<void> {
   const foods: FoodRecord[] = [];
   const portions: FoodPortionRecord[] = [];
+  const dropped: FoodPortionRecord[] = [];
   for (const dataset of FDC_DATASETS) {
     const files = unzip(await cachedDownload(dataset.url), FDC_FILES);
     const result = mapFdc(files, dataset.dataType);
@@ -26,9 +27,11 @@ async function importFdc(): Promise<void> {
     );
     foods.push(...result.foods);
     portions.push(...result.portions);
+    dropped.push(...result.droppedPortions);
   }
   console.log(`wrote ${await writeNdjson("fdc_foods.ndjson", foods)}`);
   console.log(`wrote ${await writeNdjson("fdc_food_portions.ndjson", portions)}`);
+  console.log(`wrote ${await writeNdjson("fdc_food_portions_dropped.ndjson", dropped)}`);
 }
 
 /** Downloads free-exercise-db and writes exercises. */

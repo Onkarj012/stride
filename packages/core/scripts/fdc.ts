@@ -44,11 +44,14 @@ const SKIPPED_MEASURE_UNIT_IDS = new Set(["1010", "1011", "1012"]);
 const UNDETERMINED_UNIT_ID = "9999";
 /** FNDDS placeholder portion with no real measure. Its gram weight is a guess, so it is skipped. */
 const UNSPECIFIED_PORTION = "Quantity not specified";
+/** Gram weights above this are whole dishes or conversion errors, not one measure. */
+const MAX_PORTION_GRAMS = 2000;
 
-/** Mapped rows plus counts of what was dropped and why. */
+/** Mapped rows, the portions `isOddPortion` rejected, and counts of what was dropped. */
 export interface FdcResult {
   foods: FoodRecord[];
   portions: FoodPortionRecord[];
+  droppedPortions: FoodPortionRecord[];
   skippedFoods: number;
   skippedPortions: number;
 }
@@ -103,6 +106,18 @@ function measureOf(label: string): string {
   const words = (leadingQuantity(text)?.rest ?? text).split(/\s+/);
   const pair = words.slice(0, 2).join(" ");
   return normalizeUnit(TWO_WORD_MEASURES.has(pair) ? pair : (words[0] ?? ""));
+}
+
+/** True when a finished portion would make a confusing or wrong unit chip. */
+function isOddPortion(label: string, gramsPerMeasure: number): boolean {
+  return (
+    !Number.isFinite(gramsPerMeasure) ||
+    gramsPerMeasure <= 0 ||
+    gramsPerMeasure > MAX_PORTION_GRAMS ||
+    /^[\d\s]+$/.test(label) ||
+    /calorie/i.test(label) ||
+    label.includes(UNSPECIFIED_PORTION)
+  );
 }
 
 /** Maps one extracted FDC CSV set to `foods` and `food_portions` rows for the given data type. */
@@ -184,10 +199,17 @@ export function mapFdc(files: ReadonlyMap<string, string>, dataType: string): Fd
     group.grams.push(grams / amount);
     grouped.set(key, group);
   }
-  const portions = [...grouped.values()].map(({ record, grams }) => ({
+  const averaged = [...grouped.values()].map(({ record, grams }) => ({
     ...record,
     gramsPerMeasure: grams.reduce((s, g) => s + g, 0) / grams.length,
   }));
+  const portions: FoodPortionRecord[] = [];
+  const droppedPortions: FoodPortionRecord[] = [];
+  for (const portion of averaged) {
+    if (isOddPortion(portion.description, portion.gramsPerMeasure)) droppedPortions.push(portion);
+    else portions.push(portion);
+  }
+  skippedPortions += droppedPortions.length;
 
-  return { foods, portions, skippedFoods, skippedPortions };
+  return { foods, portions, droppedPortions, skippedFoods, skippedPortions };
 }

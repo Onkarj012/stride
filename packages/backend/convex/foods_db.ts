@@ -139,6 +139,37 @@ export const upsertFoodPortions = internalMutation({
   },
 });
 
+/** Deletes the `food_portions` rows matching each listed food + description. Used to prune portions the importer now rejects. */
+export const deleteFoodPortions = internalMutation({
+  args: { portions: v.array(foodPortionRecordValidator) },
+  returns: v.object({ deleted: v.number(), absent: v.number(), missingFood: v.number() }),
+  handler: async (ctx, { portions }) => {
+    checkBatch(portions.length);
+    const counts = { deleted: 0, absent: 0, missingFood: 0 };
+    for (const portion of portions) {
+      const food = await ctx.db
+        .query("foods")
+        .withIndex("by_source_and_sourceId", (q) => q.eq("source", portion.source).eq("sourceId", portion.sourceId))
+        .unique();
+      if (food === null) {
+        counts.missingFood++;
+        continue;
+      }
+      const existing = await ctx.db
+        .query("food_portions")
+        .withIndex("by_foodId_and_description", (q) => q.eq("foodId", food._id).eq("description", portion.description))
+        .unique();
+      if (existing === null) {
+        counts.absent++;
+      } else {
+        await ctx.db.delete("food_portions", existing._id);
+        counts.deleted++;
+      }
+    }
+    return counts;
+  },
+});
+
 /** Inserts or updates `exercises` keyed on sourceId. Rerunning the same batch changes nothing. */
 export const upsertExercises = internalMutation({
   args: { exercises: v.array(exerciseRecordValidator) },

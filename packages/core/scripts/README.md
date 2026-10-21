@@ -40,6 +40,7 @@ Each line is one JSON object. The types are `FoodRecord`, `FoodPortionRecord` an
 ```sh
 pnpm --filter stride-backend data:load          # dev deployment from packages/backend/.env.local
 pnpm --filter stride-backend data:load --prod   # production; extra flags go to `convex run`
+pnpm --filter stride-backend data:load --prune-portions ../core/data/out/fdc_food_portions_dropped.ndjson   # also deletes those portions; the importer writes that file
 ```
 
 It needs the schema deployed first (`pnpm dev:convex` or `npx convex deploy`). CI does not run it.
