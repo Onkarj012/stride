@@ -245,7 +245,7 @@ const SUGAR_ITEMS = new Set(
 /** Phrases that rule out a sweet drink: no added sugar, or a solid food that has a drink word. Whole phrases only. */
 const NOT_SWEET_PHRASES = [
   "sugar free", "no sugar", "no added sugar", "without sugar", "without added sugar", "zero sugar", "unsweetened", "diet",
-  "biscuit", "cookie", "cake", "ice cream", "kulfi", "candy", "toffee", "bar", "powder", "granules", "mix",
+  "biscuit", "cookie", "cookies", "cake", "ice cream", "kulfi", "candy", "toffee", "bar", "powder", "granules", "mix",
 ];
 
 /** True when a name has one of the phrases as whole words, so "tea" matches "Tea, black" but not "steak". */

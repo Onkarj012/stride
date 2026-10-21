@@ -306,6 +306,18 @@ describe("sugar double count warning", () => {
     expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
   });
 
+  test("a solid food with a drink word, such as tea cookies, is not a sweet drink", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Tea cookies", aliases: [], searchText: "Tea cookies", per100g: { ...RICE, sugar: 20 }, source: "fdc", sourceId: "9", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "10", verified: true });
+    });
+    llm = () => extraction([{ food: "tea cookies", quantity: 50, unit: "g" }, { food: "sugar", quantity: 5, unit: "g" }]);
+    const result = await logText(user, "tea cookies with sugar");
+
+    expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
+  });
+
   test("a dish with honey in its name is not a standalone sweetener", async () => {
     const { t, user } = await setup();
     await teaAndSugar(t, 5);
