@@ -61,8 +61,6 @@
         "projectId": "d196dbbf-4b00-4bf6-b681-b2b7be4b9b29"
       }
     },
-    "icon": "./assets/icon.png",
-    "runtimeVersion": { "policy": "fingerprint" },
-    "updates": { "url": "https://u.expo.dev/d196dbbf-4b00-4bf6-b681-b2b7be4b9b29" }
+    "icon": "./assets/icon.png"
   }
 }
