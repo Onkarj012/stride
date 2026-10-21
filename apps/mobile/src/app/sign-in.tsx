@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useSignIn } from '@clerk/expo'
-import { useSSO } from '@clerk/expo/experimental'
+import { useSSO, type StartSSOFlowReturnType } from '@clerk/expo/experimental'
 import * as WebBrowser from 'expo-web-browser'
 import { layout, radii } from '@stride/ui-tokens'
 import { Polo, type PoloMood } from '@/components/Polo'
@@ -13,6 +13,7 @@ import { font, themedStyles, useTheme } from '@/theme'
 WebBrowser.maybeCompleteAuthSession()
 
 type ClerkFailure = { code?: string; message: string; longMessage?: string }
+type SignInState = NonNullable<StartSSOFlowReturnType['signIn']>
 
 const FRIENDLY: Record<string, string> = {
   form_password_incorrect: 'That password is not right. Try again.',
@@ -47,6 +48,8 @@ export default function SignInScreen() {
   const [error, setError] = useState<string | null>(null)
   const [hop, setHop] = useState(1)
   const [googleBusy, setGoogleBusy] = useState(false)
+  // The resource that sent the emailed code. The Google flow returns its own copy, so keep the one in use.
+  const [codeSignIn, setCodeSignIn] = useState<SignInState | null>(null)
   const busy = fetchStatus === 'fetching' || googleBusy
   const mood: PoloMood = error ? 'wow' : 'idle'
 
@@ -59,14 +62,19 @@ export default function SignInScreen() {
     }
   }, [])
 
-  // Runs the Google flow. Clerk activates the session, so the auth gate moves on by itself.
+  // Runs the Google flow. A finished session moves the auth gate on by itself. A second factor goes to the code step.
   async function continueWithGoogle() {
     setError(null)
     setGoogleBusy(true)
     try {
-      const { createdSessionId, authSessionResult } = await startSSOFlow({ strategy: 'oauth_google' })
+      const { createdSessionId, authSessionResult, signIn: result } = await startSSOFlow({ strategy: 'oauth_google' })
       const cancelled = authSessionResult?.type === 'cancel' || authSessionResult?.type === 'dismiss'
-      if (!createdSessionId && !cancelled) setError('Google sign-in failed. Try again.')
+      if (createdSessionId || cancelled) return
+      if (result && (result.status === 'needs_second_factor' || result.status === 'needs_client_trust')) {
+        await advance(result)
+        return
+      }
+      setError('Google sign-in failed. Try again.')
     } catch (err) {
       setError(isClerkFailure(err) ? describe(err) : 'Google sign-in failed. Try again.')
     } finally {
@@ -75,15 +83,16 @@ export default function SignInScreen() {
   }
 
   // Finishes the attempt or moves to the code step, depending on what Clerk needs next.
-  async function advance() {
-    if (signIn.status === 'complete') {
-      const { error: err } = await signIn.finalize()
+  async function advance(current: SignInState) {
+    if (current.status === 'complete') {
+      const { error: err } = await current.finalize()
       if (err) setError(describe(err))
       return
     }
-    if (signIn.status === 'needs_second_factor' || signIn.status === 'needs_client_trust') {
-      const { error: err } = await signIn.mfa.sendEmailCode()
+    if (current.status === 'needs_second_factor' || current.status === 'needs_client_trust') {
+      const { error: err } = await current.mfa.sendEmailCode()
       if (err) return setError(describe(err))
+      setCodeSignIn(current)
       setStep('code')
       setHop((n) => n + 1)
       return
@@ -96,15 +105,16 @@ export default function SignInScreen() {
     setError(null)
     const { error: err } = await signIn.password({ emailAddress: email.trim(), password })
     if (err) return setError(describe(err))
-    await advance()
+    await advance(signIn)
   }
 
-  // Submits the emailed code.
+  // Submits the emailed code to the resource that sent it.
   async function submitCode() {
+    if (!codeSignIn) return setError('Start sign-in again.')
     setError(null)
-    const { error: err } = await signIn.mfa.verifyEmailCode({ code: code.trim() })
+    const { error: err } = await codeSignIn.mfa.verifyEmailCode({ code: code.trim() })
     if (err) return setError(describe(err))
-    await advance()
+    await advance(codeSignIn)
   }
 
   const canSubmit = !busy && (step === 'password' ? email.trim() !== '' && password !== '' : code.trim().length >= 6)
