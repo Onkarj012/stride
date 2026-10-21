@@ -198,6 +198,167 @@ describe("gate: auto-commit vs draft", () => {
   });
 });
 
+describe("sugar double count warning", () => {
+  /** Adds a "Tea" food with the given sugar per 100 g, and a "Sugar" food, to a backend. */
+  async function teaAndSugar(t: TestConvex<typeof schema>, teaSugar: number): Promise<void> {
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Tea", aliases: [], searchText: "Tea", per100g: { ...RICE, sugar: teaSugar }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "9", verified: true });
+    });
+  }
+
+  /** Two items in one log: 100 g of tea, then 5 g of sugar. */
+  const teaWithSugar = [
+    { food: "tea", quantity: 100, unit: "g" },
+    { food: "sugar", quantity: 5, unit: "g" },
+  ];
+
+  test("a sweetened drink with a separate sugar item stays a draft, with the warning on the drink only", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 5);
+    llm = () => extraction(teaWithSugar);
+    const result = await logText(user, "tea with sugar");
+
+    expect(result.kind).toBe("draft");
+    if (result.kind !== "draft") return;
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items.map((item) => item.reasons)).toEqual([["sugar_double_count"], ["sugar_separate"]]);
+    expect(draft?.items.map((item) => item.grams)).toEqual([100, 5]);
+  });
+
+  test("an unsweetened drink with sugar commits with no warning", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 0);
+    llm = () => extraction(teaWithSugar);
+    const result = await logText(user, "tea with sugar");
+
+    expect(result.kind).toBe("committed");
+    expect(result.lines.every((line) => line.reasons.length === 0)).toBe(true);
+    expect(await entryRows(t)).toHaveLength(2);
+  });
+
+  test("confirming the sweetened draft as it is keeps both entries", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 5);
+    llm = () => extraction(teaWithSugar);
+    const result = await logText(user, "tea with sugar");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+
+    const confirmed = await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId });
+    expect(confirmed.kind).toBe("committed");
+    expect(await entryRows(t)).toHaveLength(2);
+  });
+
+  test("a drink alone gives no warning", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 5);
+    llm = () => extraction([{ food: "tea", quantity: 100, unit: "g" }]);
+    const result = await logText(user, "tea");
+
+    expect(result.kind).toBe("committed");
+    expect(result.lines.every((line) => line.reasons.length === 0)).toBe(true);
+  });
+
+  test("a sugar word inside a drink name is not a separate sugar item", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Tea with sugar", aliases: [], searchText: "Tea with sugar", per100g: { ...RICE, sugar: 5 }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Coffee", aliases: [], searchText: "Coffee", per100g: { ...RICE, sugar: 5 }, source: "fdc", sourceId: "9", verified: true });
+    });
+    llm = () => extraction([{ food: "tea with sugar", quantity: 100, unit: "g" }, { food: "coffee", quantity: 100, unit: "g" }]);
+    const result = await logText(user, "tea with sugar and coffee");
+
+    expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
+  });
+
+  test("a sugar-free drink with a sugar-free sweetener name gives no warning", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Cola", aliases: [], searchText: "Cola", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar-free cola", aliases: [], searchText: "Sugar-free cola", per100g: { ...RICE, sugar: 0 }, source: "fdc", sourceId: "9", verified: true });
+      await ctx.db.insert("foods", { name: "Iced tea, no added sugar", aliases: [], searchText: "Iced tea, no added sugar", per100g: { ...RICE, sugar: 5 }, source: "fdc", sourceId: "10", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "11", verified: true });
+    });
+    llm = () =>
+      extraction([
+        { food: "cola", quantity: 330, unit: "g" },
+        { food: "sugar-free cola", quantity: 330, unit: "g" },
+        { food: "iced tea, no added sugar", quantity: 200, unit: "g" },
+        { food: "sugar", quantity: 5, unit: "g" },
+      ]);
+    const result = await logText(user, "cola, sugar-free cola, iced tea and sugar");
+
+    // Only the sweet cola warns. The sugar-free cola and the no-added-sugar iced tea do not.
+    expect(result.lines[0]?.reasons).toContain("sugar_double_count");
+    expect(result.lines[1]?.reasons).not.toContain("sugar_double_count");
+    expect(result.lines[2]?.reasons).not.toContain("sugar_double_count");
+  });
+
+  test("a solid food with a drink word, such as tea biscuits, is not a sweet drink", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Tea biscuits", aliases: [], searchText: "Tea biscuits", per100g: { ...RICE, sugar: 20 }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "9", verified: true });
+    });
+    llm = () => extraction([{ food: "tea biscuits", quantity: 50, unit: "g" }, { food: "sugar", quantity: 5, unit: "g" }]);
+    const result = await logText(user, "tea biscuits with sugar");
+
+    expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
+  });
+
+  test("a solid food with a drink word, such as tea cookies, is not a sweet drink", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Tea cookies", aliases: [], searchText: "Tea cookies", per100g: { ...RICE, sugar: 20 }, source: "fdc", sourceId: "9", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "10", verified: true });
+    });
+    llm = () => extraction([{ food: "tea cookies", quantity: 50, unit: "g" }, { food: "sugar", quantity: 5, unit: "g" }]);
+    const result = await logText(user, "tea cookies with sugar");
+
+    expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
+  });
+
+  test("a dish with honey in its name is not a standalone sweetener", async () => {
+    const { t, user } = await setup();
+    await teaAndSugar(t, 5);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Honey roasted peanuts", aliases: [], searchText: "Honey roasted peanuts", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "10", verified: true });
+      await ctx.db.insert("foods", { name: "Sweetener", aliases: [], searchText: "Sweetener", per100g: { ...RICE, sugar: 0 }, source: "fdc", sourceId: "11", verified: true });
+    });
+    llm = () =>
+      extraction([
+        { food: "tea", quantity: 100, unit: "g" },
+        { food: "honey roasted peanuts", quantity: 50, unit: "g" },
+        { food: "sweetener", quantity: 1, unit: "g" },
+      ]);
+    const result = await logText(user, "tea, honey roasted peanuts and a sweetener");
+
+    expect(result.lines.every((line) => !line.reasons.includes("sugar_double_count"))).toBe(true);
+    expect(result.lines[0]?.reasons).not.toContain("sugar_separate");
+  });
+
+  test("caffeine-free cola with a separate sugar item still warns", async () => {
+    const { t, user } = await setup();
+    await t.run(async (ctx) => {
+      await ctx.db.insert("foods", { name: "Caffeine-free cola", aliases: [], searchText: "Caffeine-free cola", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "8", verified: true });
+      await ctx.db.insert("foods", { name: "Sugar", aliases: [], searchText: "Sugar", per100g: { ...RICE, sugar: 100 }, source: "fdc", sourceId: "9", verified: true });
+    });
+    await t.run((ctx) =>
+      ctx.db.insert("foods", { name: "Chocolate milkshake", aliases: [], searchText: "Chocolate milkshake", per100g: { ...RICE, sugar: 10 }, source: "fdc", sourceId: "12", verified: true }),
+    );
+    llm = () =>
+      extraction([
+        { food: "caffeine-free cola", quantity: 330, unit: "g" },
+        { food: "sugar", quantity: 5, unit: "g" },
+        { food: "chocolate milkshake", quantity: 300, unit: "g" },
+      ]);
+    const result = await logText(user, "caffeine-free cola with sugar and a chocolate milkshake");
+
+    expect(result.lines[0]?.reasons).toContain("sugar_double_count");
+    expect(result.lines[2]?.reasons).toContain("sugar_double_count");
+  });
+});
+
 describe("line kcal stays unrounded until the app displays it", () => {
   test("lines of 100.4 and 200.4 kcal come back unrounded, and their sum rounds to 301", async () => {
     const { t, user } = await setup();

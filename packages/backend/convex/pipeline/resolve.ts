@@ -5,6 +5,7 @@ import {
   evaluateGate,
   expandSynonyms,
   isLocalDate,
+  normalizeText,
   rankCandidates,
   resolvePortion,
   scaleNutrients,
@@ -61,7 +62,9 @@ export type ItemReason =
   | "invalid_date"
   | "invalid_portion_scale"
   | "ai_estimate"
-  | "photo_amount";
+  | "photo_amount"
+  | "sugar_double_count"
+  | "sugar_separate";
 
 /** The matcher's answer for one item text. */
 interface Match {
@@ -232,6 +235,56 @@ export function validScale(scale: number): boolean {
   return Number.isFinite(scale) && scale > 0 && scale <= 1;
 }
 
+const BEVERAGE_TERMS = [
+  "chai", "tea", "coffee", "cappuccino", "latte", "lassi", "milkshake", "shake", "juice", "cola", "soda",
+  "cold drink", "nimbu pani", "sharbat", "frappe", "smoothie",
+];
+const SUGAR_ITEMS = new Set(
+  ["sugar", "white sugar", "brown sugar", "shakkar", "cheeni", "jaggery", "gur", "honey", "sweetener"].map(normalizeText),
+);
+/** Phrases that rule out a sweet drink: no added sugar, or a solid food that has a drink word. Whole phrases only. */
+const NOT_SWEET_PHRASES = [
+  "sugar free", "no sugar", "no added sugar", "without sugar", "without added sugar", "zero sugar", "unsweetened", "diet",
+  "biscuit", "cookie", "cookies", "cake", "ice cream", "kulfi", "candy", "toffee", "bar", "powder", "granules", "mix",
+];
+
+/** True when a name has one of the phrases as whole words, so "tea" matches "Tea, black" but not "steak". */
+function namesPhrase(names: readonly string[], phrases: readonly string[]): boolean {
+  return names.some((name) => {
+    const padded = ` ${normalizeText(name)} `;
+    return phrases.some((phrase) => padded.includes(` ${normalizeText(phrase)} `));
+  });
+}
+
+/** A sweet drink: a beverage name with sugar in the DB row, and no "sugar free", "unsweetened" or "diet" in the name. */
+function isSweetDrink(item: SugarCandidate): boolean {
+  const names = [item.text, ...(item.foodName === null ? [] : [item.foodName])];
+  return item.sugarPer100g !== null && item.sugarPer100g > 0 && namesPhrase(names, BEVERAGE_TERMS) && !namesPhrase(names, NOT_SWEET_PHRASES);
+}
+
+/** A standalone sweetener: a sugar word as the whole typed item or the matched food's first segment, and the matched food has sugar (or is unmatched). */
+function isStandaloneSugar(item: SugarCandidate): boolean {
+  const segment = item.foodName?.split(",")[0] ?? "";
+  const named = SUGAR_ITEMS.has(normalizeText(item.text)) || SUGAR_ITEMS.has(normalizeText(segment));
+  return named && (item.foodName === null || (item.sugarPer100g ?? 0) > 0);
+}
+
+/** One item's typed text, its matched food name (null when unmatched), and the sugar per 100 g of its matched food. */
+export interface SugarCandidate {
+  text: string;
+  foodName: string | null;
+  sugarPer100g: number | null;
+}
+
+/**
+ * Sweet drinks and standalone sugar items in one input, when both exist. Empty lists mean no possible double count.
+ */
+export function sugarOverlap(items: readonly SugarCandidate[]): { drinks: number[]; sugars: number[] } {
+  const drinks = items.flatMap((item, i) => (isSweetDrink(item) ? [i] : []));
+  const sugars = items.flatMap((item, i) => (isStandaloneSugar(item) ? [i] : []));
+  return drinks.length > 0 && sugars.length > 0 ? { drinks, sugars } : { drinks: [], sugars: [] };
+}
+
 /** Matches, resolves and gates every item. Runs in a query for the preview and again in the commit mutation. */
 export async function resolveItems(
   ctx: Ctx,
@@ -315,6 +368,17 @@ export async function resolveItems(
     if (gated === undefined) return;
     r.confidence = gated.confidence;
     r.reasons = [...gated.reasons, ...r.reasons];
+  });
+  const overlap = sugarOverlap(
+    resolved.map((r) => ({
+      text: r.item.food,
+      foodName: r.food?.name ?? null,
+      sugarPer100g: r.food?.per100g.sugar ?? null,
+    })),
+  );
+  resolved.forEach((r, i) => {
+    if (overlap.drinks.includes(i)) r.reasons.push("sugar_double_count");
+    if (overlap.sugars.includes(i)) r.reasons.push("sugar_separate");
   });
   const commit = gate.decision === "commit" && resolved.every((r) => r.reasons.length === 0);
   return { resolved, commit };

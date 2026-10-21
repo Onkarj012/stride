@@ -145,6 +145,8 @@ export function DraftCard({
     return sum === null || k === null || k === undefined ? null : sum + k
   }, 0)
   const photo = draft.inputKind === 'photo'
+  // Client-side advisory only: a changed food hides the warning, and the card does not re-run the sugar rules.
+  const sugarKept = draft.items.some((other, j) => kept.includes(j) && fixes[j]?.foodId === undefined && other.reasons.includes('sugar_separate'))
 
   // Sends the fixes. The server turns quantity and unit into grams itself, so it checks every amount too.
   async function confirm() {
@@ -227,6 +229,9 @@ export function DraftCard({
                   {onEstimate ? <Tag text="AI estimate" tone="est" /> : null}
                 </View>
                 {onEstimate && item.note ? <Text style={s.metaText}>{item.note}</Text> : null}
+                {item.reasons.includes('sugar_double_count') && sugarKept && fix.foodId === undefined ? (
+                  <Text style={s.why}>This drink may already include sugar. Check the drink or remove the separate sugar.</Text>
+                ) : null}
                 <View style={s.meta}>
                   <Text style={s.metaText}>
                     {metaOf(plan)}
