@@ -130,7 +130,7 @@ export default function SignInScreen() {
         <Text style={s.lead}>
           {step === 'password'
             ? 'Same account as the web app. Polo keeps your log in sync.'
-            : `We sent a code to ${email.trim()}. It keeps this phone trusted.`}
+            : `We sent a code to ${codeSignIn?.identifier ?? 'your email'}. It keeps this phone trusted.`}
         </Text>
 
         <View style={s.form}>
