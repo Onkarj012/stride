@@ -1,13 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useSignIn } from '@clerk/expo'
+import { useSSO, type StartSSOFlowReturnType } from '@clerk/expo/experimental'
+import * as WebBrowser from 'expo-web-browser'
 import { layout, radii } from '@stride/ui-tokens'
 import { Polo, type PoloMood } from '@/components/Polo'
 import { Tap } from '@/components/Tap'
 import { font, themedStyles, useTheme } from '@/theme'
 
+// Lets the Google redirect finish the browser session that opened it.
+WebBrowser.maybeCompleteAuthSession()
+
 type ClerkFailure = { code?: string; message: string; longMessage?: string }
+type SignInState = NonNullable<StartSSOFlowReturnType['signIn']>
 
 const FRIENDLY: Record<string, string> = {
   form_password_incorrect: 'That password is not right. Try again.',
@@ -22,12 +28,18 @@ function describe(error: ClerkFailure): string {
   return (error.code && FRIENDLY[error.code]) || error.longMessage || 'Something went wrong. Try again.'
 }
 
-// Email and password sign-in, with the emailed code step Clerk asks for on a new device.
+// Tells a Clerk error object apart from anything else a thrown value can be.
+function isClerkFailure(err: unknown): err is ClerkFailure {
+  return typeof err === 'object' && err !== null && 'message' in err && typeof err.message === 'string'
+}
+
+// Email and password sign-in, Google sign-in, and the emailed code step Clerk asks for on a new device.
 export default function SignInScreen() {
   const t = useTheme()
   const s = useStyles()
   const insets = useSafeAreaInsets()
   const { signIn, fetchStatus } = useSignIn()
+  const { startSSOFlow } = useSSO()
   const [step, setStep] = useState<'password' | 'code'>('password')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -35,19 +47,52 @@ export default function SignInScreen() {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [hop, setHop] = useState(1)
-  const busy = fetchStatus === 'fetching'
+  const [googleBusy, setGoogleBusy] = useState(false)
+  // The resource that sent the emailed code. The Google flow returns its own copy, so keep the one in use.
+  const [codeSignIn, setCodeSignIn] = useState<SignInState | null>(null)
+  const busy = fetchStatus === 'fetching' || googleBusy
   const mood: PoloMood = error ? 'wow' : 'idle'
 
+  // Android opens the browser faster when it is warmed up while this screen is shown.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return
+    void WebBrowser.warmUpAsync()
+    return () => {
+      void WebBrowser.coolDownAsync()
+    }
+  }, [])
+
+  // Runs the Google flow. A finished session moves the auth gate on by itself. A second factor goes to the code step.
+  async function continueWithGoogle() {
+    setError(null)
+    setGoogleBusy(true)
+    try {
+      const { createdSessionId, authSessionResult, signIn: result } = await startSSOFlow({ strategy: 'oauth_google' })
+      const cancelled = authSessionResult?.type === 'cancel' || authSessionResult?.type === 'dismiss'
+      if (createdSessionId || cancelled) return
+      if (result && (result.status === 'needs_second_factor' || result.status === 'needs_client_trust')) {
+        await advance(result)
+        return
+      }
+      setError('Google sign-in failed. Try again.')
+    } catch (err) {
+      setError(isClerkFailure(err) ? describe(err) : 'Google sign-in failed. Try again.')
+    } finally {
+      setGoogleBusy(false)
+    }
+  }
+
   // Finishes the attempt or moves to the code step, depending on what Clerk needs next.
-  async function advance() {
-    if (signIn.status === 'complete') {
-      const { error: err } = await signIn.finalize()
+  async function advance(current: SignInState) {
+    if (current.status === 'complete') {
+      const { error: err } = await current.finalize()
       if (err) setError(describe(err))
       return
     }
-    if (signIn.status === 'needs_second_factor' || signIn.status === 'needs_client_trust') {
-      const { error: err } = await signIn.mfa.sendEmailCode()
+    if (current.status === 'needs_second_factor' || current.status === 'needs_client_trust') {
+      const { error: err } = await current.mfa.sendEmailCode()
       if (err) return setError(describe(err))
+      setCodeSignIn(current)
       setStep('code')
       setHop((n) => n + 1)
       return
@@ -60,15 +105,16 @@ export default function SignInScreen() {
     setError(null)
     const { error: err } = await signIn.password({ emailAddress: email.trim(), password })
     if (err) return setError(describe(err))
-    await advance()
+    await advance(signIn)
   }
 
-  // Submits the emailed code.
+  // Submits the emailed code to the resource that sent it.
   async function submitCode() {
+    if (!codeSignIn) return setError('Start sign-in again.')
     setError(null)
-    const { error: err } = await signIn.mfa.verifyEmailCode({ code: code.trim() })
+    const { error: err } = await codeSignIn.mfa.verifyEmailCode({ code: code.trim() })
     if (err) return setError(describe(err))
-    await advance()
+    await advance(codeSignIn)
   }
 
   const canSubmit = !busy && (step === 'password' ? email.trim() !== '' && password !== '' : code.trim().length >= 6)
@@ -84,12 +130,30 @@ export default function SignInScreen() {
         <Text style={s.lead}>
           {step === 'password'
             ? 'Same account as the web app. Polo keeps your log in sync.'
-            : `We sent a code to ${email.trim()}. It keeps this phone trusted.`}
+            : `We sent a code to ${codeSignIn?.identifier ?? 'your email'}. It keeps this phone trusted.`}
         </Text>
 
         <View style={s.form}>
           {step === 'password' ? (
             <>
+              <Tap
+                style={[s.googleButton, busy && s.buttonOff]}
+                disabled={busy}
+                onPress={() => void continueWithGoogle()}
+                accessibilityRole="button"
+              >
+                {googleBusy ? (
+                  <ActivityIndicator color={t.c.ink} />
+                ) : (
+                  <Text style={s.googleText}>Continue with Google</Text>
+                )}
+              </Tap>
+              <Text style={s.hint}>New here? Google creates your account.</Text>
+              <View style={s.divider}>
+                <View style={s.rule} />
+                <Text style={s.dividerText}>or</Text>
+                <View style={s.rule} />
+              </View>
               <TextInput
                 style={s.input}
                 value={email}
@@ -149,7 +213,7 @@ export default function SignInScreen() {
             onPress={() => void (step === 'password' ? submitPassword() : submitCode())}
             accessibilityRole="button"
           >
-            {busy ? (
+            {fetchStatus === 'fetching' ? (
               <ActivityIndicator color={t.c.bg} />
             ) : (
               <Text style={s.buttonText}>{step === 'password' ? 'Sign in' : 'Verify'}</Text>
@@ -204,6 +268,20 @@ const useStyles = themedStyles((t) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  googleButton: {
+    height: 52,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: t.c.line2,
+    backgroundColor: t.c.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  googleText: { ...font('button'), fontSize: 15.5, color: t.c.ink },
+  hint: { ...font('caption'), color: t.c.ink3, textAlign: 'center' },
+  divider: { flexDirection: 'row', alignItems: 'center', gap: 12, marginVertical: 6 },
+  rule: { flex: 1, height: 1, backgroundColor: t.c.line2 },
+  dividerText: { ...font('caption'), color: t.c.ink3 },
   buttonOff: { opacity: 0.45 },
   buttonText: { ...font('button'), fontSize: 15.5, color: t.c.bg },
   back: { ...font('link'), color: t.c.ink2, textAlign: 'center', paddingVertical: 12 },
