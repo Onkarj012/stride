@@ -78,7 +78,7 @@ The most common bug here is a fix that works on the path you tested and is missi
 
 ## Decisions
 
-`decisions.md` records choices that changed what gets built or how, with what was rejected and why, newest first. It is local only and lives in the main checkout. Read it before reversing a behavior or choosing between approaches. An active entry wins over your own preference.
+`decisions.md` records choices that changed what gets built or how, with what was rejected and why, newest first. It is local only and lives in the main checkout. Read it before reversing a behavior or choosing between approaches. An active entry wins over your own preference. Without the main checkout, as in a fresh clone, ask the owner instead.
 
 When you make or hear such a choice, list it under "Decisions" in your final report so it gets recorded. Leave `decisions.md` itself alone. If a decision changes a rule in this file, the rule here gets rewritten in the same change.
 
