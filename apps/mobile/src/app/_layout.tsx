@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
-import { Stack, ThemeProvider, DarkTheme, DefaultTheme, type Theme as NavTheme } from 'expo-router'
+import { Stack, ThemeProvider, DarkTheme, DefaultTheme, type ErrorBoundaryProps, type Theme as NavTheme } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import * as SystemUI from 'expo-system-ui'
 import { StatusBar } from 'expo-status-bar'
@@ -14,6 +14,7 @@ import { ConvexProviderWithClerk } from 'convex/react-clerk'
 import { api } from 'stride-backend/convex/_generated/api'
 import { layout } from '@stride/ui-tokens'
 import { Polo } from '@/components/Polo'
+import { RouteError } from '@/components/RouteError'
 import { readConfig } from '@/lib/config'
 import { initSentry } from '@/lib/sentry'
 import { HoldAppContext, HoldOnboardingContext } from '@/lib/profile'
@@ -67,8 +68,13 @@ function RootLayout() {
 }
 
 export default Sentry.wrap(RootLayout)
-// Root boundary: catches and reports render errors in the layout, the auth gate and routes without their own boundary.
-export { RouteError as ErrorBoundary } from '@/components/RouteError'
+// Root boundary: catches and reports render errors in the layout, the auth gate and routes without their own boundary. Also hides the splash so the error shows.
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  useEffect(() => {
+    void SplashScreen.hideAsync()
+  }, [])
+  return <RouteError {...props} />
+}
 
 // Tabs once signed in with a complete profile, onboarding until then, sign-in when signed out. Polo waits while Clerk and the profile load.
 function AuthGate() {
