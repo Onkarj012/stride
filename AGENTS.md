@@ -68,6 +68,8 @@ Names only. Never print, log, or commit values. Never open `.env*` files unless 
 | `VITE_CONVEX_URL`, `VITE_CLERK_PUBLISHABLE_KEY` | `apps/web/.env.local` | Web client. Required for `pnpm build`. |
 | `VITE_SENTRY_DSN`, `VITE_APP_VERSION`, `VITE_COMMIT_SHA` | `apps/web/.env.local` | Optional Sentry setup |
 | `EXPO_PUBLIC_CONVEX_URL`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | `apps/mobile/.env.local` | Mobile client |
+| `EXPO_PUBLIC_SENTRY_DSN` | `apps/mobile/.env.local` | Mobile crash reports. Off when unset. |
+| `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | shell env at build time | Source map upload in Android release builds. Without them, set `SENTRY_DISABLE_AUTO_UPLOAD=true` or the release build fails. |
 
 ## Conventions
 
