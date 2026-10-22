@@ -1,6 +1,6 @@
 # Stride product reference
 
-What v1 is, who it is for, and what it leaves out. Source: `plans/007-restart.md` (decisions D1-D25) plus the 2026-10-06 amendments V1-V10 listed in `AGENTS.md`. If this file and the plan disagree, the plan and its amendments win.
+What v1 is, who it is for, and what it leaves out. Source: `plans/007-restart.md` (decisions D1-D25) plus later decisions in the local `decisions.md`. Where they disagree, the newest active decision wins.
 
 ## Goals
 
