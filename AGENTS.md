@@ -8,11 +8,11 @@ Product scope lives in `PRODUCT.md`. Past choices and their reasons live in `dec
 
 ### 1. Numbers you can trust
 
-The food database decides grams and nutrients. The AI reads the input and picks the food, the amount, and the household unit. Portion tables turn that into grams, and the `foods` table gives nutrients per 100 g. When the database cannot place a food, the AI may estimate it. That entry carries the "estimated" label everywhere it appears, including after edits. An unknown food never counts as 0 kcal.
+The food database decides grams and nutrients. The AI reads the input and picks the food, the amount, and the household unit. Portion tables turn that into grams, and the `foods` table gives nutrients per 100 g. When the database cannot place a food, the AI may estimate it. That entry carries the "estimated" label everywhere it appears, for as long as it stays an estimate. Photo entries keep the label. Swapping in a database food clears it. An unknown food never counts as 0 kcal.
 
 ### 2. Every change can be undone
 
-The ledger (`entries` and their revision rows) is the truth. The day view, the totals, and the Coach chat are views of it. Every change writes a new revision, and undo reverts one. Anything else a log writes, such as food memory, gets undone with it.
+The food ledger (`entries` and their revision rows) is the truth. The day view, the totals, and the Coach chat are views of it. Every food change writes a new revision, and undo reverts one. Anything else a log writes, such as food memory, gets undone with it.
 
 ### 3. Logging is quick enough to do every meal
 
@@ -26,8 +26,8 @@ If a rule in this file fights the task in front of you, say so and ask the owner
 
 ## Words we use
 
-- **entry**: one logged food, set, or weight. **revision**: one saved version of an entry.
-- **draft** (draft card): items the pipeline was not sure about, waiting for the user to confirm or fix.
+- **entry**: one logged food in the ledger. **revision**: one saved version of an entry. Workout sets live in `sets`, and weigh-ins in `weights` (one per day, overwritten).
+- **draft** (draft card): a whole log the pipeline was not sure about, waiting for the user to confirm or fix.
 - **portion**: a household measure (katori, roti, teacup, glass) with its grams for a food.
 - **food memory**: a user's confirmed choice for a phrase, reused on the next log.
 - **estimate**: a food or amount the AI guessed because the database could not place it.
@@ -48,7 +48,7 @@ If a rule in this file fights the task in front of you, say so and ask the owner
 The most common bug here is a fix that works on the path you tested and is missing on the others. Before calling a change done, say which of these applied:
 
 - **Inputs**: text, voice, photo, barcode, and the Coach.
-- **Writers**: the compose sheet, the draft card, Coach tool calls, and food memory. A label or field one writer sets must survive the others. For example, a Coach edit keeps the "estimated" label.
+- **Writers**: the compose sheet, the draft card, Coach tool calls, and food memory. A label or field one writer sets must follow the same rules whichever writer edits the entry next. The "estimated" label is the usual one to check.
 - **Undo**: every new write has a way back.
 - **Clients**: mobile first. Web is a desktop day log and Progress view on the same backend, with no account or chat screens.
 - **Time**: the user's IANA time zone, IST midnight, and meal slots.
@@ -88,7 +88,7 @@ Plans and research notes describe intent at one moment and go stale. Treat them 
 
 ## How it works
 
-Both clients talk to Convex. A log runs through `convex/pipeline/log.ts`. Voice is transcribed first (Groq). `extract.ts` asks the model (OpenRouter) for items. `resolve.ts` matches each one against the user's foods, food memory, and the `foods` table, then resolves its portion to grams. Items the matcher cannot place go to a short tool loop (`tools.ts`), and to an estimate as a last resort. Confident items save at once with an undo toast. The rest come back as a draft card (`drafts.ts`). `entries.ts` writes entries and revisions, and `day_totals.ts` sums them with math from `packages/core`. The Coach (`chats.ts`) changes the log through the same entry functions. `ai_guard.ts` caps AI spend per user and overall. Weigh-ins feed the adaptive TDEE in `tdee_recompute.ts`.
+Both clients talk to Convex. A log runs through `convex/pipeline/log.ts`. Voice is transcribed first (Groq). `extract.ts` asks the model (OpenRouter) for items. `resolve.ts` matches each one against the user's foods, food memory, and the `foods` table, then resolves its portion to grams. Items the matcher cannot place go to a short tool loop (`tools.ts`), and to an estimate as a last resort. The gate in `packages/core` checks every item. If all pass, the whole log saves at once with an undo toast. Otherwise the whole log comes back as a draft card (`drafts.ts`). `entries.ts` writes entries and revisions, and `day_totals.ts` sums them with math from `packages/core`. The Coach (`chats.ts`) changes the log through the same entry functions. `ai_guard.ts` caps AI spend per user and overall. Weigh-ins feed the adaptive TDEE in `tdee_recompute.ts`.
 
 ## Where code lives
 
