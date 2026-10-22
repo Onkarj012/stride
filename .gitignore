@@ -88,6 +88,7 @@ apps/web/src/styles/tokens.generated.css
 # Local agent scratch and reports
 .scratch/
 reports/
+decisions.md
 
 # Food and exercise import downloads and output (IFCT rows are personal-use only)
 packages/core/data/

@@ -1,7 +1,9 @@
-# Claude Configuration
+# Claude configuration
 
-See `AGENTS.md` for full project details, conventions, and commands.
+Read `AGENTS.md` first. It covers the product, the rules, and how we work.
 
-## Orchestrator rule (permanent)
+## Main session
 
-In this repo the main Claude session acts as an orchestrator only. It must NOT write or edit application code itself — all code changes are delegated to subagents (Codex/gpt-5.5 for spec'd implementation, OpenCode for recon, Fable/Opus agents for taste-sensitive UI and reviews). The main session may read code, run read-only commands, review agent output, and edit docs/config like this file. One-shot exception only when the user explicitly says "execute directly" / "do it yourself".
+The main Claude session orchestrates. It reads code, runs read-only commands, dispatches and reviews agents, merges ready PRs, and edits docs and config. Application code goes to delegated agents, picked with the `routing` skill. Never use Fable models. The one exception is when the owner says "execute directly" or "do it yourself" for that task.
+
+Agents dispatched from here work on their own branch and hand the result back. The rules above are for the main session only.

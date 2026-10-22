@@ -70,7 +70,7 @@ plans/             The restart plan and its research
 
 ## Contributing
 
-Read [`AGENTS.md`](AGENTS.md) for commands, conventions, and how work is split into slices. CI runs typecheck and tests on every pull request.
+Read [`AGENTS.md`](AGENTS.md) for what we never compromise on, conventions, and how we work. CI runs typecheck and tests on every pull request.
 
 ## Data note
 
