@@ -1,4 +1,6 @@
+import { useEffect } from 'react'
 import { Text, View } from 'react-native'
+import * as Sentry from '@sentry/react-native'
 import { router } from 'expo-router'
 import type { ErrorBoundaryProps } from 'expo-router'
 import { layout } from '@stride/ui-tokens'
@@ -7,9 +9,12 @@ import { Polo } from '@/components/Polo'
 import { plainError } from '@/lib/log'
 import { font, themedStyles } from '@/theme'
 
-// Friendly screen instead of a red box when a route throws, with a retry and a way back when there is history.
+// Friendly screen instead of a red box when a route throws. Reports the error to Sentry, with a retry and a way back when there is history.
 export function RouteError({ error, retry }: ErrorBoundaryProps) {
   const s = useStyles()
+  useEffect(() => {
+    Sentry.captureException(error)
+  }, [error])
   return (
     <View style={s.center}>
       <Polo size={64} mood="wow" hop={1} />

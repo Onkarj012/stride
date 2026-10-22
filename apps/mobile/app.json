@@ -3,7 +3,7 @@
     "name": "Stride",
     "slug": "stride-workspace",
     "owner": "leoeccentric",
-    "version": "1.0.0",
+    "version": "0.1.0-alpha.1",
     "orientation": "portrait",
     "scheme": "stride",
     "userInterfaceStyle": "automatic",
@@ -54,7 +54,8 @@
       ],
       "expo-localization",
       "expo-asset",
-      "expo-web-browser"
+      "expo-web-browser",
+      ["@sentry/react-native/expo", { "url": "https://sentry.io/" }]
     ],
     "extra": {
       "eas": {
