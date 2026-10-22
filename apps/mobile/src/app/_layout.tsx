@@ -67,6 +67,8 @@ function RootLayout() {
 }
 
 export default Sentry.wrap(RootLayout)
+// Root boundary: catches and reports render errors in the layout, the auth gate and routes without their own boundary.
+export { RouteError as ErrorBoundary } from '@/components/RouteError'
 
 // Tabs once signed in with a complete profile, onboarding until then, sign-in when signed out. Polo waits while Clerk and the profile load.
 function AuthGate() {
