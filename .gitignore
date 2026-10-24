@@ -59,12 +59,9 @@ Thumbs.db
 # Temporary / scratchpad
 temp/
 
-# Design system reference (local only — not source code)
-Stride_Design_System/
 
 # Graphify cache
-graphify-out/cache/
-.graphify_*
+graphify-out/
 
 # Convex local config
 .convex/local/
@@ -74,7 +71,6 @@ credentials.json
 *.pem
 *.key
 .credentials
-docs/archived-plans-prds.md
 
 .vercel
 
@@ -89,6 +85,7 @@ apps/web/src/styles/tokens.generated.css
 .scratch/
 reports/
 decisions.md
+bugs.md
 
 # Food and exercise import downloads and output (IFCT rows are personal-use only)
 packages/core/data/
