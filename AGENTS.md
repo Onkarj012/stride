@@ -60,7 +60,7 @@ The most common bug here is a fix that works on the path you tested and is missi
 - The main checkout stays on `main` and stays clean. It is for reading, running dev servers against dev, and the owner's local notes.
 - Every change gets its own branch in its own worktree, cut from `origin/main`. Name branches after the change (`fix/draft-amounts`).
 - A new worktree has no `node_modules` and no `.env.local`. Run `pnpm install`. Ask the owner before copying env files in.
-- Gitignored local material (`decisions.md`, `.scratch/`, `reports/`, `temp/`, `docs/`, and plan drafts) exists only in the main checkout. `git worktree list` shows its path.
+- Gitignored local material (`decisions.md`, `bugs.md`, `docs/` with plans and design mocks, and `.scratch/`) exists only in the main checkout. `git worktree list` shows its path.
 
 ## Verifying
 

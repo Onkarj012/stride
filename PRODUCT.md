@@ -1,6 +1,6 @@
 # Stride product reference
 
-What v1 is, who it is for, and what it leaves out. Source: `plans/007-restart.md` (decisions D1-D25) plus later decisions in the local `decisions.md`. Where they disagree, the newest active decision wins.
+What v1 is, who it is for, and what it leaves out. Source: the local `docs/plans/007-restart.md` (decisions D1-D25) plus later decisions in the local `decisions.md`. Where they disagree, the newest active decision wins.
 
 ## Goals
 
@@ -110,7 +110,7 @@ The mascot's temporary name is Macro Polo, shown as "Polo" in the app. The v5 mo
 ## Design (V1, V9)
 
 - v5 is the locked design. It sets the tokens, type (Bricolage Grotesque for display, Geist for text), the dock, cards, and motion.
-- The mock is a local-only file: `temp/mocks/stride-mocks-v5.html`. Open it in a browser; routes are hash links like `#/today`.
+- The mock is a local-only file: `docs/design/stride-mocks-v5.html`. Open it in a browser; routes are hash links like `#/today`.
 - Light and dark themes both ship in v1. The app follows the system setting.
 - Tone: clear utility first, with a flat mascot and springy motion for fun.
 - One `tokens.ts` drives web and native styles (D20).

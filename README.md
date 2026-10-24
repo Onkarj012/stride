@@ -4,7 +4,7 @@ Stride is an AI nutrition and strength tracker for Android, being rebuilt for v1
 
 ## Status
 
-Restart in progress. v1 is being rebuilt in slices per [`plans/007-restart.md`](plans/007-restart.md).
+Restart in progress. v1 is being rebuilt in slices per the restart plan (local only, `docs/plans/007-restart.md`).
 
 - Slice 1 (current) cleans up the repo: old features removed, old docs archived, CI added.
 - The Android app is the main target. The current mobile app will be replaced.
