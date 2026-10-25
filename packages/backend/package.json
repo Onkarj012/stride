@@ -8,7 +8,8 @@
     "convex": "npx convex dev",
     "test": "vitest run",
     "test:watch": "vitest",
-    "data:load": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/load-foods.ts"
+    "data:load": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/load-foods.ts",
+    "eval:food-fallback": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/evaluate-food-fallback.ts"
   },
   "dependencies": {
     "@stride/core": "workspace:*",

@@ -6,6 +6,7 @@ import { applyToDayTotals, MAX_DAY_ENTRIES } from "./day_totals";
 import {
   createdByValidator,
   entrySourceValidator,
+  foodSourceCitationValidator,
   mealSlotValidator,
   nutrientsValidator,
   revisionOpValidator,
@@ -60,6 +61,7 @@ const entryViewValidator = v.object({
   loggedAt: v.number(),
   foodId: v.id("foods"),
   foodName: v.string(),
+  webSources: v.array(foodSourceCitationValidator),
   grams: v.number(),
   nutrients: nutrientsValidator,
   source: entrySourceValidator,
@@ -464,6 +466,7 @@ export const entriesForDay = query({
     return await Promise.all(rows
       .sort((a, b) => a.loggedAt - b.loggedAt)
       .map(async (row) => ({
+        webSources: (await ctx.db.get("foods", row.foodId))?.webSources ?? [],
         _id: row._id,
         entryKey: await entryKey(ctx, row),
         mealNutrients: mealTotals[row.slot],

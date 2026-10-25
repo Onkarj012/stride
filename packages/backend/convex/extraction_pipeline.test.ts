@@ -25,6 +25,9 @@ const HOMEMADE_PANEER: Nutrients = { kcal: 260, protein: 18, carbs: 4, fat: 19, 
 interface LlmReply {
   content?: string | null;
   toolCalls?: { name: string; args: Record<string, unknown> }[];
+  webSources?: { title: string; url: string }[];
+  webSearchRequests?: number;
+  omitWebSearchUsage?: boolean;
   /** Answer with this HTTP status and no body, for failures such as 402. */
   status?: number;
 }
@@ -63,8 +66,21 @@ async function fakeFetch(input: string | URL | Request, init?: RequestInit): Pro
       function: { name: call.name, arguments: JSON.stringify(call.args) },
     }));
     return json({
-      choices: [{ message: { content: reply.content ?? null, tool_calls: toolCalls }, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" }],
-      usage: { prompt_tokens: 200, completion_tokens: 40 },
+      choices: [{
+        message: {
+          content: reply.content ?? null,
+          tool_calls: toolCalls,
+          annotations: reply.webSources?.map((source) => ({ type: "url_citation", url_citation: source })) ?? [],
+        },
+        finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop",
+      }],
+      usage: {
+        prompt_tokens: 200,
+        completion_tokens: 40,
+        ...(reply.omitWebSearchUsage ? {} : {
+          server_tool_use: { web_search_requests: reply.webSearchRequests ?? (reply.webSources === undefined ? 0 : 1) },
+        }),
+      },
     });
   }
   if (url.startsWith("https://api.groq.com/")) return json({ text: "2 rotis" });
@@ -539,6 +555,8 @@ describe("D14 tool loop", () => {
     expect(result.kind).toBe("draft");
     expect(await entryRows(t)).toHaveLength(0);
     expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve"]);
+    const resolveRequest = openRouterBodies.find((body) => kind(body) === "resolve");
+    expect(Array.isArray(resolveRequest?.tools) && resolveRequest.tools.some((tool) => isRecord(tool) && tool.type === "openrouter:web_search")).toBe(false);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -1476,7 +1494,7 @@ describe("draft amounts: a food-name unit does not follow a food change", () => 
 
 describe("AI estimate checks", () => {
   test("a chai estimate passes; macros that do not add up and a 600 g katori are refused", () => {
-    const chai: Estimate = { name: "Masala chai", grams: 110, kcal: 55, protein: 2.5, carbs: 7, fat: 2, assumptions: "Milk and sugar, cafe cup" };
+    const chai: Estimate = { name: "Masala chai", grams: 110, kcal: 55, protein: 2.5, carbs: 7, fat: 2, assumptions: "Milk and sugar, cafe cup", sourceUrls: [] };
     expect(estimateProblem(chai, 1, "teacup")).toBeNull();
     expect(estimateProblem({ ...chai, fat: 10 }, 1, "teacup")).toMatch(/add up/);
     expect(estimateProblem({ ...chai, protein: 60, carbs: 50, fat: 10, kcal: 530 }, 1, "teacup")).toMatch(/cannot weigh more/);
@@ -1484,15 +1502,15 @@ describe("AI estimate checks", () => {
   });
 
   test("a cup of dry oats at 0.34 g/ml passes", () => {
-    const oats: Estimate = { name: "Oats, dry", grams: 82, kcal: 319, protein: 13.2, carbs: 54.2, fat: 6.9, assumptions: "Rolled oats" };
+    const oats: Estimate = { name: "Oats, dry", grams: 82, kcal: 319, protein: 13.2, carbs: 54.2, fat: 6.9, assumptions: "Rolled oats", sourceUrls: [] };
     expect(estimateProblem(oats, 1, "cup")).toBeNull();
   });
 
   test("grams must agree with an explicit mass or volume unit", () => {
-    const paneer: Estimate = { name: "Paneer", grams: 100, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Cubed" };
+    const paneer: Estimate = { name: "Paneer", grams: 100, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Cubed", sourceUrls: [] };
     expect(estimateProblem(paneer, 100, "g")).toBeNull();
     expect(estimateProblem({ ...paneer, grams: 150 }, 100, "g")).toMatch(/do not match 100 g/);
-    const milk: Estimate = { name: "Milk", grams: 600, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Whole" };
+    const milk: Estimate = { name: "Milk", grams: 600, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Whole", sourceUrls: [] };
     expect(estimateProblem(milk, 200, "ml")).toMatch(/do not match 200 ml/);
   });
 });
@@ -1531,6 +1549,191 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     expect(draft?.items[0]?.food?._id).toBe(estimates[0]?._id);
   });
 
+  test("opt-in lookup is bounded, stores only returned citations, and keeps the result estimated after confirmation", async () => {
+    const { t, user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : {
+            webSources: [{ title: "Masala chai nutrition", url: "https://nutrition.example/masala-chai" }],
+            toolCalls: [{ name: "estimate_food", args: { ...CHAI_CALL, source_urls: ["https://nutrition.example/masala-chai"] } }],
+          };
+    const result = await logText(user, "a teacup of masala chai");
+
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const resolveBody = openRouterBodies.find((body) => kind(body) === "resolve");
+    const resolveTools = Array.isArray(resolveBody?.tools) ? resolveBody.tools : [];
+    const searchTool = resolveTools.find((tool) => isRecord(tool) && tool.type === "openrouter:web_search");
+    expect(searchTool).toMatchObject({
+      type: "openrouter:web_search",
+      parameters: { engine: "exa", max_results: 3, max_uses: 1, max_total_results: 3 },
+    });
+    expect(resolveBody?.max_tool_calls).toBe(1);
+    const globalUsage = await t.run((ctx) => ctx.db.query("ai_usage_buckets").take(10));
+    expect(globalUsage.find((bucket) => bucket.scope === "global")?.costUsd).toBeGreaterThan(0.007);
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.webSources).toEqual([{ title: "Masala chai nutrition", url: "https://nutrition.example/masala-chai" }]);
+    const estimate = (await t.run((ctx) => ctx.db.query("foods").collect())).find((food) => food.source === "ai_estimate");
+    expect(estimate).toMatchObject({ verified: false, webSources: draft?.items[0]?.webSources });
+
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId });
+    const entries = await user.query(api.entries.entriesForDay, {});
+    expect(entries[0]).toMatchObject({ flags: ["estimated"], webSources: estimate?.webSources });
+  });
+
+  test("a search-only cited reply continues to a no-web estimate turn", async () => {
+    const { t, user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) => {
+      if (kind(body) === "extract") return extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }]);
+      const hasWebSearch = Array.isArray(body.tools) && body.tools.some((tool) => isRecord(tool) && tool.type === "openrouter:web_search");
+      return hasWebSearch
+        ? { content: "A cited source describes masala chai as a prepared tea with milk and sugar.", webSources: [{ title: "Masala chai nutrition", url: "https://nutrition.example/masala-chai" }] }
+        : { toolCalls: [{ name: "estimate_food", args: { ...CHAI_CALL, source_urls: ["https://nutrition.example/masala-chai"] } }] };
+    };
+
+    const result = await logText(user, "a teacup of masala chai");
+
+    if (result.kind !== "draft") throw new Error("expected a review draft");
+    expect(result.lines[0]).toMatchObject({ foodName: "Masala chai", estimated: true });
+    expect(result.lines[0]?.kcal).toBeCloseTo(55, 8);
+    expect(await entryRows(t)).toHaveLength(0);
+    const resolverBodies = openRouterBodies.filter((body) => kind(body) === "resolve");
+    expect(resolverBodies).toHaveLength(2);
+    expect(resolverBodies[0]?.max_tool_calls).toBe(1);
+    expect(resolverBodies[1]?.tools).not.toContainEqual(expect.objectContaining({ type: "openrouter:web_search" }));
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.webSources).toEqual([{ title: "Masala chai nutrition", url: "https://nutrition.example/masala-chai" }]);
+  });
+
+  test("estimates attach only explicitly selected citations to each item", async () => {
+    const { user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) => kind(body) === "extract"
+      ? extraction([
+          { food: "masala chai", quantity: 1, unit: "teacup" },
+          { food: "unknown lentil bowl", quantity: 1, unit: "katori" },
+          { food: "unknown rice bowl", quantity: 100, unit: "g" },
+        ])
+      : {
+          webSources: [
+            { title: "Masala chai nutrition", url: "https://nutrition.example/masala-chai" },
+            { title: "Lentil bowl nutrition", url: "https://nutrition.example/lentil-bowl" },
+          ],
+          toolCalls: [
+            { name: "estimate_food", args: { ...CHAI_CALL, source_urls: ["https://nutrition.example/masala-chai"] } },
+            { name: "estimate_food", args: { item_index: 1, name: "Unknown lentil bowl", grams: 150, kcal: 212, protein_g: 4, carbs_g: 40, fat_g: 4, assumptions: "Cooked lentils with a little oil", source_urls: ["https://nutrition.example/lentil-bowl"] } },
+            { name: "estimate_food", args: { item_index: 2, name: "Unknown rice bowl", grams: 100, kcal: 150, protein_g: 4, carbs_g: 28, fat_g: 2, assumptions: "Cooked rice with seasoning" } },
+          ],
+        };
+
+    const result = await logText(user, "chai and a lentil bowl and a rice bowl");
+
+    if (result.kind !== "draft") throw new Error("expected a review draft");
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items.map((item) => item.webSources)).toEqual([
+      [{ title: "Masala chai nutrition", url: "https://nutrition.example/masala-chai" }],
+      [{ title: "Lentil bowl nutrition", url: "https://nutrition.example/lentil-bowl" }],
+      [],
+    ]);
+  });
+
+  test("a model-provided URL without a returned citation is never saved", async () => {
+    const { t, user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: { ...CHAI_CALL, source_urls: ["https://fake.example/food"] } }] };
+    const result = await logText(user, "a teacup of masala chai");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    expect(foods.find((food) => food.source === "ai_estimate")?.webSources).toBeUndefined();
+    expect((await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId }))?.items[0]?.webSources).toEqual([]);
+  });
+
+  test("database lookup precedes one web search and later resolver calls stay capped", async () => {
+    const { user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) => {
+      if (kind(body) === "extract") return extraction([
+        { food: "masala chai", quantity: 1, unit: "teacup" },
+        { food: "unknown lentil bowl", quantity: 1, unit: "katori" },
+      ]);
+      const resolverIndex = openRouterBodies.filter((candidate) => kind(candidate) === "resolve").length;
+      if (resolverIndex === 1) return { webSearchRequests: 0, toolCalls: [{ name: "search_food", args: { query: "masala chai" } }] };
+      if (resolverIndex === 2) return { omitWebSearchUsage: true, toolCalls: [{ name: "get_user_foods", args: {} }] };
+      return { toolCalls: [
+        { name: "estimate_food", args: CHAI_CALL },
+        { name: "estimate_food", args: {
+          item_index: 1, name: "Unknown lentil bowl", grams: 150, kcal: 212, protein_g: 4, carbs_g: 40, fat_g: 4, assumptions: "Cooked lentils with a little oil",
+        } },
+      ] };
+    };
+
+    await logText(user, "a teacup of masala chai and a katori of unknown lentil bowl");
+
+    const resolverBodies = openRouterBodies.filter((body) => kind(body) === "resolve");
+    const offeredWebSearch = resolverBodies.map((body) => Array.isArray(body.tools) && body.tools.some((tool) => isRecord(tool) && tool.type === "openrouter:web_search"));
+    expect(offeredWebSearch).toEqual([true, true, false]);
+  });
+
+  test("the final bounded resolver turn is reserved for no-web synthesis", async () => {
+    const { user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) => {
+      if (kind(body) === "extract") return extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }]);
+      const resolverIndex = openRouterBodies.filter((candidate) => kind(candidate) === "resolve").length;
+      return resolverIndex < MAX_TOOL_ITERATIONS
+        ? { webSearchRequests: 0, toolCalls: [{ name: "get_user_foods", args: {} }] }
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    };
+
+    const result = await logText(user, "a teacup of masala chai");
+
+    if (result.kind !== "draft") throw new Error("expected a review draft");
+    expect(result.lines[0]?.kcal).toBeCloseTo(55, 8);
+    const resolverBodies = openRouterBodies.filter((body) => kind(body) === "resolve");
+    expect(resolverBodies).toHaveLength(MAX_TOOL_ITERATIONS);
+    expect(resolverBodies.map((body) => Array.isArray(body.tools) && body.tools.some((tool) => isRecord(tool) && tool.type === "openrouter:web_search"))).toEqual([true, true, true, false]);
+  });
+
+  test("a failed opt-in search falls back to the unresolved review draft without saving a blank entry", async () => {
+    const { t, user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) => kind(body) === "extract"
+      ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+      : Array.isArray(body.tools) && body.tools.some((tool) => isRecord(tool) && tool.type === "openrouter:web_search")
+        ? { status: 503 }
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const result = await logText(user, "a teacup of masala chai");
+    expect(result.kind).toBe("draft");
+    if (result.kind !== "draft") return;
+    expect(result.lines[0]).toMatchObject({ foodName: "Masala chai", estimated: true });
+    expect(result.lines[0]?.kcal).toBeCloseTo(55, 8);
+    expect(result.lines[0]?.reasons).toContain("ai_estimate");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect((await t.run((ctx) => ctx.db.query("foods").collect())).filter((food) => food.source === "ai_estimate")).toHaveLength(1);
+  });
+
+  test("structured own-key errors are not retried without web search", async () => {
+    const { t, user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    await t.run((ctx) => ctx.db.insert("user_api_keys", {
+      userId: "user_a", provider: "openrouter", key: "sk-or-v1-test-000000000000000000", last4: "0000", updatedAt: Date.now(),
+    }));
+    llm = (body) => kind(body) === "extract"
+      ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+      : { status: 401 };
+
+    await expect(logText(user, "a teacup of masala chai")).rejects.toMatchObject({ data: { code: "OWN_KEY_INVALID" } });
+
+    const resolverBodies = openRouterBodies.filter((body) => kind(body) === "resolve");
+    expect(resolverBodies).toHaveLength(1);
+    expect(resolverBodies[0]?.tools).toContainEqual(expect.objectContaining({ type: "openrouter:web_search" }));
+  });
+
   test("once confirmed, the same text auto-commits from memory with no model call", async () => {
     const { t, user } = await setup();
     llm = (body) =>
@@ -1548,6 +1751,36 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     const rows = await entryRows(t);
     expect(rows.at(-1)).toMatchObject({ source: "memory", grams: 110 });
     expect(rows.at(-1)?.flags).toContain("estimated");
+  });
+
+  test("a confirmed estimate is reused with the same nutrients and portion on the next day", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup", date: "2026-10-24" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const first = await logText(user, "a teacup of masala chai", "sub-1");
+    if (first.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: first.draftId });
+    const firstRow = (await entryRows(t))[0];
+    if (firstRow === undefined) throw new Error("expected a confirmed entry");
+    const firstFood = await t.run((ctx) => ctx.db.get("foods", firstRow.foodId));
+    if (firstFood === null) throw new Error("expected the saved estimate");
+
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { content: "unexpected estimate call" };
+    const callsBefore = openRouterBodies.length;
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+    const rows = await entryRows(t);
+
+    expect(second.kind).toBe("committed");
+    expect(openRouterBodies.slice(callsBefore).map(kind)).toEqual(["extract"]);
+    expect(rows[1]).toMatchObject({ foodId: firstRow.foodId, source: "memory", grams: firstRow.grams, nutrients: firstRow.nutrients, flags: ["estimated"] });
+    expect(rows[1]?.localDate).toBe("2026-10-25");
+    expect(rows.filter((row) => row.foodId === firstRow.foodId)).toHaveLength(2);
+    expect(firstFood.source).toBe("ai_estimate");
   });
 
   test("an estimate's own portion row sets the grams, so a seed piece weight cannot change them", async () => {
@@ -1631,6 +1864,22 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
 
     expect(first.kind).toBe("draft");
     expect(second.kind).toBe("draft");
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(1);
+  });
+
+  test("punctuation variants of an estimate name reuse the same private food", async () => {
+    const { t, user } = await setup();
+    let estimateName = "Masala chai";
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: { ...CHAI_CALL, name: estimateName } }] };
+    await logText(user, "a teacup of masala chai", "sub-1");
+
+    estimateName = "Masala chai!";
+    await logText(user, "a teacup of masala chai", "sub-2");
+
     const foods = await t.run((ctx) => ctx.db.query("foods").collect());
     expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(1);
   });

@@ -11,6 +11,9 @@ export const nutrientsValidator = v.object({
   sodiumMg: v.union(v.number(), v.null()),
 });
 
+/** A source URL and title returned in an OpenRouter citation annotation. */
+export const foodSourceCitationValidator = v.object({ title: v.string(), url: v.string() });
+
 /** Where a food record's numbers come from (core `FoodSource`). */
 export const foodSourceValidator = v.union(
   v.literal("fdc"),

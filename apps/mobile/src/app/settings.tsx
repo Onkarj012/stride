@@ -27,6 +27,10 @@ const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
 ]
+const FOOD_LOOKUP_OPTIONS: { value: 'off' | 'on'; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'on', label: 'On' },
+]
 const DELETE_WORD = 'DELETE'
 const FOOD_CREDITS = 'Food data: IFCT 2017 (NIN, India), USDA FoodData Central, UK CoFID 2021, Open Food Facts (ODbL). Contains public sector information licensed under the Open Government Licence v3.0.'
 
@@ -44,12 +48,15 @@ function Settings() {
   const s = useStyles()
   const profile = useQuery(api.progress_v2.profile, {})
   const ownKey = useQuery(api.api_keys.openRouterKeyStatus, {})
+  const webFoodLookupEnabled = useQuery(api.api_keys.webFoodLookupStatus, {})
   const pref = useThemePref()
   const convex = useConvex()
   const setUnits = useMutation(api.progress_v2.setUnits)
+  const setWebFoodLookup = useMutation(api.api_keys.setWebFoodLookup)
   const { signOut } = useAuth()
   const setHoldApp = useContext(HoldAppContext)
   const [unitsError, setUnitsError] = useState<string | null>(null)
+  const [lookupError, setLookupError] = useState<string | null>(null)
   const [dataError, setDataError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState(false)
@@ -67,6 +74,16 @@ function Settings() {
       await setUnits({ units: next })
     } catch (err) {
       setUnitsError(plainError(err))
+    }
+  }
+
+  // Saves whether unmatched foods may use a capped web search before AI estimation.
+  async function chooseWebFoodLookup(next: 'off' | 'on') {
+    setLookupError(null)
+    try {
+      await setWebFoodLookup({ enabled: next === 'on' })
+    } catch (err) {
+      setLookupError(plainError(err))
     }
   }
 
@@ -118,6 +135,13 @@ function Settings() {
 
         <Section title="AI" />
         <ListCard>
+          <SegmentRow
+            label="Food web lookup"
+            detail="Search one source before estimating an unmatched food."
+            options={FOOD_LOOKUP_OPTIONS}
+            value={webFoodLookupEnabled === true ? 'on' : 'off'}
+            onChange={(next) => void chooseWebFoodLookup(next)}
+          />
           <ListRow
             label="OpenRouter key"
             detail="Use your own key. Your AI use then doesn't count against the daily allowance."
@@ -126,6 +150,7 @@ function Settings() {
             last
           />
         </ListCard>
+        {lookupError ? <Text style={s.error}>{lookupError}</Text> : null}
 
         <Section title="Data" />
         <ListCard>
