@@ -19,13 +19,9 @@ import { font, themedStyles } from '@/theme'
 import { Button } from './Controls'
 import { DraftCard } from './DraftCard'
 import { useLog } from './useLog'
-import { Polo } from './Polo'
 import { Tap } from './Tap'
 
 export type ChatMessageView = FunctionReturnType<typeof api.chats.listMessages>['page'][number]
-
-// How often Polo hops while a reply is still streaming in.
-const STREAM_HOP_MS = 1600
 
 type Props = {
   message: ChatMessageView
@@ -71,28 +67,6 @@ function UserBubble({ message }: { message: ChatMessageView }) {
   )
 }
 
-// Hops Polo every so often while `active`, so a streaming reply looks like Polo is busy writing.
-function useStreamHop(active: boolean): number {
-  const [hops, setHops] = useState(0)
-  useEffect(() => {
-    if (!active) return
-    const timer = setInterval(() => setHops((n) => n + 1), STREAM_HOP_MS)
-    return () => clearInterval(timer)
-  }, [active])
-  return hops
-}
-
-// Hops Polo beside a reply while it streams. Only this small part re-renders on each hop.
-function ReplyPolo({ streaming, failed }: { streaming: boolean; failed: boolean }) {
-  const s = useStyles()
-  const hops = useStreamHop(streaming)
-  return (
-    <View style={s.polo}>
-      <Polo size={26} hop={hops} mood={failed ? 'wow' : 'idle'} />
-    </View>
-  )
-}
-
 // A streaming reply's words as plain text, so each update is cheap. Mounted only while it streams, so the live subscription ends with it.
 function LiveText({ messageId }: { messageId: ChatMessageView['_id'] }) {
   const s = useStyles()
@@ -123,9 +97,12 @@ function Reply({ message, canRegenerate, regenerating, canRetry, onRegenerate, o
 
   return (
     <Animated.View entering={FadeIn.duration(220)} style={s.reply}>
-      <ReplyPolo streaming={streaming} failed={failed} />
       <View style={s.replyBody}>
-        {streaming ? <LiveText messageId={message._id} /> : message.text ? <ReplyText text={message.text} failed={failed} /> : null}
+        {streaming || message.text ? (
+          <View style={s.replyBubble}>
+            {streaming ? <LiveText messageId={message._id} /> : <ReplyText text={message.text} failed={failed} />}
+          </View>
+        ) : null}
 
         {failed ? (
           <View style={s.row}>
@@ -187,11 +164,11 @@ function Dot({ index }: { index: number }) {
   return <Animated.View style={[s.dot, style]} />
 }
 
-// Three dots beside Polo while the reply has no text yet (mock v5 typing row).
+// Three dots show that the coach is preparing a reply.
 function TypingDots() {
   const s = useStyles()
   return (
-    <View style={s.dots} accessibilityLabel="Polo is typing" accessibilityLiveRegion="polite">
+    <View style={s.dots} accessibilityLabel="Coach is typing" accessibilityLiveRegion="polite">
       <Dot index={0} />
       <Dot index={1} />
       <Dot index={2} />
@@ -244,13 +221,21 @@ const useStyles = themedStyles((t) => ({
     paddingHorizontal: 15,
   },
   bubbleText: { ...font('body'), color: t.c.bg },
+  replyBubble: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    backgroundColor: t.c.card2,
+    borderRadius: 20,
+    borderBottomLeftRadius: 6,
+    paddingVertical: 11,
+    paddingHorizontal: 15,
+  },
   streamText: { ...font('lead'), color: t.c.ink },
   thumb: { width: 176, height: 176, borderRadius: radii.md, backgroundColor: t.c.card2 },
   thumbAlone: { borderBottomRightRadius: 6 },
   photoChip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: radii.pill, backgroundColor: t.c.card2 },
   photoChipText: { ...font('label'), color: t.c.ink2 },
-  reply: { flexDirection: 'row', gap: 10, marginTop: 18, alignItems: 'flex-start' },
-  polo: { width: 28, marginTop: 1 },
+  reply: { marginTop: 18 },
   replyBody: { flex: 1, minWidth: 0, gap: 10 },
   dim: { opacity: 0.55 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14, flexWrap: 'wrap' },
@@ -274,7 +259,7 @@ const useStyles = themedStyles((t) => ({
   cardTitle: { ...font('calloutStrong'), color: t.c.ink, marginTop: 3 },
 }))
 
-// Markdown look for coach replies (mock v5 .msg.ai .tx), in the theme's type roles and ink colours.
+// Markdown look for coach replies (mock v5 .msg.ai .tx), using the theme's type and ink colours.
 const useMarkdownStyles = themedStyles((t) => ({
   body: { ...font('lead'), color: t.c.ink, gap: 10 },
   paragraph: { marginTop: 0, marginBottom: 0 },
