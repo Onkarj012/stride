@@ -25,6 +25,8 @@ const HOMEMADE_PANEER: Nutrients = { kcal: 260, protein: 18, carbs: 4, fat: 19, 
 interface LlmReply {
   content?: string | null;
   toolCalls?: { name: string; args: Record<string, unknown> }[];
+  webSources?: { title: string; url: string }[];
+  webSearchRequests?: number;
   /** Answer with this HTTP status and no body, for failures such as 402. */
   status?: number;
 }
@@ -63,8 +65,15 @@ async function fakeFetch(input: string | URL | Request, init?: RequestInit): Pro
       function: { name: call.name, arguments: JSON.stringify(call.args) },
     }));
     return json({
-      choices: [{ message: { content: reply.content ?? null, tool_calls: toolCalls }, finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop" }],
-      usage: { prompt_tokens: 200, completion_tokens: 40 },
+      choices: [{
+        message: {
+          content: reply.content ?? null,
+          tool_calls: toolCalls,
+          annotations: reply.webSources?.map((source) => ({ type: "url_citation", url_citation: source })) ?? [],
+        },
+        finish_reason: toolCalls.length > 0 ? "tool_calls" : "stop",
+      }],
+      usage: { prompt_tokens: 200, completion_tokens: 40, server_tool_use: { web_search_requests: reply.webSearchRequests ?? (reply.webSources === undefined ? 0 : 1) } },
     });
   }
   if (url.startsWith("https://api.groq.com/")) return json({ text: "2 rotis" });
@@ -539,6 +548,8 @@ describe("D14 tool loop", () => {
     expect(result.kind).toBe("draft");
     expect(await entryRows(t)).toHaveLength(0);
     expect(openRouterBodies.map(kind)).toEqual(["extract", "resolve"]);
+    const resolveRequest = openRouterBodies.find((body) => kind(body) === "resolve");
+    expect(Array.isArray(resolveRequest?.tools) && resolveRequest.tools.some((tool) => isRecord(tool) && tool.type === "openrouter:web_search")).toBe(false);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -1476,7 +1487,7 @@ describe("draft amounts: a food-name unit does not follow a food change", () => 
 
 describe("AI estimate checks", () => {
   test("a chai estimate passes; macros that do not add up and a 600 g katori are refused", () => {
-    const chai: Estimate = { name: "Masala chai", grams: 110, kcal: 55, protein: 2.5, carbs: 7, fat: 2, assumptions: "Milk and sugar, cafe cup" };
+    const chai: Estimate = { name: "Masala chai", grams: 110, kcal: 55, protein: 2.5, carbs: 7, fat: 2, assumptions: "Milk and sugar, cafe cup", sourceUrls: [] };
     expect(estimateProblem(chai, 1, "teacup")).toBeNull();
     expect(estimateProblem({ ...chai, fat: 10 }, 1, "teacup")).toMatch(/add up/);
     expect(estimateProblem({ ...chai, protein: 60, carbs: 50, fat: 10, kcal: 530 }, 1, "teacup")).toMatch(/cannot weigh more/);
@@ -1484,15 +1495,15 @@ describe("AI estimate checks", () => {
   });
 
   test("a cup of dry oats at 0.34 g/ml passes", () => {
-    const oats: Estimate = { name: "Oats, dry", grams: 82, kcal: 319, protein: 13.2, carbs: 54.2, fat: 6.9, assumptions: "Rolled oats" };
+    const oats: Estimate = { name: "Oats, dry", grams: 82, kcal: 319, protein: 13.2, carbs: 54.2, fat: 6.9, assumptions: "Rolled oats", sourceUrls: [] };
     expect(estimateProblem(oats, 1, "cup")).toBeNull();
   });
 
   test("grams must agree with an explicit mass or volume unit", () => {
-    const paneer: Estimate = { name: "Paneer", grams: 100, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Cubed" };
+    const paneer: Estimate = { name: "Paneer", grams: 100, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Cubed", sourceUrls: [] };
     expect(estimateProblem(paneer, 100, "g")).toBeNull();
     expect(estimateProblem({ ...paneer, grams: 150 }, 100, "g")).toMatch(/do not match 100 g/);
-    const milk: Estimate = { name: "Milk", grams: 600, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Whole" };
+    const milk: Estimate = { name: "Milk", grams: 600, kcal: 300, protein: 20, carbs: 4, fat: 20, assumptions: "Whole", sourceUrls: [] };
     expect(estimateProblem(milk, 200, "ml")).toMatch(/do not match 200 ml/);
   });
 });
@@ -1529,6 +1540,94 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     expect(estimates).toHaveLength(1);
     expect(estimates[0]).toMatchObject({ name: "Masala chai", ownerUserId: "user_a", verified: false });
     expect(draft?.items[0]?.food?._id).toBe(estimates[0]?._id);
+  });
+
+  test("opt-in lookup is bounded, stores only returned citations, and keeps the result estimated after confirmation", async () => {
+    const { t, user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : {
+            webSources: [{ title: "USDA food record", url: "https://fdc.nal.usda.gov/food-details/171844/nutrients" }],
+            toolCalls: [{ name: "estimate_food", args: { ...CHAI_CALL, source_urls: ["https://fdc.nal.usda.gov/food-details/171844/nutrients"] } }],
+          };
+    const result = await logText(user, "a teacup of masala chai");
+
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const resolveBody = openRouterBodies.find((body) => kind(body) === "resolve");
+    const resolveTools = Array.isArray(resolveBody?.tools) ? resolveBody.tools : [];
+    const searchTool = resolveTools.find((tool) => isRecord(tool) && tool.type === "openrouter:web_search");
+    expect(searchTool).toMatchObject({
+      type: "openrouter:web_search",
+      parameters: { engine: "exa", max_results: 3, max_uses: 1, max_total_results: 3 },
+    });
+    expect(resolveBody?.max_tool_calls).toBe(1);
+    const globalUsage = await t.run((ctx) => ctx.db.query("ai_usage_buckets").take(10));
+    expect(globalUsage.find((bucket) => bucket.scope === "global")?.costUsd).toBeGreaterThan(0.007);
+    const draft = await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId });
+    expect(draft?.items[0]?.webSources).toEqual([{ title: "USDA food record", url: "https://fdc.nal.usda.gov/food-details/171844/nutrients" }]);
+    const estimate = (await t.run((ctx) => ctx.db.query("foods").collect())).find((food) => food.source === "ai_estimate");
+    expect(estimate).toMatchObject({ verified: false, webSources: draft?.items[0]?.webSources });
+
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: result.draftId });
+    const entries = await user.query(api.entries.entriesForDay, {});
+    expect(entries[0]).toMatchObject({ flags: ["estimated"], webSources: estimate?.webSources });
+  });
+
+  test("a model-provided URL without a returned citation is never saved", async () => {
+    const { t, user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: { ...CHAI_CALL, source_urls: ["https://fake.example/food"] } }] };
+    const result = await logText(user, "a teacup of masala chai");
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    expect(foods.find((food) => food.source === "ai_estimate")?.webSources).toBeUndefined();
+    expect((await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId }))?.items[0]?.webSources).toEqual([]);
+  });
+
+  test("database lookup precedes one web search and later resolver calls stay capped", async () => {
+    const { user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) => {
+      if (kind(body) === "extract") return extraction([
+        { food: "masala chai", quantity: 1, unit: "teacup" },
+        { food: "unknown lentil bowl", quantity: 1, unit: "katori" },
+      ]);
+      const resolverIndex = openRouterBodies.filter((candidate) => kind(candidate) === "resolve").length;
+      if (resolverIndex === 1) return { webSearchRequests: 0, toolCalls: [{ name: "search_food", args: { query: "masala chai" } }] };
+      if (resolverIndex === 2) return { webSearchRequests: 1, toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+      return { toolCalls: [{ name: "estimate_food", args: {
+        item_index: 1, name: "Unknown lentil bowl", grams: 150, kcal: 212, protein_g: 4, carbs_g: 40, fat_g: 4, assumptions: "Cooked lentils with a little oil",
+      } }] };
+    };
+
+    await logText(user, "a teacup of masala chai and a katori of unknown lentil bowl");
+
+    const resolverBodies = openRouterBodies.filter((body) => kind(body) === "resolve");
+    const offeredWebSearch = resolverBodies.map((body) => Array.isArray(body.tools) && body.tools.some((tool) => isRecord(tool) && tool.type === "openrouter:web_search"));
+    expect(offeredWebSearch).toEqual([true, true, false]);
+  });
+
+  test("a failed opt-in search falls back to the unresolved review draft without saving a blank entry", async () => {
+    const { t, user } = await setup();
+    await user.mutation(api.api_keys.setWebFoodLookup, { enabled: true });
+    llm = (body) => kind(body) === "extract"
+      ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+      : Array.isArray(body.tools) && body.tools.some((tool) => isRecord(tool) && tool.type === "openrouter:web_search")
+        ? { status: 503 }
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const result = await logText(user, "a teacup of masala chai");
+    expect(result.kind).toBe("draft");
+    if (result.kind !== "draft") return;
+    expect(result.lines[0]).toMatchObject({ foodName: "Masala chai", estimated: true });
+    expect(result.lines[0]?.kcal).toBeCloseTo(55, 8);
+    expect(result.lines[0]?.reasons).toContain("ai_estimate");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect((await t.run((ctx) => ctx.db.query("foods").collect())).filter((food) => food.source === "ai_estimate")).toHaveLength(1);
   });
 
   test("once confirmed, the same text auto-commits from memory with no model call", async () => {
