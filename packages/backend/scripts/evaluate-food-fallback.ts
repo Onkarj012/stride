@@ -1,7 +1,13 @@
 import { readFile } from "node:fs/promises"
 
 type Macros = { kcal: number; protein_g: number; carbs_g: number; fat_g: number }
-type SavedOutputs = { database: Record<string, Macros>; llm: Record<string, Macros> }
+type NutrientPrediction = { basis: "per100g"; values: Macros } | { basis: "portion"; values: Macros; grams: number }
+type SavedOutputs = {
+  capturedAt?: string
+  llmModel?: string
+  database: Record<string, NutrientPrediction>
+  llm: Record<string, NutrientPrediction>
+}
 type ReferenceCase = {
   name: string
   fdcId: number
@@ -16,7 +22,7 @@ type ReferenceCase = {
 
 const cases: ReferenceCase[] = [
   {
-    name: "Chapati / roti, plain",
+    name: "Bread, chapati or roti, plain, commercially prepared",
     fdcId: 171844,
     sourceUrl: "https://api.nal.usda.gov/fdc/v1/food/171844?api_key=DEMO_KEY",
     apiGuideUrl: "https://fdc.nal.usda.gov/api-guide/",
@@ -27,18 +33,7 @@ const cases: ReferenceCase[] = [
     llmFixture: { kcal: 300, protein_g: 11, carbs_g: 45, fat_g: 7.5 },
   },
   {
-    name: "White long-grain rice, cooked",
-    fdcId: 168878,
-    sourceUrl: "https://api.nal.usda.gov/fdc/v1/food/168878?api_key=DEMO_KEY",
-    apiGuideUrl: "https://fdc.nal.usda.gov/api-guide/",
-    portionLabel: "one cup",
-    portionGrams: 158,
-    referencePer100g: { kcal: 130, protein_g: 2.69, carbs_g: 28.17, fat_g: 0.28 },
-    databaseFixture: { kcal: 130, protein_g: 2.69, carbs_g: 28.17, fat_g: 0.28 },
-    llmFixture: { kcal: 135, protein_g: 2.7, carbs_g: 29, fat_g: 0.3 },
-  },
-  {
-    name: "White long-grain parboiled rice, cooked",
+    name: "Rice, white, long-grain, parboiled, enriched, cooked",
     fdcId: 169708,
     sourceUrl: "https://api.nal.usda.gov/fdc/v1/food/169708?api_key=DEMO_KEY",
     apiGuideUrl: "https://fdc.nal.usda.gov/api-guide/",
@@ -55,14 +50,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** Converts a source portion into the per-100-g basis used by Stride foods. */
-function normalizePortion(per100g: Macros, grams: number): Macros {
-  const normalize = (value: number): number => (value * grams / 100) * 100 / grams
+/** Scales a per-100-g nutrient row to a named portion. */
+function toPortion(values: Macros, grams: number): Macros {
+  const scale = (value: number): number => value * grams / 100
   return {
-    kcal: normalize(per100g.kcal),
-    protein_g: normalize(per100g.protein_g),
-    carbs_g: normalize(per100g.carbs_g),
-    fat_g: normalize(per100g.fat_g),
+    kcal: scale(values.kcal),
+    protein_g: scale(values.protein_g),
+    carbs_g: scale(values.carbs_g),
+    fat_g: scale(values.fat_g),
+  }
+}
+
+/** Converts explicitly labeled nutrient totals to the per-100-g basis used for comparison. */
+function normalizePrediction(prediction: NutrientPrediction): Macros {
+  if (prediction.basis === "per100g") return prediction.values
+  if (!Number.isFinite(prediction.grams) || prediction.grams <= 0) throw new Error("Portion grams must be positive")
+  const scale = (value: number): number => value * 100 / prediction.grams
+  return {
+    kcal: scale(prediction.values.kcal),
+    protein_g: scale(prediction.values.protein_g),
+    carbs_g: scale(prediction.values.carbs_g),
+    fat_g: scale(prediction.values.fat_g),
   }
 }
 
@@ -77,43 +85,73 @@ function errors(prediction: Macros, reference: Macros): Macros {
   }
 }
 
-/** Validates one untrusted saved model/database nutrient row. */
+/** Validates one untrusted nutrient row from a saved output file. */
 function readMacros(value: unknown): Macros | null {
   if (!isRecord(value)) return null
-  const row = value
-  const { kcal, protein_g, carbs_g, fat_g } = row
-  if ([kcal, protein_g, carbs_g, fat_g].some((value) => typeof value !== "number" || !Number.isFinite(value) || value < 0)) return null
+  const { kcal, protein_g, carbs_g, fat_g } = value
+  if ([kcal, protein_g, carbs_g, fat_g].some((macro) => typeof macro !== "number" || !Number.isFinite(macro) || macro < 0)) return null
   if (typeof kcal !== "number" || typeof protein_g !== "number" || typeof carbs_g !== "number" || typeof fat_g !== "number") return null
   return { kcal, protein_g, carbs_g, fat_g }
 }
 
-/** Reads explicit offline outputs; live provider calls are not supported by this evaluator. */
+/** Parses an explicitly based prediction from a saved file. */
+function readPrediction(value: unknown): NutrientPrediction | null {
+  if (!isRecord(value)) return null
+  const values = readMacros(value.values)
+  if (values === null) return null
+  if (value.basis === "per100g") return { basis: "per100g", values }
+  if (value.basis === "portion" && typeof value.grams === "number" && Number.isFinite(value.grams) && value.grams > 0) {
+    return { basis: "portion", values, grams: value.grams }
+  }
+  return null
+}
+
+/** Reads explicit offline database/model outputs and validates their basis. */
 async function readSavedOutputs(path: string): Promise<SavedOutputs> {
   const parsed: unknown = JSON.parse(await readFile(path, "utf8"))
   if (!isRecord(parsed)) throw new Error("Saved outputs must be an object")
   const root = parsed
   const result: SavedOutputs = { database: {}, llm: {} }
+  if (typeof root.capturedAt === "string") result.capturedAt = root.capturedAt
+  if (typeof root.llmModel === "string") result.llmModel = root.llmModel
   for (const source of ["database", "llm"] as const) {
     const rows = root[source]
     if (!isRecord(rows)) throw new Error(`Saved outputs need a ${source} object`)
     for (const item of cases) {
-      const row = readMacros(rows[String(item.fdcId)])
-      if (row === null) throw new Error(`${source} output is missing a valid FDC ${item.fdcId} row`)
-      result[source][String(item.fdcId)] = row
+      const prediction = readPrediction(rows[String(item.fdcId)])
+      if (prediction === null) throw new Error(`${source} output is missing a valid based FDC ${item.fdcId} row`)
+      result[source][String(item.fdcId)] = prediction
     }
   }
   return result
 }
 
-/** Checks reference portion math and reports offline fixture or saved-output errors. */
+/** Verifies conversion from a non-100-g portion and rejects zero-mass totals. */
+function assertPortionMath(): void {
+  const firstCase = cases[0]
+  if (firstCase === undefined) throw new Error("No reference cases are configured")
+  const reference = firstCase.referencePer100g
+  const grams = 50
+  const normalized = normalizePrediction({ basis: "portion", grams, values: toPortion(reference, grams) })
+  if (Object.values(errors(normalized, reference)).some((error) => error > 1e-9)) throw new Error("Non-100-g portion normalization failed")
+  try {
+    normalizePrediction({ basis: "portion", grams: 0, values: reference })
+  } catch (err) {
+    if (err instanceof Error && err.message === "Portion grams must be positive") return
+    throw err;
+  }
+  throw new Error("Zero-mass portion was accepted")
+}
+
+/** Reports offline fixture or saved-output errors without a live model call. */
 async function main(): Promise<void> {
+  assertPortionMath()
   const savedPath = process.argv.slice(2).find((argument) => argument !== "--")
   const saved = savedPath === undefined ? null : await readSavedOutputs(savedPath)
   const output = cases.map((item) => {
-    const reference = normalizePortion(item.referencePer100g, item.portionGrams)
-    if (Object.values(errors(reference, item.referencePer100g)).some((error) => error > 1e-9)) {
-      throw new Error(`Portion normalization failed for FDC ${item.fdcId}`)
-    }
+    const reference = item.referencePer100g
+    const database = saved?.database[String(item.fdcId)] ?? { basis: "per100g", values: item.databaseFixture } satisfies NutrientPrediction
+    const llm = saved?.llm[String(item.fdcId)] ?? { basis: "per100g", values: item.llmFixture } satisfies NutrientPrediction
     return {
       name: item.name,
       reference: {
@@ -123,17 +161,17 @@ async function main(): Promise<void> {
         apiGuideUrl: item.apiGuideUrl,
         portionLabel: item.portionLabel,
         portionGrams: item.portionGrams,
-        perPortion: {
-          kcal: item.referencePer100g.kcal * item.portionGrams / 100,
-          protein_g: item.referencePer100g.protein_g * item.portionGrams / 100,
-          carbs_g: item.referencePer100g.carbs_g * item.portionGrams / 100,
-          fat_g: item.referencePer100g.fat_g * item.portionGrams / 100,
-        },
+        perPortion: toPortion(reference, item.portionGrams),
         per100g: reference,
       },
+      predictions: { database, llm },
+      portionGramsAbsoluteError: {
+        database: database.basis === "portion" ? Math.abs(database.grams - item.portionGrams) : null,
+        llm: llm.basis === "portion" ? Math.abs(llm.grams - item.portionGrams) : null,
+      },
       errorAbsPer100g: {
-        database: errors(saved?.database[String(item.fdcId)] ?? item.databaseFixture, reference),
-        llm: errors(saved?.llm[String(item.fdcId)] ?? item.llmFixture, reference),
+        database: errors(normalizePrediction(database), reference),
+        llm: errors(normalizePrediction(llm), reference),
       },
     }
   })
@@ -141,6 +179,8 @@ async function main(): Promise<void> {
     evidence: saved === null
       ? "source-backed references and synthetic math fixtures; no live model output or model-quality claim"
       : "source-backed references and explicit saved database/model outputs; no live calls and no independent model-quality claim",
+    ...(saved?.capturedAt === undefined ? {} : { capturedAt: saved.capturedAt }),
+    ...(saved?.llmModel === undefined ? {} : { llmModel: saved.llmModel }),
     errorUnits: "kcal and grams per 100 g, absolute",
     cases: output,
   }, null, 2)}\n`)

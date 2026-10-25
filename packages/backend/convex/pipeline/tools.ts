@@ -97,7 +97,7 @@ const RESOLVE_PROMPT = [
   "(cooked vs raw, prepared drink vs powder or mix, plain vs flavoured). If no suitable row exists and web search is available,",
   "search once for an authoritative nutrition source for the exact cooked or prepared food. Otherwise estimate the typical",
   "Indian home or cafe version for the whole stated amount. Web search does not verify a recipe or turn an estimate into a database food.",
-  "Include source_urls only for citations returned by the web search in this response. Never invent a URL.",
+  "Include source_urls only for URLs in the returned OpenRouter citations for this resolver pass, selecting the source that matches the item. Never invent a URL.",
   "Household sizes: katori 150 ml, bowl 250 ml, glass 250 ml, teacup (home chai or coffee cup) 110 ml, tbsp 15 ml, tsp 5 ml, spoon = tsp.",
   "A cafe drink with no size is a regular Indian cafe size. Give assumptions in at most 12 words.",
   "Skip items you cannot place; the user will be asked. Never make up a food id.",
@@ -433,9 +433,9 @@ async function estimate(
   if (parsed === null) return { ok: false, error: "name, grams, kcal, protein_g, carbs_g, fat_g and assumptions are required" };
   const problem = estimateProblem(parsed, item.quantity, item.unit);
   if (problem !== null) return { ok: false, error: problem };
-  const requestedSources = parsed.sourceUrls.length === 0
-    ? citations
-    : parsed.sourceUrls.map((url) => citations.find((citation) => citation.url === url)).filter((source): source is WebSource => source !== undefined);
+  const requestedSources = parsed.sourceUrls
+    .map((url) => citations.find((citation) => citation.url === url))
+    .filter((source): source is WebSource => source !== undefined);
   const webSources = requestedSources.slice(0, 3);
   const { sourceUrls: _sourceUrls, ...estimateFields } = parsed;
   const foodId: Id<"foods"> = await ctx.runMutation(internal.pipeline.tools.saveEstimate, {
@@ -479,23 +479,27 @@ export async function runToolPass(
   ];
   const citations: WebSource[] = [];
   let webSearchAvailable = webFoodLookup;
-  const webTools = (): RequestToolDefinition[] => webSearchAvailable
-    ? [{ type: "openrouter:web_search", parameters: { engine: "exa", mode: "instant", max_results: 3, max_uses: 1, max_total_results: 3, max_characters: 2000 } }]
-    : [];
+  let searchOnlyFollowupAvailable = true;
+  const webSearchTool: RequestToolDefinition = {
+    type: "openrouter:web_search",
+    parameters: { engine: "exa", mode: "instant", max_results: 3, max_uses: 1, max_total_results: 3, max_characters: 2000 },
+  };
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS && picks.size < open.size; i++) {
+    const searchOffered = webSearchAvailable && i < MAX_TOOL_ITERATIONS - 1;
     const request = {
       model: PIPELINE_MODEL,
       maxTokens: resolveMaxTokens(open.size - picks.size),
       messages,
-      tools: [...LOOKUP_TOOLS, CHOOSE_FOOD_TOOL, ESTIMATE_FOOD_TOOL, ...webTools()],
-      ...(webSearchAvailable ? { additionalCostUsd: OPENROUTER_EXA_SEARCH_COST_USD } : {}),
+      tools: [...LOOKUP_TOOLS, CHOOSE_FOOD_TOOL, ESTIMATE_FOOD_TOOL, ...(searchOffered ? [webSearchTool] : [])],
+      ...(searchOffered ? { additionalCostUsd: OPENROUTER_EXA_SEARCH_COST_USD } : {}),
     };
     let reply: ChatReply;
     try {
       reply = await callOpenRouter(ctx, userId, request);
     } catch (err) {
-      if (!webSearchAvailable) throw err;
+      if (err instanceof ConvexError) throw err;
+      if (!searchOffered) throw err;
       webSearchAvailable = false;
       reply = await callOpenRouter(ctx, userId, {
         model: request.model,
@@ -504,11 +508,24 @@ export async function runToolPass(
         tools: [...LOOKUP_TOOLS, CHOOSE_FOOD_TOOL, ESTIMATE_FOOD_TOOL],
       });
     }
-    if (reply.webSearchRequests !== 0 || reply.webSources.length > 0) webSearchAvailable = false;
+    // Missing usage is treated as possibly searched so an uncertain response cannot reopen the allowance.
+    if (searchOffered && (reply.webSearchRequests !== 0 || reply.webSources.length > 0)) webSearchAvailable = false;
     for (const source of reply.webSources) {
       if (!citations.some((saved) => saved.url === source.url) && citations.length < 3) citations.push(source);
     }
-    if (reply.toolCalls.length === 0) break;
+    if (reply.toolCalls.length === 0) {
+      if (!searchOnlyFollowupAvailable || !reply.content?.trim() || reply.webSources.length === 0) break;
+      searchOnlyFollowupAvailable = false;
+      messages.push({ role: "assistant", content: reply.content });
+      messages.push({
+        role: "user",
+        content: JSON.stringify({
+          instruction: "Resolve the unmatched foods using the cited search context above. Do not search again. Each estimate may include source_urls only for returned citations that directly describe that item.",
+          available_citations: reply.webSources,
+        }),
+      });
+      continue;
+    }
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
     for (const call of reply.toolCalls) {
       const args = parseToolArgs(call.function.arguments);
@@ -517,7 +534,6 @@ export async function runToolPass(
       if (name === "choose_food") result = choose(args, open, seen, picks);
       else if (name === "estimate_food") {
         result = await estimate(ctx, userId, args, open, picks, chatId, citations);
-        if (isRecord(result) && result.ok === true) citations.length = 0;
       } else result = (await runLookupTool(ctx, userId, name, args, seen)) ?? { error: `Unknown tool ${name}` };
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }

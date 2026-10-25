@@ -71,7 +71,6 @@ export interface ChatReply {
   content: string | null;
   toolCalls: ToolCall[];
   webSources: WebSource[];
-  webSearchUsed: boolean;
   webSearchRequests?: number;
 }
 
@@ -281,7 +280,6 @@ export async function callOpenRouter(ctx: ActionCtx, userId: string, request: Ch
         content,
         toolCalls,
         webSources: readWebSources(message.annotations),
-        webSearchUsed: (webSearchRequests ?? 0) > 0,
         ...(webSearchRequests === undefined ? {} : { webSearchRequests }),
       };
     } finally {
@@ -450,7 +448,7 @@ export async function streamOpenRouter(
             .map((call) => ({ id: call.id, type: "function", function: { name: call.name, arguments: call.arguments } }));
       const content = state.content === "" ? null : state.content;
       await settleCall(ctx, reservation.reservationId, request.model, state.usage, estimatedInputTokens, estimatedOutputTokens, content, toolCalls, request.additionalCostUsd ?? 0);
-      if (stopped) return { content, toolCalls, webSources: [], webSearchUsed: false, stopped };
+      if (stopped) return { content, toolCalls, webSources: [], stopped };
       // A connection closed cleanly mid-answer looks like EOF; only a finish reason or [DONE] means the reply is whole.
       if (!sawDone && state.finishReason === undefined) throw new Error("OpenRouter stream ended before the reply finished");
       if (state.finishReason === "length") throw new Error("OpenRouter reply was cut off (finish_reason: length)");
@@ -458,7 +456,6 @@ export async function streamOpenRouter(
         content,
         toolCalls,
         webSources: [],
-        webSearchUsed: (state.usage?.webSearchRequests ?? 0) > 0,
         ...(state.usage?.webSearchRequests === undefined ? {} : { webSearchRequests: state.usage.webSearchRequests }),
         stopped,
       };
