@@ -17,7 +17,9 @@ import type * as day_totals from "../day_totals.js";
 import type * as entries from "../entries.js";
 import type * as exercises from "../exercises.js";
 import type * as foods_db from "../foods_db.js";
+import type * as food_shortcuts from "../food_shortcuts.js";
 import type * as http from "../http.js";
+import type * as label_foods from "../label_foods.js";
 import type * as ledger_validators from "../ledger_validators.js";
 import type * as pipeline_barcode from "../pipeline/barcode.js";
 import type * as pipeline_drafts from "../pipeline/drafts.js";
@@ -34,6 +36,7 @@ import type * as time_zone from "../time_zone.js";
 import type * as uploads from "../uploads.js";
 import type * as users from "../users.js";
 import type * as weights from "../weights.js";
+import type * as usual_meals from "../usual_meals.js";
 
 import type {
   ApiFromModules,
@@ -51,7 +54,9 @@ declare const fullApi: ApiFromModules<{
   entries: typeof entries;
   exercises: typeof exercises;
   foods_db: typeof foods_db;
+  food_shortcuts: typeof food_shortcuts;
   http: typeof http;
+  label_foods: typeof label_foods;
   ledger_validators: typeof ledger_validators;
   "pipeline/barcode": typeof pipeline_barcode;
   "pipeline/drafts": typeof pipeline_drafts;
@@ -68,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   uploads: typeof uploads;
   users: typeof users;
   weights: typeof weights;
+  usual_meals: typeof usual_meals;
 }>;
 
 /**

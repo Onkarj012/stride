@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeInDown } from 'react-native-reanimated'
-import { useAction, useMutation } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
+import { router } from 'expo-router'
 import { useAuth } from '@clerk/expo'
 import type { FunctionArgs } from 'convex/server'
 import { inferSlot } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
+import type { Id } from 'stride-backend/convex/_generated/dataModel'
+import type { LabelNutritionCandidate } from 'stride-backend/convex/label_foods'
 import { motion, radii } from '@stride/ui-tokens'
 import { formatClock, formatGrams, formatNumber } from '@/lib/format'
 import {
@@ -32,6 +35,8 @@ import { useLog } from './useLog'
 import { Polo, type PoloMood } from './Polo'
 import { Tap } from './Tap'
 import { ThaliPicker } from './ThaliPicker'
+import { LabelReview } from './LabelReview'
+import { UsualMealPicker } from './UsualMealPicker'
 
 export type ComposeMode = 'text' | 'voice' | 'photo' | 'barcode'
 
@@ -45,6 +50,9 @@ type Phase =
   | { kind: 'voice' }
   | { kind: 'photo' }
   | { kind: 'barcode' }
+  | { kind: 'label_photo' }
+  | { kind: 'label_review'; storageId: StorageId; photoUri: string; candidate: LabelNutritionCandidate }
+  | { kind: 'usual_meals' }
   | { kind: 'thali' }
   | { kind: 'working'; label: string; photoUri?: string }
   | { kind: 'committed'; lines: LogLine[] }
@@ -88,7 +96,10 @@ export function Compose({
   const { getToken } = useAuth()
   const logInput = useAction(api.pipeline.log.logInput)
   const lookupBarcode = useAction(api.pipeline.barcode.lookupBarcode)
+  const readLabel = useAction(api.label_foods.readNutritionLabel)
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl)
+  const logUsual = useMutation(api.usual_meals.log)
+  const foodShortcutsEnabled = useQuery(api.food_shortcuts.getEnabled, {})
   const [phase, setPhase] = useState<Phase>(() => {
     if (initialDraftId) return { kind: 'draft', draftId: initialDraftId }
     if (prefill?.storageId) return { kind: 'working', label: 'Looking at your plate…' }
@@ -206,6 +217,31 @@ export function Compose({
     }
   }
 
+  // Reads a package panel from an owned upload and opens an editable review.
+  async function submitLabelPhoto(uri: string) {
+    go({ kind: 'working', label: 'Reading the nutrition panel…', photoUri: uri })
+    try {
+      const token = await getToken({ template: 'convex' })
+      if (!token) throw new PlainError('You are signed out. Sign in again.')
+      const storageId = await uploadPhoto(await generateUploadUrl({}), uri, token)
+      const candidate = await readLabel({ storageId })
+      go({ kind: 'label_review', storageId, photoUri: uri, candidate })
+    } catch (err) {
+      go({ kind: 'error', message: plainError(err), retry: () => void submitLabelPhoto(uri) })
+    }
+  }
+
+  // Logs a saved meal through the ordinary entry and undo path.
+  async function logUsualMeal(mealId: Id<'usual_meals'>) {
+    try {
+      const entryIds = await logUsual({ mealId, submissionId: newSubmissionId(), ...(defaultSlot ? { slot: defaultSlot } : {}) })
+      toast({ title: 'Usual meal logged', sub: 'Current food values · undo available', undo: undoFor(entryIds) })
+      onClose()
+    } catch (err) {
+      go({ kind: 'error', message: plainError(err) })
+    }
+  }
+
   const mood: PoloMood =
     phase.kind === 'committed' ? 'happy' : phase.kind === 'voice' || phase.kind === 'error' || phase.kind === 'empty' ? 'wow' : 'idle'
   const showBox = phase.kind === 'input' || phase.kind === 'empty'
@@ -261,6 +297,12 @@ export function Compose({
           >
             <Text style={s.chipText}>Build a thali</Text>
           </Tap>
+          {foodShortcutsEnabled ? (
+            <View style={s.shortcutRow}>
+              <Button label="Usual meal" variant="ghost" size="sm" onPress={() => go({ kind: 'usual_meals' })} />
+              <Button label="Read a label" variant="ghost" size="sm" onPress={() => go({ kind: 'label_photo' })} />
+            </View>
+          ) : null}
           {phase.kind === 'empty' ? (
             <Text style={s.note}>I didn't catch any food there. Try "2 roti and dal".</Text>
           ) : (
@@ -299,6 +341,29 @@ export function Compose({
       ) : null}
       {phase.kind === 'barcode' ? (
         <BarcodeScanner onCode={(code) => void submitCode(code)} onCancel={() => go({ kind: 'input' })} />
+      ) : null}
+      {phase.kind === 'label_photo' ? (
+        <PhotoCapture quality={0.85} hint="Frame the full nutrition panel. Check the values before saving." onPhoto={(uri) => void submitLabelPhoto(uri)} onCancel={() => go({ kind: 'input' })} />
+      ) : null}
+      {phase.kind === 'label_review' ? (
+        <LabelReview
+          storageId={phase.storageId}
+          photoUri={phase.photoUri}
+          candidate={phase.candidate}
+          onSaved={(_, name) => {
+            toast({ title: 'Personal food saved', sub: `${name} · unverified label values` })
+            onClose()
+          }}
+          onCancel={() => go({ kind: 'input' })}
+        />
+      ) : null}
+      {phase.kind === 'usual_meals' ? (
+        <UsualMealPicker
+          enabled={foodShortcutsEnabled === true}
+          onLog={(mealId) => void logUsualMeal(mealId)}
+          onManage={() => router.push('/usual-meals')}
+          onCancel={() => go({ kind: 'input' })}
+        />
       ) : null}
 
       {phase.kind === 'thali' ? (
@@ -491,6 +556,7 @@ const useStyles = themedStyles((t) => ({
   },
   chipText: { ...font('secondary'), fontFamily: font('bodyStrong').fontFamily, color: t.c.ink },
   hint: { ...font('caption'), lineHeight: 19, color: t.c.ink3, marginTop: 18 },
+  shortcutRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
   note: { ...font('callout'), color: t.c.ink2, marginTop: 16 },
   result: { marginTop: 18 },
   listHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 },
