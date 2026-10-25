@@ -43,13 +43,16 @@ export default function SettingsScreen() {
 function Settings() {
   const s = useStyles()
   const profile = useQuery(api.progress_v2.profile, {})
+  const foodShortcuts = useQuery(api.food_shortcuts.getEnabled, {})
   const ownKey = useQuery(api.api_keys.openRouterKeyStatus, {})
   const pref = useThemePref()
   const convex = useConvex()
   const setUnits = useMutation(api.progress_v2.setUnits)
+  const setFoodShortcuts = useMutation(api.food_shortcuts.setEnabled)
   const { signOut } = useAuth()
   const setHoldApp = useContext(HoldAppContext)
   const [unitsError, setUnitsError] = useState<string | null>(null)
+  const [foodShortcutError, setFoodShortcutError] = useState<string | null>(null)
   const [dataError, setDataError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState(false)
@@ -67,6 +70,16 @@ function Settings() {
       await setUnits({ units: next })
     } catch (err) {
       setUnitsError(plainError(err))
+    }
+  }
+
+  // Saves the opt-in choice for label capture and fixed usual meals.
+  async function chooseFoodShortcuts(enabled: boolean) {
+    setFoodShortcutError(null)
+    try {
+      await setFoodShortcuts({ enabled })
+    } catch (err) {
+      setFoodShortcutError(plainError(err))
     }
   }
 
@@ -111,9 +124,16 @@ function Settings() {
             options={THEME_OPTIONS}
             value={pref}
             onChange={setThemePref}
-            last
           />
+          <ListRow
+            label="Saved meals and label capture"
+            detail="Save fixed meals or read a package label after checking the numbers."
+            value={foodShortcuts === undefined ? '…' : foodShortcuts ? 'On' : 'Off'}
+            onPress={foodShortcuts === undefined ? undefined : () => void chooseFoodShortcuts(!foodShortcuts)}
+          />
+          <ListRow label="Manage usual meals" detail="Create, edit or remove fixed meal templates" onPress={() => router.push('/usual-meals')} last />
         </ListCard>
+        {foodShortcutError ? <Text style={s.error}>{foodShortcutError}</Text> : null}
         {unitsError ? <Text style={s.error}>{unitsError}</Text> : null}
 
         <Section title="AI" />
