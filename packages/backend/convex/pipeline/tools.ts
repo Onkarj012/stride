@@ -108,7 +108,7 @@ const ESTIMATE_VESSEL_ML: Readonly<Partial<Record<string, number>>> = {
 
 /** Dedupe key for an estimate's name. Unicode-safe, so Devanagari names stay distinct. */
 export function estimateKey(name: string): string {
-  return name.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+  return name.normalize("NFKC").toLowerCase().replace(/[\p{P}\p{S}]+/gu, " ").replace(/\s+/g, " ").trim();
 }
 
 /** A table's number for a key, or undefined. Own properties only, so "constructor" is not a unit. */

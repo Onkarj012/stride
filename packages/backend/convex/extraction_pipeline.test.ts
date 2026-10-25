@@ -1550,6 +1550,36 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
     expect(rows.at(-1)?.flags).toContain("estimated");
   });
 
+  test("a confirmed estimate is reused with the same nutrients and portion on the next day", async () => {
+    const { t, user } = await setup();
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup", date: "2026-10-24" }])
+        : { toolCalls: [{ name: "estimate_food", args: CHAI_CALL }] };
+    const first = await logText(user, "a teacup of masala chai", "sub-1");
+    if (first.kind !== "draft") throw new Error("expected a draft");
+    await user.mutation(api.pipeline.drafts.confirmDraft, { draftId: first.draftId });
+    const firstRow = (await entryRows(t))[0];
+    if (firstRow === undefined) throw new Error("expected a confirmed entry");
+    const firstFood = await t.run((ctx) => ctx.db.get("foods", firstRow.foodId));
+    if (firstFood === null) throw new Error("expected the saved estimate");
+
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { content: "unexpected estimate call" };
+    const callsBefore = openRouterBodies.length;
+    const second = await logText(user, "a teacup of masala chai", "sub-2");
+    const rows = await entryRows(t);
+
+    expect(second.kind).toBe("committed");
+    expect(openRouterBodies.slice(callsBefore).map(kind)).toEqual(["extract"]);
+    expect(rows[1]).toMatchObject({ foodId: firstRow.foodId, source: "memory", grams: firstRow.grams, nutrients: firstRow.nutrients, flags: ["estimated"] });
+    expect(rows[1]?.localDate).toBe("2026-10-25");
+    expect(rows.filter((row) => row.foodId === firstRow.foodId)).toHaveLength(2);
+    expect(firstFood.source).toBe("ai_estimate");
+  });
+
   test("an estimate's own portion row sets the grams, so a seed piece weight cannot change them", async () => {
     const { user } = await setup();
     llm = (body) =>
@@ -1631,6 +1661,22 @@ describe("AI estimate: an unmatched item becomes a private estimate on the draft
 
     expect(first.kind).toBe("draft");
     expect(second.kind).toBe("draft");
+    const foods = await t.run((ctx) => ctx.db.query("foods").collect());
+    expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(1);
+  });
+
+  test("punctuation variants of an estimate name reuse the same private food", async () => {
+    const { t, user } = await setup();
+    let estimateName = "Masala chai";
+    llm = (body) =>
+      kind(body) === "extract"
+        ? extraction([{ food: "masala chai", quantity: 1, unit: "teacup" }])
+        : { toolCalls: [{ name: "estimate_food", args: { ...CHAI_CALL, name: estimateName } }] };
+    await logText(user, "a teacup of masala chai", "sub-1");
+
+    estimateName = "Masala chai!";
+    await logText(user, "a teacup of masala chai", "sub-2");
+
     const foods = await t.run((ctx) => ctx.db.query("foods").collect());
     expect(foods.filter((food) => food.source === "ai_estimate")).toHaveLength(1);
   });
