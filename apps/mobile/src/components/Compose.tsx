@@ -107,6 +107,9 @@ export function Compose({
   })
   const [text, setText] = useState(prefill?.text ?? '')
   const startedPrefill = useRef(false)
+  const usualMealInFlight = useRef(false)
+  const usualMealSubmission = useRef<{ mealId: Id<'usual_meals'>; submissionId: string } | null>(null)
+  const [busyUsualMeal, setBusyUsualMeal] = useState<Id<'usual_meals'> | null>(null)
   const [hops, setHops] = useState(1)
   const alive = useRef(true)
   const now = new Date()
@@ -233,12 +236,23 @@ export function Compose({
 
   // Logs a saved meal through the ordinary entry and undo path.
   async function logUsualMeal(mealId: Id<'usual_meals'>) {
+    if (usualMealInFlight.current) return
+    usualMealInFlight.current = true
+    setBusyUsualMeal(mealId)
+    if (usualMealSubmission.current?.mealId !== mealId) {
+      usualMealSubmission.current = { mealId, submissionId: newSubmissionId() }
+    }
+    const submissionId = usualMealSubmission.current.submissionId
     try {
-      const entryIds = await logUsual({ mealId, submissionId: newSubmissionId(), ...(defaultSlot ? { slot: defaultSlot } : {}) })
+      const entryIds = await logUsual({ mealId, submissionId, ...(defaultSlot ? { slot: defaultSlot } : {}) })
+      usualMealSubmission.current = null
       toast({ title: 'Usual meal logged', sub: 'Current food values · undo available', undo: undoFor(entryIds) })
       onClose()
     } catch (err) {
-      go({ kind: 'error', message: plainError(err) })
+      go({ kind: 'error', message: plainError(err), retry: () => void logUsualMeal(mealId) })
+    } finally {
+      usualMealInFlight.current = false
+      setBusyUsualMeal(null)
     }
   }
 
@@ -360,8 +374,12 @@ export function Compose({
       {phase.kind === 'usual_meals' ? (
         <UsualMealPicker
           enabled={foodShortcutsEnabled === true}
+          busyMealId={busyUsualMeal}
           onLog={(mealId) => void logUsualMeal(mealId)}
-          onManage={() => router.push('/usual-meals')}
+          onManage={() => {
+            onClose()
+            router.push('/usual-meals')
+          }}
           onCancel={() => go({ kind: 'input' })}
         />
       ) : null}

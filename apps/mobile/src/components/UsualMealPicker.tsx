@@ -10,8 +10,9 @@ import { Button } from './Controls'
 type UsualMeal = FunctionReturnType<typeof api.usual_meals.list>[number]
 
 /** Offers the caller's saved templates for immediate logging or editing. */
-export function UsualMealPicker({ enabled, onLog, onManage, onCancel }: {
+export function UsualMealPicker({ enabled, busyMealId, onLog, onManage, onCancel }: {
   enabled: boolean
+  busyMealId: Id<'usual_meals'> | null
   onLog: (mealId: Id<'usual_meals'>) => void
   onManage: () => void
   onCancel: () => void
@@ -22,7 +23,7 @@ export function UsualMealPicker({ enabled, onLog, onManage, onCancel }: {
     <View style={s.card}>
       <Text style={s.title}>Your usual meals</Text>
       <Text style={s.note}>Each log uses current food data and can be undone.</Text>
-      {meals?.map((meal) => <MealRow key={meal._id} meal={meal} onLog={() => onLog(meal._id)} />)}
+      {meals?.map((meal) => <MealRow key={meal._id} meal={meal} busy={busyMealId === meal._id} disabled={busyMealId !== null} onLog={() => onLog(meal._id)} />)}
       {meals?.length === 0 ? <Text style={s.note}>No saved meals yet.</Text> : null}
       <View style={s.actions}>
         <Button label="Manage meals" variant="ghost" onPress={onManage} />
@@ -33,7 +34,7 @@ export function UsualMealPicker({ enabled, onLog, onManage, onCancel }: {
 }
 
 // Shows a template's fixed amounts and keeps missing food references out of the log action.
-function MealRow({ meal, onLog }: { meal: UsualMeal; onLog: () => void }) {
+function MealRow({ meal, busy, disabled, onLog }: { meal: UsualMeal; busy: boolean; disabled: boolean; onLog: () => void }) {
   const s = useStyles()
   const available = meal.items.length > 0 && meal.items.every((item) => item.available)
   const detail = meal.items.map((item) => `${item.foodName} ${item.grams} g${item.estimated ? ' · estimated' : ''}${item.available ? '' : ' · missing'}`).join(', ')
@@ -43,7 +44,7 @@ function MealRow({ meal, onLog }: { meal: UsualMeal; onLog: () => void }) {
         <Text style={s.mealName}>{meal.name}</Text>
         <Text style={s.note}>{detail}</Text>
       </View>
-      <Button label="Log" variant="coral" size="sm" disabled={!available} onPress={onLog} />
+      <Button label="Log" variant="coral" size="sm" busy={busy} disabled={!available || disabled} onPress={onLog} />
     </View>
   )
 }

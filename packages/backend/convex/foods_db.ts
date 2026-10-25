@@ -286,6 +286,7 @@ export async function saveUserFoodRow(
     .unique();
   if (existing !== null) {
     await ctx.db.replace("foods", existing._id, row);
+    await saveLabelServingPortion(ctx, existing._id, labelProvenance);
     return existing._id;
   }
   const owned = await ctx.db
@@ -293,17 +294,42 @@ export async function saveUserFoodRow(
     .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", userId).eq("source", "user"))
     .take(MAX_USER_FOODS);
   if (owned.length >= MAX_USER_FOODS) throw new ConvexError({ code: "FOOD_LIMIT", message: `You can keep at most ${MAX_USER_FOODS} personal foods` });
-  return await ctx.db.insert("foods", row);
+  const foodId = await ctx.db.insert("foods", row);
+  await saveLabelServingPortion(ctx, foodId, labelProvenance);
+  return foodId;
+}
+
+/** Saves an explicit package serving as a normal gram-based portion when its mass is known. */
+async function saveLabelServingPortion(
+  ctx: MutationCtx,
+  foodId: Id<"foods">,
+  provenance: Infer<typeof labelProvenanceValidator> | undefined,
+): Promise<void> {
+  const existing = await ctx.db.query("food_portions")
+    .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId).eq("description", "1 serving"))
+    .unique();
+  const grams = provenance === undefined || provenance.servingAmount === null || provenance.servingUnit === null
+    ? null
+    : provenance.servingUnit === "g"
+      ? provenance.servingAmount
+      : provenance.densityGramsPer100ml === null ? null : (provenance.servingAmount * provenance.densityGramsPer100ml) / 100;
+  if (grams === null || !Number.isFinite(grams) || grams <= 0) {
+    if (existing !== null) await ctx.db.delete(existing._id);
+    return;
+  }
+  const portion = { foodId, source: "user" as const, measure: "serving", description: "1 serving", gramsPerMeasure: grams };
+  if (existing === null) await ctx.db.insert("food_portions", portion);
+  else await ctx.db.replace("food_portions", existing._id, portion);
 }
 
 /** Saves a personal food (e.g. homemade paneer) with user-stated per-100 g values. Same name again updates it. */
 export const createUserFood = mutation({
-  args: { name: v.string(), aliases: v.optional(v.array(v.string())), per100g: nutrientsValidator, labelProvenance: v.optional(labelProvenanceValidator) },
+  args: { name: v.string(), aliases: v.optional(v.array(v.string())), per100g: nutrientsValidator },
   returns: v.id("foods"),
-  handler: async (ctx, { name, aliases, per100g, labelProvenance }): Promise<Id<"foods">> => {
+  handler: async (ctx, { name, aliases, per100g }): Promise<Id<"foods">> => {
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
-    return await saveUserFoodRow(ctx, userId, name, aliases ?? [], per100g, labelProvenance);
+    return await saveUserFoodRow(ctx, userId, name, aliases ?? [], per100g);
   },
 });
 

@@ -1,10 +1,11 @@
-import type { Nutrients } from "@stride/core";
+import { hasAtwaterMismatch, type Nutrients } from "@stride/core";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, mutation } from "./_generated/server";
 import { callOpenRouter, isRecord, PHOTO_MODEL } from "./pipeline/openrouter";
 import { requireOwnUpload } from "./uploads";
+import { imageUrl } from "./pipeline/log";
 import { saveUserFoodRow } from "./foods_db";
 import { assertLedgerWritable } from "./users";
 
@@ -90,6 +91,9 @@ export function normalizeLabelNutrients(candidate: {
     } else throw new ConvexError({ code: "LABEL_MASS_REQUIRED", message: "Choose whether the serving amount is g or ml." });
   }
   const factor = 100 / grams;
+  if (!Number.isFinite(grams) || grams <= 0 || !Number.isFinite(factor)) {
+    throw new ConvexError({ code: "LABEL_REVIEW_REQUIRED", message: "Check the serving amount and density values." });
+  }
   const values: Nutrients = {
     kcal: energy * (candidate.energyUnit === "kJ" ? 1 / 4.184 : 1) * factor,
     protein: protein * factor,
@@ -99,7 +103,11 @@ export function normalizeLabelNutrients(candidate: {
     sugar: candidate.sugar === null ? null : candidate.sugar * factor,
     sodiumMg: candidate.sodiumMg === null ? null : candidate.sodiumMg * factor,
   };
+  if (Object.values(values).some((value) => value !== null && !Number.isFinite(value))) {
+    throw new ConvexError({ code: "LABEL_REVIEW_REQUIRED", message: "Those values exceed the usable range. Check the label digits and serving size." });
+  }
   if (values.protein + values.carbs + values.fat > 100) throw new ConvexError({ code: "LABEL_REVIEW_REQUIRED", message: "Protein, carbohydrate and fat exceed 100 g per 100 g. Check the label values." });
+  if (hasAtwaterMismatch(values)) throw new ConvexError({ code: "LABEL_REVIEW_REQUIRED", message: "Energy does not match the macros. Check the label values and units." });
   return values;
 }
 
@@ -164,8 +172,7 @@ export const readNutritionLabel = action({
     const enabled: boolean = await ctx.runQuery(internal.food_shortcuts.enabled, { userId });
     if (!enabled) throw new ConvexError({ code: "FOOD_SHORTCUTS_DISABLED", message: "Turn on saved meals and label capture in Settings first." });
     await requireOwnUpload(ctx, userId, storageId);
-    const imageUrl = await ctx.storage.getUrl(storageId);
-    if (imageUrl === null) throw new ConvexError({ code: "UPLOAD_NOT_FOUND", message: "Label photo not found. Take it again." });
+    const photoUrl = await imageUrl(ctx, storageId);
     const result = await callOpenRouter(ctx, userId, {
       model: PHOTO_MODEL,
       maxTokens: 500,
@@ -199,7 +206,7 @@ export const readNutritionLabel = action({
         { role: "system", content: "Read only printed values visible in the nutrition panel. Do not estimate or infer any number, serving size, or unit. Use null for every absent, illegible, or ambiguous value. Read the basis exactly as per 100 g, per 100 ml, or per serving. Return the energy unit exactly as printed, kcal or kJ. Sodium must be in mg; if only salt is shown, return null. Do not treat the confirmation step as proof that values are lab verified." },
         { role: "user", content: [
           { type: "text", text: "Read the nutrition label in this package photo." },
-          { type: "image_url", image_url: { url: imageUrl } },
+          { type: "image_url", image_url: { url: photoUrl } },
         ] },
       ],
     });

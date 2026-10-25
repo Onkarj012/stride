@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { normalizeLabelNutrients } from "./label_foods";
+import { assertImageContentType } from "./pipeline/log";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -12,6 +13,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 test("normalizes label serving values only when serving mass is known", () => {
@@ -46,10 +48,16 @@ test("normalizes label serving values only when serving mass is known", () => {
 });
 
 test("normalizes kJ and refuses incomplete macros and volume without mass", () => {
-  const base = { basis: "per_100g" as const, servingAmount: null, servingUnit: null, densityGramsPer100ml: null, energy: 418.4, energyUnit: "kJ" as const, protein: 10, carbs: 20, fat: 5, fiber: null, sugar: null, sodiumMg: null };
+  const base = { basis: "per_100g" as const, servingAmount: null, servingUnit: null, densityGramsPer100ml: null, energy: 418.4, energyUnit: "kJ" as const, protein: 25, carbs: 0, fat: 0, fiber: null, sugar: null, sodiumMg: null };
   expect(normalizeLabelNutrients(base)?.kcal).toBeCloseTo(100);
   expect(() => normalizeLabelNutrients({ ...base, protein: null })).toThrow(/protein/);
   expect(() => normalizeLabelNutrients({ ...base, basis: "per_100ml" })).toThrow(/grams are in 100 ml/);
+});
+
+test("requires correction for implausible energy and rejects non-finite scaled values", () => {
+  const base = { basis: "per_100g" as const, servingAmount: null, servingUnit: null, densityGramsPer100ml: null, energy: 999999, energyUnit: "kcal" as const, protein: 1, carbs: 1, fat: 1, fiber: null, sugar: null, sodiumMg: null };
+  expect(() => normalizeLabelNutrients(base)).toThrow(/energy/i);
+  expect(() => normalizeLabelNutrients({ ...base, energy: 10, basis: "per_serving", servingAmount: Number.MIN_VALUE, servingUnit: "g" })).toThrow(/serving amount/i);
 });
 
 test("usual meals are private, use current food nutrients, and log as undoable entries", async () => {
@@ -71,6 +79,21 @@ test("usual meals are private, use current food nutrients, and log as undoable e
   expect(entry).toMatchObject({ grams: 40, nutrients: { kcal: 160 }, source: "db", flags: [] });
   await owner.mutation(api.entries.undoRevision, { entryId: ids[0]!, submissionId: "undo-breakfast" });
   expect((await owner.query(api.entries.entriesForDay, {})).length).toBe(0);
+});
+
+test("replaying a usual meal submission returns the same multi-item entries", async () => {
+  const t = convexTest(schema, modules);
+  const user = t.withIdentity({ subject: "user_a" });
+  await user.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
+  await user.mutation(api.food_shortcuts.setEnabled, { enabled: true });
+  const foodIds = await t.run(async (ctx) => Promise.all(["Oats", "Milk"].map((name) => ctx.db.insert("foods", {
+    name, aliases: [], searchText: name, per100g: { kcal: 100, protein: 5, carbs: 10, fat: 2, fiber: null, sugar: null, sodiumMg: null }, source: "fdc" as const, sourceId: name, verified: true,
+  }))));
+  const mealId = await user.mutation(api.usual_meals.save, { name: "Oats and milk", items: [{ foodId: foodIds[0]!, grams: 40 }, { foodId: foodIds[1]!, grams: 150 }] });
+  const first = await user.mutation(api.usual_meals.log, { mealId, submissionId: "replay-oats-milk" });
+  const replay = await user.mutation(api.usual_meals.log, { mealId, submissionId: "replay-oats-milk" });
+  expect(replay).toEqual(first);
+  expect(await t.run((ctx) => ctx.db.query("entries").collect())).toHaveLength(2);
 });
 
 test("usual meal logging blocks missing foods and disabled feature", async () => {
@@ -129,6 +152,7 @@ test("a reviewed label food keeps serving provenance and remains unverified", as
   });
   const food = await t.run((ctx) => ctx.db.get("foods", foodId));
   expect(food).toMatchObject({ source: "user", verified: false, per100g: { kcal: 375, protein: 12.5 }, labelProvenance: { storageId, basis: "per_serving", servingAmount: 40, servingUnit: "g" } });
+  expect(await t.run((ctx) => ctx.db.query("food_portions").collect())).toMatchObject([{ foodId, source: "user", measure: "serving", description: "1 serving", gramsPerMeasure: 40 }]);
   const other = t.withIdentity({ subject: "other" });
   await other.mutation(api.food_shortcuts.setEnabled, { enabled: true });
   await expect(other.mutation(api.label_foods.saveReviewedLabel, {
@@ -138,7 +162,7 @@ test("a reviewed label food keeps serving provenance and remains unverified", as
     servingAmount: null,
     servingUnit: null,
     densityGramsPer100ml: null,
-    energy: 300,
+    energy: 152,
     energyUnit: "kcal",
     protein: 5,
     carbs: 25,
@@ -147,4 +171,20 @@ test("a reviewed label food keeps serving provenance and remains unverified", as
     sugar: null,
     sodiumMg: null,
   })).rejects.toThrow(/Label photo not found/);
+});
+
+test("label reader rejects oversized and non-image uploads before model calls", async () => {
+  const t = convexTest(schema, modules);
+  const user = t.withIdentity({ subject: "user_a" });
+  await user.mutation(api.food_shortcuts.setEnabled, { enabled: true });
+  const storageId = await t.run(async (ctx) => {
+    const oversized = await ctx.storage.store(new Blob([new Uint8Array(5 * 1024 * 1024 + 1)], { type: "image/jpeg" }));
+    await ctx.db.insert("uploads", { userId: "user_a", storageId: oversized, createdAt: Date.now() });
+    return oversized;
+  });
+  const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(user.action(api.label_foods.readNutritionLabel, { storageId })).rejects.toMatchObject({ data: { code: "PHOTO_TOO_LARGE" } });
+  expect(() => assertImageContentType("application/pdf")).toThrow(/not an image/);
+  expect(fetchMock).not.toHaveBeenCalled();
 });

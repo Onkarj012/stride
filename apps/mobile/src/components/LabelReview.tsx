@@ -71,7 +71,7 @@ export function LabelReview({ storageId, photoUri, candidate, onSaved, onCancel 
     }
   }
 
-  const needsDensity = basis === 'per_100ml' || (basis === 'per_serving' && servingUnit === 'ml')
+  const needsDensity = basis === 'per_100ml' || servingUnit === 'ml'
   return (
     <View style={s.card}>
       <Text style={s.title}>Check the label values</Text>
@@ -80,17 +80,16 @@ export function LabelReview({ storageId, photoUri, candidate, onSaved, onCancel 
       <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Food name" placeholderTextColor={t.c.ink3} accessibilityLabel="Food name" />
       <Text style={s.label}>The panel gives values</Text>
       <ChoiceRow choices={[['per_100g', 'per 100 g'], ['per_100ml', 'per 100 ml'], ['per_serving', 'per serving']]} value={basis} onChange={setBasis} />
-      {basis === 'per_serving' ? (
-        <View style={s.row}>
-          <TextInput style={[s.input, s.flex]} value={servingAmount} onChangeText={setServingAmount} keyboardType="decimal-pad" placeholder="Serving amount" placeholderTextColor={t.c.ink3} accessibilityLabel="Serving amount" />
-          <ChoiceRow choices={[["g", "g"], ["ml", "ml"]]} value={servingUnit} onChange={setServingUnit} />
-        </View>
-      ) : null}
+      <Text style={s.label}>Serving size, if shown</Text>
+      <View style={s.row}>
+        <TextInput style={[s.input, s.flex]} value={servingAmount} onChangeText={setServingAmount} keyboardType="decimal-pad" placeholder="Serving amount" placeholderTextColor={t.c.ink3} accessibilityLabel="Serving amount" />
+        <ChoiceRow choices={[["g", "g"], ["ml", "ml"]]} value={servingUnit} onChange={setServingUnit} />
+      </View>
       {needsDensity ? <Field label="Grams in 100 ml" value={density} onChange={setDensity} /> : null}
       <Text style={s.label}>Energy unit</Text>
       <ChoiceRow choices={[["kcal", "kcal"], ["kJ", "kJ"]]} value={energyUnit} onChange={setEnergyUnit} />
       <View style={s.fields}>
-        <Field label="Energy" value={values.energy} onChange={(value) => setField(setValues, 'energy', value)} />
+        <Field label={`Energy (${energyUnit ?? 'kcal or kJ'})`} value={values.energy} onChange={(value) => setField(setValues, 'energy', value)} />
         <Field label="Protein (g)" value={values.protein} onChange={(value) => setField(setValues, 'protein', value)} />
         <Field label="Carbohydrate (g)" value={values.carbs} onChange={(value) => setField(setValues, 'carbs', value)} />
         <Field label="Fat (g)" value={values.fat} onChange={(value) => setField(setValues, 'fat', value)} />
@@ -130,7 +129,12 @@ function ChoiceRow<T extends string>({ choices, value, onChange }: {
 function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   const t = useTheme()
   const s = useStyles()
-  return <TextInput style={s.input} value={value} onChangeText={onChange} keyboardType="decimal-pad" placeholder={label} placeholderTextColor={t.c.ink3} accessibilityLabel={label} />
+  return (
+    <View style={s.field}>
+      <Text style={s.fieldLabel}>{label}</Text>
+      <TextInput style={s.input} value={value} onChangeText={onChange} keyboardType="decimal-pad" placeholder="Enter value" placeholderTextColor={t.c.ink3} accessibilityLabel={label} />
+    </View>
+  )
 }
 
 // Leaves unreadable or absent values empty instead of filling them with zero.
@@ -159,6 +163,8 @@ const useStyles = themedStyles((t) => ({
   label: { ...font('label'), color: t.c.ink2, marginTop: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   fields: { gap: 8 },
+  field: { flex: 1, minWidth: '46%', gap: 4 },
+  fieldLabel: { ...font('caption'), color: t.c.ink2 },
   flex: { flex: 1 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   choice: { borderRadius: radii.pill, backgroundColor: t.c.card2, paddingVertical: 9, paddingHorizontal: 12 },
