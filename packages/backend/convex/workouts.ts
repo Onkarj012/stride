@@ -12,6 +12,7 @@ export { parse } from "./pipeline/workout_parse";
 const MAX_WORKOUT_TEXT_CHARS = 12_000;
 const MAX_ITEMS = 30;
 const MAX_SETS_PER_ITEM = 30;
+const MAX_SESSION_CARDIO = 100;
 
 /** Rejects invalid cardio measurements before they enter a committed workout. */
 function cardioHasInvalidMeasurements(cardio: { durationMin?: number; distanceKm?: number; reportedKcal?: number; speedKmh?: number; inclinePct?: number } | undefined): boolean {
@@ -60,6 +61,7 @@ const workoutDraftValidator = v.object({
   mode: v.union(v.literal("new"), v.literal("append"), v.literal("revise")), targetSessionId: v.optional(v.id("workout_sessions")),
   needsTarget: v.boolean(), localDate: v.string(), startTime: v.optional(v.string()), durationMin: v.optional(v.number()),
   headSetIds: v.optional(v.array(v.id("sets"))), headCardioIds: v.optional(v.array(v.id("cardio"))),
+  version: v.optional(v.number()), supersedes: v.optional(v.id("workout_drafts")), supersededBy: v.optional(v.id("workout_drafts")),
   items: v.array(workoutItemValidator), createdAt: v.number(),
 });
 type WorkoutItem = Infer<typeof workoutItemValidator>;
@@ -262,7 +264,8 @@ export const parseContext = internalQuery({
     if (requestedSessionId !== undefined && (session === null || session.userId !== userId || session.deletedAt !== undefined)) throw new ConvexError({ code: "NOT_FOUND", message: "Workout not found" });
     const currentItems = pendingDraft !== null ? numberDraftItems(pendingDraft.items) : session === null ? [] : await sessionItems(ctx, session._id);
     const mode = pendingDraft?.mode ?? (session?.endedAt !== undefined ? "revise" : session !== null ? "append" : "new");
-    return { enabled: settings?.plainWorkouts === true, timeZone, now, localDate: day.localDate, startTime: `${values.hour}:${values.minute}`, openSession: open[0] ?? null, session, mode, currentItems };
+    const heads = session === null ? undefined : await sessionHeads(ctx, session._id);
+    return { enabled: settings?.plainWorkouts === true, timeZone, now, localDate: day.localDate, startTime: `${values.hour}:${values.minute}`, openSession: open[0] ?? null, session, mode, currentItems, ...(heads ?? {}), ...(pendingDraft?.version === undefined ? {} : { version: pendingDraft.version }) };
   },
 });
 
@@ -294,7 +297,7 @@ async function resolveExercise(ctx: MutationCtx, userId: string, name: string, k
 
 /** Saves one complete pending review after the model output has passed validation. */
 export const saveParsedDraft = internalMutation({
-  args: { userId: v.string(), submissionId: v.string(), text: v.string(), source: v.union(v.literal("text"), v.literal("coach")), localDate: v.string(), startTime: v.string(), raw: v.string(), draftId: v.optional(v.id("workout_drafts")), sessionId: v.optional(v.id("workout_sessions")), chatId: v.optional(v.id("chats")), messageId: v.optional(v.id("messages")) },
+  args: { userId: v.string(), submissionId: v.string(), text: v.string(), source: v.union(v.literal("text"), v.literal("coach")), localDate: v.string(), startTime: v.string(), raw: v.string(), draftId: v.optional(v.id("workout_drafts")), sessionId: v.optional(v.id("workout_sessions")), chatId: v.optional(v.id("chats")), messageId: v.optional(v.id("messages")), contextItems: v.array(v.object({ from: v.number(), name: v.string(), sets: v.array(v.object({ setId: v.optional(v.id("sets")), weightKg: v.optional(v.number()), reps: v.optional(v.number()), weightBasis: v.optional(v.union(v.literal("total"), v.literal("each"))) })), cardio: v.optional(v.object({ cardioId: v.optional(v.id("cardio")), durationMin: v.optional(v.number()), distanceKm: v.optional(v.number()), reportedKcal: v.optional(v.number()), speedKmh: v.optional(v.number()), inclinePct: v.optional(v.number()) })) })), headSetIds: v.optional(v.array(v.id("sets"))), headCardioIds: v.optional(v.array(v.id("cardio"))), version: v.optional(v.number()) },
   returns: v.id("workout_drafts"),
   handler: async (ctx, args) => {
     const existing = await ctx.db.query("workout_drafts").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", args.userId).eq("submissionId", args.submissionId)).unique();
@@ -305,6 +308,7 @@ export const saveParsedDraft = internalMutation({
     const timeZone = await resolveTimeZone(ctx, args.userId);
     const editedDraft = args.draftId === undefined ? null : await ctx.db.get("workout_drafts", args.draftId);
     if (args.draftId !== undefined && (editedDraft === null || editedDraft.userId !== args.userId || editedDraft.status !== "pending")) throw new ConvexError({ code: "NOT_FOUND", message: "Pending workout draft not found" });
+    if (editedDraft !== null && args.version !== (editedDraft.version ?? 0)) throw new ConvexError({ code: "STALE_REVISION", message: "This review changed in chat. Reload it." });
     const targetId = args.sessionId ?? editedDraft?.targetSessionId;
     const target = targetId === undefined ? null : await ctx.db.get("workout_sessions", targetId);
     if (target !== null && (target.userId !== args.userId || target.deletedAt !== undefined)) throw new ConvexError({ code: "NOT_FOUND", message: "Workout not found" });
@@ -312,7 +316,7 @@ export const saveParsedDraft = internalMutation({
     const targetSession = target ?? (raw.targetIntent === "append" ? open[0] ?? null : null);
     const mode: "new" | "append" | "revise" = editedDraft?.mode ?? (targetSession?.endedAt !== undefined ? "revise" : targetSession !== null ? "append" : "new");
     const needsTarget = target === null && open[0] !== undefined && raw.targetIntent === "unclear";
-    const currentItems = editedDraft !== null ? numberDraftItems(editedDraft.items) : targetSession === null ? [] : await sessionItems(ctx, targetSession._id);
+    const currentItems = args.contextItems;
     const logged = await loggedExercises(ctx, args.userId);
     const items: WorkoutItem[] = [];
     for (const [index, item] of raw.items.entries()) {
@@ -323,7 +327,7 @@ export const saveParsedDraft = internalMutation({
       let sets: WorkoutItem["sets"] = [];
       let cardio: WorkoutItem["cardio"];
       if (item.kind === "strength") {
-        const expanded = expandSets(Array.isArray(item.weights) ? item.weights as number[] : [], Array.isArray(item.reps) ? item.reps as number[] : [], { weightUnit: item.unit === "lb" ? "lb" : "kg", ...(item.basis === "each" || item.basis === "total" ? { weightBasis: item.basis } : {}), bodyweight: item.bodyweight === true });
+        const expanded = expandSets(item.weights, item.reps, { weightUnit: item.unit === "lb" ? "lb" : "kg", ...(item.basis === "each" || item.basis === "total" ? { weightBasis: item.basis } : {}), bodyweight: item.bodyweight === true });
         if (expanded.problem !== undefined) problems.push(expanded.problem);
         else sets = expanded.sets.slice(0, MAX_SETS_PER_ITEM);
       } else {
@@ -347,8 +351,8 @@ export const saveParsedDraft = internalMutation({
       if (typeof item.from === "number") {
         const oldItem = currentItems[item.from];
         if (oldItem !== undefined) {
-          replaceSetIds = oldItem.sets.flatMap((set) => set.setId === undefined ? [] : [set.setId]);
-          replaceCardioIds = oldItem.cardio?.cardioId === undefined ? [] : [oldItem.cardio.cardioId];
+          replaceSetIds = [...new Set([...(editedDraft?.items[item.from]?.replaceSetIds ?? []), ...oldItem.sets.flatMap((set) => set.setId === undefined ? [] : [set.setId])])];
+          replaceCardioIds = [...new Set([...(editedDraft?.items[item.from]?.replaceCardioIds ?? []), ...(oldItem.cardio?.cardioId === undefined ? [] : [oldItem.cardio.cardioId])])];
         }
         if (oldItem !== undefined && item.kind === "strength") {
           setRows = sets.map((set, setIndex) => {
@@ -370,9 +374,7 @@ export const saveParsedDraft = internalMutation({
     if (!isLocalDate(date)) throw new ConvexError({ code: "BAD_WORKOUT_OUTPUT", message: "The workout date could not be read." });
     const startTime = raw.startTime ?? targetStartTime ?? editedDraft?.startTime ?? args.startTime;
     const durationMin = raw.durationMin ?? editedDraft?.durationMin ?? targetSession?.durationMin;
-    const heads = targetSession === null ? {} : editedDraft?.headSetIds !== undefined && editedDraft.headCardioIds !== undefined
-      ? { headSetIds: editedDraft.headSetIds, headCardioIds: editedDraft.headCardioIds }
-      : await sessionHeads(ctx, targetSession._id);
+    const heads = targetSession === null ? {} : { headSetIds: args.headSetIds ?? [], headCardioIds: args.headCardioIds ?? [] };
     const draft = {
       userId: args.userId,
       submissionId: args.submissionId,
@@ -388,14 +390,20 @@ export const saveParsedDraft = internalMutation({
       startTime,
       ...(durationMin === undefined ? {} : { durationMin }),
       ...heads,
+      version: (editedDraft?.version ?? 0) + 1,
       items,
       createdAt: Date.now(),
     };
     if (id !== undefined) {
       const prior = await ctx.db.get("workout_drafts", id);
       if (prior === null || prior.userId !== args.userId || prior.status !== "pending") throw new ConvexError({ code: "NOT_FOUND", message: "Pending workout draft not found" });
-      await ctx.db.patch("workout_drafts", id, { ...draft, submissionId: prior.submissionId });
-      return id;
+      if (args.source !== "coach") {
+        await ctx.db.patch("workout_drafts", id, { ...draft, submissionId: args.submissionId, version: (prior.version ?? 0) + 1 });
+        return id;
+      }
+      const replacementId = await ctx.db.insert("workout_drafts", { ...draft, supersedes: id });
+      await ctx.db.patch("workout_drafts", id, { status: "discarded", supersededBy: replacementId });
+      return replacementId;
     }
     return await ctx.db.insert("workout_drafts", draft);
   },
@@ -492,14 +500,14 @@ export const updateDraft = mutation({
     const mode = target === null ? "new" : row.mode === "revise" && target._id === row.targetSessionId ? "revise" : "append";
     const items = args.items.map((item) => ({ ...item, problems: workoutItemProblems(item) }));
     const heads = target === null ? { headSetIds: undefined, headCardioIds: undefined } : target._id === row.targetSessionId ? {} : await sessionHeads(ctx, target._id);
-    await ctx.db.patch("workout_drafts", row._id, { localDate: args.localDate, startTime: args.startTime, ...(args.durationMin === null ? { durationMin: undefined } : { durationMin: args.durationMin }), needsTarget: args.needsTarget, ...(target === null ? { targetSessionId: undefined } : { targetSessionId: target._id }), ...heads, mode, items });
+    await ctx.db.patch("workout_drafts", row._id, { localDate: args.localDate, startTime: args.startTime, ...(args.durationMin === null ? { durationMin: undefined } : { durationMin: args.durationMin }), needsTarget: args.needsTarget, ...(target === null ? { targetSessionId: undefined } : { targetSessionId: target._id }), ...heads, mode, items, version: (row.version ?? 0) + 1 });
     return null;
   },
 });
 
 /** Creates a workout session and its complete set/cardio batch in one transaction. */
 export const commitDraft = mutation({
-  args: { draftId: v.id("workout_drafts"), submissionId: v.string() },
+  args: { draftId: v.id("workout_drafts"), submissionId: v.string(), expectedVersion: v.optional(v.number()), edits: v.optional(v.object({ localDate: v.string(), startTime: v.string(), durationMin: v.union(v.number(), v.null()), needsTarget: v.boolean(), targetSessionId: v.union(v.id("workout_sessions"), v.null()), items: v.array(workoutItemValidator) })) },
   returns: v.object({ sessionId: v.id("workout_sessions"), setIds: v.array(v.id("sets")), cardioIds: v.array(v.id("cardio")) }),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx); await assertLedgerWritable(ctx, userId);
@@ -509,11 +517,24 @@ export const commitDraft = mutation({
       if (row.committedSubmissionId !== args.submissionId || row.written === undefined) throw new Error("submissionId already used for another workout change");
       return { sessionId: row.written.sessionId, setIds: row.written.setRevisionIds, cardioIds: row.written.cardioRevisionIds };
     }
+    if (args.expectedVersion !== undefined && args.expectedVersion !== (row.version ?? 0)) throw new ConvexError({ code: "STALE_REVISION", message: "This review changed in chat. Reload it." });
+    if (args.edits !== undefined) {
+      if (!isLocalDate(args.edits.localDate) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(args.edits.startTime) || (args.edits.durationMin !== null && (!Number.isInteger(args.edits.durationMin) || args.edits.durationMin < 1 || args.edits.durationMin > 1440)) || itemsExceedLimits(args.edits.items)) throw new ConvexError({ code: "INVALID_DRAFT", message: "Check the date, time, duration and workout items." });
+      const editTarget = args.edits.targetSessionId === null ? null : await ctx.db.get("workout_sessions", args.edits.targetSessionId);
+      if (editTarget !== null && (editTarget.userId !== userId || editTarget.deletedAt !== undefined)) throw new ConvexError({ code: "NOT_FOUND", message: "Workout not found" });
+      const editHeads = editTarget === null ? {} : editTarget._id === row.targetSessionId ? {} : await sessionHeads(ctx, editTarget._id);
+      const changedItems = args.edits.items.map((item) => ({ ...item, problems: workoutItemProblems(item) }));
+      Object.assign(row, { localDate: args.edits.localDate, startTime: args.edits.startTime, durationMin: args.edits.durationMin ?? undefined, needsTarget: args.edits.needsTarget, targetSessionId: editTarget?._id, mode: editTarget === null ? "new" : row.mode === "revise" && editTarget._id === row.targetSessionId ? "revise" : "append", items: changedItems, ...editHeads });
+    }
     if (row.status !== "pending" || row.needsTarget || row.items.some((item) => workoutItemProblems(item).length > 0)) throw new ConvexError({ code: "WORKOUT_NEEDS_REVIEW", message: "Fix every workout item and choose a target before saving." });
-    const timeZone = await resolveTimeZone(ctx, userId);
-    const startedAt = instantAt(row.localDate, row.startTime ?? "12:00", timeZone);
+    const userTimeZone = await resolveTimeZone(ctx, userId);
     let session = row.targetSessionId === undefined ? null : await ctx.db.get("workout_sessions", row.targetSessionId);
     if (session !== null && (session.userId !== userId || session.deletedAt !== undefined || (row.mode === "append" && session.endedAt !== undefined))) throw new ConvexError({ code: "INVALID_TARGET", message: "That workout can no longer be changed." });
+    const timeZone = row.mode === "revise" && session !== null ? session.timeZone : userTimeZone;
+    const savedDate = session?.localDate;
+    const savedStartTime = session === null ? undefined : new Intl.DateTimeFormat("en-GB", { timeZone: session.timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(session.startedAt));
+    const timingChanged = row.mode === "revise" && (row.localDate !== savedDate || (row.startTime ?? "12:00") !== savedStartTime);
+    const startedAt = row.mode === "revise" && session !== null && !timingChanged ? session.startedAt : instantAt(row.localDate, row.startTime ?? "12:00", timeZone);
     const hasReferencedHeads = row.items.some((item) => item.sets.some((set) => set.setId !== undefined) || item.cardio?.cardioId !== undefined || (item.replaceSetIds?.length ?? 0) > 0 || (item.replaceCardioIds?.length ?? 0) > 0);
     if (session !== null && (row.mode === "revise" || (row.mode === "append" && hasReferencedHeads))) {
       const currentHeads = await sessionHeads(ctx, session._id);
@@ -538,14 +559,17 @@ export const commitDraft = mutation({
       if (session.localDate !== row.localDate) sessionPatch.localDate = row.localDate;
       if (session.timeZone !== timeZone) sessionPatch.timeZone = timeZone;
       if (session.startedAt !== startedAt) sessionPatch.startedAt = startedAt;
-      if (session.endedAt !== undefined) {
+      if (session.endedAt !== undefined && row.durationMin !== undefined) {
         if (session.durationMin !== row.durationMin) {
           sessionPatch.durationMin = row.durationMin;
-          sessionPatch.endedAt = row.durationMin === undefined ? startedAt : startedAt + row.durationMin * 60_000;
-        } else if (row.durationMin !== undefined && session.startedAt !== startedAt) {
+          sessionPatch.endedAt = startedAt + row.durationMin * 60_000;
+        } else if (timingChanged && session.startedAt !== startedAt) {
           sessionPatch.endedAt = startedAt + row.durationMin * 60_000;
         }
+      } else if (session.endedAt !== undefined && timingChanged) {
+        sessionPatch.endedAt = session.endedAt + (startedAt - session.startedAt);
       }
+      if (session.endedAt !== undefined && (sessionPatch.endedAt ?? session.endedAt) < (sessionPatch.startedAt ?? session.startedAt)) throw new ConvexError({ code: "INVALID_TIME", message: "A workout cannot end before it starts." });
       if (Object.keys(sessionPatch).length > 0) {
         previousSession = {
           localDate: session.localDate, timeZone: session.timeZone, startedAt: session.startedAt,
@@ -558,11 +582,15 @@ export const commitDraft = mutation({
     }
     const existingSets = await ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", session!._id).eq("status", "live")).take(201);
     const existingCardio = await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", session!._id).eq("status", "live")).take(101);
+    const cardioAdds = row.items.filter((item) => item.kind === "cardio" && item.cardio?.cardioId === undefined).length;
+    const finalCardioCount = row.mode === "revise" ? row.items.filter((item) => item.kind === "cardio").length : existingCardio.length + cardioAdds;
+    if (finalCardioCount > MAX_SESSION_CARDIO) throw new ConvexError({ code: "LIMIT_REACHED", message: "A workout can contain at most 100 cardio items." });
     const additions = row.items.reduce((sum, item) => sum + (item.kind === "strength" ? item.sets.filter((set) => set.setId === undefined).length : 0), 0);
     const finalSetCount = row.mode === "revise" ? row.items.reduce((sum, item) => sum + (item.kind === "strength" ? item.sets.length : 0), 0) : existingSets.length + additions;
     if (finalSetCount > 200) throw new ConvexError({ code: "LIMIT_REACHED", message: "A workout can contain at most 200 sets." });
     const setIds: Id<"sets">[] = []; const cardioIds: Id<"cardio">[] = [];
     const retainedSets = new Set<Id<"sets">>(); const retainedCardio = new Set<Id<"cardio">>();
+    const nextSetIndex = new Map<Id<"exercises">, number>();
     for (const [itemIndex, item] of row.items.entries()) {
       const chosen = item.exerciseId === undefined ? await createPersonalInMutation(ctx, userId, item.name, item.kind) : item.exerciseId;
       const exercise = await ctx.db.get("exercises", chosen);
@@ -573,7 +601,9 @@ export const commitDraft = mutation({
           const old = set.setId === undefined ? null : await ctx.db.get("sets", set.setId);
           if (old !== null && (old.userId !== userId || old.sessionId !== session._id || old.status !== "live")) throw new ConvexError({ code: "STALE_REVISION", message: "This workout changed since the review was made. Open it again." });
           if (old !== null) retainedSets.add(old._id);
-          const desiredIndex = old?.exerciseId === chosen ? old.setIndex : existingSets.filter((rowSet) => rowSet.exerciseId === chosen).reduce((max, rowSet) => Math.max(max, rowSet.setIndex), 0) + setIndex + 1;
+          const maxExisting = existingSets.filter((rowSet) => rowSet.exerciseId === chosen).reduce((max, rowSet) => Math.max(max, rowSet.setIndex), 0);
+          const desiredIndex = old?.exerciseId === chosen ? old.setIndex : (nextSetIndex.get(chosen) ?? maxExisting) + 1;
+          if (old?.exerciseId !== chosen) nextSetIndex.set(chosen, desiredIndex);
           const changed = old !== null && (old.exerciseId !== chosen || old.weightKg !== set.weightKg || old.reps !== set.reps || old.weightBasis !== set.weightBasis || old.setIndex !== desiredIndex);
           if (old !== null && !changed) continue;
           if (old !== null) await ctx.db.patch("sets", old._id, { status: "superseded" });
@@ -632,7 +662,10 @@ export const commitDraft = mutation({
         }));
       }
     }
-    await ctx.db.patch("workout_drafts", row._id, { status: "committed", committedSubmissionId: args.submissionId, written: { sessionId: session._id, createdSession, setRevisionIds: setIds, cardioRevisionIds: cardioIds, ...(previousSession === undefined ? {} : { previousSession }) } });
+    const currentSession = await ctx.db.get("workout_sessions", session._id);
+    if (currentSession === null) throw new Error("Workout session disappeared during save");
+    const sessionFields = { localDate: currentSession.localDate, timeZone: currentSession.timeZone, startedAt: currentSession.startedAt, ...(currentSession.endedAt === undefined ? {} : { endedAt: currentSession.endedAt }), ...(currentSession.durationMin === undefined ? {} : { durationMin: currentSession.durationMin }), ...(currentSession.timing === undefined ? {} : { timing: currentSession.timing }) };
+    await ctx.db.patch("workout_drafts", row._id, { status: "committed", committedSubmissionId: args.submissionId, written: { sessionId: session._id, createdSession, setRevisionIds: setIds, cardioRevisionIds: cardioIds, sessionFields, ...(previousSession === undefined ? {} : { previousSession }) } });
     return { sessionId: session._id, setIds, cardioIds };
   },
 });
@@ -656,6 +689,11 @@ export const undoDraft = mutation({
     const row = await ctx.db.get("workout_drafts", args.draftId);
     if (row === null || row.userId !== userId || row.written === undefined) throw new ConvexError({ code: "NOT_FOUND", message: "Saved workout not found" });
     if (row.undoneAt !== undefined) return null;
+    if (row.written.sessionFields !== undefined) {
+      const current = await ctx.db.get("workout_sessions", row.written.sessionId);
+      const fields = row.written.sessionFields;
+      if (current === null || current.localDate !== fields.localDate || current.timeZone !== fields.timeZone || current.startedAt !== fields.startedAt || current.endedAt !== fields.endedAt || current.durationMin !== fields.durationMin || current.timing !== fields.timing) throw new ConvexError({ code: "STALE_REVISION", message: "The workout time changed after it was saved." });
+    }
     for (const id of row.written.setRevisionIds) {
       const head = await ctx.db.get("sets", id); if (head === null || head.status === "superseded") throw new ConvexError({ code: "STALE_REVISION", message: "A workout set changed after it was saved." });
       const previous = head.supersedes === undefined ? null : await ctx.db.get("sets", head.supersedes);

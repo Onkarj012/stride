@@ -101,6 +101,19 @@ test("personal exercise names normalize to one private row and never leak in sea
   expect(await stranger.query(api.exercises.search, { query: "cable row" })).toEqual([]);
 });
 
+test("personal exercise matches rank ahead of catalog results at the result limit", async () => {
+  const { t, user } = await setup();
+  const personalId = await user.mutation(api.exercises.createPersonal, { name: "Bench press personal", kind: "strength" });
+  await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "bench-catalog", name: "Bench press catalog", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  expect(await user.query(api.exercises.search, { query: "bench press", limit: 1 })).toMatchObject([{ _id: personalId }]);
+});
+
+test("personal exercise creation refuses while ledger clearing is active", async () => {
+  const { t, user } = await setup();
+  await t.run((ctx) => ctx.db.insert("ledger_clears", { userId: "user_a" }));
+  await expect(user.mutation(api.exercises.createPersonal, { name: "Cable fly", kind: "strength" })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+});
+
 test("other users' matching personal exercises do not crowd catalog search results", async () => {
   const t = convexTest(schema, modules);
   const user = t.withIdentity({ subject: "user_a" });

@@ -1,6 +1,6 @@
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { OPENROUTER_CHAT_URL } from "./pipeline/openrouter";
 import schema from "./schema";
 
@@ -84,6 +84,36 @@ test("setting off refuses parsing before calling the model", async () => {
   expect(fetch).not.toHaveBeenCalled();
 });
 
+test("commit rejects a plate version changed after it loaded", async () => {
+  const { user } = await setup();
+  const draftId = await user.mutation(api.workouts.blankDraft, { submissionId: "versioned" });
+  await user.mutation(api.workouts.updateDraft, { draftId, localDate: "2026-10-29", startTime: "10:00", durationMin: null, needsTarget: false, targetSessionId: null, items: [] });
+  await expect(user.mutation(api.workouts.commitDraft, { draftId, submissionId: "versioned-save", expectedVersion: 0, edits: { localDate: "2026-10-29", startTime: "10:00", durationMin: null, needsTarget: false, targetSessionId: null, items: [] } })).rejects.toMatchObject({ data: { code: "STALE_REVISION", message: "This review changed in chat. Reload it." } });
+});
+
+test("batch additions to the same exercise get consecutive set indexes", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "same-ex", name: "Bench press", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const draftId = await user.mutation(api.workouts.blankDraft, { submissionId: "same-index" });
+  const items = [1, 2].map((n) => ({ key: `item-${n}`, name: "Bench press", kind: "strength" as const, exerciseId, candidateIds: [exerciseId], sets: [{ weightKg: 50, reps: 8 }], problems: [] }));
+  await user.mutation(api.workouts.updateDraft, { draftId, localDate: "2026-10-29", startTime: "10:00", durationMin: null, needsTarget: false, targetSessionId: null, items });
+  const saved = await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "same-index-save" });
+  const sets = await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", saved.sessionId).eq("status", "live")).take(10));
+  expect(sets.map((set) => set.setIndex).sort()).toEqual([1, 2]);
+});
+
+test("workout draft appends stop at the shared 100 cardio row session limit", async () => {
+  const { t, user } = await setup();
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "cardio-cap-session" });
+  const exerciseId = await user.mutation(api.exercises.createPersonal, { name: "Walking", kind: "cardio" });
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 100; index += 1) await ctx.db.insert("cardio", { userId: "user_a", sessionId, exerciseId, position: index, durationMin: 1, revision: 1, op: "add", status: "live", submissionId: `draft-cardio-${index}` });
+  });
+  const draftId = await user.mutation(api.workouts.blankDraft, { submissionId: "cardio-cap-draft", sessionId });
+  await user.mutation(api.workouts.updateDraft, { draftId, localDate: "2026-10-29", startTime: "10:00", durationMin: null, needsTarget: false, targetSessionId: sessionId, items: [{ key: "walk", name: "Walking", kind: "cardio", exerciseId, candidateIds: [exerciseId], sets: [], cardio: { durationMin: 1 }, problems: [] }] });
+  await expect(user.mutation(api.workouts.commitDraft, { draftId, submissionId: "cardio-cap-save" })).rejects.toMatchObject({ data: { code: "LIMIT_REACHED" } });
+});
+
 test("AI failure leaves no workout draft or session", async () => {
   const { t, user } = await setup();
   await expect(user.action(api.workouts.parse, { submissionId: "provider-failure", text: "bench 60 kg 8 reps" })).rejects.toMatchObject({ data: { code: "AI_UNAVAILABLE" } });
@@ -129,6 +159,34 @@ test("a revise draft keeps the saved workout time when the model gives no date o
   expect(after).not.toHaveProperty("timing");
 });
 
+test("batch undo refuses to restore session times changed by a later write", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "undo-time", name: "Bench", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "undo-time-session", startedAt: Date.UTC(2026, 9, 29, 5) });
+  await user.mutation(api.strength.addSet, { submissionId: "undo-time-set", sessionId, exerciseId, weightKg: 40, reps: 8 });
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: Date.UTC(2026, 9, 29, 5, 30) });
+  const draftId = await user.mutation(api.workouts.blankDraft, { submissionId: "undo-time-draft", sessionId });
+  await t.run((ctx) => ctx.db.patch("workout_drafts", draftId, { mode: "revise" }));
+  const item = { key: "bench", name: "Bench", kind: "strength" as const, exerciseId, candidateIds: [exerciseId], sets: [{ weightKg: 41, reps: 8, setId: (await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).first()))!._id }], problems: [] };
+  await user.mutation(api.workouts.updateDraft, { draftId, localDate: "2026-10-29", startTime: "11:00", durationMin: null, needsTarget: false, targetSessionId: sessionId, items: [item] });
+  await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "undo-time-save" });
+  await t.run((ctx) => ctx.db.patch("workout_sessions", sessionId, { startedAt: Date.UTC(2026, 9, 29, 6) }));
+  await expect(user.mutation(api.workouts.undoDraft, { draftId, submissionId: "undo-time-undo" })).rejects.toMatchObject({ data: { code: "STALE_REVISION", message: "The workout time changed after it was saved." } });
+});
+
+test("moving a finished workout start keeps its elapsed time", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "shift-time", name: "Bench", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "shift-session", startedAt: Date.UTC(2026, 9, 28, 5) });
+  const setId = await user.mutation(api.strength.addSet, { submissionId: "shift-set", sessionId, exerciseId, weightKg: 40, reps: 8 });
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: Date.UTC(2026, 9, 28, 5, 30) });
+  const draftId = await user.mutation(api.workouts.blankDraft, { submissionId: "shift-draft", sessionId });
+  await t.run((ctx) => ctx.db.patch("workout_drafts", draftId, { mode: "revise" }));
+  await user.mutation(api.workouts.updateDraft, { draftId, localDate: "2026-10-28", startTime: "12:00", durationMin: null, needsTarget: false, targetSessionId: sessionId, items: [{ key: "bench", name: "Bench", kind: "strength", exerciseId, candidateIds: [exerciseId], sets: [{ setId, weightKg: 40, reps: 8 }], problems: [] }] });
+  await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "shift-save" });
+  expect(await t.run((ctx) => ctx.db.get("workout_sessions", sessionId))).toMatchObject({ startedAt: Date.UTC(2026, 9, 28, 6, 30), endedAt: Date.UTC(2026, 9, 28, 7) });
+});
+
 test("a pending-draft correction keeps the other items and their set ids", async () => {
   const { user } = await setup();
   const initialItems = ["Bench press", "Squat"].map((name) => ({ name, kind: "strength", weights: [40], reps: [8], unit: "kg", basis: null, bodyweight: false, durationMin: null, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: null }));
@@ -153,6 +211,36 @@ test("a pending-draft correction keeps the other items and their set ids", async
   expect(after.items.map((item) => item.sets[0]?.setId)).toEqual(before.items.map((item) => item.sets[0]?.setId));
   expect(after.items[0]?.sets[0]?.weightKg).toBe(39);
   expect(prompts[1]).toContain('"from":0,"name":"Bench press"');
+});
+
+test("repeated append corrections keep earlier removed set ids for commit", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "append-correction", name: "Bench", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "append-session" });
+  for (const [index, weightKg] of [30, 40, 50].entries()) await user.mutation(api.strength.addSet, { submissionId: `append-set-${index}`, sessionId, exerciseId, weightKg, reps: 8 });
+  const originalSets = await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(10));
+  const target = await user.mutation(api.workouts.blankDraft, { submissionId: "append-draft", sessionId });
+  await user.mutation(api.workouts.updateDraft, { draftId: target, localDate: "2026-10-29", startTime: "10:00", durationMin: null, needsTarget: false, targetSessionId: sessionId, items: [{ key: "bench", name: "Bench", kind: "strength", exerciseId, candidateIds: [exerciseId], sets: originalSets.map((set) => ({ setId: set._id, weightKg: set.weightKg, reps: set.reps })), problems: [] }] });
+  vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [{ name: "Bench", kind: "strength", weights: [35], reps: [8], unit: "kg", basis: null, bodyweight: false, durationMin: null, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: 0 }], durationMin: null, date: null, startTime: null, targetIntent: "append" }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { headers: { "content-type": "application/json" } })));
+  const first = await user.action(api.workouts.parse, { submissionId: "append-fix-1", text: "bench is one set", draftId: target });
+  const second = await user.action(api.workouts.parse, { submissionId: "append-fix-2", text: "bench is still one set", draftId: first.draftId });
+  await user.mutation(api.workouts.commitDraft, { draftId: second.draftId, submissionId: "append-save" });
+  expect(await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(10))).toMatchObject([{ weightKg: 35, reps: 8 }]);
+});
+
+test("Coach corrections create a retry-discoverable draft and supersede the old card", async () => {
+  const { t, user } = await setup();
+  const chatId = await t.run((ctx) => ctx.db.insert("chats", { userId: "user_a", title: "Workout", updatedAt: Date.now() }));
+  const messageId = await t.run((ctx) => ctx.db.insert("messages", { userId: "user_a", chatId, role: "assistant", text: "Review below", status: "done", submissionId: "message", attachments: [], toolCalls: [], draftIds: [], entryIds: [], workoutDraftIds: [] }));
+  const oldDraftId = await t.run((ctx) => ctx.db.insert("workout_drafts", { userId: "user_a", chatId, submissionId: "old-workout", status: "pending", source: "coach", inputText: "bench", mode: "new", needsTarget: false, localDate: "2026-10-29", startTime: "10:00", version: 1, items: [], createdAt: Date.now() }));
+  vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [{ name: "Bench", kind: "strength", weights: [40], reps: [8], unit: "kg", basis: null, bodyweight: false, durationMin: null, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: null }], durationMin: null, date: null, startTime: null, targetIntent: "new" }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { headers: { "content-type": "application/json" } })));
+  const newDraftId = await t.action(internal.pipeline.workout_parse.parseCoach, { userId: "user_a", submissionId: "retry-turn:offer_workout:0", text: "bench 40 kg 8 reps", chatId, messageId, draftId: oldDraftId });
+  const oldDraft = await user.query(api.workouts.draft, { draftId: oldDraftId });
+  expect(oldDraft.draft).toMatchObject({ status: "discarded", supersededBy: newDraftId });
+  const saved = await t.query(internal.chats.priorTurnWrites, { userId: "user_a", submissionId: "retry-turn" });
+  expect(saved.workoutDraftIds).toContain(newDraftId);
 });
 
 test("a correction to an open session edits the numbered item instead of appending a duplicate", async () => {
@@ -254,6 +342,27 @@ test("revise commit rejects changed live heads before writing", async () => {
   await user.mutation(api.strength.editSet, { submissionId: "later-set", setId: liveBefore!._id, reps: 9 });
   await expect(user.mutation(api.workouts.commitDraft, { draftId, submissionId: "stale-save" })).rejects.toMatchObject({ data: { code: "STALE_REVISION", message: "This workout changed since the review was made. Open it again." } });
   expect((await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(10))).map((set) => set.reps)).toEqual([9]);
+});
+
+test("revision mapping uses the heads read before the model call", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "snapshot-bench", name: "Bench", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "snapshot-session", startedAt: Date.UTC(2026, 9, 28, 5) });
+  const oldSetId = await user.mutation(api.strength.addSet, { submissionId: "snapshot-set", sessionId, exerciseId, weightKg: 40, reps: 8 });
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: Date.UTC(2026, 9, 28, 5, 30) });
+  vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  vi.stubGlobal("fetch", vi.fn(async () => {
+    await t.run(async (ctx) => {
+      const old = await ctx.db.get("sets", oldSetId);
+      await ctx.db.patch("sets", oldSetId, { status: "superseded" });
+      await ctx.db.insert("sets", { userId: "user_a", sessionId, exerciseId, setIndex: 1, weightKg: 45, reps: 8, revision: 2, supersedes: oldSetId, op: "edit", status: "live", submissionId: "snapshot-later-edit" });
+      return old;
+    });
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [{ name: "Bench", kind: "strength", weights: [50], reps: [8], unit: "kg", basis: null, bodyweight: false, durationMin: null, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: 0 }], durationMin: null, date: null, startTime: null, targetIntent: "new" }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { headers: { "content-type": "application/json" } });
+  }));
+  const { draftId } = await user.action(api.workouts.parse, { submissionId: "snapshot-correction", text: "Bench was 50 kg", sessionId });
+  expect((await user.query(api.workouts.draft, { draftId })).draft.items[0]?.sets[0]?.setId).toBe(oldSetId);
+  await expect(user.mutation(api.workouts.commitDraft, { draftId, submissionId: "snapshot-save" })).rejects.toMatchObject({ data: { code: "STALE_REVISION" } });
 });
 
 test("undo leaves a created session live when a later batch added records", async () => {

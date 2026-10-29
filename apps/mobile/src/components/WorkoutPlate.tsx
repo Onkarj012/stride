@@ -119,7 +119,9 @@ function planText(plan: PlanFields): string {
 // Sorts object keys, so a copy whose keys were added in another order still matches.
 function sortedKeys(_key: string, value: unknown): unknown {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
-  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+  const sorted: Record<string, unknown> = {}
+  for (const [key, child] of Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) sorted[key] = child
+  return sorted
 }
 
 // The plate's local edits in the shape planText reads.
@@ -138,7 +140,6 @@ function localPlan(header: Header, items: WorkoutItem[]): PlanFields {
 export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraftId; toast: (message: Omit<ToastMessage, 'id'>) => void; onDone: () => void }) {
   const s = useStyles()
   const view = useQuery(api.workouts.draft, { draftId })
-  const updateDraft = useMutation(api.workouts.updateDraft)
   const commitDraft = useMutation(api.workouts.commitDraft)
   const discardDraft = useMutation(api.workouts.discardDraft)
   const undoDraft = useUndoWorkoutDraft(toast)
@@ -155,9 +156,11 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
   const [problem, setProblem] = useState<string | null>(null)
   // Kept across retries so a resend after a dropped reply commits once.
   const submission = useRef(newSubmissionId())
+  const loadedVersion = useRef(0)
 
   // Replaces the local edits with the saved review.
   function copyFrom(draft: WorkoutDraftView['draft']) {
+    loadedVersion.current = draft.version ?? 0
     setHeader({
       localDate: draft.localDate,
       startTime: draft.startTime ?? '12:00',
@@ -236,16 +239,19 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
     setBusy('save')
     setProblem(null)
     try {
-      await updateDraft({
+      const saved = await commitDraft({
         draftId,
+        submissionId: submission.current,
+        expectedVersion: loadedVersion.current,
+        edits: {
         localDate: form.localDate,
         startTime: form.startTime,
         durationMin: form.duration.trim() === '' ? null : Number(form.duration),
         needsTarget: form.needsTarget,
         targetSessionId: form.targetSessionId,
         items,
+        },
       })
-      const saved = await commitDraft({ draftId, submissionId: submission.current })
       const sets = saved.setIds.length
       const cardio = saved.cardioIds.length
       toast({
@@ -282,6 +288,8 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
           <Button label="Reload" variant="ghost" size="sm" onPress={() => copyFrom(view.draft)} />
         </View>
       ) : null}
+
+      {view.draft.inputText.trim() !== '' ? <YourText text={view.draft.inputText} /> : null}
 
       <View style={s.card}>
         <View style={s.row}>
@@ -358,8 +366,20 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
       {problem ? <Text style={s.problem}>{problem}</Text> : null}
       <View style={s.actions}>
         <Button label="Discard" variant="ghost" busy={busy === 'discard'} disabled={busy !== null} onPress={() => void discard()} />
-        <Button label="Save workout" variant="coral" style={s.grow} busy={busy === 'save'} disabled={busy !== null || blocker !== null} onPress={() => void save()} />
+        <Button label="Save workout" variant="coral" style={s.grow} busy={busy === 'save'} disabled={busy !== null || blocker !== null || outside} onPress={() => void save()} />
       </View>
+    </View>
+  )
+}
+
+// Keeps the original workout text available while the user checks a manual review.
+function YourText({ text }: { text: string }) {
+  const s = useStyles()
+  const [open, setOpen] = useState(false)
+  return (
+    <View style={s.card}>
+      <Button label={open ? 'Hide your text' : 'Your text'} variant="ghost" size="sm" onPress={() => setOpen((value) => !value)} />
+      {open ? <Text style={s.caption}>{text}</Text> : null}
     </View>
   )
 }

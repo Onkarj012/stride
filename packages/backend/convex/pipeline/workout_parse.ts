@@ -18,7 +18,7 @@ type ParseInput = {
 };
 
 /** Validates, prompts, parses, and saves one workout review for either entry point. */
-async function parseWorkout(ctx: ActionCtx, args: ParseInput): Promise<Id<"workout_drafts">> {
+export async function parseWorkout(ctx: ActionCtx, args: ParseInput): Promise<Id<"workout_drafts">> {
   if (args.text.trim() === "" || args.text.length > Math.min(AI_INPUT_LIMITS.messageChars, 12_000) || args.submissionId.trim() === "" || args.submissionId.length > 128) {
     throw new ConvexError({ code: "INVALID_TEXT", message: `Enter workout text up to ${AI_INPUT_LIMITS.messageChars} characters.` });
   }
@@ -59,6 +59,10 @@ async function parseWorkout(ctx: ActionCtx, args: ParseInput): Promise<Id<"worko
     ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
     ...(args.chatId === undefined ? {} : { chatId: args.chatId }),
     ...(args.messageId === undefined ? {} : { messageId: args.messageId }),
+    contextItems: context.currentItems.map((item) => ({ from: item.from, name: item.name, sets: item.sets.map(({ setId, weightKg, reps, weightBasis }) => ({ ...(setId === undefined ? {} : { setId }), ...(weightKg === undefined ? {} : { weightKg }), ...(reps === undefined ? {} : { reps }), ...(weightBasis === undefined ? {} : { weightBasis }) })), ...(item.cardio === undefined ? {} : { cardio: item.cardio }) })),
+    ...(context.headSetIds === undefined ? {} : { headSetIds: context.headSetIds }),
+    ...(context.headCardioIds === undefined ? {} : { headCardioIds: context.headCardioIds }),
+    ...(args.draftId === undefined ? {} : { version: context.version }),
   });
 }
 

@@ -6,6 +6,7 @@ import type { Doc } from "./_generated/dataModel";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { exerciseRecordValidator } from "./ledger_validators";
 import { requireUserId } from "./time_zone";
+import { assertLedgerWritable } from "./users";
 
 const MAX_SEARCH_RESULTS = 30;
 const MAX_IMPORT_BATCH = 100;
@@ -94,7 +95,7 @@ export const search = query({
       return category === undefined ? searchQuery : searchQuery.eq("category", category);
     }).take(limit);
     const normalized = normalizeExerciseName(text);
-    return [...catalog.filter((row) => row.ownerId === undefined), ...own.filter((row) => normalizeExerciseName(row.name).includes(normalized))].slice(0, limit).map(exerciseView);
+    return [...own.filter((row) => normalizeExerciseName(row.name).includes(normalized)), ...catalog.filter((row) => row.ownerId === undefined)].slice(0, limit).map(exerciseView);
   },
 });
 
@@ -115,6 +116,7 @@ export const createPersonal = mutation({
   returns: v.id("exercises"),
   handler: async (ctx, { name, kind }) => {
     const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
     const cleaned = catalogText(name, "name", 200);
     const normalized = normalizeExerciseName(cleaned);
     if (normalized === "") throw new ConvexError({ code: "INVALID_TEXT", message: "name must contain letters or numbers" });

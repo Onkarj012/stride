@@ -35,7 +35,7 @@ export function WorkoutCard({ draftId }: { draftId: WorkoutDraftId }) {
     <View style={s.card}>
       <View style={s.head}>
         <Text style={s.eyebrow}>Workout · {formatDayTitle(draft.localDate)}</Text>
-        <Text style={s.status}>{STATUS_TEXT[state]}</Text>
+        <Text style={s.status}>{draft.supersededBy !== undefined ? 'Updated below' : STATUS_TEXT[state]}</Text>
       </View>
       {draft.items.map((item, i) => (
         <View key={i} style={s.line}>

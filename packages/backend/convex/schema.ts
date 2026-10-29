@@ -485,6 +485,9 @@ export default defineSchema({
     durationMin: v.optional(v.number()),
     headSetIds: v.optional(v.array(v.id("sets"))),
     headCardioIds: v.optional(v.array(v.id("cardio"))),
+    version: v.optional(v.number()),
+    supersedes: v.optional(v.id("workout_drafts")),
+    supersededBy: v.optional(v.id("workout_drafts")),
     items: v.array(v.object({
       key: v.string(), name: v.string(), kind: v.union(v.literal("strength"), v.literal("cardio")),
       exerciseId: v.optional(v.id("exercises")), candidateIds: v.array(v.id("exercises")),
@@ -494,7 +497,7 @@ export default defineSchema({
       problems: v.array(v.string()),
     })),
     committedSubmissionId: v.optional(v.string()),
-    written: v.optional(v.object({ sessionId: v.id("workout_sessions"), createdSession: v.boolean(), setRevisionIds: v.array(v.id("sets")), cardioRevisionIds: v.array(v.id("cardio")), previousSession: v.optional(v.object({ localDate: v.string(), timeZone: v.string(), startedAt: v.number(), endedAt: v.optional(v.number()), durationMin: v.optional(v.number()), timing: v.optional(v.union(v.literal("live"), v.literal("logged"))) })) })),
+    written: v.optional(v.object({ sessionId: v.id("workout_sessions"), createdSession: v.boolean(), setRevisionIds: v.array(v.id("sets")), cardioRevisionIds: v.array(v.id("cardio")), sessionFields: v.optional(v.object({ localDate: v.string(), timeZone: v.string(), startedAt: v.number(), endedAt: v.optional(v.number()), durationMin: v.optional(v.number()), timing: v.optional(v.union(v.literal("live"), v.literal("logged"))) })), previousSession: v.optional(v.object({ localDate: v.string(), timeZone: v.string(), startedAt: v.number(), endedAt: v.optional(v.number()), durationMin: v.optional(v.number()), timing: v.optional(v.union(v.literal("live"), v.literal("logged"))) })) })),
     undoneAt: v.optional(v.number()),
     createdAt: v.number(),
   }).index("by_userId_and_submissionId", ["userId", "submissionId"])

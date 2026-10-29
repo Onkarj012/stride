@@ -42,6 +42,7 @@ import {
 import { resolveFoodPortion, userFoodsOf, userMeasuresOf } from "./pipeline/resolve";
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
 import { transcribeAudio } from "./pipeline/transcribe";
+import { parseWorkout } from "./pipeline/workout_parse";
 import { calorieTarget, dietsOf, MAX_PROGRESS_RANGE_DAYS, tdeeInput } from "./progress_v2";
 import { requireUserId, resolveLocalDay, resolveTimeZone } from "./time_zone";
 import { requireOwnUpload } from "./uploads";
@@ -696,7 +697,7 @@ export const finishReply = internalMutation({
       toolCalls: args.toolCalls,
       draftIds: args.draftIds,
       entryIds: args.entryIds,
-      workoutDraftIds: args.workoutDraftIds,
+      workoutDraftIds: [...new Set([...(row.workoutDraftIds ?? []), ...args.workoutDraftIds])],
       logAction: args.logAction,
       stopRequested: undefined,
     });
@@ -1208,7 +1209,7 @@ async function runChatTurn(
           if (typeof args.text !== "string" || args.text.trim() === "") throw new Error("text must contain the workout");
           const sessionId = context.sessions.find((session) => session.sessionId === args.session_id)?.sessionId;
           const pendingDraftId = context.workoutDraftIds.find((id) => id === args.draft_id);
-          const draftId = await ctx.runAction(internal.pipeline.workout_parse.parseCoach, { userId, submissionId: subId, text: args.text.slice(0, AI_INPUT_LIMITS.messageChars), chatId, messageId: target.messageId, ...(sessionId === undefined ? {} : { sessionId }), ...(pendingDraftId === undefined ? {} : { draftId: pendingDraftId }) });
+          const draftId = await parseWorkout(ctx, { userId, submissionId: subId, text: args.text.slice(0, AI_INPUT_LIMITS.messageChars), source: "coach", chatId, messageId: target.messageId, ...(sessionId === undefined ? {} : { sessionId }), ...(pendingDraftId === undefined ? {} : { draftId: pendingDraftId }) });
           workoutDraftIds.push(draftId);
           await ctx.runMutation(internal.chats.saveReplyCards, { ...target, entryIds, draftIds, workoutDraftIds });
           result = { status: "review_card_shown", draft_id: draftId, message: "The user must review and tap Save." };
