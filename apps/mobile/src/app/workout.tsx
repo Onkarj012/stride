@@ -469,6 +469,7 @@ function Live({
           <Sheet open={picking && !ended} onClose={() => setPicking(false)}>
             <ExercisePicker
               taken={list.map((e) => e.exercise._id)}
+              kind="strength"
               allowOwn={plain}
               onPick={(exercise) => {
                 setPicked((p) => (p.some((x) => x._id === exercise._id) ? p : [...p, exercise]))

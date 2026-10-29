@@ -217,3 +217,101 @@ test("copying a saved workout makes a new draft with names only or all measureme
   expect(names.items.find((item) => item.kind === "strength")?.sets).toEqual([]);
   expect(names.items.find((item) => item.kind === "strength")?.problems).toHaveLength(1);
 });
+
+test("revision context keeps every cardio row as a separately numbered item", async () => {
+  const { t, user } = await setup();
+  const cardioId = await user.mutation(api.exercises.createPersonal, { name: "Walking", kind: "cardio" });
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "cardio-session", startedAt: Date.UTC(2026, 9, 28, 5, 30) });
+  const first = await user.mutation(api.strength.addCardio, { submissionId: "walk-1", sessionId, exerciseId: cardioId, durationMin: 10 });
+  const second = await user.mutation(api.strength.addCardio, { submissionId: "walk-2", sessionId, exerciseId: cardioId, durationMin: 20 });
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: Date.UTC(2026, 9, 28, 5, 55) });
+  vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as { messages: { role: string; content: string }[] };
+    const context = body.messages.find((message) => message.role === "system")?.content ?? "";
+    expect(context).toContain('"from":0');
+    expect(context).toContain('"from":1');
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [
+      { name: "Walking", kind: "cardio", weights: [], reps: [], unit: "kg", basis: null, bodyweight: false, durationMin: 11, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: 0 },
+      { name: "Walking", kind: "cardio", weights: [], reps: [], unit: "kg", basis: null, bodyweight: false, durationMin: 21, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: 1 },
+    ], durationMin: null, date: null, startTime: null, targetIntent: "new" }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { headers: { "content-type": "application/json" } });
+  }));
+  const { draftId } = await user.action(api.workouts.parse, { submissionId: "revise-cardio", text: "correct both walks", sessionId });
+  const items = (await user.query(api.workouts.draft, { draftId })).draft.items;
+  expect(items.map((item) => item.cardio?.cardioId)).toEqual([first, second]);
+});
+
+test("revise commit rejects changed live heads before writing", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "stale-bench", name: "Bench press", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "stale-session", startedAt: Date.UTC(2026, 9, 28, 5, 30) });
+  await user.mutation(api.strength.addSet, { submissionId: "stale-set", sessionId, exerciseId, weightKg: 60, reps: 8 });
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: Date.UTC(2026, 9, 28, 5, 45) });
+  vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [{ name: "Bench press", kind: "strength", weights: [70], reps: [8], unit: "kg", basis: null, bodyweight: false, durationMin: null, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: 0 }], durationMin: null, date: null, startTime: null, targetIntent: "new" }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { headers: { "content-type": "application/json" } })));
+  const { draftId } = await user.action(api.workouts.parse, { submissionId: "stale-review", text: "change bench", sessionId });
+  const liveBefore = await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).first());
+  await user.mutation(api.strength.editSet, { submissionId: "later-set", setId: liveBefore!._id, reps: 9 });
+  await expect(user.mutation(api.workouts.commitDraft, { draftId, submissionId: "stale-save" })).rejects.toMatchObject({ data: { code: "STALE_REVISION", message: "This workout changed since the review was made. Open it again." } });
+  expect((await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(10))).map((set) => set.reps)).toEqual([9]);
+});
+
+test("undo leaves a created session live when a later batch added records", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "undo-bench", name: "Bench press", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const draftId = await t.run((ctx) => ctx.db.insert("workout_drafts", { userId: "user_a", submissionId: "create-for-undo", status: "pending", source: "manual", inputText: "", mode: "new", needsTarget: false, localDate: "2026-10-29", startTime: "11:00", items: [{ key: "one", name: "Bench press", kind: "strength", exerciseId, candidateIds: [exerciseId], sets: [{ weightKg: 60, reps: 8 }], problems: [] }], createdAt: Date.now() }));
+  const saved = await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "created-save" });
+  await t.run(async (ctx) => {
+    const current = await ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", saved.sessionId).eq("status", "live")).first();
+    await ctx.db.insert("sets", { userId: "user_a", sessionId: saved.sessionId, exerciseId, setIndex: 2, weightKg: 65, reps: 8, revision: 1, op: "add", status: "live", submissionId: "later-work" });
+    return current;
+  });
+  await user.mutation(api.workouts.undoDraft, { draftId, submissionId: "created-undo" });
+  expect(await t.run((ctx) => ctx.db.get("workout_sessions", saved.sessionId))).not.toHaveProperty("deletedAt");
+  expect((await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", saved.sessionId).eq("status", "live")).take(10))).map((set) => set.weightKg)).toEqual([65]);
+});
+
+test("append correction deletes old sets that the corrected item no longer has", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "shorten-bench", name: "Bench press", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "shorten-session" });
+  const old = await Promise.all([60, 65].map((weightKg, i) => user.mutation(api.strength.addSet, { submissionId: `shorten-old-${i}`, sessionId, exerciseId, weightKg, reps: 8 })));
+  vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [{ name: "Bench press", kind: "strength", weights: [62], reps: [8], unit: "kg", basis: null, bodyweight: false, durationMin: null, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: 0 }], durationMin: null, date: null, startTime: null, targetIntent: "append" }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { headers: { "content-type": "application/json" } })));
+  const { draftId } = await user.action(api.workouts.parse, { submissionId: "shorten-review", text: "bench was one set", sessionId });
+  await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "shorten-save" });
+  const live = await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(10));
+  expect(live).toHaveLength(1);
+  expect(live[0]).toMatchObject({ weightKg: 62, supersedes: old[0] });
+  const deleted = await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "deleted")).take(10));
+  expect(deleted.map((set) => set.supersedes)).toContain(old[1]);
+});
+
+test("batch undo restores absent session fields and RPE", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "restore-bench", name: "Bench press", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "restore-session", startedAt: Date.UTC(2026, 9, 28, 5, 30) });
+  const original = await user.mutation(api.strength.addSet, { submissionId: "restore-set", sessionId, exerciseId, weightKg: 60, reps: 8, rpe: 7 });
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: Date.UTC(2026, 9, 28, 5, 45) });
+  vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ items: [{ name: "Bench press", kind: "strength", weights: [70], reps: [8], unit: "kg", basis: null, bodyweight: false, durationMin: null, distanceKm: null, reportedKcal: null, speedKmh: null, inclinePct: null, from: 0 }], durationMin: 20, date: null, startTime: null, targetIntent: "new" }) } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }), { headers: { "content-type": "application/json" } })));
+  const { draftId } = await user.action(api.workouts.parse, { submissionId: "restore-review", text: "correct workout", sessionId });
+  await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "restore-save" });
+  expect((await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).first()))?.rpe).toBe(7);
+  await user.mutation(api.workouts.undoDraft, { draftId, submissionId: "restore-undo" });
+  const session = await t.run((ctx) => ctx.db.get("workout_sessions", sessionId));
+  expect(session).not.toHaveProperty("durationMin");
+  expect(session).not.toHaveProperty("timing");
+  expect(await t.run((ctx) => ctx.db.get("sets", original))).toMatchObject({ rpe: 7 });
+  expect((await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(10)))[0]).toMatchObject({ weightKg: 60, rpe: 7 });
+});
+
+test("blank append draft uses the target session local date and start time", async () => {
+  const { t, user } = await setup();
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "old-open", startedAt: Date.UTC(2026, 9, 27, 19, 5) });
+  const draftId = await user.mutation(api.workouts.blankDraft, { submissionId: "blank-append", sessionId });
+  expect((await user.query(api.workouts.draft, { draftId })).draft).toMatchObject({ mode: "append", localDate: "2026-10-28", startTime: "00:35" });
+  const before = await t.run((ctx) => ctx.db.get("workout_sessions", sessionId));
+  await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "blank-append-save" });
+  expect(await t.run((ctx) => ctx.db.get("workout_sessions", sessionId))).toEqual(before);
+});

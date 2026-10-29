@@ -50,6 +50,7 @@ const workoutItemValidator = v.object({
   exerciseId: v.optional(v.id("exercises")), candidateIds: v.array(v.id("exercises")),
   sets: v.array(v.object({ setId: v.optional(v.id("sets")), weightKg: v.optional(v.number()), reps: v.optional(v.number()), weightBasis: v.optional(v.union(v.literal("total"), v.literal("each"))) })),
   cardio: v.optional(v.object({ cardioId: v.optional(v.id("cardio")), durationMin: v.optional(v.number()), distanceKm: v.optional(v.number()), reportedKcal: v.optional(v.number()), speedKmh: v.optional(v.number()), inclinePct: v.optional(v.number()) })),
+  replaceSetIds: v.optional(v.array(v.id("sets"))), replaceCardioIds: v.optional(v.array(v.id("cardio"))),
   problems: v.array(v.string()),
 });
 const workoutDraftValidator = v.object({
@@ -58,6 +59,7 @@ const workoutDraftValidator = v.object({
   source: v.union(v.literal("text"), v.literal("coach"), v.literal("copy"), v.literal("manual")), inputText: v.string(),
   mode: v.union(v.literal("new"), v.literal("append"), v.literal("revise")), targetSessionId: v.optional(v.id("workout_sessions")),
   needsTarget: v.boolean(), localDate: v.string(), startTime: v.optional(v.string()), durationMin: v.optional(v.number()),
+  headSetIds: v.optional(v.array(v.id("sets"))), headCardioIds: v.optional(v.array(v.id("cardio"))),
   items: v.array(workoutItemValidator), createdAt: v.number(),
 });
 type WorkoutItem = Infer<typeof workoutItemValidator>;
@@ -164,15 +166,25 @@ export const WORKOUT_RESPONSE_FORMAT: { [key: string]: JsonValue } = {
   },
 };
 
-/** Numbers saved strength and cardio items in one stable exercise order. */
+/** Numbers saved strength groups and every cardio record in one stable order. */
 function numberSessionItems(sets: Doc<"sets">[], cardio: Doc<"cardio">[], names: Map<Id<"exercises">, string>): NumberedItem[] {
   const exerciseIds = [...new Set([...sets.map((set) => set.exerciseId), ...cardio.map((row) => row.exerciseId)])];
-  return exerciseIds.map((exerciseId, from) => ({
-    from,
-    name: names.get(exerciseId) ?? "Exercise",
-    sets: sets.filter((set) => set.exerciseId === exerciseId).sort((a, b) => a.setIndex - b.setIndex).map((set) => ({ setId: set._id, weightKg: set.weightKg, reps: set.reps, weightBasis: set.weightBasis })),
-    ...(cardio.find((row) => row.exerciseId === exerciseId) === undefined ? {} : { cardio: (() => { const row = cardio.find((candidate) => candidate.exerciseId === exerciseId)!; return { cardioId: row._id, durationMin: row.durationMin, distanceKm: row.distanceKm, reportedKcal: row.reportedKcal, speedKmh: row.speedKmh, inclinePct: row.inclinePct }; })() }),
-  }));
+  const items: NumberedItem[] = [];
+  for (const exerciseId of exerciseIds) {
+    const exerciseSets = sets.filter((set) => set.exerciseId === exerciseId).sort((a, b) => a.setIndex - b.setIndex);
+    if (exerciseSets.length > 0) items.push({ from: items.length, name: names.get(exerciseId) ?? "Exercise", sets: exerciseSets.map((set) => ({ setId: set._id, weightKg: set.weightKg, reps: set.reps, weightBasis: set.weightBasis, rpe: set.rpe })) });
+    for (const row of cardio.filter((entry) => entry.exerciseId === exerciseId).sort((a, b) => a.position - b.position)) {
+      items.push({ from: items.length, name: names.get(exerciseId) ?? "Exercise", sets: [], cardio: { cardioId: row._id, durationMin: row.durationMin, distanceKm: row.distanceKm, reportedKcal: row.reportedKcal, speedKmh: row.speedKmh, inclinePct: row.inclinePct } });
+    }
+  }
+  return items;
+}
+
+/** Reads the live set and cardio ids used to detect stale workout reviews. */
+async function sessionHeads(ctx: QueryCtx | MutationCtx, sessionId: Id<"workout_sessions">): Promise<{ headSetIds: Id<"sets">[]; headCardioIds: Id<"cardio">[] }> {
+  const sets = await ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(201);
+  const cardio = await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(101);
+  return { headSetIds: sets.map((set) => set._id).sort(), headCardioIds: cardio.map((row) => row._id).sort() };
 }
 
 /** Reads saved workout items and exercise names for parse context or revision mapping. */
@@ -330,8 +342,14 @@ export const saveParsedDraft = internalMutation({
       }
       let setRows: WorkoutItem["sets"] = sets;
       let cardioContent = cardio;
+      let replaceSetIds: Id<"sets">[] | undefined;
+      let replaceCardioIds: Id<"cardio">[] | undefined;
       if (typeof item.from === "number") {
         const oldItem = currentItems[item.from];
+        if (oldItem !== undefined) {
+          replaceSetIds = oldItem.sets.flatMap((set) => set.setId === undefined ? [] : [set.setId]);
+          replaceCardioIds = oldItem.cardio?.cardioId === undefined ? [] : [oldItem.cardio.cardioId];
+        }
         if (oldItem !== undefined && item.kind === "strength") {
           setRows = sets.map((set, setIndex) => {
             const oldSet = oldItem.sets[setIndex];
@@ -342,7 +360,7 @@ export const saveParsedDraft = internalMutation({
           cardioContent = { ...cardio, cardioId: oldItem.cardio.cardioId };
         }
       }
-      items.push({ key: `item-${index + 1}`, name, kind: item.kind, ...(match.exerciseId === undefined ? {} : { exerciseId: match.exerciseId }), candidateIds: match.candidateIds, sets: setRows, ...(cardioContent === undefined ? {} : { cardio: cardioContent }), problems });
+      items.push({ key: `item-${index + 1}`, name, kind: item.kind, ...(match.exerciseId === undefined ? {} : { exerciseId: match.exerciseId }), candidateIds: match.candidateIds, sets: setRows, ...(cardioContent === undefined ? {} : { cardio: cardioContent }), ...(replaceSetIds === undefined ? {} : { replaceSetIds }), ...(replaceCardioIds === undefined ? {} : { replaceCardioIds }), problems });
     }
     if (items.reduce((sum, item) => sum + item.sets.length, 0) > 200) throw new ConvexError({ code: "LIMIT_REACHED", message: "A workout can contain at most 200 sets." });
     const id = args.draftId;
@@ -352,6 +370,9 @@ export const saveParsedDraft = internalMutation({
     if (!isLocalDate(date)) throw new ConvexError({ code: "BAD_WORKOUT_OUTPUT", message: "The workout date could not be read." });
     const startTime = raw.startTime ?? targetStartTime ?? editedDraft?.startTime ?? args.startTime;
     const durationMin = raw.durationMin ?? editedDraft?.durationMin ?? targetSession?.durationMin;
+    const heads = targetSession === null ? {} : editedDraft?.headSetIds !== undefined && editedDraft.headCardioIds !== undefined
+      ? { headSetIds: editedDraft.headSetIds, headCardioIds: editedDraft.headCardioIds }
+      : await sessionHeads(ctx, targetSession._id);
     const draft = {
       userId: args.userId,
       submissionId: args.submissionId,
@@ -366,6 +387,7 @@ export const saveParsedDraft = internalMutation({
       localDate: date,
       startTime,
       ...(durationMin === undefined ? {} : { durationMin }),
+      ...heads,
       items,
       createdAt: Date.now(),
     };
@@ -422,10 +444,12 @@ export const blankDraft = mutation({
     if (prior !== null) return prior._id;
     const timeZone = await resolveTimeZone(ctx, userId); const now = Date.now();
     const localDate = (await resolveLocalDay(ctx, userId, now)).localDate;
-    const startTime = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(now));
     const session = args.sessionId === undefined ? null : await ctx.db.get("workout_sessions", args.sessionId);
     if (session !== null && session.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Workout not found" });
-    return await ctx.db.insert("workout_drafts", { userId, submissionId: args.submissionId, status: "pending", source: "manual", inputText: args.text ?? "", mode: session === null ? "new" : "append", ...(session === null ? {} : { targetSessionId: session._id }), needsTarget: false, localDate, startTime, items: [], createdAt: now });
+    const targetTimeZone = session?.timeZone ?? timeZone;
+    const startTime = session === null ? new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(now)) : new Intl.DateTimeFormat("en-GB", { timeZone: targetTimeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(session.startedAt));
+    const heads = session === null ? {} : await sessionHeads(ctx, session._id);
+    return await ctx.db.insert("workout_drafts", { userId, submissionId: args.submissionId, status: "pending", source: "manual", inputText: args.text ?? "", mode: session === null ? "new" : "append", ...(session === null ? {} : { targetSessionId: session._id }), ...heads, needsTarget: false, localDate: session?.localDate ?? localDate, startTime, items: [], createdAt: now });
   },
 });
 
@@ -467,7 +491,8 @@ export const updateDraft = mutation({
     if (target !== null && (target.userId !== userId || target.deletedAt !== undefined)) throw new ConvexError({ code: "NOT_FOUND", message: "Workout not found" });
     const mode = target === null ? "new" : row.mode === "revise" && target._id === row.targetSessionId ? "revise" : "append";
     const items = args.items.map((item) => ({ ...item, problems: workoutItemProblems(item) }));
-    await ctx.db.patch("workout_drafts", row._id, { localDate: args.localDate, startTime: args.startTime, ...(args.durationMin === null ? { durationMin: undefined } : { durationMin: args.durationMin }), needsTarget: args.needsTarget, ...(target === null ? { targetSessionId: undefined } : { targetSessionId: target._id }), mode, items });
+    const heads = target === null ? { headSetIds: undefined, headCardioIds: undefined } : target._id === row.targetSessionId ? {} : await sessionHeads(ctx, target._id);
+    await ctx.db.patch("workout_drafts", row._id, { localDate: args.localDate, startTime: args.startTime, ...(args.durationMin === null ? { durationMin: undefined } : { durationMin: args.durationMin }), needsTarget: args.needsTarget, ...(target === null ? { targetSessionId: undefined } : { targetSessionId: target._id }), ...heads, mode, items });
     return null;
   },
 });
@@ -489,6 +514,12 @@ export const commitDraft = mutation({
     const startedAt = instantAt(row.localDate, row.startTime ?? "12:00", timeZone);
     let session = row.targetSessionId === undefined ? null : await ctx.db.get("workout_sessions", row.targetSessionId);
     if (session !== null && (session.userId !== userId || session.deletedAt !== undefined || (row.mode === "append" && session.endedAt !== undefined))) throw new ConvexError({ code: "INVALID_TARGET", message: "That workout can no longer be changed." });
+    const hasReferencedHeads = row.items.some((item) => item.sets.some((set) => set.setId !== undefined) || item.cardio?.cardioId !== undefined || (item.replaceSetIds?.length ?? 0) > 0 || (item.replaceCardioIds?.length ?? 0) > 0);
+    if (session !== null && (row.mode === "revise" || (row.mode === "append" && hasReferencedHeads))) {
+      const currentHeads = await sessionHeads(ctx, session._id);
+      const sameIds = (left: Id<"sets">[] | Id<"cardio">[] | undefined, right: Id<"sets">[] | Id<"cardio">[]) => left !== undefined && left.length === right.length && [...left].sort().every((id, index) => id === right[index]);
+      if (!sameIds(row.headSetIds, currentHeads.headSetIds) || !sameIds(row.headCardioIds, currentHeads.headCardioIds)) throw new ConvexError({ code: "STALE_REVISION", message: "This workout changed since the review was made. Open it again." });
+    }
     const createdSession = session === null;
     if (session === null) {
       const local = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(startedAt));
@@ -500,7 +531,7 @@ export const commitDraft = mutation({
     }
     if (session === null) throw new Error("Workout session insert failed");
     let previousSession: { localDate: string; timeZone: string; startedAt: number; endedAt?: number; durationMin?: number; timing?: "live" | "logged" } | undefined;
-    if (!createdSession) {
+    if (!createdSession && row.mode === "revise") {
       const local = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(startedAt));
       if (local !== row.localDate) throw new ConvexError({ code: "INVALID_DATE", message: "The workout date does not match the selected time zone." });
       const sessionPatch: Partial<Doc<"workout_sessions">> = {};
@@ -536,10 +567,11 @@ export const commitDraft = mutation({
       const chosen = item.exerciseId === undefined ? await createPersonalInMutation(ctx, userId, item.name, item.kind) : item.exerciseId;
       const exercise = await ctx.db.get("exercises", chosen);
       if (exercise === null || (exercise.ownerId !== undefined && exercise.ownerId !== userId)) throw new ConvexError({ code: "NOT_FOUND", message: "Exercise not found" });
+      if ((item.kind === "cardio") !== (exercise.category === "cardio")) throw new ConvexError({ code: "INVALID_EXERCISE", message: item.kind === "cardio" ? "Choose a cardio activity." : "Choose a strength exercise." });
       if (item.kind === "strength") {
         for (const [setIndex, set] of item.sets.entries()) {
           const old = set.setId === undefined ? null : await ctx.db.get("sets", set.setId);
-          if (old !== null && (old.userId !== userId || old.sessionId !== session._id || old.status !== "live")) throw new ConvexError({ code: "STALE_REVISION", message: "A workout set changed. Reload the review and try again." });
+          if (old !== null && (old.userId !== userId || old.sessionId !== session._id || old.status !== "live")) throw new ConvexError({ code: "STALE_REVISION", message: "This workout changed since the review was made. Open it again." });
           if (old !== null) retainedSets.add(old._id);
           const desiredIndex = old?.exerciseId === chosen ? old.setIndex : existingSets.filter((rowSet) => rowSet.exerciseId === chosen).reduce((max, rowSet) => Math.max(max, rowSet.setIndex), 0) + setIndex + 1;
           const changed = old !== null && (old.exerciseId !== chosen || old.weightKg !== set.weightKg || old.reps !== set.reps || old.weightBasis !== set.weightBasis || old.setIndex !== desiredIndex);
@@ -548,6 +580,7 @@ export const commitDraft = mutation({
           const revisionId = await ctx.db.insert("sets", {
             userId, sessionId: session._id, exerciseId: chosen, setIndex: desiredIndex,
             weightKg: set.weightKg!, reps: set.reps!,
+            ...(old?.rpe === undefined ? {} : { rpe: old.rpe }),
             ...(set.weightBasis === undefined ? {} : { weightBasis: set.weightBasis }),
             revision: (old?.revision ?? 0) + 1,
             ...(old === null ? {} : { supersedes: old._id }),
@@ -559,7 +592,7 @@ export const commitDraft = mutation({
       } else {
         const c = item.cardio!;
         const old = c.cardioId === undefined ? null : await ctx.db.get("cardio", c.cardioId);
-        if (old !== null && (old.userId !== userId || old.sessionId !== session._id || old.status !== "live")) throw new ConvexError({ code: "STALE_REVISION", message: "A cardio item changed. Reload the review and try again." });
+        if (old !== null && (old.userId !== userId || old.sessionId !== session._id || old.status !== "live")) throw new ConvexError({ code: "STALE_REVISION", message: "This workout changed since the review was made. Open it again." });
         if (old !== null) retainedCardio.add(old._id);
         const changed = old !== null && (old.exerciseId !== chosen || old.durationMin !== c.durationMin || old.distanceKm !== c.distanceKm || old.reportedKcal !== c.reportedKcal || old.speedKmh !== c.speedKmh || old.inclinePct !== c.inclinePct || old.position !== itemIndex);
         if (old !== null && !changed) continue;
@@ -575,18 +608,20 @@ export const commitDraft = mutation({
         }));
       }
     }
-    if (row.mode === "revise") {
-      for (const old of existingSets) if (!retainedSets.has(old._id)) {
+    const replacedSetIds = new Set(row.items.flatMap((item) => item.replaceSetIds ?? []));
+    const replacedCardioIds = new Set(row.items.flatMap((item) => item.replaceCardioIds ?? []));
+    if (row.mode === "revise" || row.mode === "append") {
+      for (const old of existingSets) if (!retainedSets.has(old._id) && (row.mode === "revise" || replacedSetIds.has(old._id))) {
         await ctx.db.patch("sets", old._id, { status: "superseded" });
         setIds.push(await ctx.db.insert("sets", {
           userId, sessionId: session._id, exerciseId: old.exerciseId,
           setIndex: old.setIndex, weightKg: old.weightKg, reps: old.reps,
-          weightBasis: old.weightBasis, revision: old.revision + 1,
+          weightBasis: old.weightBasis, ...(old.rpe === undefined ? {} : { rpe: old.rpe }), revision: old.revision + 1,
           supersedes: old._id, op: "delete", status: "deleted",
           submissionId: `${args.submissionId}:delete:${old._id}`, deletedAt: Date.now(),
         }));
       }
-      for (const old of existingCardio) if (!retainedCardio.has(old._id)) {
+      for (const old of existingCardio) if (!retainedCardio.has(old._id) && (row.mode === "revise" || replacedCardioIds.has(old._id))) {
         await ctx.db.patch("cardio", old._id, { status: "superseded" });
         cardioIds.push(await ctx.db.insert("cardio", {
           userId, sessionId: session._id, exerciseId: old.exerciseId, position: old.position,
@@ -630,6 +665,7 @@ export const undoDraft = mutation({
         userId, sessionId: restored.sessionId, exerciseId: restored.exerciseId,
         setIndex: restored.setIndex, weightKg: restored.weightKg, reps: restored.reps,
         ...(restored.weightBasis === undefined ? {} : { weightBasis: restored.weightBasis }),
+        ...(restored.rpe === undefined ? {} : { rpe: restored.rpe }),
         revision: head.revision + 1, supersedes: head._id, op: "undo",
         status: previous === null ? "deleted" : "live",
         ...(previous === null ? { deletedAt: Date.now() } : {}),
@@ -655,8 +691,15 @@ export const undoDraft = mutation({
         submissionId: `${args.submissionId}:cardio:${head._id}`,
       });
     }
-    if (row.written.createdSession) await ctx.db.patch("workout_sessions", row.written.sessionId, { deletedAt: Date.now() });
-    else if (row.written.previousSession !== undefined) await ctx.db.patch("workout_sessions", row.written.sessionId, row.written.previousSession);
+    if (row.written.createdSession) {
+      const sets = await ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", row.written!.sessionId).eq("status", "live")).take(201);
+      const cardio = await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", row.written!.sessionId).eq("status", "live")).take(101);
+      if (sets.length === 0 && cardio.length === 0) await ctx.db.patch("workout_sessions", row.written.sessionId, { deletedAt: Date.now() });
+    } else if (row.written.previousSession !== undefined) await ctx.db.patch("workout_sessions", row.written.sessionId, {
+      localDate: row.written.previousSession.localDate, timeZone: row.written.previousSession.timeZone,
+      startedAt: row.written.previousSession.startedAt, endedAt: row.written.previousSession.endedAt,
+      durationMin: row.written.previousSession.durationMin, timing: row.written.previousSession.timing,
+    });
     await ctx.db.patch("workout_drafts", row._id, { undoneAt: Date.now() });
     return null;
   },

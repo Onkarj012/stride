@@ -193,7 +193,8 @@ export const addSet = mutation({
     await assertLedgerWritable(ctx, userId);
     checkSubmissionId(args.submissionId);
     const session = await requireSession(ctx, userId, args.sessionId);
-    await requireExercise(ctx, args.exerciseId);
+    const exercise = await requireExercise(ctx, args.exerciseId);
+    if (exercise.category === "cardio") throw new ConvexError({ code: "INVALID_EXERCISE", message: "Choose a strength exercise." });
     const prior = await ctx.db.query("sets").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).eq("submissionId", args.submissionId)).unique();
     if (prior !== null) {
       if (prior.op !== "add" || prior.sessionId !== session._id || prior.exerciseId !== args.exerciseId) throw new Error("submissionId already used for a different change");

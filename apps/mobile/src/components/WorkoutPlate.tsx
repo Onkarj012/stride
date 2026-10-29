@@ -313,7 +313,7 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
 
       {items.map((item, i) => (
         <PlateItemCard
-          key={i}
+          key={item.key}
           item={item}
           known={known}
           matching={matching === i}
