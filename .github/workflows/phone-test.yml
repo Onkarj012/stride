@@ -12,10 +12,10 @@ on:
 permissions:
   contents: read
 
-# The phone runs whatever was published last, so a newer run replaces an older one.
+# Runs one at a time and never cancels: a run stopped between the Convex push and the update would leave the phone's app out of step with the backend.
 concurrency:
   group: phone-test
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   publish:
