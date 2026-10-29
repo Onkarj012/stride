@@ -69,6 +69,13 @@ jobs:
             exit 1
           fi
 
+      # Bundles the merged app before the backend changes, so a broken bundle fails the run with dev Convex untouched.
+      - name: Bundle the app
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: dev
+        run: npx expo export --platform android --output-dir "$RUNNER_TEMP/bundle-check"
+
       - name: Push the backend to dev Convex
         working-directory: packages/backend
         env:
