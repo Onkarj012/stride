@@ -18,8 +18,10 @@ import type { EntryId } from '@/lib/log'
 import { font, themedStyles } from '@/theme'
 import { Button } from './Controls'
 import { DraftCard } from './DraftCard'
-import { useLog } from './useLog'
 import { Tap } from './Tap'
+import { usePlainWorkouts } from './WorkoutPlate'
+import { WorkoutCard } from './WorkoutCard'
+import { useLog } from './useLog'
 
 export type ChatMessageView = FunctionReturnType<typeof api.chats.listMessages>['page'][number]
 
@@ -89,6 +91,7 @@ function ReplyText({ text, failed }: { text: string; failed: boolean }) {
 function Reply({ message, canRegenerate, regenerating, canRetry, onRegenerate, onRetry }: Props) {
   const s = useStyles()
   const { compose } = useLog()
+  const plain = usePlainWorkouts()
   const streaming = message.status === 'streaming'
   const failed = message.status === 'failed'
   const stopped = message.status === 'stopped'
@@ -122,6 +125,7 @@ function Reply({ message, canRegenerate, regenerating, canRetry, onRegenerate, o
         {message.draftIds.map((draftId) => (
           <DraftCard key={draftId} draftId={draftId} onCommitted={() => undefined} onDiscarded={() => undefined} />
         ))}
+        {plain ? message.workoutDraftIds.map((draftId) => <WorkoutCard key={draftId} draftId={draftId} />) : null}
 
         {!streaming && (logAction || canRegenerate) ? (
           <View style={[s.row, s.actions]}>

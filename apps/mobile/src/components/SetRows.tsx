@@ -236,7 +236,7 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
       </View>
       <NumStep
         value={value.weightKg}
-        unit="kg"
+        unit={set.weightBasis === 'each' ? 'kg each' : 'kg'}
         step={weightStep(exercise)}
         min={0}
         max={MAX_KG}

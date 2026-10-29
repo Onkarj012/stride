@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import type { DraftId, EntryId, MealSlot } from '@/lib/log'
+import type { WorkoutDraftId } from '@/lib/workoutDraft'
 import type { ComposeMode, ComposePrefill } from './Compose'
 import type { ToastMessage } from './Toast'
 
@@ -7,6 +8,8 @@ export type LogApi = {
   // Prefill fills the box with text, or logs an already uploaded photo.
   compose: (mode?: ComposeMode, defaultSlot?: MealSlot, prefill?: ComposePrefill) => void
   openDraft: (draftId: DraftId) => void
+  // Opens a workout review (the plate) in the shared sheet.
+  openWorkout: (draftId: WorkoutDraftId) => void
   openMeal: (localDate: string, slot: MealSlot) => void
   // The daily-burn explainer, or the one-time milestone version of it.
   openBurn: (milestone: boolean) => void

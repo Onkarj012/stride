@@ -2,17 +2,20 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { newSubmissionId, plainError, type DraftId, type EntryId, type MealSlot } from '@/lib/log'
+import type { WorkoutDraftId } from '@/lib/workoutDraft'
 import { BurnSheet } from './BurnSheet'
 import { Compose, type ComposeMode, type ComposePrefill } from './Compose'
 import { MealSheet } from './MealSheet'
 import { Sheet } from './Sheet'
 import { Toast, type ToastMessage } from './Toast'
+import { WorkoutPlate } from './WorkoutPlate'
 import { LogContext, type LogApi } from './useLog'
 
 type SheetContent =
   | { kind: 'compose'; mode: ComposeMode; defaultSlot?: MealSlot; draftId?: DraftId; prefill?: ComposePrefill }
   | { kind: 'meal'; localDate: string; slot: MealSlot }
   | { kind: 'burn'; milestone: boolean }
+  | { kind: 'workout'; draftId: WorkoutDraftId }
 
 // One sheet opening. Its session number changes on every show, so each opening mounts fresh.
 type Opening = SheetContent & { session: number }
@@ -89,6 +92,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
     () => ({
       compose: (mode = 'text', defaultSlot, prefill) => show({ kind: 'compose', mode, defaultSlot, prefill }),
       openDraft: (draftId) => show({ kind: 'compose', mode: 'text', draftId }),
+      openWorkout: (draftId) => show({ kind: 'workout', draftId }),
       openMeal: (localDate, slot) => show({ kind: 'meal', localDate, slot }),
       openBurn: (milestone) => show({ kind: 'burn', milestone }),
       toast,
@@ -109,6 +113,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
           <MealSheet key={content.session} localDate={content.localDate} slot={content.slot} onClose={closeOpening(content.session)} />
         ) : null}
         {content?.kind === 'burn' ? <BurnSheet key={content.session} milestone={content.milestone} onClose={closeOpening(content.session)} /> : null}
+        {content?.kind === 'workout' ? <WorkoutPlate key={content.session} draftId={content.draftId} toast={toast} onDone={closeOpening(content.session)} /> : null}
       </Sheet>
       <Toast message={message} onDone={toastDone} />
     </LogContext.Provider>
