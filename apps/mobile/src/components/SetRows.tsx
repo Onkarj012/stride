@@ -21,6 +21,7 @@ import {
   type SessionId,
   type SetId,
   type SetView,
+  type WeightBasis,
 } from '@/lib/strength'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Icon } from './Icon'
@@ -37,7 +38,7 @@ export type WorkoutActions = {
   undoFor: (setId: SetId) => () => void
 }
 
-type Hint = { weightKg: number; reps: number }
+type Hint = { weightKg: number; reps: number; weightBasis?: WeightBasis }
 
 // Caps a generated target's reps at the backend's limit so the draft can always be logged.
 function withinLimits(target: SetTarget): SetTarget {
@@ -83,11 +84,13 @@ export function ExerciseBlock({
   const band = useRepBand(userId, exercise._id, previous)
   const limited = historyLimited || hints?.historyLimited === true
   const step = weightStep(exercise)
-  const targets = limited || band === null ? [] : nextTargets(previous, step, band, MAX_KG).map(withinLimits)
+  // nextTargets returns one target per previous set, in order, so each target keeps its planned set's hand basis.
+  const targets = limited || band === null ? [] : nextTargets(previous, step, band, MAX_KG).map((target, i) => ({ ...withinLimits(target), weightBasis: previous[i]?.weightBasis }))
   const muscle = exercise.primaryMuscles[0]
   const last = sets.at(-1)
   const next = targets[sets.length] ?? last ?? previous.at(-1) ?? { weightKg: startingWeight(exercise), reps: 8 }
-  const draft: Hint = { weightKg: next.weightKg, reps: next.reps }
+  // The next set keeps the basis of the last set logged, else last time's.
+  const draft: Hint = { weightKg: next.weightKg, reps: next.reps, weightBasis: last?.weightBasis ?? previous.at(-1)?.weightBasis }
 
   return (
     <View>
@@ -176,7 +179,7 @@ function LoggedRow({ set, number, hint, exercise, actions }: { set: SetView; num
       .then(
         (revision) => {
           ahead.current = revision
-          actions.toast({ title: `Set ${number} changed`, sub: `${formatKg(next.weightKg)} kg × ${next.reps}`, undo: actions.undoFor(revision) })
+          actions.toast({ title: `Set ${number} changed`, sub: formatSets([{ ...next, weightBasis: head.weightBasis }]), undo: actions.undoFor(revision) })
         },
         (err: unknown) => actions.toast({ title: "Couldn't save that set.", sub: plainError(err) }),
       )
@@ -305,6 +308,8 @@ function DraftRow({
   const touched = useRef({ weightKg: false, reps: false })
   // Kept across retries so a resend after a dropped reply logs the set once.
   const submissionId = useRef(newSubmissionId())
+  // Not editable in this row; it follows the hint, so a late hint can change it.
+  const basis = start.weightBasis
 
   useEffect(() => {
     setValue((v) => ({
@@ -314,7 +319,7 @@ function DraftRow({
   }, [start.weightKg, start.reps])
 
   // Records a user edit to one field and keeps it.
-  function setField(field: keyof Hint, n: number) {
+  function setField(field: 'weightKg' | 'reps', n: number) {
     touched.current[field] = true
     setValue((v) => ({ ...v, [field]: n }))
   }
@@ -329,12 +334,13 @@ function DraftRow({
         exerciseId: exercise._id,
         weightKg: value.weightKg,
         reps: value.reps,
+        ...(basis === undefined ? {} : { weightBasis: basis }),
         ...(rpe === null ? {} : { rpe }),
       })
       const hit = target !== undefined && value.weightKg >= target.weightKg && value.reps >= target.reps
       actions.toast({
         title: hit ? `Set ${number} logged · goal hit` : `Set ${number} logged`,
-        sub: `${formatKg(value.weightKg)} kg × ${value.reps}`,
+        sub: formatSets([{ ...value, weightBasis: basis }]),
         undo: actions.undoFor(id),
       })
     } catch (err) {
@@ -354,7 +360,7 @@ function DraftRow({
         </View>
         <NumStep
           value={value.weightKg}
-          unit="kg"
+          unit={basis === 'each' ? 'kg each' : 'kg'}
           step={weightStep(exercise)}
           min={0}
           max={MAX_KG}
