@@ -257,7 +257,12 @@ function Start({
         <Button label="Start workout" icon="play" variant="coral" size="block" busy={busy} onPress={() => void start([])} style={s.startButton} />
         <Button label="Saved workouts" variant="ghost" size="block" onPress={onHistory} style={s.startButton} />
       </Animated.View>
-      {plain ? <WordsEntry title="Log in words" placeholder="Bench 60 kg, 8, 8, 6 reps. Walking 10 min, 60 kcal." onReview={onReview} /> : null}
+      {plain ? (
+        <>
+          <WordsEntry title="Log in words" placeholder="Bench 60 kg, 8, 8, 6 reps. Walking 10 min, 60 kcal." onReview={onReview} />
+          <PendingReviews onReview={onReview} />
+        </>
+      ) : null}
       <RepeatSection disabled={busy} onPick={repeat} />
     </Page>
   )
@@ -539,14 +544,7 @@ function Live({
             </Animated.View>
           ))}
           {detail.cardio.map((row) => (
-            <View key={row._id} style={s.upRow}>
-              <Text style={s.upName} numberOfLines={1}>
-                {row.exercise.name}
-              </Text>
-              <Text style={s.upMeta} numberOfLines={1}>
-                {formatCardio(row)}
-              </Text>
-            </View>
+            <CardioRow key={row._id} row={row} actions={actions} />
           ))}
           {ended ? null : (
             <Tap style={s.addEx} scale={0.98} onPress={() => setPicking(true)} accessibilityRole="button">
@@ -569,7 +567,12 @@ function Live({
         </View>
       ) : null}
 
-      {plain && !ended ? <WordsEntry sessionId={detail.session._id} title="Add in words" placeholder="2 more sets of curls, 12 and 10 reps." onReview={onReview} /> : null}
+      {plain && !ended ? (
+        <>
+          <WordsEntry sessionId={detail.session._id} title="Add in words" placeholder="2 more sets of curls, 12 and 10 reps." onReview={onReview} />
+          <PendingReviews onReview={onReview} />
+        </>
+      ) : null}
     </Page>
   )
 }
@@ -614,6 +617,114 @@ function AddCardio({ sessionId, exercise, actions, onDone }: { sessionId: Sessio
       <CardioFields value={values} onChange={(change) => setValues((current) => ({ ...current, ...change }))} />
       <Text style={s.sheetBody}>Give minutes or km. Calories are what you reported.</Text>
       <Button label="Add cardio" variant="coral" size="block" busy={busy} disabled={!ready || busy} onPress={() => void save()} />
+    </View>
+  )
+}
+
+type CardioRecord = SessionDetail['cardio'][number]
+
+// One cardio record in the session list. Tapping it opens its measures to edit or remove, with Undo on the toast.
+function CardioRow({ row, actions }: { row: CardioRecord; actions: WorkoutActions }) {
+  const s = useStyles()
+  const editCardio = useMutation(api.strength.editCardio)
+  const deleteCardio = useMutation(api.strength.deleteCardio)
+  const undoCardio = useMutation(api.strength.undoCardioRevision)
+  const [editing, setEditing] = useState(false)
+  const [values, setValues] = useState<CardioValues>({})
+  const [busy, setBusy] = useState(false)
+  // Kept across retries so a resend after a dropped reply saves one edit. Renewed after each change.
+  const submission = useRef(newSubmissionId())
+
+  // Reverts one cardio revision and toasts the result.
+  function undoTo(cardioId: CardioRecord['_id']) {
+    void undoCardio({ submissionId: newSubmissionId(), cardioId }).then(
+      () => actions.toast({ title: 'Undone. Nothing lost.', sub: "It's back the way it was." }),
+      (err: unknown) => actions.toast({ title: "Couldn't undo that.", sub: plainError(err) }),
+    )
+  }
+
+  // Opens the editor with the saved measures.
+  function open() {
+    setValues({ durationMin: row.durationMin, distanceKm: row.distanceKm, reportedKcal: row.reportedKcal, speedKmh: row.speedKmh, inclinePct: row.inclinePct })
+    setEditing(true)
+  }
+
+  // Saves the measures as a new revision. A cleared field is sent as null so the server drops it.
+  async function save() {
+    setBusy(true)
+    try {
+      const cardioId = await editCardio({
+        submissionId: submission.current,
+        cardioId: row._id,
+        durationMin: values.durationMin ?? null,
+        distanceKm: values.distanceKm ?? null,
+        reportedKcal: values.reportedKcal ?? null,
+        speedKmh: values.speedKmh ?? null,
+        inclinePct: values.inclinePct ?? null,
+      })
+      submission.current = newSubmissionId()
+      setEditing(false)
+      actions.toast({ title: `${row.exercise.name} changed`, sub: formatCardio(values), undo: () => undoTo(cardioId) })
+    } catch (err) {
+      actions.toast({ title: "Couldn't save that.", sub: plainError(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Removes the record as a revision, with Undo on the toast.
+  async function remove() {
+    setBusy(true)
+    try {
+      const cardioId = await deleteCardio({ submissionId: newSubmissionId(), cardioId: row._id })
+      actions.toast({ title: `Removed ${row.exercise.name}`, sub: 'Every version is kept.', undo: () => undoTo(cardioId) })
+    } catch (err) {
+      actions.toast({ title: "Couldn't remove that.", sub: plainError(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <View>
+      <Tap style={s.upRow} onPress={() => (editing ? setEditing(false) : open())} accessibilityRole="button" accessibilityLabel={`Edit ${row.exercise.name}`}>
+        <Text style={s.upName} numberOfLines={1}>
+          {row.exercise.name}
+        </Text>
+        <Text style={s.upMeta} numberOfLines={1}>
+          {formatCardio(row)}
+        </Text>
+      </Tap>
+      {editing ? (
+        <View style={s.cardioEdit}>
+          <CardioFields value={values} onChange={(change) => setValues((current) => ({ ...current, ...change }))} />
+          <View style={s.wordsActions}>
+            <Button label="Save" variant="coral" size="sm" busy={busy} disabled={busy} onPress={() => void save()} />
+            <Button label="Remove" variant="ghost" size="sm" disabled={busy} onPress={() => void remove()} />
+            <Button label="Cancel" variant="ghost" size="sm" disabled={busy} onPress={() => setEditing(false)} />
+          </View>
+        </View>
+      ) : null}
+    </View>
+  )
+}
+
+// Reviews that were read, copied or typed but not saved or discarded yet. Shown with words logging on.
+function PendingReviews({ onReview }: { onReview: (draftId: WorkoutDraftId) => void }) {
+  const s = useStyles()
+  const drafts = useQuery(api.workouts.pendingDrafts, {})
+  if (drafts === undefined || drafts.length === 0) return null
+  return (
+    <View>
+      <Text style={[s.eyebrow, s.repeatLabel]}>Unfinished reviews</Text>
+      <Animated.View entering={FadeInDown.springify()} style={s.repeatCard}>
+        {drafts.map((draft) => (
+          <Tap key={draft._id} style={s.repeatRow} onPress={() => onReview(draft._id)} accessibilityRole="button" accessibilityLabel={`Continue review from ${formatDayTitle(draft.localDate)}`}>
+            <Text style={s.repeatTitle}>Continue review</Text>
+            <Text style={s.repeatMeta}>{`${formatDayTitle(draft.localDate)} · ${draft.itemCount} ${draft.itemCount === 1 ? 'item' : 'items'}`}</Text>
+          </Tap>
+        ))}
+      </Animated.View>
     </View>
   )
 }
@@ -777,6 +888,7 @@ const useStyles = themedStyles((t) => ({
   sheetTitle: { ...font('cardTitle'), color: t.c.ink, marginTop: 4, marginBottom: 8 },
   sheetBody: { ...font('callout'), color: t.c.ink2, marginTop: 4, marginBottom: 14 },
   gap: { marginTop: 10 },
+  cardioEdit: { gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: t.c.line },
 }))
 
 export { RouteError as ErrorBoundary } from '@/components/RouteError'

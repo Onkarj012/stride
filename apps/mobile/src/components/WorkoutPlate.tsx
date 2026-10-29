@@ -7,9 +7,10 @@ import { api } from 'stride-backend/convex/_generated/api'
 import { formatDayTitle } from '@/lib/format'
 import { newSubmissionId, plainError } from '@/lib/log'
 import type { ExerciseId, SessionId, WeightBasis } from '@/lib/strength'
-import { saveBlocker, type WorkoutDraftId, type WorkoutItem } from '@/lib/workoutDraft'
+import { saveBlocker, type WorkoutDraftId, type WorkoutDraftView, type WorkoutItem } from '@/lib/workoutDraft'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button, RoundButton, Thinking } from './Controls'
+import { ExercisePicker } from './ExercisePicker'
 import { Tap } from './Tap'
 import type { ToastMessage } from './Toast'
 
@@ -98,6 +99,41 @@ function basisLabel(basis: WeightBasis | undefined): string {
   return basis === 'each' ? 'Each' : 'Total'
 }
 
+type PlanFields = { localDate: string; startTime?: string; durationMin?: number | null; needsTarget: boolean; targetSessionId?: SessionId | null; items: WorkoutItem[] }
+
+// A stable text of the plate's content, to tell a server change from the user's own edits. Problems are left out: the server recomputes them on save.
+function planText(plan: PlanFields): string {
+  return JSON.stringify(
+    {
+      localDate: plan.localDate,
+      startTime: plan.startTime ?? '12:00',
+      durationMin: plan.durationMin ?? null,
+      needsTarget: plan.needsTarget,
+      targetSessionId: plan.targetSessionId ?? null,
+      items: plan.items.map(({ problems: _problems, ...item }) => item),
+    },
+    sortedKeys,
+  )
+}
+
+// Sorts object keys, so a copy whose keys were added in another order still matches.
+function sortedKeys(_key: string, value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value
+  return Object.fromEntries(Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+}
+
+// The plate's local edits in the shape planText reads.
+function localPlan(header: Header, items: WorkoutItem[]): PlanFields {
+  return {
+    localDate: header.localDate,
+    startTime: header.startTime,
+    durationMin: header.duration.trim() === '' ? null : Number(header.duration),
+    needsTarget: header.needsTarget,
+    targetSessionId: header.targetSessionId,
+    items,
+  }
+}
+
 // The review before a workout is saved: date, start, duration, the target, then each exercise to check. Nothing saves until Save.
 export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraftId; toast: (message: Omit<ToastMessage, 'id'>) => void; onDone: () => void }) {
   const s = useStyles()
@@ -111,22 +147,35 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
   // Exercises picked from search, so their names show before the review is refetched.
   const [picked, setPicked] = useState<ExerciseLike[]>([])
   const [matching, setMatching] = useState<number | null>(null)
+  // The add-an-item picker under the list: strength or cardio. Null when closed.
+  const [adding, setAdding] = useState<'strength' | 'cardio' | null>(null)
+  // The server content the local edits were last copied from, as planText. Null until the first copy.
+  const [synced, setSynced] = useState<string | null>(null)
   const [busy, setBusy] = useState<'save' | 'discard' | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   // Kept across retries so a resend after a dropped reply commits once.
   const submission = useRef(newSubmissionId())
 
-  // Copies the saved review into local edits once, so a refetch never overwrites what the user is editing.
-  if (view && header === null) {
+  // Replaces the local edits with the saved review.
+  function copyFrom(draft: WorkoutDraftView['draft']) {
     setHeader({
-      localDate: view.draft.localDate,
-      startTime: view.draft.startTime ?? '12:00',
-      duration: view.draft.durationMin === undefined ? '' : String(view.draft.durationMin),
-      needsTarget: view.draft.needsTarget,
-      targetSessionId: view.draft.targetSessionId ?? null,
+      localDate: draft.localDate,
+      startTime: draft.startTime ?? '12:00',
+      duration: draft.durationMin === undefined ? '' : String(draft.durationMin),
+      needsTarget: draft.needsTarget,
+      targetSessionId: draft.targetSessionId ?? null,
     })
-    setItems(view.draft.items)
+    setItems(draft.items)
+    setMatching(null)
+    setSynced(planText(draft))
   }
+
+  // Copies the saved review when it changes and there are no local edits. When both changed, the note shows instead and nothing is overwritten.
+  const serverText = view ? planText(view.draft) : null
+  const localText = header === null ? null : planText(localPlan(header, items))
+  // The server changed while the local edits differ from both the last copy and the new server content.
+  const outside = serverText !== null && localText !== null && serverText !== synced && localText !== synced && localText !== serverText
+  if (view && (header === null || (serverText !== synced && !outside))) copyFrom(view.draft)
 
   if (view === undefined) return <Thinking label="Opening your review…" />
   if (view === null || header === null) return <Text style={s.note}>This review is gone.</Text>
@@ -147,7 +196,7 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
     setItems((all) => all.map((item, i) => (i === index ? change(item) : item)))
   }
 
-  // Changes one set. Edits clear the item's problems, since the server does not recompute them on update.
+  // Changes one set. Edits clear the item's problems here; the server recomputes them when the review is saved.
   function editSet(index: number, setIndex: number, change: Partial<SetRow>) {
     editItem(index, (item) => ({ ...item, problems: [], sets: item.sets.map((set, j) => (j === setIndex ? { ...set, ...change } : set)) }))
   }
@@ -162,6 +211,24 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
     if (exercise !== null) setPicked((all) => [...all, exercise])
     editItem(index, (item) => withMatch(item, exercise))
     setMatching(null)
+  }
+
+  // Adds an exercise or cardio from the picker. A catalog or own exercise keeps its id; own words save without one.
+  function addItem(kind: WorkoutItem['kind'], exercise: ExerciseLike | null, words: string) {
+    if (exercise !== null) setPicked((all) => [...all, exercise])
+    const exerciseId = exercise?._id
+    const item: WorkoutItem = {
+      key: newSubmissionId(), // Unique per item. The server keeps the key as given.
+      name: exercise?.name ?? words,
+      kind,
+      ...(exerciseId === undefined ? {} : { exerciseId }),
+      candidateIds: exerciseId === undefined ? [] : [exerciseId],
+      sets: kind === 'strength' ? [{}] : [],
+      ...(kind === 'cardio' ? { cardio: {} } : {}),
+      problems: [],
+    }
+    setItems((all) => [...all, item])
+    setAdding(null)
   }
 
   // Writes the edits, then commits the whole review in one batch, and offers Undo for it.
@@ -209,6 +276,12 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
     <View>
       <Text style={s.eyebrow}>Review</Text>
       <Text style={s.title}>Check this workout</Text>
+      {outside ? (
+        <View style={s.updated}>
+          <Text style={s.noteText}>Updated in chat. Reload?</Text>
+          <Button label="Reload" variant="ghost" size="sm" onPress={() => copyFrom(view.draft)} />
+        </View>
+      ) : null}
 
       <View style={s.card}>
         <View style={s.row}>
@@ -258,6 +331,28 @@ export function WorkoutPlate({ draftId, toast, onDone }: { draftId: WorkoutDraft
           }}
         />
       ))}
+
+      {adding === null ? (
+        <View style={s.addRow}>
+          <Tap onPress={() => setAdding('strength')} scale={0.98} style={s.addItem} accessibilityRole="button">
+            <Text style={s.addItemText}>+ Add exercise</Text>
+          </Tap>
+          <Tap onPress={() => setAdding('cardio')} scale={0.98} style={s.addItem} accessibilityRole="button">
+            <Text style={s.addItemText}>+ Add cardio</Text>
+          </Tap>
+        </View>
+      ) : (
+        <View style={s.card}>
+          <ExercisePicker
+            taken={items.flatMap((item) => (item.exerciseId === undefined ? [] : [item.exerciseId]))}
+            kind={adding}
+            allowOwn
+            onOwnWords={(words) => addItem(adding, null, words)}
+            onPick={(exercise) => addItem(adding, exercise, exercise.name)}
+          />
+          <Button label="Cancel" variant="ghost" size="sm" onPress={() => setAdding(null)} style={s.gap} />
+        </View>
+      )}
 
       {blocker !== null ? <Text style={s.foot}>{blocker}</Text> : null}
       {problem ? <Text style={s.problem}>{problem}</Text> : null}
@@ -470,6 +565,12 @@ const useStyles = themedStyles((t) => ({
   eyebrow: { ...font('eyebrow'), color: t.c.ink3 },
   title: { ...font('section'), fontSize: 18, color: t.c.ink, marginTop: 4, marginBottom: 12 },
   card: { backgroundColor: t.c.card, borderRadius: 16, boxShadow: t.shadow.card, padding: 14, gap: 8, marginBottom: 8 },
+  updated: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, backgroundColor: t.c.card2, borderRadius: 14, paddingVertical: 8, paddingHorizontal: 12, marginBottom: 8 },
+  noteText: { ...font('caption'), color: t.c.ink2, flex: 1 },
+  addRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  addItem: { flex: 1, paddingVertical: 11, borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: t.c.line2, alignItems: 'center' },
+  addItemText: { ...font('calloutStrong'), color: t.c.ink2 },
+  gap: { marginTop: 8 },
   row: { flexDirection: 'row', gap: 8 },
   stack: { gap: 8 },
   caption: { ...font('caption'), color: t.c.ink3 },

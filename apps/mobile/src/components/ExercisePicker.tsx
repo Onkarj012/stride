@@ -16,7 +16,20 @@ type Kind = 'strength' | 'cardio'
 
 // Sheet content for choosing a lift: search the shared library, with the user's own lifts first when the box is empty.
 // kind limits the list to strength or cardio. allowOwn offers the typed text as a new personal exercise of that kind.
-export function ExercisePicker({ taken, onPick, kind, allowOwn = false }: { taken: ExerciseId[]; onPick: (exercise: Exercise) => void; kind?: Kind; allowOwn?: boolean }) {
+// onOwnWords, when given, takes the typed text instead of creating the personal exercise now.
+export function ExercisePicker({
+  taken,
+  onPick,
+  kind,
+  allowOwn = false,
+  onOwnWords,
+}: {
+  taken: ExerciseId[]
+  onPick: (exercise: Exercise) => void
+  kind?: Kind
+  allowOwn?: boolean
+  onOwnWords?: (words: string) => void
+}) {
   const t = useTheme()
   const s = useStyles()
   const convex = useConvex()
@@ -103,7 +116,7 @@ export function ExercisePicker({ taken, onPick, kind, allowOwn = false }: { take
               <ExerciseRow key={exercise._id} exercise={exercise} taken={taken.includes(exercise._id)} onPick={onPick} />
             ))}
           {allowOwn && query !== '' && !exactMatch ? (
-            <Tap style={s.own} scale={0.98} disabled={adding} onPress={() => void addOwn()} accessibilityRole="button">
+            <Tap style={s.own} scale={0.98} disabled={adding} onPress={() => (onOwnWords ? onOwnWords(query) : void addOwn())} accessibilityRole="button">
               <Text style={s.ownText}>{adding ? 'Adding…' : `Add "${query}" as your own`}</Text>
             </Tap>
           ) : null}

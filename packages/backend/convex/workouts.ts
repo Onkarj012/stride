@@ -443,6 +443,18 @@ export const draft = query({
   },
 });
 
+/** Lists the caller's pending reviews that were not made in a chat, newest first. */
+export const pendingDrafts = query({
+  args: {},
+  returns: v.array(v.object({ _id: v.id("workout_drafts"), localDate: v.string(), source: v.union(v.literal("text"), v.literal("coach"), v.literal("copy"), v.literal("manual")), itemCount: v.number() })),
+  handler: async (ctx) => {
+    const userId = await requireUserId(ctx);
+    // Reads the newest 20 pending reviews, then keeps the non-chat ones, so chat reviews can use up part of the window.
+    const rows = await ctx.db.query("workout_drafts").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "pending")).order("desc").take(20);
+    return rows.filter((row) => row.chatId === undefined).slice(0, 5).map((row) => ({ _id: row._id, localDate: row.localDate, source: row.source, itemCount: row.items.length }));
+  },
+});
+
 /** Replaces editable fields on a pending draft after validating the entire plate. */
 export const updateDraft = mutation({
   args: { draftId: v.id("workout_drafts"), localDate: v.string(), startTime: v.string(), durationMin: v.union(v.number(), v.null()), needsTarget: v.boolean(), targetSessionId: v.union(v.id("workout_sessions"), v.null()), items: v.array(workoutItemValidator) }, returns: v.null(),

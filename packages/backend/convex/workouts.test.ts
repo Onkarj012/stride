@@ -60,6 +60,23 @@ test("acceptance workout makes a review with 15 sets and one cardio item, then s
   expect(await t.run((ctx) => ctx.db.get("workout_sessions", saved.sessionId))).toMatchObject({ deletedAt: expect.any(Number) });
 });
 
+test("pending reviews list only the caller's pending non-chat drafts, newest first", async () => {
+  const { t, user } = await setup();
+  const other = t.withIdentity({ subject: "user_b" });
+  await other.mutation(api.time_zone.setTimeZone, { timeZone: "Asia/Kolkata" });
+  const first = await user.mutation(api.workouts.blankDraft, { submissionId: "pending-1" });
+  const chatId = await t.run((ctx) => ctx.db.insert("chats", { userId: "user_a", title: "Chat", updatedAt: Date.now() }));
+  await t.run((ctx) => ctx.db.insert("workout_drafts", { userId: "user_a", chatId, submissionId: "chat-draft", status: "pending", source: "coach", inputText: "", mode: "new", needsTarget: false, localDate: "2026-10-29", items: [], createdAt: Date.now() }));
+  const discarded = await user.mutation(api.workouts.blankDraft, { submissionId: "discarded-1" });
+  await user.mutation(api.workouts.discardDraft, { draftId: discarded });
+  await other.mutation(api.workouts.blankDraft, { submissionId: "other-1" });
+  const second = await user.mutation(api.workouts.blankDraft, { submissionId: "pending-2" });
+  expect(await user.query(api.workouts.pendingDrafts, {})).toEqual([
+    { _id: second, localDate: "2026-10-29", source: "manual", itemCount: 0 },
+    { _id: first, localDate: "2026-10-29", source: "manual", itemCount: 0 },
+  ]);
+});
+
 test("setting off refuses parsing before calling the model", async () => {
   const { user } = await setup(); await user.mutation(api.progress_v2.setPlainWorkouts, { on: false });
   const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
