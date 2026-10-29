@@ -90,6 +90,15 @@ test("manual set and cardio writes reject exercises of the other kind", async ()
   await expect(user.mutation(api.workouts.commitDraft, { draftId, submissionId: "wrong-kind-save" })).rejects.toMatchObject({ data: { code: "INVALID_EXERCISE", message: "Choose a strength exercise." } });
 });
 
+test("addCardio refuses the 101st live cardio row in a session", async () => {
+  const { t, user, sessionId } = await setup();
+  const exerciseId = await user.mutation(api.exercises.createPersonal, { name: "Walking", kind: "cardio" });
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 100; index++) await ctx.db.insert("cardio", { userId: "user_a", sessionId, exerciseId, position: index, durationMin: 10, revision: 1, op: "add", status: "live", submissionId: `cardio-${index}` });
+  });
+  await expect(user.mutation(api.strength.addCardio, { submissionId: "cardio-overflow", sessionId, exerciseId, durationMin: 10 })).rejects.toMatchObject({ data: { code: "LIMIT_REACHED", message: "Session exceeds 100 cardio entries" } });
+});
+
 test("set edit, delete and undo revisions preserve RPE", async () => {
   const { t, user, setId } = await withSet();
   const edited = await user.mutation(api.strength.editSet, { submissionId: "keep-rpe-edit", setId, reps: 9 });

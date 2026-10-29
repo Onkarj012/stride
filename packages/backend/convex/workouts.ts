@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { isRecord, type JsonValue } from "./pipeline/openrouter";
+import { MAX_SESSION_CARDIO } from "./strength";
 import { requireUserId, resolveLocalDay, resolveTimeZone } from "./time_zone";
 import { assertLedgerWritable } from "./users";
 
@@ -12,7 +13,6 @@ export { parse } from "./pipeline/workout_parse";
 const MAX_WORKOUT_TEXT_CHARS = 12_000;
 const MAX_ITEMS = 30;
 const MAX_SETS_PER_ITEM = 30;
-const MAX_SESSION_CARDIO = 100;
 
 /** Rejects invalid cardio measurements before they enter a committed workout. */
 function cardioHasInvalidMeasurements(cardio: { durationMin?: number; distanceKm?: number; reportedKcal?: number; speedKmh?: number; inclinePct?: number } | undefined): boolean {

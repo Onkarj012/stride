@@ -8,6 +8,7 @@ import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
 import { assertLedgerWritable } from "./users";
 
 const MAX_SESSION_SETS = 200;
+export const MAX_SESSION_CARDIO = 100;
 // Shared by all exercises in one sessionDetail query. Each set read can also cost a session read, so this stays under Convex's 4,096 range limit.
 const MAX_HISTORY_SETS = 1000;
 const RECENT_SET_SCAN = 200;
@@ -81,6 +82,11 @@ async function sessionSets(ctx: ReadCtx, sessionId: Id<"workout_sessions">, user
   if (rows.length > MAX_SESSION_SETS) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 200 sets" });
   if (rows.some((row) => row.userId !== userId)) throw new Error("Set ownership mismatch");
   return rows.sort((a, b) => a.setIndex - b.setIndex);
+}
+
+/** Reads up to the cardio cap of live rows; a full result means the session is at the limit. */
+async function liveCardio(ctx: ReadCtx, sessionId: Id<"workout_sessions">): Promise<Doc<"cardio">[]> {
+  return await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(MAX_SESSION_CARDIO);
 }
 
 /** Reads recent live sets and their sessions, reporting when older history is omitted. */
@@ -228,7 +234,8 @@ export const addCardio = mutation({
       return prior._id;
     }
     if (session.endedAt !== undefined) throw new ConvexError({ code: "SESSION_FINISHED", message: "Session is finished" });
-    const rows = await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", session._id).eq("status", "live")).take(100);
+    const rows = await liveCardio(ctx, session._id);
+    if (rows.length >= MAX_SESSION_CARDIO) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 100 cardio entries" });
     return await ctx.db.insert("cardio", { userId, sessionId: session._id, exerciseId: args.exerciseId, position: rows.length, durationMin: args.durationMin, distanceKm: args.distanceKm, reportedKcal: args.reportedKcal, speedKmh: args.speedKmh, inclinePct: args.inclinePct, revision: 1, op: "add", status: "live", submissionId: args.submissionId });
   },
 });
@@ -277,8 +284,9 @@ export const undoCardioRevision = mutation({
     const head = await ctx.db.get("cardio", cardioId);
     if (head === null || head.userId !== userId || head.status === "superseded") throw new ConvexError({ code: "NOT_FOUND", message: "Cardio record not found" });
     const previous = head.supersedes === undefined ? null : await ctx.db.get("cardio", head.supersedes);
-    await ctx.db.patch("cardio", head._id, { status: "superseded" });
     const gone = previous === null;
+    if (!gone && head.status !== "live" && (await liveCardio(ctx, head.sessionId)).length >= MAX_SESSION_CARDIO) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 100 cardio entries" });
+    await ctx.db.patch("cardio", head._id, { status: "superseded" });
     const content = previous ?? head;
     return await ctx.db.insert("cardio", { userId, sessionId: content.sessionId, exerciseId: content.exerciseId, position: content.position, ...(content.durationMin === undefined ? {} : { durationMin: content.durationMin }), ...(content.distanceKm === undefined ? {} : { distanceKm: content.distanceKm }), ...(content.reportedKcal === undefined ? {} : { reportedKcal: content.reportedKcal }), ...(content.speedKmh === undefined ? {} : { speedKmh: content.speedKmh }), ...(content.inclinePct === undefined ? {} : { inclinePct: content.inclinePct }), revision: head.revision + 1, supersedes: head._id, op: "undo", status: gone ? "deleted" : "live", ...(gone ? { deletedAt: Date.now() } : {}), submissionId });
   },
