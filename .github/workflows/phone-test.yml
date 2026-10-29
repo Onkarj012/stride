@@ -1,0 +1,89 @@
+name: Phone test
+
+# Merges the chosen PRs onto main and ships the result to Stride Dev:
+# the backend to the dev Convex deployment, the app as an update on the dev channel.
+on:
+  workflow_dispatch:
+    inputs:
+      prs:
+        description: PR numbers to test together, merged in this order (for example "92 95")
+        required: true
+
+permissions:
+  contents: read
+
+# The phone runs whatever was published last, so a newer run replaces an older one.
+concurrency:
+  group: phone-test
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge the PRs
+        id: merge
+        env:
+          PRS: ${{ inputs.prs }}
+        run: |
+          git config user.name phone-test
+          git config user.email phone-test@users.noreply.github.com
+          label=""
+          for pr in ${PRS//,/ }; do
+            pr="${pr#\#}"
+            [[ "$pr" =~ ^[0-9]+$ ]] || { echo "::error::Not a PR number: $pr"; exit 1; }
+            git fetch -q origin "pull/$pr/head:pr-$pr"
+            if ! git merge -q --no-edit "pr-$pr"; then
+              echo "::error::PR #$pr conflicts with main or with a PR earlier in the list. Nothing was published."
+              exit 1
+            fi
+            label="$label #$pr@$(git rev-parse --short=7 "pr-$pr")"
+          done
+          echo "label=${label# }" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # An update only reaches an APK with the same native fingerprint; the phone would drop it silently.
+      - name: Check Stride Dev can take this update
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: dev
+          INSTALLED: ${{ vars.DEV_ANDROID_RUNTIME }}
+        run: |
+          runtime=$(npx expo-updates fingerprint:generate --platform android | jq -r .hash)
+          if [ "$runtime" != "$INSTALLED" ]; then
+            echo "::error::Native code changed (needs runtime $runtime, the phone has ${INSTALLED:-nothing recorded}). Build a new Stride Dev APK first."
+            exit 1
+          fi
+
+      - name: Push the backend to dev Convex
+        working-directory: packages/backend
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY_DEV }}
+        run: npx convex dev --once
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Publish to the dev channel
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: dev
+          EXPO_PUBLIC_BUILD_LABEL: ${{ steps.merge.outputs.label }}
+          LABEL: ${{ steps.merge.outputs.label }}
+        run: eas update --channel dev --environment development --platform android --message "$LABEL" --non-interactive

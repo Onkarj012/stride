@@ -16,6 +16,7 @@ import { layout } from '@stride/ui-tokens'
 import { Polo } from '@/components/Polo'
 import { RouteError } from '@/components/RouteError'
 import { readConfig } from '@/lib/config'
+import { useDevUpdates } from '@/lib/devUpdates'
 import { initSentry } from '@/lib/sentry'
 import { HoldAppContext, HoldOnboardingContext } from '@/lib/profile'
 import { font, fontAssets, themedStyles, useTheme } from '@/theme'
@@ -32,6 +33,7 @@ function RootLayout() {
   const t = useTheme()
   const [fontsLoaded, fontError] = useFonts(fontAssets)
   const ready = fontsLoaded || fontError !== null
+  useDevUpdates()
 
   useEffect(() => {
     void SystemUI.setBackgroundColorAsync(t.c.bg)
