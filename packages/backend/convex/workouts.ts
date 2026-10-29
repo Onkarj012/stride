@@ -519,7 +519,7 @@ export const commitDraft = mutation({
       return { sessionId: row.written.sessionId, setIds: row.written.setRevisionIds, cardioIds: row.written.cardioRevisionIds };
     }
     if (args.expectedVersion !== undefined && args.expectedVersion !== (row.version ?? 0)) throw new ConvexError({ code: "STALE_REVISION", message: "This review changed in chat. Reload it." });
-    const durationCleared = args.edits?.durationMin === null;
+    const durationCleared = args.edits?.durationMin === null && row.durationMin !== undefined;
     if (args.edits !== undefined) {
       if (!isLocalDate(args.edits.localDate) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(args.edits.startTime) || (args.edits.durationMin !== null && (!Number.isInteger(args.edits.durationMin) || args.edits.durationMin < 1 || args.edits.durationMin > 1440)) || itemsExceedLimits(args.edits.items)) throw new ConvexError({ code: "INVALID_DRAFT", message: "Check the date, time, duration and workout items." });
       const editTarget = args.edits.targetSessionId === null ? null : await ctx.db.get("workout_sessions", args.edits.targetSessionId);
@@ -674,7 +674,7 @@ export const commitDraft = mutation({
       status: "committed", committedSubmissionId: args.submissionId,
       localDate: row.localDate, startTime: row.startTime, durationMin: row.durationMin,
       needsTarget: row.needsTarget, targetSessionId: row.targetSessionId, mode: row.mode, items: row.items,
-      written: { sessionId: session._id, createdSession, setRevisionIds: setIds, cardioRevisionIds: cardioIds, ...(previousSession === undefined ? {} : { sessionFields }), ...(previousSession === undefined ? {} : { previousSession }) },
+      written: { sessionId: session._id, createdSession, setRevisionIds: setIds, cardioRevisionIds: cardioIds, ...(createdSession || previousSession !== undefined ? { sessionFields } : {}), ...(previousSession === undefined ? {} : { previousSession }) },
     });
     return { sessionId: session._id, setIds, cardioIds };
   },

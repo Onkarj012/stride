@@ -159,6 +159,20 @@ test("a revise draft keeps the saved workout time when the model gives no date o
   expect(after).not.toHaveProperty("timing");
 });
 
+test("a set-only correction keeps elapsed time on a live-timed workout", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "live-time-correction", name: "Bench", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const sessionId = await user.mutation(api.strength.startSession, { submissionId: "live-time-session", startedAt: Date.UTC(2026, 9, 28, 5) });
+  const setId = await user.mutation(api.strength.addSet, { submissionId: "live-time-set", sessionId, exerciseId, weightKg: 40, reps: 8 });
+  await user.mutation(api.strength.endSession, { sessionId, endedAt: Date.UTC(2026, 9, 28, 5, 45) });
+  const draftId = await user.mutation(api.workouts.blankDraft, { submissionId: "live-time-draft", sessionId });
+  const item = { key: "bench", name: "Bench", kind: "strength" as const, exerciseId, candidateIds: [exerciseId], sets: [{ setId, weightKg: 42, reps: 8 }], problems: [] };
+  await t.run((ctx) => ctx.db.patch("workout_drafts", draftId, { mode: "revise", items: [item] }));
+  await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "live-time-save", edits: { localDate: "2026-10-28", startTime: "10:30", durationMin: null, needsTarget: false, targetSessionId: sessionId, items: [item] } });
+  expect(await t.run((ctx) => ctx.db.get("workout_sessions", sessionId))).toMatchObject({ startedAt: Date.UTC(2026, 9, 28, 5), endedAt: Date.UTC(2026, 9, 28, 5, 45) });
+  expect(await t.run((ctx) => ctx.db.get("workout_sessions", sessionId))).not.toHaveProperty("durationMin");
+});
+
 test("batch undo refuses to restore session times changed by a later write", async () => {
   const { t, user } = await setup();
   const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "undo-time", name: "Bench", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
@@ -437,6 +451,20 @@ test("undo leaves a created session live when a later batch added records", asyn
   await user.mutation(api.workouts.undoDraft, { draftId, submissionId: "created-undo" });
   expect(await t.run((ctx) => ctx.db.get("workout_sessions", saved.sessionId))).not.toHaveProperty("deletedAt");
   expect((await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", saved.sessionId).eq("status", "live")).take(10))).map((set) => set.weightKg)).toEqual([65]);
+});
+
+test("undo of a created session refuses a later time-only correction", async () => {
+  const { t, user } = await setup();
+  const exerciseId = await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "created-time-undo", name: "Bench", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  const draftId = await t.run((ctx) => ctx.db.insert("workout_drafts", { userId: "user_a", submissionId: "created-time-draft", status: "pending", source: "manual", inputText: "", mode: "new", needsTarget: false, localDate: "2026-10-29", startTime: "10:00", durationMin: 30, items: [{ key: "bench", name: "Bench", kind: "strength", exerciseId, candidateIds: [exerciseId], sets: [{ weightKg: 40, reps: 8 }], problems: [] }], createdAt: Date.now() }));
+  const saved = await user.mutation(api.workouts.commitDraft, { draftId, submissionId: "created-time-save" });
+  const correctionId = await user.mutation(api.workouts.blankDraft, { submissionId: "created-time-correction", sessionId: saved.sessionId });
+  const setId = (await t.run((ctx) => ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", saved.sessionId).eq("status", "live")).first()))!._id;
+  const item = { key: "bench", name: "Bench", kind: "strength" as const, exerciseId, candidateIds: [exerciseId], sets: [{ setId, weightKg: 40, reps: 8 }], problems: [] };
+  await t.run((ctx) => ctx.db.patch("workout_drafts", correctionId, { mode: "revise", items: [item] }));
+  await user.mutation(api.workouts.commitDraft, { draftId: correctionId, submissionId: "created-time-correct-save", edits: { localDate: "2026-10-29", startTime: "10:05", durationMin: null, needsTarget: false, targetSessionId: saved.sessionId, items: [item] } });
+  await expect(user.mutation(api.workouts.undoDraft, { draftId, submissionId: "created-time-undo" })).rejects.toMatchObject({ data: { code: "STALE_REVISION", message: "The workout time changed after it was saved." } });
+  expect(await t.run((ctx) => ctx.db.get("workout_sessions", saved.sessionId))).not.toHaveProperty("deletedAt");
 });
 
 test("append correction deletes old sets that the corrected item no longer has", async () => {
