@@ -105,6 +105,7 @@ const messageViewValidator = v.object({
   text: v.string(),
   attachments: v.array(v.object({ kind: v.union(v.literal("image"), v.literal("audio")), storageId: v.id("_storage") })),
   draftIds: v.array(v.id("drafts")),
+  workoutDraftIds: v.array(v.id("workout_drafts")),
   entryIds: v.array(v.id("entries")),
   status: replyStatusValidator,
   logAction: v.optional(logActionValidator),
@@ -120,6 +121,7 @@ type Turn = {
   reply: string;
   toolCalls: ToolCallRecord[];
   draftIds: Id<"drafts">[];
+  workoutDraftIds: Id<"workout_drafts">[];
   entryIds: Id<"entries">[];
   stopped: boolean;
   logAction: LogAction | undefined;
@@ -132,6 +134,7 @@ const turnResultValidator = v.object({
   reply: v.string(),
   draftIds: v.array(v.id("drafts")),
   entryIds: v.array(v.id("entries")),
+  workoutDraftIds: v.array(v.id("workout_drafts")),
 });
 type TurnResult = Infer<typeof turnResultValidator>;
 
@@ -331,6 +334,7 @@ export const listMessages = query({
           text: m.text,
           attachments: m.attachments,
           draftIds: m.draftIds,
+          workoutDraftIds: m.workoutDraftIds ?? [],
           entryIds: m.entryIds ?? [],
           status: m.status ?? "done",
           logAction: m.logAction,
@@ -383,6 +387,7 @@ export const findTurn = internalQuery({
       reply: reply.text,
       draftIds: reply.draftIds,
       entryIds: reply.entryIds ?? [],
+      workoutDraftIds: reply.workoutDraftIds ?? [],
     };
   },
 });
@@ -535,15 +540,16 @@ export const appendReply = internalMutation({
 
 /** Records the cards a streaming reply has produced so far, while the claiming attempt still owns the row. */
 export const saveReplyCards = internalMutation({
-  args: { messageId: v.id("messages"), claimedAt: v.number(), entryIds: v.array(v.id("entries")), draftIds: v.array(v.id("drafts")) },
+  args: { messageId: v.id("messages"), claimedAt: v.number(), entryIds: v.array(v.id("entries")), draftIds: v.array(v.id("drafts")), workoutDraftIds: v.optional(v.array(v.id("workout_drafts"))) },
   returns: v.null(),
-  handler: async (ctx, { messageId, claimedAt, entryIds, draftIds }) => {
+  handler: async (ctx, { messageId, claimedAt, entryIds, draftIds, workoutDraftIds = [] }) => {
     const row = await ownedStream(ctx, messageId, claimedAt);
     if (row === null) return null;
     // Regenerate seeds the row with the hidden reply's cards; keep them alongside this attempt's.
     await ctx.db.patch("messages", messageId, {
       entryIds: [...new Set([...(row.entryIds ?? []), ...entryIds])],
       draftIds: [...new Set([...row.draftIds, ...draftIds])],
+      workoutDraftIds: [...new Set([...(row.workoutDraftIds ?? []), ...workoutDraftIds])],
     });
     return null;
   },
@@ -630,7 +636,7 @@ export const releaseTurn = internalMutation({
 /** Entries and drafts an earlier, failed attempt at this turn already wrote, with a reply describing them. */
 export const priorTurnWrites = internalQuery({
   args: { userId: v.string(), submissionId: v.string() },
-  returns: v.object({ reply: v.string(), draftIds: v.array(v.id("drafts")), entryIds: v.array(v.id("entries")) }),
+  returns: v.object({ reply: v.string(), draftIds: v.array(v.id("drafts")), entryIds: v.array(v.id("entries")), workoutDraftIds: v.array(v.id("workout_drafts")) }),
   handler: async (ctx, { userId, submissionId }) => {
     // Every write of a turn uses a `${submissionId}:...` key, so one index range finds them all.
     const prefix = `${submissionId}:`;
@@ -643,6 +649,7 @@ export const priorTurnWrites = internalQuery({
       .query("drafts")
       .withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).gte("submissionId", prefix).lt("submissionId", end))
       .take(MAX_PRIOR_DRAFTS);
+    const workoutDrafts = await ctx.db.query("workout_drafts").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).gte("submissionId", prefix).lt("submissionId", end)).take(MAX_PRIOR_DRAFTS);
     const names = [...new Set(entries.map((row) => row.foodName))];
     const parts = [
       ...(names.length === 0 ? [] : [`Part of this was saved before an error: ${names.join(", ")}.`]),
@@ -650,9 +657,10 @@ export const priorTurnWrites = internalQuery({
       "Send the rest again if anything is missing.",
     ];
     return {
-      reply: entries.length === 0 && drafts.length === 0 ? "" : parts.join(" "),
+      reply: entries.length === 0 && drafts.length === 0 && workoutDrafts.length === 0 ? "" : parts.join(" "),
       draftIds: drafts.map((row) => row._id),
       entryIds: entries.map((row) => row._id),
+      workoutDraftIds: workoutDrafts.map((row) => row._id),
     };
   },
 });
@@ -672,6 +680,7 @@ export const finishReply = internalMutation({
     toolCalls: v.array(toolCallRecordValidator),
     draftIds: v.array(v.id("drafts")),
     entryIds: v.array(v.id("entries")),
+    workoutDraftIds: v.array(v.id("workout_drafts")),
     logAction: v.optional(logActionValidator),
   },
   returns: v.union(v.null(), v.object({ text: v.string(), status: v.union(v.literal("done"), v.literal("stopped")) })),
@@ -687,6 +696,7 @@ export const finishReply = internalMutation({
       toolCalls: args.toolCalls,
       draftIds: args.draftIds,
       entryIds: args.entryIds,
+      workoutDraftIds: args.workoutDraftIds,
       logAction: args.logAction,
       stopRequested: undefined,
     });
@@ -731,6 +741,9 @@ const contextValidator = v.object({
   ),
   userFoods: v.array(v.string()),
   profile: coachProfileValidator,
+  plainWorkouts: v.boolean(),
+  workoutDraftIds: v.array(v.id("workout_drafts")),
+  sessions: v.array(v.object({ sessionId: v.id("workout_sessions"), name: v.optional(v.string()), startedAt: v.number(), open: v.boolean() })),
 });
 type TurnContext = Infer<typeof contextValidator>;
 
@@ -814,8 +827,13 @@ export const turnContext = internalQuery({
         kcal: roundTo(row.nutrients.kcal, 0),
       }));
     const userFoods = (await userFoodsOf(ctx, userId)).slice(0, MAX_CONTEXT_USER_FOODS).map((food) => food.name);
-    const profile = await coachProfileOf(ctx, userId, day.localDate);
-    return { localDate: day.localDate, slot: day.slot, history, entries, userFoods, profile };
+    const [profile, settings, workoutDrafts, sessions] = await Promise.all([
+      coachProfileOf(ctx, userId, day.localDate),
+      ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first(),
+      ctx.db.query("workout_drafts").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "pending")).take(20),
+      ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).eq("localDate", day.localDate)).order("desc").take(10),
+    ]);
+    return { localDate: day.localDate, slot: day.slot, history, entries, userFoods, profile, plainWorkouts: settings?.plainWorkouts === true, workoutDraftIds: workoutDrafts.filter((draft) => draft.chatId === chatId).map((draft) => draft._id), sessions: sessions.filter((session) => session.deletedAt === undefined).map((session) => ({ sessionId: session._id, name: session.name, startedAt: session.startedAt, open: session.endedAt === undefined })) };
   },
 });
 
@@ -953,12 +971,20 @@ const CHAT_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "offer_workout",
+      description: "Prepare a workout review card. You cannot save a workout; the user must review it and tap Save.",
+      parameters: { type: "object", additionalProperties: false, required: ["text"], properties: { text: { type: "string" }, draft_id: { type: "string" }, session_id: { type: "string" } } },
+    },
+  },
   ...LOOKUP_TOOLS,
 ];
 
 /** Tools for a regenerated reply: the earlier reply already made its log changes, so they can't run twice. */
 const REGENERATE_TOOLS: ToolDefinition[] = CHAT_TOOLS.filter(
-  (tool) => tool.function.name !== "edit_entry" && tool.function.name !== "delete_entry",
+  (tool) => tool.function.name !== "edit_entry" && tool.function.name !== "delete_entry" && tool.function.name !== "offer_workout",
 );
 /** Told to the model when it rewrites a reply, so it doesn't promise changes it can no longer make. */
 const REGENERATE_NOTE =
@@ -1006,6 +1032,7 @@ function systemPrompt(context: TurnContext): string {
     "Only quote calorie numbers that tool results or the entry list give. Never work out nutrients yourself.",
     `Today is ${context.localDate}. The current meal slot is ${context.slot}.`,
     `Today's entries (id | slot | food | grams | kcal):\n${entries}`,
+    ...(context.plainWorkouts ? ["Plain-English workout logging is on. You can prepare a workout review card with offer_workout, but you cannot save it. The user must review and tap Save.", `Today's workouts (id | name | start | state):\n${context.sessions.map((session) => `- ${session.sessionId} | ${session.name ?? "Workout"} | ${new Date(session.startedAt).toISOString()} | ${session.open ? "open" : "done"}`).join("\n") || "(none)"}`, `Pending workout review ids in this chat: ${context.workoutDraftIds.join(", ") || "(none)"}.` ] : []),
     `The user's own foods: ${context.userFoods.length === 0 ? "(none)" : context.userFoods.join(", ")}.`,
     ...(about.length === 0 ? [] : [`About the user:\n${about.join("\n")}`]),
   ].join("\n");
@@ -1096,7 +1123,7 @@ async function runChatTurn(
 ): Promise<Turn> {
   const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId, replyId: target.messageId });
   const system = systemPrompt(context);
-  const tools = regenerating ? REGENERATE_TOOLS : CHAT_TOOLS;
+  const tools = (regenerating ? REGENERATE_TOOLS : CHAT_TOOLS).filter((tool) => tool.function.name !== "offer_workout" || context.plainWorkouts);
   const messages: ChatMessage[] = [
     { role: "system", content: regenerating ? `${system}\n${REGENERATE_NOTE}` : system },
     ...context.history.map((m): ChatMessage => ({ role: m.role, content: m.text })),
@@ -1109,6 +1136,7 @@ async function runChatTurn(
   const model = photo === undefined ? PIPELINE_MODEL : PHOTO_MODEL;
   const toolCalls: ToolCallRecord[] = [];
   const draftIds: Id<"drafts">[] = [];
+  const workoutDraftIds: Id<"workout_drafts">[] = [];
   const entryIds: Id<"entries">[] = [];
   const seen: SeenFoods = new Map();
   const notes: string[] = [];
@@ -1117,7 +1145,7 @@ async function runChatTurn(
   const logAction = (): LogAction | undefined =>
     photo === undefined ? offered : { storageId: photo.storageId, ...(photo.text === "" ? {} : { text: photo.text }) };
   const stream = new ReplyStream(ctx, target);
-  const stopped = (): Turn => ({ reply: stream.shown, toolCalls, draftIds, entryIds, stopped: true, logAction: logAction() });
+  const stopped = (): Turn => ({ reply: stream.shown, toolCalls, draftIds, workoutDraftIds, entryIds, stopped: true, logAction: logAction() });
 
   for (let i = 0; i < MAX_CHAT_ITERATIONS; i++) {
     // A stop pressed while tools ran ends the turn before the next model call.
@@ -1139,7 +1167,7 @@ async function runChatTurn(
         else if (offered !== undefined) reply = "Tap Log this to add it.";
         else reply = SORRY_REPLY;
       }
-      return { reply, toolCalls, draftIds, entryIds, stopped: false, logAction: logAction() };
+      return { reply, toolCalls, draftIds, workoutDraftIds, entryIds, stopped: false, logAction: logAction() };
     }
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
 
@@ -1166,13 +1194,22 @@ async function runChatTurn(
               });
           entryIds.push(changed.entry_id);
           // Saved on the reply now, so a later model failure still leaves this change's Undo card.
-          await ctx.runMutation(internal.chats.saveReplyCards, { ...target, entryIds, draftIds });
+          await ctx.runMutation(internal.chats.saveReplyCards, { ...target, entryIds, draftIds, workoutDraftIds });
           notes.push(`${call.function.name === "delete_entry" ? "Removed" : "Updated"} ${changed.food}.`);
           result = { status: "ok", ...changed };
         } else if (call.function.name === "offer_log") {
           if (typeof args.text !== "string" || args.text.trim() === "") throw new Error("text must be the food to log");
           offered = { text: args.text.trim().slice(0, MAX_LOG_TEXT_CHARS) };
           result = { status: "button_shown" };
+        } else if (call.function.name === "offer_workout") {
+          if (!context.plainWorkouts) throw new Error("Plain-English workout logging is off.");
+          if (typeof args.text !== "string" || args.text.trim() === "") throw new Error("text must contain the workout");
+          const sessionId = context.sessions.find((session) => session.sessionId === args.session_id)?.sessionId;
+          const pendingDraftId = context.workoutDraftIds.find((id) => id === args.draft_id);
+          const draftId = await ctx.runAction(internal.pipeline.workout_parse.parseCoach, { userId, submissionId: subId, text: args.text.slice(0, AI_INPUT_LIMITS.messageChars), chatId, messageId: target.messageId, ...(sessionId === undefined ? {} : { sessionId }), ...(pendingDraftId === undefined ? {} : { draftId: pendingDraftId }) });
+          workoutDraftIds.push(draftId);
+          await ctx.runMutation(internal.chats.saveReplyCards, { ...target, entryIds, draftIds, workoutDraftIds });
+          result = { status: "review_card_shown", draft_id: draftId, message: "The user must review and tap Save." };
         } else {
           result = (await runLookupTool(ctx, userId, call.function.name, args, seen)) ?? { error: `Unknown tool ${call.function.name}` };
         }
@@ -1189,6 +1226,7 @@ async function runChatTurn(
     reply: [stream.text, fallback].filter((part) => part !== "").join("\n\n"),
     toolCalls,
     draftIds,
+    workoutDraftIds,
     entryIds,
     stopped: false,
     logAction: logAction(),
@@ -1263,6 +1301,7 @@ export const sendMessage = action({
         toolCalls: turn.toolCalls,
         draftIds: turn.draftIds,
         entryIds: turn.entryIds,
+        workoutDraftIds: turn.workoutDraftIds,
         logAction: turn.logAction,
       });
       return {
@@ -1271,6 +1310,7 @@ export const sendMessage = action({
         reply: stored?.text ?? turn.reply,
         draftIds: turn.draftIds,
         entryIds: turn.entryIds,
+        workoutDraftIds: turn.workoutDraftIds,
       };
     } catch (err) {
       await ctx.runMutation(internal.chats.releaseTurn, { userId, messageId: userMessageId, replyId: target.messageId, claimedAt: target.claimedAt });
@@ -1288,6 +1328,7 @@ export const regenerateTarget = internalQuery({
     replyId: v.id("messages"),
     draftIds: v.array(v.id("drafts")),
     entryIds: v.array(v.id("entries")),
+    workoutDraftIds: v.array(v.id("workout_drafts")),
   }),
   handler: async (ctx, { userId, chatId }) => {
     await ownChat(ctx, userId, chatId);
@@ -1302,7 +1343,7 @@ export const regenerateTarget = internalQuery({
     const user = reply.answersMessageId === undefined ? null : await ctx.db.get("messages", reply.answersMessageId);
     if (user === null || user.userId !== userId || user.submissionId === undefined) throw new ConvexError({ code: "NOTHING_TO_REGENERATE", message: "Nothing to regenerate yet." });
     if (user.attachments.some((a) => a.kind === "image")) throw new ConvexError({ code: "PHOTO_REGENERATE", message: "Photo replies can't be regenerated yet." });
-    return { userMessageId: user._id, userSubmissionId: user.submissionId, replyId: reply._id, draftIds: reply.draftIds, entryIds: reply.entryIds ?? [] };
+    return { userMessageId: user._id, userSubmissionId: user.submissionId, replyId: reply._id, draftIds: reply.draftIds, entryIds: reply.entryIds ?? [], workoutDraftIds: reply.workoutDraftIds ?? [] };
   },
 });
 
@@ -1320,6 +1361,7 @@ export const regenerate = action({
       replyId: Id<"messages">;
       draftIds: Id<"drafts">[];
       entryIds: Id<"entries">[];
+      workoutDraftIds: Id<"workout_drafts">[];
     } = await ctx.runQuery(
       internal.chats.regenerateTarget,
       { userId, chatId },
@@ -1344,6 +1386,7 @@ export const regenerate = action({
         // The hidden reply's cards move to its replacement, so the entries it changed stay undoable from the chat.
         draftIds: [...new Set([...old.draftIds, ...turn.draftIds])],
         entryIds: [...new Set([...old.entryIds, ...turn.entryIds])],
+        workoutDraftIds: [...new Set([...old.workoutDraftIds, ...turn.workoutDraftIds])],
         logAction: turn.logAction,
       });
       return { assistantMessageId: claim.replyId, reply: stored?.text ?? turn.reply };
@@ -1414,12 +1457,12 @@ async function runTurn(
   target: ReplyTarget,
 ): Promise<Turn> {
   if (retry) {
-    const prior: { reply: string; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[] } = await ctx.runQuery(
+    const prior: { reply: string; draftIds: Id<"drafts">[]; entryIds: Id<"entries">[]; workoutDraftIds: Id<"workout_drafts">[] } = await ctx.runQuery(
       internal.chats.priorTurnWrites,
       { userId, submissionId: args.submissionId },
     );
     if (prior.reply !== "") {
-      return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, entryIds: prior.entryIds, stopped: false, logAction: undefined };
+      return { reply: prior.reply, toolCalls: [], draftIds: prior.draftIds, workoutDraftIds: prior.workoutDraftIds, entryIds: prior.entryIds, stopped: false, logAction: undefined };
     }
   }
   const photo: PhotoInput | undefined =

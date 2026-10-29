@@ -273,6 +273,7 @@ describe("clearAllData", () => {
         toolCalls: [],
         draftIds: [],
         entryIds: [],
+        workoutDraftIds: [],
       }),
     ).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
     await expect(

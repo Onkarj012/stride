@@ -246,6 +246,7 @@ export const profile = query({
     pace: v.optional(paceValidator),
     trainingDaysPerWeek: v.optional(v.number()),
     units: v.optional(v.string()),
+    plainWorkouts: v.boolean(),
     latestWeightKg: v.union(v.number(), v.null()),
   })),
   handler: async (ctx) => {
@@ -265,6 +266,7 @@ export const profile = query({
       pace: settings.pace,
       trainingDaysPerWeek: settings.trainingDaysPerWeek,
       units: settings.units,
+      plainWorkouts: settings.plainWorkouts ?? false,
       latestWeightKg: latestWeight?.kg ?? null,
     };
   },
@@ -334,6 +336,20 @@ export const setUnits = mutation({
     const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
     if (settings === null) await ctx.db.insert("user_settings", { userId, units });
     else await ctx.db.patch("user_settings", settings._id, { units });
+    return null;
+  },
+});
+
+/** Saves whether the caller may use plain-English workout logging. */
+export const setPlainWorkouts = mutation({
+  args: { on: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, { on }) => {
+    const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
+    const settings = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
+    if (settings === null) await ctx.db.insert("user_settings", { userId, plainWorkouts: on });
+    else await ctx.db.patch("user_settings", settings._id, { plainWorkouts: on });
     return null;
   },
 });

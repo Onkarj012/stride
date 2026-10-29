@@ -50,6 +50,34 @@ export function localDateTime(instantMs: number, timeZone: string): { date: stri
   };
 }
 
+/** Converts a local wall-clock date and time to an instant, choosing the earlier DST overlap. */
+export function instantAt(localDateValue: string, time: string, timeZone: string): number {
+  if (!isLocalDate(localDateValue)) throw new RangeError("localDate must be a valid YYYY-MM-DD date");
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!match) throw new RangeError("time must use HH:MM");
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) throw new RangeError("time must use a valid 24-hour time");
+  formatterFor(timeZone);
+  const [year, month, day] = localDateValue.split("-").map(Number) as [number, number, number];
+  const target = Date.UTC(year, month - 1, day, hour, minute);
+  const candidates: number[] = [];
+  const offsets = new Set<number>();
+  for (let delta = -36; delta <= 36; delta += 3) {
+    const sample = target + delta * 60 * 60 * 1000;
+    const local = localDateTime(sample, timeZone);
+    const [localYear, localMonth, localDay] = local.date.split("-").map(Number) as [number, number, number];
+    offsets.add(Date.UTC(localYear, localMonth - 1, localDay, local.hour, local.minute) - sample);
+  }
+  for (const offset of offsets) {
+    const candidate = target - offset;
+    const local = localDateTime(candidate, timeZone);
+    if (local.date === localDateValue && local.hour === hour && local.minute === minute) candidates.push(candidate);
+  }
+  if (candidates.length === 0) throw new RangeError("Local time does not exist in this time zone");
+  return Math.min(...candidates);
+}
+
 /** Local calendar date (YYYY-MM-DD) of an instant in a zone. */
 export function localDate(instantMs: number, timeZone: string): string {
   return localDateTime(instantMs, timeZone).date;

@@ -91,6 +91,16 @@ test("catalog queries require authentication", async () => {
   await expect(t.query(api.exercises.get, { exerciseId: row._id })).rejects.toThrow(/Unauthenticated/);
 });
 
+test("personal exercise names normalize to one private row and never leak in search or get", async () => {
+  const { t, user } = await setup();
+  const id = await user.mutation(api.exercises.createPersonal, { name: "Cable  Row!", kind: "strength" });
+  expect(await user.mutation(api.exercises.createPersonal, { name: " cable row ", kind: "strength" })).toBe(id);
+  expect(await user.query(api.exercises.search, { query: "cable row" })).toMatchObject([{ _id: id, sourceId: "personal:user_a:cable row", ownerId: "user_a", primaryMuscles: [] }]);
+  const stranger = t.withIdentity({ subject: "user_b" });
+  expect(await stranger.query(api.exercises.get, { exerciseId: id })).toBeNull();
+  expect(await stranger.query(api.exercises.search, { query: "cable row" })).toEqual([]);
+});
+
 test("upsertBatch preserves IDs, skips unchanged rows and updates sourceId matches", async () => {
   const t = convexTest(schema, modules);
   expect(await t.mutation(internal.exercises.upsertBatch, { exercises: [exercise()] })).toEqual({

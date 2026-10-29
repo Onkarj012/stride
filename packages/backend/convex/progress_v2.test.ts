@@ -437,3 +437,10 @@ test("setUnits saves the unit choice and keeps the frozen calorie target", async
   const settings = await t.run((ctx) => ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", "user_a")).first());
   expect(settings).toMatchObject({ units: "imperial", calorieTarget: { kcal: 2000 } });
 });
+
+test("plain workout preference defaults off and can be changed", async () => {
+  const { user } = await setup();
+  expect(await user.query(api.progress_v2.profile, {})).toMatchObject({ plainWorkouts: false });
+  await user.mutation(api.progress_v2.setPlainWorkouts, { on: true });
+  expect(await user.query(api.progress_v2.profile, {})).toMatchObject({ plainWorkouts: true });
+});
