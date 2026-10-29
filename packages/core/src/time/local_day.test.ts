@@ -12,6 +12,7 @@ import {
   isValidTimeZone,
   localDate,
   localDateTime,
+  localTime,
   nextLocalMidnight,
   slotAt,
   shiftMonth,
@@ -36,6 +37,10 @@ describe("IST midnight boundary", () => {
   it("rolls the date at 18:30 UTC", () => {
     expect(localDate(at("2026-10-05T18:29:59.999Z"), IST)).toBe("2026-10-05");
     expect(localDate(at("2026-10-05T18:30:00.000Z"), IST)).toBe("2026-10-06");
+  });
+
+  it("formats local wall-clock time as HH:MM", () => {
+    expect(localTime(at("2026-10-05T18:30:00Z"), IST)).toBe("00:00");
   });
 
   it("puts 23:59 IST in dinner and 00:00 IST in next-day breakfast", () => {

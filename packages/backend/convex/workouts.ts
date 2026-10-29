@@ -1,4 +1,4 @@
-import { expandSets, instantAt, isLocalDate, normalizeExerciseName } from "@stride/core";
+import { expandSets, instantAt, isLocalDate, localDate, localDateTime, localTime, normalizeExerciseName } from "@stride/core";
 import { ConvexError, v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -254,8 +254,7 @@ export const parseContext = internalQuery({
     const timeZone = await resolveTimeZone(ctx, userId);
     const now = Date.now();
     const day = await resolveLocalDay(ctx, userId, now);
-    const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(now));
-    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const localNow = localDateTime(now, timeZone);
     const open = await ctx.db.query("workout_sessions").withIndex("by_userId_and_endedAt_and_deletedAt_and_startedAt", (q) => q.eq("userId", userId).eq("endedAt", undefined).eq("deletedAt", undefined)).order("desc").take(1);
     const pendingDraft = draftId === undefined ? null : await ctx.db.get("workout_drafts", draftId);
     if (draftId !== undefined && (pendingDraft === null || pendingDraft.userId !== userId || pendingDraft.status !== "pending")) throw new ConvexError({ code: "NOT_FOUND", message: "Pending workout draft not found" });
@@ -264,8 +263,10 @@ export const parseContext = internalQuery({
     if (requestedSessionId !== undefined && (session === null || session.userId !== userId || session.deletedAt !== undefined)) throw new ConvexError({ code: "NOT_FOUND", message: "Workout not found" });
     const currentItems = pendingDraft !== null ? numberDraftItems(pendingDraft.items) : session === null ? [] : await sessionItems(ctx, session._id);
     const mode = pendingDraft?.mode ?? (session?.endedAt !== undefined ? "revise" : session !== null ? "append" : "new");
-    const heads = session === null ? undefined : await sessionHeads(ctx, session._id);
-    return { enabled: settings?.plainWorkouts === true, timeZone, now, localDate: day.localDate, startTime: `${values.hour}:${values.minute}`, openSession: open[0] ?? null, session, mode, currentItems, ...(heads ?? {}), ...(pendingDraft?.version === undefined ? {} : { version: pendingDraft.version }) };
+    const heads = session === null ? undefined : pendingDraft?.targetSessionId === session._id && pendingDraft.headSetIds !== undefined && pendingDraft.headCardioIds !== undefined
+      ? { headSetIds: pendingDraft.headSetIds, headCardioIds: pendingDraft.headCardioIds }
+      : await sessionHeads(ctx, session._id);
+    return { enabled: settings?.plainWorkouts === true, timeZone, now, localDate: day.localDate, startTime: `${String(localNow.hour).padStart(2, "0")}:${String(localNow.minute).padStart(2, "0")}`, openSession: open[0] ?? null, session, mode, currentItems, ...(heads ?? {}), ...(pendingDraft?.version === undefined ? {} : { version: pendingDraft.version }) };
   },
 });
 
@@ -369,7 +370,7 @@ export const saveParsedDraft = internalMutation({
     if (items.reduce((sum, item) => sum + item.sets.length, 0) > 200) throw new ConvexError({ code: "LIMIT_REACHED", message: "A workout can contain at most 200 sets." });
     const id = args.draftId;
     const targetTimeZone = targetSession?.timeZone ?? timeZone;
-    const targetStartTime = targetSession === null ? undefined : new Intl.DateTimeFormat("en-GB", { timeZone: targetTimeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(targetSession.startedAt));
+    const targetStartTime = targetSession === null ? undefined : localTime(targetSession.startedAt, targetTimeZone);
     const date = raw.date ?? targetSession?.localDate ?? editedDraft?.localDate ?? args.localDate;
     if (!isLocalDate(date)) throw new ConvexError({ code: "BAD_WORKOUT_OUTPUT", message: "The workout date could not be read." });
     const startTime = raw.startTime ?? targetStartTime ?? editedDraft?.startTime ?? args.startTime;
@@ -423,7 +424,7 @@ export const draftFromSession = mutation({
     const timeZone = await resolveTimeZone(ctx, userId);
     const now = Date.now();
     const date = (await resolveLocalDay(ctx, userId, now)).localDate;
-    const startTime = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(now));
+    const startTime = localTime(now, timeZone);
     const sets = await ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", session._id).eq("status", "live")).take(200);
     const cardio = await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", session._id).eq("status", "live")).take(100);
     const exerciseIds = [...new Set([...sets.map((set) => set.exerciseId), ...cardio.map((row) => row.exerciseId)])];
@@ -455,7 +456,7 @@ export const blankDraft = mutation({
     const session = args.sessionId === undefined ? null : await ctx.db.get("workout_sessions", args.sessionId);
     if (session !== null && session.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Workout not found" });
     const targetTimeZone = session?.timeZone ?? timeZone;
-    const startTime = session === null ? new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(now)) : new Intl.DateTimeFormat("en-GB", { timeZone: targetTimeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(session.startedAt));
+    const startTime = session === null ? localTime(now, timeZone) : localTime(session.startedAt, targetTimeZone);
     const heads = session === null ? {} : await sessionHeads(ctx, session._id);
     return await ctx.db.insert("workout_drafts", { userId, submissionId: args.submissionId, status: "pending", source: "manual", inputText: args.text ?? "", mode: session === null ? "new" : "append", ...(session === null ? {} : { targetSessionId: session._id }), ...heads, needsTarget: false, localDate: session?.localDate ?? localDate, startTime, items: [], createdAt: now });
   },
@@ -518,6 +519,7 @@ export const commitDraft = mutation({
       return { sessionId: row.written.sessionId, setIds: row.written.setRevisionIds, cardioIds: row.written.cardioRevisionIds };
     }
     if (args.expectedVersion !== undefined && args.expectedVersion !== (row.version ?? 0)) throw new ConvexError({ code: "STALE_REVISION", message: "This review changed in chat. Reload it." });
+    const durationCleared = args.edits?.durationMin === null;
     if (args.edits !== undefined) {
       if (!isLocalDate(args.edits.localDate) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(args.edits.startTime) || (args.edits.durationMin !== null && (!Number.isInteger(args.edits.durationMin) || args.edits.durationMin < 1 || args.edits.durationMin > 1440)) || itemsExceedLimits(args.edits.items)) throw new ConvexError({ code: "INVALID_DRAFT", message: "Check the date, time, duration and workout items." });
       const editTarget = args.edits.targetSessionId === null ? null : await ctx.db.get("workout_sessions", args.edits.targetSessionId);
@@ -532,7 +534,7 @@ export const commitDraft = mutation({
     if (session !== null && (session.userId !== userId || session.deletedAt !== undefined || (row.mode === "append" && session.endedAt !== undefined))) throw new ConvexError({ code: "INVALID_TARGET", message: "That workout can no longer be changed." });
     const timeZone = row.mode === "revise" && session !== null ? session.timeZone : userTimeZone;
     const savedDate = session?.localDate;
-    const savedStartTime = session === null ? undefined : new Intl.DateTimeFormat("en-GB", { timeZone: session.timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(session.startedAt));
+    const savedStartTime = session === null ? undefined : localTime(session.startedAt, session.timeZone);
     const timingChanged = row.mode === "revise" && (row.localDate !== savedDate || (row.startTime ?? "12:00") !== savedStartTime);
     const startedAt = row.mode === "revise" && session !== null && !timingChanged ? session.startedAt : instantAt(row.localDate, row.startTime ?? "12:00", timeZone);
     const hasReferencedHeads = row.items.some((item) => item.sets.some((set) => set.setId !== undefined) || item.cardio?.cardioId !== undefined || (item.replaceSetIds?.length ?? 0) > 0 || (item.replaceCardioIds?.length ?? 0) > 0);
@@ -543,7 +545,7 @@ export const commitDraft = mutation({
     }
     const createdSession = session === null;
     if (session === null) {
-      const local = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(startedAt));
+      const local = localDate(startedAt, timeZone);
       if (local !== row.localDate) throw new ConvexError({ code: "INVALID_DATE", message: "The workout date does not match the selected time zone." });
       const sameDay = await ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).eq("localDate", row.localDate)).take(30);
       if (sameDay.length >= 30) throw new ConvexError({ code: "LIMIT_REACHED", message: "Day exceeds 30 workout sessions" });
@@ -553,13 +555,16 @@ export const commitDraft = mutation({
     if (session === null) throw new Error("Workout session insert failed");
     let previousSession: { localDate: string; timeZone: string; startedAt: number; endedAt?: number; durationMin?: number; timing?: "live" | "logged" } | undefined;
     if (!createdSession && row.mode === "revise") {
-      const local = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(startedAt));
+      const local = localDate(startedAt, timeZone);
       if (local !== row.localDate) throw new ConvexError({ code: "INVALID_DATE", message: "The workout date does not match the selected time zone." });
       const sessionPatch: Partial<Doc<"workout_sessions">> = {};
       if (session.localDate !== row.localDate) sessionPatch.localDate = row.localDate;
       if (session.timeZone !== timeZone) sessionPatch.timeZone = timeZone;
       if (session.startedAt !== startedAt) sessionPatch.startedAt = startedAt;
-      if (session.endedAt !== undefined && row.durationMin !== undefined) {
+      if (session.endedAt !== undefined && durationCleared) {
+        sessionPatch.durationMin = undefined;
+        sessionPatch.endedAt = startedAt;
+      } else if (session.endedAt !== undefined && row.durationMin !== undefined) {
         if (session.durationMin !== row.durationMin) {
           sessionPatch.durationMin = row.durationMin;
           sessionPatch.endedAt = startedAt + row.durationMin * 60_000;
@@ -665,7 +670,12 @@ export const commitDraft = mutation({
     const currentSession = await ctx.db.get("workout_sessions", session._id);
     if (currentSession === null) throw new Error("Workout session disappeared during save");
     const sessionFields = { localDate: currentSession.localDate, timeZone: currentSession.timeZone, startedAt: currentSession.startedAt, ...(currentSession.endedAt === undefined ? {} : { endedAt: currentSession.endedAt }), ...(currentSession.durationMin === undefined ? {} : { durationMin: currentSession.durationMin }), ...(currentSession.timing === undefined ? {} : { timing: currentSession.timing }) };
-    await ctx.db.patch("workout_drafts", row._id, { status: "committed", committedSubmissionId: args.submissionId, written: { sessionId: session._id, createdSession, setRevisionIds: setIds, cardioRevisionIds: cardioIds, sessionFields, ...(previousSession === undefined ? {} : { previousSession }) } });
+    await ctx.db.patch("workout_drafts", row._id, {
+      status: "committed", committedSubmissionId: args.submissionId,
+      localDate: row.localDate, startTime: row.startTime, durationMin: row.durationMin,
+      needsTarget: row.needsTarget, targetSessionId: row.targetSessionId, mode: row.mode, items: row.items,
+      written: { sessionId: session._id, createdSession, setRevisionIds: setIds, cardioRevisionIds: cardioIds, ...(previousSession === undefined ? {} : { sessionFields }), ...(previousSession === undefined ? {} : { previousSession }) },
+    });
     return { sessionId: session._id, setIds, cardioIds };
   },
 });

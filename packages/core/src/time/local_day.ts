@@ -83,6 +83,12 @@ export function localDate(instantMs: number, timeZone: string): string {
   return localDateTime(instantMs, timeZone).date;
 }
 
+/** Local wall-clock time (HH:MM) of an instant in a zone. */
+export function localTime(instantMs: number, timeZone: string): string {
+  const { hour, minute } = localDateTime(instantMs, timeZone);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 /** First instant of the next local day, including days shortened or extended by DST. */
 export function nextLocalMidnight(instantMs: number, timeZone: string): number {
   const date = localDate(instantMs, timeZone);
