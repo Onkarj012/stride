@@ -101,6 +101,21 @@ test("personal exercise names normalize to one private row and never leak in sea
   expect(await stranger.query(api.exercises.search, { query: "cable row" })).toEqual([]);
 });
 
+test("other users' matching personal exercises do not crowd catalog search results", async () => {
+  const t = convexTest(schema, modules);
+  const user = t.withIdentity({ subject: "user_a" });
+  const stranger = t.withIdentity({ subject: "user_b" });
+  for (let index = 0; index < 35; index += 1) {
+    await stranger.mutation(api.exercises.createPersonal, { name: `Bench personal ${index}`, kind: "strength" });
+  }
+  await t.run((ctx) => ctx.db.insert("exercises", {
+    sourceId: "target-bench", name: "Bench Press", category: "strength", equipment: "barbell",
+    mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [],
+  }));
+  const rows = await user.query(api.exercises.search, { query: "bench", limit: 1 });
+  expect(rows.map((row) => row.name)).toEqual(["Bench Press"]);
+});
+
 test("upsertBatch preserves IDs, skips unchanged rows and updates sourceId matches", async () => {
   const t = convexTest(schema, modules);
   expect(await t.mutation(internal.exercises.upsertBatch, { exercises: [exercise()] })).toEqual({

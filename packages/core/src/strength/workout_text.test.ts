@@ -13,6 +13,12 @@ describe("plain-English workout helpers", () => {
     expect(expandSets([], [8]).problem).toBeDefined();
   });
 
+  it("expands bodyweight reps without a weight list into zero kg", () => {
+    expect(expandSets([], [8, 6], { bodyweight: true })).toEqual({
+      sets: [{ weightKg: 0, reps: 8 }, { weightKg: 0, reps: 6 }],
+    });
+  });
+
   it("normalizes only case, punctuation, and whitespace", () => {
     expect(normalizeExerciseName(" Lat pull-down,  Long Grip! ")).toBe("lat pulldown long grip");
   });

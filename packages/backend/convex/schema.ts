@@ -445,6 +445,7 @@ export default defineSchema({
     .index("by_sourceId", ["sourceId"])
     .index("by_category_and_name", ["category", "name"])
     .index("by_ownerId_and_name", ["ownerId", "name"])
+    .index("by_ownerId_and_category_and_name", ["ownerId", "category", "name"])
     .index("by_ownerId_and_normalizedName", ["ownerId", "normalizedName"])
     .searchIndex("search_name", { searchField: "name", filterFields: ["category", "ownerId"] }),
 

@@ -43,7 +43,7 @@ import { resolveFoodPortion, userFoodsOf, userMeasuresOf } from "./pipeline/reso
 import { LOOKUP_TOOLS, parseToolArgs, runLookupTool, type SeenFoods } from "./pipeline/tools";
 import { transcribeAudio } from "./pipeline/transcribe";
 import { calorieTarget, dietsOf, MAX_PROGRESS_RANGE_DAYS, tdeeInput } from "./progress_v2";
-import { requireUserId, resolveLocalDay } from "./time_zone";
+import { requireUserId, resolveLocalDay, resolveTimeZone } from "./time_zone";
 import { requireOwnUpload } from "./uploads";
 import { assertLedgerWritable } from "./users";
 
@@ -734,6 +734,7 @@ type CoachProfile = NonNullable<Infer<typeof coachProfileValidator>>;
 
 const contextValidator = v.object({
   localDate: v.string(),
+  timeZone: v.string(),
   slot: mealSlotValidator,
   history: v.array(v.object({ role: v.union(v.literal("user"), v.literal("assistant")), text: v.string() })),
   entries: v.array(
@@ -790,6 +791,7 @@ export const turnContext = internalQuery({
   handler: async (ctx, { userId, chatId, replyId }): Promise<TurnContext> => {
     await ownChat(ctx, userId, chatId);
     const day = await resolveLocalDay(ctx, userId, Date.now());
+    const timeZone = await resolveTimeZone(ctx, userId);
     // History ends at the message this reply answers, so retrying an older question doesn't see later turns.
     const reply = await ctx.db.get("messages", replyId);
     const answers = reply?.answersMessageId === undefined ? null : await ctx.db.get("messages", reply.answersMessageId);
@@ -833,7 +835,7 @@ export const turnContext = internalQuery({
       ctx.db.query("workout_drafts").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "pending")).take(20),
       ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId).eq("localDate", day.localDate)).order("desc").take(10),
     ]);
-    return { localDate: day.localDate, slot: day.slot, history, entries, userFoods, profile, plainWorkouts: settings?.plainWorkouts === true, workoutDraftIds: workoutDrafts.filter((draft) => draft.chatId === chatId).map((draft) => draft._id), sessions: sessions.filter((session) => session.deletedAt === undefined).map((session) => ({ sessionId: session._id, name: session.name, startedAt: session.startedAt, open: session.endedAt === undefined })) };
+    return { localDate: day.localDate, timeZone, slot: day.slot, history, entries, userFoods, profile, plainWorkouts: settings?.plainWorkouts === true, workoutDraftIds: workoutDrafts.filter((draft) => draft.chatId === chatId).map((draft) => draft._id), sessions: sessions.filter((session) => session.deletedAt === undefined).map((session) => ({ sessionId: session._id, name: session.name, startedAt: session.startedAt, open: session.endedAt === undefined })) };
   },
 });
 
@@ -1032,7 +1034,7 @@ function systemPrompt(context: TurnContext): string {
     "Only quote calorie numbers that tool results or the entry list give. Never work out nutrients yourself.",
     `Today is ${context.localDate}. The current meal slot is ${context.slot}.`,
     `Today's entries (id | slot | food | grams | kcal):\n${entries}`,
-    ...(context.plainWorkouts ? ["Plain-English workout logging is on. You can prepare a workout review card with offer_workout, but you cannot save it. The user must review and tap Save.", `Today's workouts (id | name | start | state):\n${context.sessions.map((session) => `- ${session.sessionId} | ${session.name ?? "Workout"} | ${new Date(session.startedAt).toISOString()} | ${session.open ? "open" : "done"}`).join("\n") || "(none)"}`, `Pending workout review ids in this chat: ${context.workoutDraftIds.join(", ") || "(none)"}.` ] : []),
+    ...(context.plainWorkouts ? ["Plain-English workout logging is on. You can prepare a workout review card with offer_workout, but you cannot save it. The user must review and tap Save.", `Today's workouts (id | name | start | state):\n${context.sessions.map((session) => `- ${session.sessionId} | ${session.name ?? "Workout"} | ${new Intl.DateTimeFormat("en-GB", { timeZone: context.timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(session.startedAt))} | ${session.open ? "open" : "done"}`).join("\n") || "(none)"}`, `Pending workout review ids in this chat: ${context.workoutDraftIds.join(", ") || "(none)"}.` ] : []),
     `The user's own foods: ${context.userFoods.length === 0 ? "(none)" : context.userFoods.join(", ")}.`,
     ...(about.length === 0 ? [] : [`About the user:\n${about.join("\n")}`]),
   ].join("\n");

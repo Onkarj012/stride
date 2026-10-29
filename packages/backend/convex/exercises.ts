@@ -74,18 +74,21 @@ export const search = query({
     if (text === "") {
       const rows = await ctx.db
         .query("exercises")
-        .withIndex("by_category_and_name", (q) => category === undefined ? q : q.eq("category", category))
-        .take(limit + 1);
+        .withIndex("by_ownerId_and_category_and_name", (q) => {
+          const catalogQuery = q.eq("ownerId", undefined);
+          return category === undefined ? catalogQuery : catalogQuery.eq("category", category);
+        })
+        .take(limit);
       const own = await ctx.db.query("exercises").withIndex("by_ownerId_and_name", (q) => q.eq("ownerId", userId)).take(limit);
       return [...rows.filter((row) => row.ownerId === undefined), ...own.filter((row) => category === undefined || row.category === category)].slice(0, limit).map(exerciseView);
     }
     const catalog = await ctx.db
       .query("exercises")
       .withSearchIndex("search_name", (q) => {
-        const searchQuery = q.search("name", text);
-        return category === undefined ? searchQuery : searchQuery.eq("category", category);
+        const catalogQuery = q.search("name", text).eq("ownerId", undefined);
+        return category === undefined ? catalogQuery : catalogQuery.eq("category", category);
       })
-      .take(limit + 1);
+      .take(limit);
     const own = await ctx.db.query("exercises").withSearchIndex("search_name", (q) => {
       const searchQuery = q.search("name", text).eq("ownerId", userId);
       return category === undefined ? searchQuery : searchQuery.eq("category", category);
