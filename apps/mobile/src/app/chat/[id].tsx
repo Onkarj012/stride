@@ -15,6 +15,7 @@ import { ChatMessage, type ChatMessageView } from '@/components/ChatMessage'
 import { Icon } from '@/components/Icon'
 import { LogProvider } from '@/components/LogProvider'
 import { Polo } from '@/components/Polo'
+import { Sheet } from '@/components/Sheet'
 import { Tap } from '@/components/Tap'
 import { formatNumber } from '@/lib/format'
 import { SUMMARY_DAYS, newSubmissionId, plainError, PlainError, targetsFor, uploadPhoto, type StorageId } from '@/lib/log'
@@ -281,12 +282,13 @@ type ComposerProps = {
   onProblem: (text: string) => void
 }
 
-// The message box: text, an optional photo, and send or stop. It keeps its own text, so typing doesn't re-render the thread.
+// The message box: text, an optional photo picked from the + menu, and send or stop. It keeps its own text and menu state, so typing doesn't re-render the thread.
 const Composer = memo(function Composer({ streaming, sending, onSubmit, onStop, onProblem }: ComposerProps) {
   const s = useStyles()
   const t = useTheme()
   const [text, setText] = useState('')
   const [photoUri, setPhotoUri] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
   const canSend = (text.trim() !== '' || photoUri !== null) && !sending
 
   // Sends what is in the box and clears it.
@@ -325,49 +327,62 @@ const Composer = memo(function Composer({ streaming, sending, onSubmit, onStop, 
     }
   }
 
+  // Closes the + menu, then runs one of its photo picks.
+  function pick(choose: () => Promise<void>) {
+    setMenuOpen(false)
+    void choose()
+  }
+
   return (
-    <View style={s.composer}>
-      {photoUri ? (
-        <Animated.View entering={FadeIn} style={s.pendingPhoto}>
-          <Image source={{ uri: photoUri }} style={s.pendingThumb} accessibilityLabel="Photo to send" />
-          <View style={s.removePhoto}>
-            <RoundButton icon="x" label="Remove photo" tone="card" size={26} onPress={() => setPhotoUri(null)} />
+    <>
+      <View style={s.composer}>
+        {photoUri ? (
+          <Animated.View entering={FadeIn} style={s.pendingPhoto}>
+            <Image source={{ uri: photoUri }} style={s.pendingThumb} accessibilityLabel="Photo to send" />
+            <View style={s.removePhoto}>
+              <RoundButton icon="x" label="Remove photo" tone="card" size={26} onPress={() => setPhotoUri(null)} />
+            </View>
+          </Animated.View>
+        ) : null}
+        <View style={s.inputRow}>
+          <RoundButton icon="plus" label="Add a photo" tone="card" size={46} onPress={() => setMenuOpen(true)} />
+          <View style={s.field}>
+            <TextInput
+              style={s.input}
+              value={text}
+              onChangeText={setText}
+              placeholder="Message Polo"
+              placeholderTextColor={t.c.ink3}
+              multiline
+              accessibilityLabel="Message"
+            />
+            {streaming ? (
+              <Tap style={[s.send, s.stopButton]} scale={motion.press.iconScale} onPress={onStop} accessibilityRole="button" accessibilityLabel="Stop the reply">
+                <View style={s.stopGlyph} />
+              </Tap>
+            ) : (
+              <Tap
+                style={[s.send, canSend ? s.sendOn : s.sendOff]}
+                scale={motion.press.iconScale}
+                disabled={!canSend}
+                onPress={submitTyped}
+                accessibilityRole="button"
+                accessibilityLabel="Send"
+                accessibilityState={{ disabled: !canSend, busy: sending }}
+              >
+                {sending ? <ActivityIndicator size="small" color={t.c.ink3} /> : <Icon name="up" size={18} color={canSend ? t.c.onPolo : t.c.ink3} />}
+              </Tap>
+            )}
           </View>
-        </Animated.View>
-      ) : null}
-      <View style={s.inputRow}>
-        <RoundButton icon="image" label="Attach a photo" tone="card" size={46} onPress={() => void attach()} />
-        <RoundButton icon="cam" label="Take a photo" tone="card" size={46} onPress={() => void takePhoto()} />
-        <View style={s.field}>
-          <TextInput
-            style={s.input}
-            value={text}
-            onChangeText={setText}
-            placeholder="Message Polo"
-            placeholderTextColor={t.c.ink3}
-            multiline
-            accessibilityLabel="Message"
-          />
-          {streaming ? (
-            <Tap style={[s.send, s.stopButton]} scale={motion.press.iconScale} onPress={onStop} accessibilityRole="button" accessibilityLabel="Stop the reply">
-              <View style={s.stopGlyph} />
-            </Tap>
-          ) : (
-            <Tap
-              style={[s.send, canSend ? s.sendOn : s.sendOff]}
-              scale={motion.press.iconScale}
-              disabled={!canSend}
-              onPress={submitTyped}
-              accessibilityRole="button"
-              accessibilityLabel="Send"
-              accessibilityState={{ disabled: !canSend, busy: sending }}
-            >
-              {sending ? <ActivityIndicator size="small" color={t.c.ink3} /> : <Icon name="up" size={18} color={canSend ? t.c.onPolo : t.c.ink3} />}
-            </Tap>
-          )}
         </View>
       </View>
-    </View>
+      <Sheet open={menuOpen} onClose={() => setMenuOpen(false)}>
+        <View style={s.menu}>
+          <Button label="Take photo" icon="cam" variant="ghost" size="block" onPress={() => pick(takePhoto)} />
+          <Button label="Choose photo" icon="image" variant="ghost" size="block" onPress={() => pick(attach)} />
+        </View>
+      </Sheet>
+    </>
   )
 })
 
@@ -451,6 +466,7 @@ const useStyles = themedStyles((t) => ({
   problemRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: layout.screenX, paddingTop: 8 },
   problem: { ...font('caption'), color: t.c.poloInk, flex: 1 },
   composer: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10, backgroundColor: t.c.bg },
+  menu: { gap: 8 },
   pendingPhoto: { alignSelf: 'flex-start', marginLeft: 54, marginBottom: 8 },
   pendingThumb: { width: 64, height: 64, borderRadius: radii.sm, backgroundColor: t.c.card2 },
   removePhoto: { position: 'absolute', top: -8, right: -8 },
