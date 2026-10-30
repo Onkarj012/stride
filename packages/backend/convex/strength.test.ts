@@ -69,6 +69,46 @@ test("addSet retries once and gives each exercise ordered set numbers", async ()
   expect(await t.run((ctx) => ctx.db.query("sets").take(5))).toHaveLength(2);
 });
 
+test("weight basis survives set revisions and cardio does not affect strength totals", async () => {
+  const { user, sessionId, exerciseId } = await setup();
+  const setId = await user.mutation(api.strength.addSet, { submissionId: "basis", sessionId, exerciseId, weightKg: 10, reps: 8, weightBasis: "each" });
+  await user.mutation(api.strength.editSet, { submissionId: "basis-edit", setId, weightBasis: "total" });
+  const detail = await user.query(api.strength.sessionDetail, { sessionId });
+  expect(detail.exercises[0]?.sets[0]).toMatchObject({ weightKg: 10, weightBasis: "total" });
+  expect(detail.summary.setCount).toBe(1);
+  await user.mutation(api.strength.addCardio, { submissionId: "walk", sessionId, exerciseId: await user.mutation(api.exercises.createPersonal, { name: "Walking", kind: "cardio" }), durationMin: 10, reportedKcal: 60 });
+  expect((await user.query(api.strength.sessionDetail, { sessionId })).summary).toMatchObject({ setCount: 1, cardioCount: 1, reportedKcal: 60 });
+});
+
+test("manual set and cardio writes reject exercises of the other kind", async () => {
+  const { user, sessionId, exerciseId } = await setup();
+  const cardioId = await user.mutation(api.exercises.createPersonal, { name: "Walking", kind: "cardio" });
+  await expect(user.mutation(api.strength.addSet, { submissionId: "wrong-set-kind", sessionId, exerciseId: cardioId, weightKg: 10, reps: 8 })).rejects.toMatchObject({ data: { code: "INVALID_EXERCISE", message: "Choose a strength exercise." } });
+  await expect(user.mutation(api.strength.addCardio, { submissionId: "wrong-cardio-kind", sessionId, exerciseId, durationMin: 10 })).rejects.toMatchObject({ data: { code: "INVALID_EXERCISE", message: "Choose a cardio activity." } });
+  const draftId = await user.mutation(api.workouts.blankDraft, { submissionId: "wrong-kind-draft" });
+  await user.mutation(api.workouts.updateDraft, { draftId, localDate: "2026-10-06", startTime: "11:00", durationMin: null, needsTarget: false, targetSessionId: null, items: [{ key: "wrong-kind", name: "Walking", kind: "strength", exerciseId: cardioId, candidateIds: [cardioId], sets: [{ weightKg: 10, reps: 8 }], problems: [] }] });
+  await expect(user.mutation(api.workouts.commitDraft, { draftId, submissionId: "wrong-kind-save" })).rejects.toMatchObject({ data: { code: "INVALID_EXERCISE", message: "Choose a strength exercise." } });
+});
+
+test("addCardio refuses the 101st live cardio row in a session", async () => {
+  const { t, user, sessionId } = await setup();
+  const exerciseId = await user.mutation(api.exercises.createPersonal, { name: "Walking", kind: "cardio" });
+  await t.run(async (ctx) => {
+    for (let index = 0; index < 100; index++) await ctx.db.insert("cardio", { userId: "user_a", sessionId, exerciseId, position: index, durationMin: 10, revision: 1, op: "add", status: "live", submissionId: `cardio-${index}` });
+  });
+  await expect(user.mutation(api.strength.addCardio, { submissionId: "cardio-overflow", sessionId, exerciseId, durationMin: 10 })).rejects.toMatchObject({ data: { code: "LIMIT_REACHED", message: "Session exceeds 100 cardio entries" } });
+});
+
+test("set edit, delete and undo revisions preserve RPE", async () => {
+  const { t, user, setId } = await withSet();
+  const edited = await user.mutation(api.strength.editSet, { submissionId: "keep-rpe-edit", setId, reps: 9 });
+  expect(await t.run((ctx) => ctx.db.get("sets", edited))).toMatchObject({ rpe: 7, reps: 9 });
+  const deleted = await user.mutation(api.strength.deleteSet, { submissionId: "keep-rpe-delete", setId: edited });
+  expect(await t.run((ctx) => ctx.db.get("sets", deleted))).toMatchObject({ rpe: 7, status: "deleted" });
+  const restored = await user.mutation(api.strength.undoRevision, { submissionId: "keep-rpe-undo", setId: deleted });
+  expect(await t.run((ctx) => ctx.db.get("sets", restored))).toMatchObject({ rpe: 7, reps: 9, status: "live" });
+});
+
 test("addSet validates numbers, allows bodyweight and suppresses high-rep e1RM", async () => {
   const { user, sessionId, exerciseId } = await setup();
   for (const values of [{ weightKg: -1, reps: 8 }, { weightKg: 1001, reps: 8 }, { weightKg: 60, reps: 0 }, { weightKg: 60, reps: 1.5 }, { weightKg: 60, reps: 8, rpe: 11 }]) {
@@ -194,7 +234,7 @@ test("sessionDetail gives previous completed sets, totals and new e1RM bests", a
   expect(detail.exercises[0]?.previousSets.map((set) => set._id)).toEqual([setId]);
   expect((await user.query(api.strength.exerciseHints, { sessionId: next, exerciseId })).previousSets.map((set) => set._id)).toEqual([setId]);
   expect(detail.exercises[0]?.sets.map((set) => set._id)).toEqual([nextSet]);
-  expect(detail.summary).toEqual({ setCount: 1, volumeKg: 420, newBests: [{ exerciseId, name: "Bench press", e1rmKg: 84, previousBestKg: 76 }] });
+  expect(detail.summary).toEqual({ setCount: 1, volumeKg: 420, newBests: [{ exerciseId, name: "Bench press", e1rmKg: 84, previousBestKg: 76 }], cardioCount: 0, reportedKcal: null });
   expect((await user.query(api.strength.sessionDetail, { sessionId })).summary.newBests[0]?.previousBestKg).toBeNull();
 });
 

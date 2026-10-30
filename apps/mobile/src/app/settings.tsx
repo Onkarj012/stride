@@ -28,6 +28,10 @@ const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
 ]
+const WORDS_OPTIONS: { value: 'off' | 'on'; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'on', label: 'On' },
+]
 const DELETE_WORD = 'DELETE'
 const FOOD_CREDITS = 'Food data: IFCT 2017 (NIN, India), USDA FoodData Central, UK CoFID 2021, Open Food Facts (ODbL). Contains public sector information licensed under the Open Government Licence v3.0.'
 
@@ -48,9 +52,11 @@ function Settings() {
   const pref = useThemePref()
   const convex = useConvex()
   const setUnits = useMutation(api.progress_v2.setUnits)
+  const setPlainWorkouts = useMutation(api.progress_v2.setPlainWorkouts)
   const { signOut } = useAuth()
   const setHoldApp = useContext(HoldAppContext)
   const [unitsError, setUnitsError] = useState<string | null>(null)
+  const [wordsError, setWordsError] = useState<string | null>(null)
   const [dataError, setDataError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState(false)
@@ -68,6 +74,16 @@ function Settings() {
       await setUnits({ units: next })
     } catch (err) {
       setUnitsError(plainError(err))
+    }
+  }
+
+  // Saves whether workouts can be logged in words.
+  async function chooseWords(on: boolean) {
+    setWordsError(null)
+    try {
+      await setPlainWorkouts({ on })
+    } catch (err) {
+      setWordsError(plainError(err))
     }
   }
 
@@ -112,10 +128,18 @@ function Settings() {
             options={THEME_OPTIONS}
             value={pref}
             onChange={setThemePref}
+          />
+          <SegmentRow
+            label="Log workouts in words"
+            detail="Type or paste a workout and check it before it saves."
+            options={WORDS_OPTIONS}
+            value={profile?.plainWorkouts === true ? 'on' : 'off'}
+            onChange={(next) => void chooseWords(next === 'on')}
             last
           />
         </ListCard>
         {unitsError ? <Text style={s.error}>{unitsError}</Text> : null}
+        {wordsError ? <Text style={s.error}>{wordsError}</Text> : null}
 
         <Section title="AI" />
         <ListCard>

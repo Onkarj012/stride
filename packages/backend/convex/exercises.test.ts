@@ -91,6 +91,44 @@ test("catalog queries require authentication", async () => {
   await expect(t.query(api.exercises.get, { exerciseId: row._id })).rejects.toThrow(/Unauthenticated/);
 });
 
+test("personal exercise names normalize to one private row and never leak in search or get", async () => {
+  const { t, user } = await setup();
+  const id = await user.mutation(api.exercises.createPersonal, { name: "Cable  Row!", kind: "strength" });
+  expect(await user.mutation(api.exercises.createPersonal, { name: " cable row ", kind: "strength" })).toBe(id);
+  expect(await user.query(api.exercises.search, { query: "cable row" })).toMatchObject([{ _id: id, sourceId: "personal:user_a:cable row", ownerId: "user_a", primaryMuscles: [] }]);
+  const stranger = t.withIdentity({ subject: "user_b" });
+  expect(await stranger.query(api.exercises.get, { exerciseId: id })).toBeNull();
+  expect(await stranger.query(api.exercises.search, { query: "cable row" })).toEqual([]);
+});
+
+test("personal exercise matches rank ahead of catalog results at the result limit", async () => {
+  const { t, user } = await setup();
+  const personalId = await user.mutation(api.exercises.createPersonal, { name: "Bench press personal", kind: "strength" });
+  await t.run((ctx) => ctx.db.insert("exercises", { sourceId: "bench-catalog", name: "Bench press catalog", category: "strength", equipment: "barbell", mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [] }));
+  expect(await user.query(api.exercises.search, { query: "bench press", limit: 1 })).toMatchObject([{ _id: personalId }]);
+});
+
+test("personal exercise creation refuses while ledger clearing is active", async () => {
+  const { t, user } = await setup();
+  await t.run((ctx) => ctx.db.insert("ledger_clears", { userId: "user_a" }));
+  await expect(user.mutation(api.exercises.createPersonal, { name: "Cable fly", kind: "strength" })).rejects.toMatchObject({ data: { code: "LEDGER_CLEARING" } });
+});
+
+test("other users' matching personal exercises do not crowd catalog search results", async () => {
+  const t = convexTest(schema, modules);
+  const user = t.withIdentity({ subject: "user_a" });
+  const stranger = t.withIdentity({ subject: "user_b" });
+  for (let index = 0; index < 35; index += 1) {
+    await stranger.mutation(api.exercises.createPersonal, { name: `Bench personal ${index}`, kind: "strength" });
+  }
+  await t.run((ctx) => ctx.db.insert("exercises", {
+    sourceId: "target-bench", name: "Bench Press", category: "strength", equipment: "barbell",
+    mechanic: "compound", level: "beginner", primaryMuscles: ["chest"], secondaryMuscles: [],
+  }));
+  const rows = await user.query(api.exercises.search, { query: "bench", limit: 1 });
+  expect(rows.map((row) => row.name)).toEqual(["Bench Press"]);
+});
+
 test("upsertBatch preserves IDs, skips unchanged rows and updates sourceId matches", async () => {
   const t = convexTest(schema, modules);
   expect(await t.mutation(internal.exercises.upsertBatch, { exercises: [exercise()] })).toEqual({

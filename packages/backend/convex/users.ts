@@ -16,7 +16,10 @@ const LEDGER_TABLES = [
   "food_link_events",
   "user_measures",
   "sets",
+  "cardio",
+  "workout_drafts",
   "workout_sessions",
+  "personal_exercises",
   "tdee_snapshots",
   "foods",
 ] as const;
@@ -48,6 +51,12 @@ async function ledgerBatch(ctx: MutationCtx, table: Exclude<LedgerTable, "messag
       return await ctx.db.query("user_measures").withIndex("by_userId_and_measure", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
     case "sets":
       return await ctx.db.query("sets").withIndex("by_userId_and_exerciseId_and_status", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "cardio":
+      return await ctx.db.query("cardio").withIndex("by_userId_and_status", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "workout_drafts":
+      return await ctx.db.query("workout_drafts").withIndex("by_userId_and_status", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "personal_exercises":
+      return await ctx.db.query("exercises").withIndex("by_ownerId_and_name", (q) => q.eq("ownerId", userId)).take(CLEAR_LEDGER_BATCH);
     case "workout_sessions":
       return await ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
     case "tdee_snapshots":
@@ -65,6 +74,11 @@ async function clearBatch(ctx: MutationCtx, table: LedgerTable, userId: string):
       if ((await ctx.db.system.get("_storage", row.storageId)) !== null) await ctx.storage.delete(row.storageId);
       await ctx.db.delete("uploads", row._id);
     }
+    return rows.length === CLEAR_LEDGER_BATCH;
+  }
+  if (table === "personal_exercises") {
+    const rows = await ctx.db.query("exercises").withIndex("by_ownerId_and_name", (q) => q.eq("ownerId", userId)).take(CLEAR_LEDGER_BATCH);
+    for (const row of rows) await ctx.db.delete("exercises", row._id);
     return rows.length === CLEAR_LEDGER_BATCH;
   }
   if (table === "messages") {
@@ -304,7 +318,7 @@ export const exportAllData = query({
 
     // These tables grow without bound, so each read is capped and `truncated` names the ones that had more rows.
     const take = EXPORT_ROW_LIMIT + 1;
-    const [chats, messages, drafts, food_links, food_link_events, foods, user_measures, workout_sessions, sets, tdee_snapshots] = await Promise.all([
+    const [chats, messages, drafts, food_links, food_link_events, foods, user_measures, workout_sessions, sets, cardio, workout_drafts, personal_exercises, tdee_snapshots] = await Promise.all([
       ctx.db.query("chats").withIndex("by_userId_and_updatedAt", (q) => q.eq("userId", userId)).take(take),
       ctx.db.query("messages").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId)).take(EXPORT_MESSAGE_LIMIT + 1),
       ctx.db.query("drafts").withIndex("by_userId_and_status", (q) => q.eq("userId", userId)).take(take),
@@ -314,6 +328,9 @@ export const exportAllData = query({
       ctx.db.query("user_measures").withIndex("by_userId_and_measure", (q) => q.eq("userId", userId)).take(take),
       ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(take),
       ctx.db.query("sets").withIndex("by_userId_and_exerciseId_and_status", (q) => q.eq("userId", userId)).take(take),
+      ctx.db.query("cardio").withIndex("by_userId_and_status", (q) => q.eq("userId", userId)).take(take),
+      ctx.db.query("workout_drafts").withIndex("by_userId_and_status", (q) => q.eq("userId", userId)).take(take),
+      ctx.db.query("exercises").withIndex("by_ownerId_and_name", (q) => q.eq("ownerId", userId)).take(take),
       ctx.db.query("tdee_snapshots").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(take),
     ]);
     const restart = {
@@ -326,6 +343,9 @@ export const exportAllData = query({
       user_measures: capped(user_measures, EXPORT_ROW_LIMIT),
       workout_sessions: capped(workout_sessions, EXPORT_ROW_LIMIT),
       sets: capped(sets, EXPORT_ROW_LIMIT),
+      cardio: capped(cardio, EXPORT_ROW_LIMIT),
+      workout_drafts: capped(workout_drafts, EXPORT_ROW_LIMIT),
+      personal_exercises: capped(personal_exercises, EXPORT_ROW_LIMIT),
       tdee_snapshots: capped(tdee_snapshots, EXPORT_ROW_LIMIT),
     };
 
@@ -349,6 +369,9 @@ export const exportAllData = query({
       user_measures: restart.user_measures.rows,
       workout_sessions: restart.workout_sessions.rows,
       sets: restart.sets.rows,
+      cardio: restart.cardio.rows,
+      workout_drafts: restart.workout_drafts.rows,
+      personal_exercises: restart.personal_exercises.rows,
       tdee_snapshots: restart.tdee_snapshots.rows,
       truncated: {
         chats: restart.chats.truncated,

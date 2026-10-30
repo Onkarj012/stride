@@ -881,6 +881,31 @@ describe("regenerate", () => {
     await expect(user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "hi" })).rejects.toMatchObject({ data: { code: "MESSAGE_BUSY" } });
     expect(bodies).toHaveLength(calls);
   });
+
+  test("a regenerate that fails keeps the old reply's workout card on its row", async () => {
+    const { t, user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "bench 40 kg 8 reps" });
+    const card = await t.run((ctx) =>
+      ctx.db.insert("workout_drafts", { userId: "user_a", chatId, submissionId: "card", status: "pending", source: "coach", inputText: "bench", mode: "new", needsTarget: false, localDate: "2026-10-30", items: [], createdAt: Date.now() }),
+    );
+    const reply = await replyRow(t);
+    await t.run((ctx) => ctx.db.patch("messages", reply._id, { workoutDraftIds: [card] }));
+    llm = () => {
+      throw new Error("upstream 500");
+    };
+    await expect(user.action(api.chats.regenerate, { chatId })).rejects.toThrow();
+    const page = await user.query(api.chats.listMessages, { chatId, paginationOpts: { numItems: 10, cursor: null } });
+    expect(page.page.find((m) => m.role === "assistant")).toMatchObject({ status: "failed", workoutDraftIds: [card] });
+  });
+
+  test("regenerating a workout message with plain workouts on offers the workout card tool when no card exists", async () => {
+    const { user, chatId } = await setup();
+    await user.mutation(api.progress_v2.setPlainWorkouts, { on: true });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "bench 40 kg 8 reps" });
+    llm = () => ({ content: "Got it." });
+    await user.action(api.chats.regenerate, { chatId });
+    expect(JSON.stringify(bodies.at(-1)?.tools ?? [])).toContain("offer_workout");
+  });
 });
 
 describe("rename, preview and search", () => {
@@ -1155,5 +1180,14 @@ describe("coach sees the profile (10f)", () => {
     const revision = (await entryRows(t)).at(-1);
     expect(failed.status).toBe("failed");
     expect(failed.entryIds).toEqual([revision?._id]);
+  });
+
+  test("the system prompt says workouts cannot be saved while words logging is off, and not once it is on", async () => {
+    const { user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "did lower body and core, 40 min" });
+    expect(systemText(bodies[0] ?? {})).toContain("You cannot log or save workouts.");
+    await user.mutation(api.progress_v2.setPlainWorkouts, { on: true });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m2", text: "did lower body and core, 40 min" });
+    expect(systemText(bodies[1] ?? {})).not.toContain("You cannot log or save workouts.");
   });
 });
