@@ -12,6 +12,7 @@ import { Screen, ScreenTitle, Section } from '@/components/Screen'
 import { Sheet } from '@/components/Sheet'
 import { Tap } from '@/components/Tap'
 import { TimeZoneGate } from '@/components/TimeZoneGate'
+import { isDevChannel } from '@/lib/devUpdates'
 import { plainError } from '@/lib/log'
 import { HoldAppContext, savedUnits, type Units } from '@/lib/profile'
 import { font, setThemePref, themedStyles, useThemePref, type ThemePref } from '@/theme'
@@ -147,7 +148,8 @@ function Settings() {
 
         <Section title="About" />
         <ListCard>
-          <ListRow label="Version" value={Constants.expoConfig?.version ?? 'Unknown'} last />
+          <ListRow label="Version" value={Constants.expoConfig?.version ?? 'Unknown'} last={!isDevChannel} />
+          {isDevChannel ? <ListRow label="Testing" value={process.env.EXPO_PUBLIC_BUILD_LABEL || 'APK only'} last /> : null}
         </ListCard>
         <Text style={s.caption}>{FOOD_CREDITS}</Text>
       </Screen>
