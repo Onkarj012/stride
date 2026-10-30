@@ -221,9 +221,9 @@ const useStyles = themedStyles((t) => ({
     paddingHorizontal: 15,
   },
   bubbleText: { ...font('body'), color: t.c.bg },
+  // Full width: markdown list rows use flex text, which Yoga mismeasures inside a shrink-to-fit bubble and spills past its bottom.
   replyBubble: {
-    alignSelf: 'flex-start',
-    maxWidth: '100%',
+    alignSelf: 'stretch',
     backgroundColor: t.c.card2,
     borderRadius: 20,
     borderBottomLeftRadius: 6,
