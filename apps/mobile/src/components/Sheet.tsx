@@ -36,11 +36,13 @@ type SheetProps = {
   onClose: () => void
   // Runs once the close animation finishes, so callers can reset what the sheet showed.
   onClosed?: () => void
+  // Hides the rest of the screen from assistive tech while the sheet is open.
+  modal?: boolean
   children: ReactNode
 }
 
 // v5 bottom sheet: scrim, grab handle with swipe-down to close, spring in and out, lifts above the keyboard.
-export function Sheet({ open, onClose, onClosed, children }: SheetProps) {
+export function Sheet({ open, onClose, onClosed, modal, children }: SheetProps) {
   const s = useStyles()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
@@ -116,9 +118,9 @@ export function Sheet({ open, onClose, onClosed, children }: SheetProps) {
   if (!mounted) return null
 
   return (
-    <View style={[StyleSheet.absoluteFill, { pointerEvents: open ? 'auto' : 'none' }]}>
+    <View style={[StyleSheet.absoluteFill, { pointerEvents: open ? 'auto' : 'none' }]} accessibilityViewIsModal={modal === true && open}>
       <Animated.View style={[s.scrim, scrimStyle]}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close" />
       </Animated.View>
       <Animated.View style={[s.sheet, sheetStyle]}>
         <View {...pan.panHandlers} style={s.grabZone}>

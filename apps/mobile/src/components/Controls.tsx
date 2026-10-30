@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native'
+import { ActivityIndicator, Text, TextInput, View, type AccessibilityState, type StyleProp, type ViewStyle } from 'react-native'
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
@@ -58,6 +58,8 @@ export function RoundButton({
   tone = 'soft',
   size = layout.iconButton,
   disabled,
+  hitSlop,
+  accessibilityState,
 }: {
   icon: IconName
   label: string
@@ -65,6 +67,9 @@ export function RoundButton({
   tone?: 'soft' | 'card' | 'plain'
   size?: number
   disabled?: boolean
+  // Extra touch area around a badge that stays visually small.
+  hitSlop?: number
+  accessibilityState?: AccessibilityState
 }) {
   const t = useTheme()
   const s = useStyles()
@@ -72,10 +77,12 @@ export function RoundButton({
     <Tap
       onPress={onPress}
       disabled={disabled}
+      hitSlop={hitSlop}
       scale={motion.press.iconScale}
       style={[s.round, { width: size, height: size }, tone === 'soft' && s.soft, tone === 'card' && s.cardTone, disabled && s.dim]}
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityState={{ disabled: !!disabled, ...accessibilityState }}
     >
       <Icon name={icon} size={size < 36 ? 16 : layout.icon} color={t.c.ink} />
     </Tap>
