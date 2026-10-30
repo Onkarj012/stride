@@ -502,6 +502,7 @@ export const claimRegenerate = internalMutation({
       toolCalls: [],
       // The hidden reply's cards move here now, so they survive even if this attempt fails.
       draftIds: old.draftIds,
+      workoutDraftIds: old.workoutDraftIds ?? [],
       entryIds: old.entryIds ?? [],
       answersMessageId: args.userMessageId,
       submissionId: `${args.userSubmissionId}:reply:${now}`,
@@ -987,11 +988,13 @@ const CHAT_TOOLS: ToolDefinition[] = [
 
 /** Tools for a regenerated reply: the earlier reply already made its log changes, so they can't run twice. */
 const REGENERATE_TOOLS: ToolDefinition[] = CHAT_TOOLS.filter(
-  (tool) => tool.function.name !== "edit_entry" && tool.function.name !== "delete_entry" && tool.function.name !== "offer_workout",
+  (tool) => tool.function.name !== "edit_entry" && tool.function.name !== "delete_entry",
 );
 /** Told to the model when it rewrites a reply, so it doesn't promise changes it can no longer make. */
 const REGENERATE_NOTE =
   "You are rewriting your last reply. Any log changes it made are already saved and can't be repeated; only answer again.";
+/** Told to the model when a rewrite keeps the workout card the replaced reply already showed. */
+const WORKOUT_CARD_NOTE = "The workout review card above is unchanged. Do not describe that workout as saved or ready to save.";
 
 /** Lines about the user's goal, diet, targets and weight trend. Only lines that have data. */
 function aboutUser(profile: CoachProfile | null): string[] {
@@ -1111,6 +1114,11 @@ function photoMessage(photo: PhotoInput): ChatMessage {
   return { role: "user", content: parts };
 }
 
+/** What a regenerate replaces: whether the hidden reply already had a workout card, which the rewrite must not duplicate. */
+interface Regeneration {
+  replacedWorkoutCard: boolean;
+}
+
 /**
  * Runs one chat turn: luna with the chat tools, in a bounded loop, streaming text and executing ledger tools as it
  * goes. A photo turn uses the photo model instead and only discusses the image; the reply offers Log this for it.
@@ -1122,13 +1130,19 @@ async function runChatTurn(
   submissionId: string,
   target: ReplyTarget,
   photo?: PhotoInput,
-  regenerating = false,
+  regeneration?: Regeneration,
 ): Promise<Turn> {
   const context: TurnContext = await ctx.runQuery(internal.chats.turnContext, { userId, chatId, replyId: target.messageId });
-  const system = systemPrompt(context);
-  const tools = (regenerating ? REGENERATE_TOOLS : CHAT_TOOLS).filter((tool) => tool.function.name !== "offer_workout" || context.plainWorkouts);
+  const regenerating = regeneration !== undefined;
+  const offerWorkout = context.plainWorkouts && regeneration?.replacedWorkoutCard !== true;
+  const tools = (regenerating ? REGENERATE_TOOLS : CHAT_TOOLS).filter((tool) => tool.function.name !== "offer_workout" || offerWorkout);
+  const system = [
+    systemPrompt(context),
+    ...(regenerating ? [REGENERATE_NOTE] : []),
+    ...(regeneration?.replacedWorkoutCard === true ? [WORKOUT_CARD_NOTE] : []),
+  ].join("\n");
   const messages: ChatMessage[] = [
-    { role: "system", content: regenerating ? `${system}\n${REGENERATE_NOTE}` : system },
+    { role: "system", content: system },
     ...context.history.map((m): ChatMessage => ({ role: m.role, content: m.text })),
   ];
   // The newest history entry is this turn's own user message; the photo takes its place.
@@ -1379,7 +1393,7 @@ export const regenerate = action({
     const target: ReplyTarget = { messageId: claim.replyId, claimedAt: claim.claimedAt };
     try {
       // The claim time keeps this attempt's tool writes apart from the replaced reply's.
-      const turn = await runChatTurn(ctx, userId, chatId, `${old.userSubmissionId}:regen:${claim.claimedAt}`, target, undefined, true);
+      const turn = await runChatTurn(ctx, userId, chatId, `${old.userSubmissionId}:regen:${claim.claimedAt}`, target, undefined, { replacedWorkoutCard: old.workoutDraftIds.length > 0 });
       const stored: { text: string } | null = await ctx.runMutation(internal.chats.finishReply, {
         userId,
         ...target,
