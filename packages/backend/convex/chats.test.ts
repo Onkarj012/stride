@@ -1156,4 +1156,13 @@ describe("coach sees the profile (10f)", () => {
     expect(failed.status).toBe("failed");
     expect(failed.entryIds).toEqual([revision?._id]);
   });
+
+  test("the system prompt says workouts cannot be saved while words logging is off, and not once it is on", async () => {
+    const { user, chatId } = await setup();
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m1", text: "did lower body and core, 40 min" });
+    expect(systemText(bodies[0] ?? {})).toContain("You cannot log or save workouts.");
+    await user.mutation(api.progress_v2.setPlainWorkouts, { on: true });
+    await user.action(api.chats.sendMessage, { chatId, submissionId: "m2", text: "did lower body and core, 40 min" });
+    expect(systemText(bodies[1] ?? {})).not.toContain("You cannot log or save workouts.");
+  });
 });
