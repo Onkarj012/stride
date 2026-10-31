@@ -9,15 +9,17 @@ const points: WeightPoint[] = [
   { localDate: "2026-10-14", kg: 79.5, trendKg: 79.9 },
 ];
 
+// Renders the three-day chart used by the interaction tests.
 function renderChart() {
   return render(<WeightChart points={points} from="2026-10-01" to="2026-10-14" units="metric" />);
 }
 
+// The chart widget. Application role is what hands arrow keys to it in browse mode.
 function chart() {
-  return screen.getByRole("group");
+  return screen.getByRole("application");
 }
 
-// jsdom reports a zero box, which would make every pointer land on NaN.
+// Gives the chart a real box. jsdom's zero box would make every pointer land on NaN.
 function stubChartBox(svg: HTMLElement) {
   svg.getBoundingClientRect = () =>
     ({
@@ -100,6 +102,16 @@ describe("WeightChart", () => {
     renderChart();
     const svg = chart();
     stubChartBox(svg);
+    fireEvent.pointerMove(svg, { clientX: 0, clientY: 40 });
+    fireEvent.keyDown(svg, { key: "ArrowRight" });
+    expect(screen.getByRole("status")).toHaveTextContent(weightPointText(points[1]!, "metric"));
+  });
+
+  it("steps from the hovered day even after keyboard focus landed on the latest", () => {
+    renderChart();
+    const svg = chart();
+    stubChartBox(svg);
+    fireEvent.focus(svg);
     fireEvent.pointerMove(svg, { clientX: 0, clientY: 40 });
     fireEvent.keyDown(svg, { key: "ArrowRight" });
     expect(screen.getByRole("status")).toHaveTextContent(weightPointText(points[1]!, "metric"));

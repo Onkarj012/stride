@@ -20,6 +20,7 @@ export function weightChartLabel(points: readonly WeightPoint[], units: Units): 
   return `Weight trend, ${count}. Latest ${weightPointText(latest, units)}. Arrow keys read each day.`;
 }
 
+// Keeps a weigh-in index inside the list.
 function clampIndex(index: number, count: number): number {
   return Math.min(count - 1, Math.max(0, index));
 }
@@ -71,20 +72,21 @@ export function WeightChart({ points, from, to, units }: { points: WeightPoint[]
     setPointerIndex(best === -1 ? null : best);
   }
 
-  // Moves the keyboard reading. With nothing selected yet, the first arrow lands on the latest day.
+  // Steps from the day on screen, so a hover after focus is not skipped.
   function move(delta: number) {
-    const current = keyIndex !== null && keyIndex < points.length ? keyIndex : null;
-    const origin = current ?? pointerIndex;
-    const next = origin === null ? points.length - 1 : clampIndex(origin + delta, points.length);
+    const shown = pointerIndex ?? (keyIndex !== null && keyIndex < points.length ? keyIndex : null);
+    const next = shown === null ? points.length - 1 : clampIndex(shown + delta, points.length);
     setPointerIndex(null);
     setKeyIndex(next);
   }
 
+  // Jumps the keyboard reading to one end of the chart.
   function jump(index: number) {
     setPointerIndex(null);
     setKeyIndex(clampIndex(index, points.length));
   }
 
+  // Arrow keys step one day. Home and End jump to the ends.
   function onKeyDown(event: KeyboardEvent<SVGSVGElement>) {
     if (points.length === 0) return;
     if (event.key === "ArrowRight") {
@@ -108,6 +110,7 @@ export function WeightChart({ points, from, to, units }: { points: WeightPoint[]
     setKeyIndex((current) => (current !== null && current < points.length ? current : points.length - 1));
   }
 
+  // Drops the keyboard reading when focus leaves, so the next visit starts clean.
   function onBlur() {
     fromPointer.current = false;
     setKeyIndex(null);
@@ -115,10 +118,11 @@ export function WeightChart({ points, from, to, units }: { points: WeightPoint[]
 
   return (
     <div className="relative">
+      {/* Browse mode keeps arrow keys unless the focused widget is an application. */}
       <svg
         viewBox={`0 0 ${W} ${H}`}
         tabIndex={points.length === 0 ? undefined : 0}
-        role="group"
+        role="application"
         aria-roledescription="chart"
         aria-label={weightChartLabel(points, units)}
         className="block h-auto w-full touch-none select-none"
