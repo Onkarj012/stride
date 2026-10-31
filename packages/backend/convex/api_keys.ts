@@ -122,6 +122,41 @@ export const openRouterKeyStatus = query({
   },
 });
 
+/** Returns whether the caller opted into one capped web search for unmatched foods. */
+export const webFoodLookupStatus = query({
+  args: {},
+  returns: v.boolean(),
+  handler: async (ctx) => {
+    const userId = await callerUserId(ctx);
+    const row = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
+    return row?.webFoodLookupEnabled === true;
+  },
+});
+
+/** Whether unmatched food resolution may use its one capped web search. */
+export const webFoodLookupForUser = internalQuery({
+  args: { userId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, { userId }) => {
+    const row = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
+    return row?.webFoodLookupEnabled === true;
+  },
+});
+
+/** Saves the caller's opt-in choice for web lookup of unmatched foods. */
+export const setWebFoodLookup = mutation({
+  args: { enabled: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, { enabled }) => {
+    const userId = await callerUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
+    const row = await ctx.db.query("user_settings").withIndex("by_user", (q) => q.eq("userId", userId)).first();
+    if (row === null) await ctx.db.insert("user_settings", { userId, webFoodLookupEnabled: enabled });
+    else await ctx.db.patch("user_settings", row._id, { webFoodLookupEnabled: enabled });
+    return null;
+  },
+});
+
 /** The user's own OpenRouter key, or null. Called by the OpenRouter client, never by the app. */
 export const ownOpenRouterKey = internalQuery({
   args: { userId: v.string() },

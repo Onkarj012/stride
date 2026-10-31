@@ -19,7 +19,7 @@ import { foodSourceValidator, mealSlotValidator } from "../ledger_validators";
 import { resolveLocalDay } from "../time_zone";
 import { assertLedgerWritable } from "../users";
 import { lookupBarcodeFood } from "./barcode";
-import { callOpenRouter, isRecord, PIPELINE_MODEL, type ChatMessage, type JsonValue, type ToolDefinition } from "./openrouter";
+import { callOpenRouter, isRecord, OPENROUTER_EXA_SEARCH_COST_USD, PIPELINE_MODEL, type ChatMessage, type ChatReply, type JsonValue, type RequestToolDefinition, type ToolDefinition, type WebSource } from "./openrouter";
 import { searchVisibleFoods, userFoodsOf, type Pick, type UnresolvedItem } from "./resolve";
 
 /** Most model calls in one tool loop. The loop also stops when the model makes no tool call. */
@@ -86,15 +86,18 @@ const ESTIMATE_FOOD_TOOL = tool(
     carbs_g: { type: "number" },
     fat_g: { type: "number" },
     assumptions: { type: "string" },
+    source_urls: { type: "array", items: { type: "string" } },
   },
   ["item_index", "name", "grams", "kcal", "protein_g", "carbs_g", "fat_g", "assumptions"],
 );
 
 const RESOLVE_PROMPT = [
   "Some foods in a meal log did not match the food database. Find the right food for each item.",
-  "Use the tools to search. Call choose_food only when a database row is the same dish in the same form",
-  "(cooked vs raw, prepared drink vs powder or mix, plain vs flavoured). Otherwise call estimate_food with the",
-  "typical Indian home or cafe version, for the whole stated amount of the item.",
+  "Search the food database first. Call choose_food only when a database row is the same dish in the same form",
+  "(cooked vs raw, prepared drink vs powder or mix, plain vs flavoured). If no suitable row exists and web search is available,",
+  "search once for an authoritative nutrition source for the exact cooked or prepared food. Otherwise estimate the typical",
+  "Indian home or cafe version for the whole stated amount. Web search does not verify a recipe or turn an estimate into a database food.",
+  "Include source_urls only for URLs in the returned OpenRouter citations for this resolver pass, selecting the source that matches the item. Never invent a URL.",
   "Household sizes: katori 150 ml, bowl 250 ml, glass 250 ml, teacup (home chai or coffee cup) 110 ml, tbsp 15 ml, tsp 5 ml, spoon = tsp.",
   "A cafe drink with no size is a regular Indian cafe size. Give assumptions in at most 12 words.",
   "Skip items you cannot place; the user will be asked. Never make up a food id.",
@@ -108,7 +111,7 @@ const ESTIMATE_VESSEL_ML: Readonly<Partial<Record<string, number>>> = {
 
 /** Dedupe key for an estimate's name. Unicode-safe, so Devanagari names stay distinct. */
 export function estimateKey(name: string): string {
-  return name.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+  return name.normalize("NFKC").toLowerCase().replace(/[\p{P}\p{S}]+/gu, " ").replace(/\s+/g, " ").trim();
 }
 
 /** A table's number for a key, or undefined. Own properties only, so "constructor" is not a unit. */
@@ -125,6 +128,7 @@ export interface Estimate {
   carbs: number;
   fat: number;
   assumptions: string;
+  sourceUrls: string[];
 }
 
 /** Parses a tool call's JSON arguments, or an empty object when malformed. */
@@ -288,7 +292,10 @@ function parseEstimate(args: Record<string, unknown>): Estimate | null {
   if (typeof name !== "string" || typeof assumptions !== "string") return null;
   if (typeof grams !== "number" || typeof kcal !== "number") return null;
   if (typeof protein_g !== "number" || typeof carbs_g !== "number" || typeof fat_g !== "number") return null;
-  return { name: name.trim(), grams, kcal, protein: protein_g, carbs: carbs_g, fat: fat_g, assumptions: assumptions.trim() };
+  const sourceUrls = Array.isArray(args.source_urls)
+    ? args.source_urls.filter((url): url is string => typeof url === "string").slice(0, 3)
+    : [];
+  return { name: name.trim(), grams, kcal, protein: protein_g, carbs: carbs_g, fat: fat_g, assumptions: assumptions.trim(), sourceUrls };
 }
 
 /** Why an estimate is refused, or null when it passes. Numbers are for the whole stated amount of `quantity` × `unit`. */
@@ -337,6 +344,7 @@ export const saveEstimate = internalMutation({
     carbs: v.number(),
     fat: v.number(),
     assumptions: v.string(),
+    webSources: v.optional(v.array(v.object({ title: v.string(), url: v.string() }))),
     chatId: v.optional(v.id("chats")),
   },
   returns: v.id("foods"),
@@ -380,7 +388,13 @@ export const saveEstimate = internalMutation({
       verified: false,
       ownerUserId: a.userId,
       note: a.assumptions,
+      ...(a.webSources === undefined || a.webSources.length === 0 ? {} : { webSources: a.webSources }),
     });
+    if (same !== null && same.ownerUserId === a.userId && a.webSources !== undefined && a.webSources.length > 0) {
+      const webSources = [...(same.webSources ?? [])];
+      for (const source of a.webSources) if (!webSources.some((saved) => saved.url === source.url) && webSources.length < 3) webSources.push(source);
+      await ctx.db.patch("foods", foodId, { webSources });
+    }
     // A bare count or a unit that names the food is stored as "piece", so a later bare count finds it. The stated word stays as the description.
     // One row per measure: a reused food keeps the row it already has, so its counts never conflict.
     const rows = await ctx.db
@@ -408,6 +422,7 @@ async function estimate(
   open: ReadonlyMap<number, UnresolvedItem>,
   picks: Map<number, Id<"foods">>,
   chatId: Id<"chats"> | undefined,
+  citations: readonly WebSource[],
 ): Promise<JsonValue> {
   const index = args.item_index;
   const item = typeof index === "number" && !picks.has(index) ? open.get(index) : undefined;
@@ -418,11 +433,17 @@ async function estimate(
   if (parsed === null) return { ok: false, error: "name, grams, kcal, protein_g, carbs_g, fat_g and assumptions are required" };
   const problem = estimateProblem(parsed, item.quantity, item.unit);
   if (problem !== null) return { ok: false, error: problem };
+  const requestedSources = parsed.sourceUrls
+    .map((url) => citations.find((citation) => citation.url === url))
+    .filter((source): source is WebSource => source !== undefined);
+  const webSources = requestedSources.slice(0, 3);
+  const { sourceUrls: _sourceUrls, ...estimateFields } = parsed;
   const foodId: Id<"foods"> = await ctx.runMutation(internal.pipeline.tools.saveEstimate, {
     userId,
     quantity: item.quantity,
     unit: item.unit,
-    ...parsed,
+    ...estimateFields,
+    ...(webSources.length === 0 ? {} : { webSources }),
     ...(chatId === undefined ? {} : { chatId }),
   });
   picks.set(index, foodId);
@@ -438,6 +459,7 @@ export async function runToolPass(
   userId: string,
   unresolved: readonly UnresolvedItem[],
   chatId?: Id<"chats">,
+  webFoodLookup = false,
 ): Promise<Pick[]> {
   if (unresolved.length === 0) return [];
   const seen: SeenFoods = new Map();
@@ -455,24 +477,64 @@ export async function runToolPass(
     { role: "system", content: RESOLVE_PROMPT },
     { role: "user", content: JSON.stringify({ unresolved_items: items }) },
   ];
+  const citations: WebSource[] = [];
+  let webSearchAvailable = webFoodLookup;
+  let searchOnlyFollowupAvailable = true;
+  const webSearchTool: RequestToolDefinition = {
+    type: "openrouter:web_search",
+    parameters: { engine: "exa", mode: "instant", max_results: 3, max_uses: 1, max_total_results: 3, max_characters: 2000 },
+  };
 
   for (let i = 0; i < MAX_TOOL_ITERATIONS && picks.size < open.size; i++) {
-    const reply = await callOpenRouter(ctx, userId, {
+    const searchOffered = webSearchAvailable && i < MAX_TOOL_ITERATIONS - 1;
+    const request = {
       model: PIPELINE_MODEL,
       maxTokens: resolveMaxTokens(open.size - picks.size),
       messages,
-      tools: [...LOOKUP_TOOLS, CHOOSE_FOOD_TOOL, ESTIMATE_FOOD_TOOL],
-    });
-    if (reply.toolCalls.length === 0) break;
+      tools: [...LOOKUP_TOOLS, CHOOSE_FOOD_TOOL, ESTIMATE_FOOD_TOOL, ...(searchOffered ? [webSearchTool] : [])],
+      ...(searchOffered ? { additionalCostUsd: OPENROUTER_EXA_SEARCH_COST_USD } : {}),
+    };
+    let reply: ChatReply;
+    try {
+      reply = await callOpenRouter(ctx, userId, request);
+    } catch (err) {
+      if (err instanceof ConvexError) throw err;
+      if (!searchOffered) throw err;
+      webSearchAvailable = false;
+      reply = await callOpenRouter(ctx, userId, {
+        model: request.model,
+        maxTokens: request.maxTokens,
+        messages: request.messages,
+        tools: [...LOOKUP_TOOLS, CHOOSE_FOOD_TOOL, ESTIMATE_FOOD_TOOL],
+      });
+    }
+    // Missing usage is treated as possibly searched so an uncertain response cannot reopen the allowance.
+    if (searchOffered && (reply.webSearchRequests !== 0 || reply.webSources.length > 0)) webSearchAvailable = false;
+    for (const source of reply.webSources) {
+      if (!citations.some((saved) => saved.url === source.url) && citations.length < 3) citations.push(source);
+    }
+    if (reply.toolCalls.length === 0) {
+      if (!searchOnlyFollowupAvailable || !reply.content?.trim() || reply.webSources.length === 0) break;
+      searchOnlyFollowupAvailable = false;
+      messages.push({ role: "assistant", content: reply.content });
+      messages.push({
+        role: "user",
+        content: JSON.stringify({
+          instruction: "Resolve the unmatched foods using the cited search context above. Do not search again. Each estimate may include source_urls only for returned citations that directly describe that item.",
+          available_citations: reply.webSources,
+        }),
+      });
+      continue;
+    }
     messages.push({ role: "assistant", content: reply.content, tool_calls: reply.toolCalls });
     for (const call of reply.toolCalls) {
       const args = parseToolArgs(call.function.arguments);
       const name = call.function.name;
-      const result = name === "choose_food"
-        ? choose(args, open, seen, picks)
-        : name === "estimate_food"
-          ? await estimate(ctx, userId, args, open, picks, chatId)
-          : (await runLookupTool(ctx, userId, name, args, seen)) ?? { error: `Unknown tool ${name}` };
+      let result: JsonValue;
+      if (name === "choose_food") result = choose(args, open, seen, picks);
+      else if (name === "estimate_food") {
+        result = await estimate(ctx, userId, args, open, picks, chatId, citations);
+      } else result = (await runLookupTool(ctx, userId, name, args, seen)) ?? { error: `Unknown tool ${name}` };
       messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
     }
   }

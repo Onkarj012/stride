@@ -13,7 +13,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { insertEntries, type NewEntry } from "../entries";
 import { isVisibleFood } from "../foods_db";
-import { inputKindValidator, mealSlotValidator, nutrientsValidator } from "../ledger_validators";
+import { foodSourceCitationValidator, inputKindValidator, mealSlotValidator, nutrientsValidator } from "../ledger_validators";
 import { requireUserId, resolveLocalDay } from "../time_zone";
 import { assertLedgerWritable } from "../users";
 import { MAX_EXTRACTED_ITEMS } from "./extract";
@@ -60,6 +60,7 @@ const draftItemViewValidator = v.object({
   localDate: v.union(v.string(), v.null()),
   requestedDate: v.union(v.string(), v.null()),
   food: v.union(v.object({ _id: v.id("foods"), name: v.string() }), v.null()),
+  webSources: v.array(foodSourceCitationValidator),
   grams: v.union(v.number(), v.null()),
   preview: v.union(nutrientsValidator, v.null()),
   unresolved: v.union(v.string(), v.null()),
@@ -177,6 +178,7 @@ export const getDraft = query({
         localDate: item.localDate ?? null,
         requestedDate: item.requestedDate ?? null,
         food: food === null ? null : { _id: food._id, name: food.name },
+        webSources: food?.webSources ?? [],
         grams: item.grams ?? null,
         preview: food !== null && item.grams !== undefined ? scaleNutrients(food.per100g, item.grams) : null,
         unresolved: item.unresolved ?? null,
