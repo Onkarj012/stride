@@ -2,11 +2,13 @@ import { hasAtwaterMismatch, type Nutrients } from "@stride/core";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { action, mutation } from "./_generated/server";
+import { action, mutation, query } from "./_generated/server";
+import { barcodeFoodValidator, type BarcodeFood } from "./pipeline/barcode";
+import { requireUserId } from "./time_zone";
 import { callOpenRouter, isRecord, PHOTO_MODEL } from "./pipeline/openrouter";
 import { requireOwnUpload } from "./uploads";
 import { imageUrl } from "./pipeline/log";
-import { saveUserFoodRow } from "./foods_db";
+import { isVisibleFood, saveUserFoodRow } from "./foods_db";
 import { assertLedgerWritable } from "./users";
 
 export type LabelBasis = "per_100g" | "per_100ml" | "per_serving";
@@ -145,6 +147,21 @@ export const saveReviewedLabel = mutation({
       servingUnit: args.servingUnit,
       densityGramsPer100ml: args.densityGramsPer100ml,
     });
+  },
+});
+
+/** A saved label food with its package serving grams, so the client can log it right after review. */
+export const labelFood = query({
+  args: { foodId: v.id("foods") },
+  returns: v.union(barcodeFoodValidator, v.null()),
+  handler: async (ctx, { foodId }): Promise<BarcodeFood | null> => {
+    const userId = await requireUserId(ctx);
+    const food = await ctx.db.get("foods", foodId);
+    if (food === null || !isVisibleFood(food, userId)) return null;
+    const serving = await ctx.db.query("food_portions")
+      .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId).eq("description", "1 serving"))
+      .unique();
+    return { foodId, name: food.name, per100g: food.per100g, servingGrams: serving?.gramsPerMeasure ?? null };
   },
 });
 
