@@ -1,10 +1,29 @@
-import { useState, type PointerEvent } from "react";
+import { useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { addDays, daysBetween } from "@stride/core";
 import { formatDayLabel } from "@/lib/date";
 import { weightNumber, weightUnit, type Units } from "@/lib/units";
 
 export type WeightPoint = { localDate: string; kg: number; trendKg: number };
+
+// "Wed, 14 Oct, 78.4 kg, trend 78.1 kg" for one weigh-in, in the user's unit.
+export function weightPointText(point: WeightPoint, units: Units): string {
+  const unit = weightUnit(units);
+  return `${formatDayLabel(point.localDate)}, ${weightNumber(point.kg, units)} ${unit}, trend ${weightNumber(point.trendKg, units)} ${unit}`;
+}
+
+// Overview read when the chart is focused as a whole: count, then the latest weigh-in.
+export function weightChartLabel(points: readonly WeightPoint[], units: Units): string {
+  const latest = points.at(-1);
+  if (!latest) return "Weight trend. No weigh-ins yet.";
+  const count = points.length === 1 ? "1 weigh-in" : `${points.length} weigh-ins`;
+  return `Weight trend, ${count}. Latest ${weightPointText(latest, units)}. Arrow keys read each day.`;
+}
+
+// Keeps a weigh-in index inside the list.
+function clampIndex(index: number, count: number): number {
+  return Math.min(count - 1, Math.max(0, index));
+}
 
 const W = 760;
 const H = 260;
@@ -13,9 +32,12 @@ const PLOT_W = W - PAD.left - PAD.right;
 const PLOT_H = H - PAD.top - PAD.bottom;
 const BASE = PAD.top + PLOT_H;
 
-// Weigh-ins as dots and the trend as a line, placed by date so gaps in logging show. Hover reads off a day.
+// Weigh-ins as dots and the trend as a line, placed by date so gaps in logging show. Pointer or arrow keys read off a day.
 export function WeightChart({ points, from, to, units }: { points: WeightPoint[]; from: string; to: string; units: Units }) {
-  const [hover, setHover] = useState<number | null>(null);
+  const [pointerIndex, setPointerIndex] = useState<number | null>(null);
+  const [keyIndex, setKeyIndex] = useState<number | null>(null);
+  // A click focuses the chart too. That focus must not pin a reading after the pointer leaves.
+  const fromPointer = useRef(false);
   const reduce = useReducedMotion();
   const span = Math.max(1, daysBetween(from, to));
   const values = points.flatMap((p) => [p.kg, p.trendKg]);
@@ -29,8 +51,10 @@ export function WeightChart({ points, from, to, units }: { points: WeightPoint[]
   const ticks = [...new Set([hi - 0.2, (hi + lo) / 2, lo + 0.2].map((v) => Math.round(v * 2) / 2))];
   const mid = span > 6 ? addDays(from, Math.round(span / 2)) : null;
   const unit = weightUnit(units);
-  const active = hover === null ? undefined : points[hover];
-  const activeX = hover === null ? 0 : (xs[hover] ?? 0);
+  const activeIndex = pointerIndex ?? (keyIndex !== null && keyIndex < points.length ? keyIndex : null);
+  const active = activeIndex === null ? undefined : points[activeIndex];
+  const activeX = activeIndex === null ? 0 : (xs[activeIndex] ?? 0);
+  const spoken = keyIndex !== null && keyIndex < points.length ? weightPointText(points[keyIndex], units) : "";
 
   // Picks the weigh-in nearest the pointer, in chart units.
   function track(event: PointerEvent<SVGSVGElement>) {
@@ -45,18 +69,71 @@ export function WeightChart({ points, from, to, units }: { points: WeightPoint[]
         best = i;
       }
     });
-    setHover(best === -1 ? null : best);
+    setPointerIndex(best === -1 ? null : best);
+  }
+
+  // Steps from the day on screen, so a hover after focus is not skipped.
+  function move(delta: number) {
+    const shown = pointerIndex ?? (keyIndex !== null && keyIndex < points.length ? keyIndex : null);
+    const next = shown === null ? points.length - 1 : clampIndex(shown + delta, points.length);
+    setPointerIndex(null);
+    setKeyIndex(next);
+  }
+
+  // Jumps the keyboard reading to one end of the chart.
+  function jump(index: number) {
+    setPointerIndex(null);
+    setKeyIndex(clampIndex(index, points.length));
+  }
+
+  // Arrow keys step one day. Home and End jump to the ends.
+  function onKeyDown(event: KeyboardEvent<SVGSVGElement>) {
+    if (points.length === 0) return;
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      move(1);
+    } else if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      move(-1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      jump(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      jump(points.length - 1);
+    }
+  }
+
+  // Keyboard focus starts on the latest weigh-in. A pointer press does not, so mouse-leave still clears the tip.
+  function onFocus() {
+    if (fromPointer.current || points.length === 0) return;
+    setKeyIndex((current) => (current !== null && current < points.length ? current : points.length - 1));
+  }
+
+  // Drops the keyboard reading when focus leaves, so the next visit starts clean.
+  function onBlur() {
+    fromPointer.current = false;
+    setKeyIndex(null);
   }
 
   return (
     <div className="relative">
+      {/* Browse mode keeps arrow keys unless the focused widget is an application. */}
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        role="img"
-        aria-label="Weight trend chart"
+        tabIndex={points.length === 0 ? undefined : 0}
+        role="application"
+        aria-roledescription="chart"
+        aria-label={weightChartLabel(points, units)}
         className="block h-auto w-full touch-none select-none"
+        onPointerDown={() => {
+          fromPointer.current = true;
+        }}
         onPointerMove={track}
-        onPointerLeave={() => setHover(null)}
+        onPointerLeave={() => setPointerIndex(null)}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
       >
         {ticks.map((tick) => (
           <g key={tick}>
@@ -89,8 +166,8 @@ export function WeightChart({ points, from, to, units }: { points: WeightPoint[]
             key={p.localDate}
             cx={xs[i]}
             cy={y(p.kg)}
-            r={hover === i ? 4.5 : 3.2}
-            className={hover === i ? "fill-ink" : "fill-ink3 opacity-60"}
+            r={activeIndex === i ? 4.5 : 3.2}
+            className={activeIndex === i ? "fill-ink" : "fill-ink3 opacity-60"}
           />
         ))}
         {active ? (
@@ -111,8 +188,14 @@ export function WeightChart({ points, from, to, units }: { points: WeightPoint[]
           {formatDayLabel(to)}
         </text>
       </svg>
+      {spoken ? (
+        <p className="sr-only" role="status" aria-atomic="true">
+          {spoken}
+        </p>
+      ) : null}
       {active ? (
         <div
+          aria-hidden
           className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-sm bg-ink px-3 py-2 text-bg shadow-toast"
           style={{
             left: `${Math.min(88, Math.max(12, (activeX / W) * 100))}%`,
