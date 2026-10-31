@@ -127,7 +127,7 @@ function Settings() {
           />
           <ListRow
             label="Saved meals and label capture"
-            detail="Save fixed meals or read a package label after checking the numbers."
+            detail="Save fixed meals, read a package label, or find a packaged product by name."
             value={foodShortcuts === undefined ? '…' : foodShortcuts ? 'On' : 'Off'}
             onPress={foodShortcuts === undefined ? undefined : () => void chooseFoodShortcuts(!foodShortcuts)}
           />
