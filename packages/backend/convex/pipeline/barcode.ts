@@ -172,6 +172,75 @@ export async function lookupBarcodeFood(ctx: ActionCtx, barcode: string): Promis
   return { foodId, ...product };
 }
 
+/** Open Food Facts full-text product search, only the fields the parser reads. */
+export function offSearchUrl(query: string): string {
+  const params = new URLSearchParams({
+    search_terms: query,
+    search_simple: "1",
+    json: "1",
+    page_size: String(OFF_SEARCH_PAGE),
+    fields: "code,product_name,brands,nutriments,serving_quantity,serving_quantity_unit",
+  });
+  return `https://world.openfoodfacts.org/cgi/search.pl?${params.toString()}`;
+}
+
+/** Products fetched per search; some drop out for missing nutrients. */
+const OFF_SEARCH_PAGE = 20;
+const MAX_SEARCH_HITS = 8;
+
+/** One product search hit. Nothing is cached until the user picks it. */
+export const productHitValidator = v.object({
+  barcode: v.string(),
+  name: v.string(),
+  per100g: nutrientsValidator,
+  servingGrams: v.union(v.number(), v.null()),
+});
+export type ProductHit = Infer<typeof productHitValidator>;
+
+/** Parses an OFF search response into products with a valid barcode and usable per-100 g values, deduplicated by barcode. */
+export function parseOffSearch(data: unknown): ProductHit[] {
+  if (!isRecord(data) || !Array.isArray(data.products)) return [];
+  const hits: ProductHit[] = [];
+  for (const product of data.products) {
+    if (!isRecord(product) || typeof product.code !== "string" || !BARCODE_RE.test(product.code)) continue;
+    if (hits.some((hit) => hit.barcode === product.code)) continue;
+    const parsed = parseOffProduct({ product });
+    if (parsed !== null) hits.push({ barcode: product.code, ...parsed });
+    if (hits.length === MAX_SEARCH_HITS) break;
+  }
+  return hits;
+}
+
+/** Finds packaged products by name on Open Food Facts, for users who opted into label capture. */
+export const searchProducts = action({
+  args: { query: v.string() },
+  returns: v.array(productHitValidator),
+  handler: async (ctx, { query }): Promise<ProductHit[]> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (identity === null) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
+    const enabled: boolean = await ctx.runQuery(internal.food_shortcuts.enabled, { userId: identity.subject });
+    if (!enabled) throw new ConvexError({ code: "FOOD_SHORTCUTS_DISABLED", message: "Turn on saved meals and label capture in Settings first." });
+    const text = query.trim();
+    if (text.length < 2 || text.length > 80) throw new ConvexError({ code: "INVALID_PRODUCT_QUERY", message: "Type 2-80 characters of the product name." });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), OFF_TIMEOUT_MS);
+    try {
+      const res = await fetch(offSearchUrl(text), {
+        headers: { "User-Agent": "Stride/1.0 (personal nutrition tracker)" },
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new ConvexError({ code: "FOOD_DB_UNAVAILABLE", message: `Open Food Facts error ${res.status}` });
+      return parseOffSearch(await res.json());
+    } catch (err) {
+      if (err instanceof ConvexError) throw err;
+      throw new ConvexError({ code: "FOOD_DB_UNAVAILABLE", message: "Open Food Facts did not respond" });
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+});
+
 /** Barcode scan for the input bar: the cached or freshly fetched product. The client logs it with `entries.addEntries`. */
 export const lookupBarcode = action({
   args: { barcode: v.string() },

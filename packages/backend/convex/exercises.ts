@@ -1,9 +1,12 @@
 import type { ExerciseRecord } from "@stride/core";
+import { normalizeExerciseName } from "@stride/core";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { exerciseRecordValidator } from "./ledger_validators";
 import { requireUserId } from "./time_zone";
+import { assertLedgerWritable } from "./users";
 
 const MAX_SEARCH_RESULTS = 30;
 const MAX_IMPORT_BATCH = 100;
@@ -11,6 +14,7 @@ const exerciseValidator = v.object({
   ...exerciseRecordValidator.fields,
   _id: v.id("exercises"),
   _creationTime: v.number(),
+  ownerId: v.optional(v.string()),
 });
 
 /** Trims a required catalog field and rejects missing or oversized text. */
@@ -49,12 +53,18 @@ function importRecord(exercise: ExerciseRecord): ExerciseRecord {
   };
 }
 
+/** Omits private matching metadata from an exercise returned to clients. */
+function exerciseView(row: Doc<"exercises">) {
+  const { normalizedName: _normalizedName, ...view } = row;
+  return view;
+}
+
 /** Searches the shared exercise library, or browses a bounded page when search text is empty. */
 export const search = query({
   args: { query: v.string(), category: v.optional(v.string()), limit: v.optional(v.number()) },
   returns: v.array(exerciseValidator),
   handler: async (ctx, args) => {
-    await requireUserId(ctx);
+    const userId = await requireUserId(ctx);
     const text = args.query.trim();
     if (text.length > 200) throw new ConvexError({ code: "INVALID_TEXT", message: "query must be at most 200 characters" });
     const category = args.category === undefined ? undefined : catalogText(args.category, "category", 80);
@@ -63,18 +73,29 @@ export const search = query({
       throw new Error(`limit must be an integer within 1-${MAX_SEARCH_RESULTS}`);
     }
     if (text === "") {
-      return ctx.db
+      const rows = await ctx.db
         .query("exercises")
-        .withIndex("by_category_and_name", (q) => category === undefined ? q : q.eq("category", category))
+        .withIndex("by_ownerId_and_category_and_name", (q) => {
+          const catalogQuery = q.eq("ownerId", undefined);
+          return category === undefined ? catalogQuery : catalogQuery.eq("category", category);
+        })
         .take(limit);
+      const own = await ctx.db.query("exercises").withIndex("by_ownerId_and_name", (q) => q.eq("ownerId", userId)).take(limit);
+      return [...rows.filter((row) => row.ownerId === undefined), ...own.filter((row) => category === undefined || row.category === category)].slice(0, limit).map(exerciseView);
     }
-    return ctx.db
+    const catalog = await ctx.db
       .query("exercises")
       .withSearchIndex("search_name", (q) => {
-        const searchQuery = q.search("name", text);
-        return category === undefined ? searchQuery : searchQuery.eq("category", category);
+        const catalogQuery = q.search("name", text).eq("ownerId", undefined);
+        return category === undefined ? catalogQuery : catalogQuery.eq("category", category);
       })
       .take(limit);
+    const own = await ctx.db.query("exercises").withSearchIndex("search_name", (q) => {
+      const searchQuery = q.search("name", text).eq("ownerId", userId);
+      return category === undefined ? searchQuery : searchQuery.eq("category", category);
+    }).take(limit);
+    const normalized = normalizeExerciseName(text);
+    return [...own.filter((row) => normalizeExerciseName(row.name).includes(normalized)), ...catalog.filter((row) => row.ownerId === undefined)].slice(0, limit).map(exerciseView);
   },
 });
 
@@ -83,8 +104,31 @@ export const get = query({
   args: { exerciseId: v.id("exercises") },
   returns: v.union(exerciseValidator, v.null()),
   handler: async (ctx, { exerciseId }) => {
-    await requireUserId(ctx);
-    return ctx.db.get("exercises", exerciseId);
+    const userId = await requireUserId(ctx);
+    const exercise = await ctx.db.get("exercises", exerciseId);
+    return exercise === null || (exercise.ownerId !== undefined && exercise.ownerId !== userId) ? null : exerciseView(exercise);
+  },
+});
+
+/** Finds or creates one personal exercise with a stable normalized identity. */
+export const createPersonal = mutation({
+  args: { name: v.string(), kind: v.union(v.literal("strength"), v.literal("cardio")) },
+  returns: v.id("exercises"),
+  handler: async (ctx, { name, kind }) => {
+    const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
+    const cleaned = catalogText(name, "name", 200);
+    const normalized = normalizeExerciseName(cleaned);
+    if (normalized === "") throw new ConvexError({ code: "INVALID_TEXT", message: "name must contain letters or numbers" });
+    const prior = await ctx.db.query("exercises").withIndex("by_ownerId_and_normalizedName", (q) => q.eq("ownerId", userId).eq("normalizedName", normalized)).unique();
+    if (prior !== null) {
+      if (prior.category !== kind) throw new ConvexError({ code: "EXERCISE_KIND_CONFLICT", message: "This name is already saved for another exercise type." });
+      return prior._id;
+    }
+    return await ctx.db.insert("exercises", {
+      ownerId: userId, normalizedName: normalized, sourceId: `personal:${userId}:${normalized}`, name: cleaned,
+      category: kind, equipment: null, mechanic: null, level: null, primaryMuscles: [], secondaryMuscles: [],
+    });
   },
 });
 

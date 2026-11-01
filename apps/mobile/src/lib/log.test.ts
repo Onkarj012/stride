@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { ConvexError } from 'convex/values'
-import { PlainError, linesKcal, plainError, type LogLine } from './log'
+import { PlainError, linesKcal, plainError, splitGrams, type LogLine } from './log'
 
 // Native modules that cannot load in Node. plainError and linesKcal never call them.
 vi.mock('expo-localization', () => ({ getCalendars: () => [] }))
@@ -16,6 +16,11 @@ function logLine(kcal: number | null): LogLine {
 describe('plainError', () => {
   it('maps a known ConvexError code to its plain line', () => {
     expect(plainError(new ConvexError({ code: 'NOT_FOUND' }))).toBe("That's no longer there.")
+  })
+
+  it('shows the server message for a workout code', () => {
+    const err = new ConvexError({ code: 'WORKOUT_NEEDS_REVIEW', message: 'Fix every workout item and choose a target before saving.' })
+    expect(plainError(err)).toBe('Fix every workout item and choose a target before saving.')
   })
 
   it('uses the server message for DRAFT_ITEM', () => {
@@ -53,5 +58,18 @@ describe('linesKcal', () => {
   it('sums unrounded kcal and rounds once at the total', () => {
     // 100.4 + 200.4 = 300.8 rounds to 301; rounding each line first would give 300.
     expect(linesKcal([logLine(100.4), logLine(200.4)])).toBe(301)
+  })
+})
+
+describe('splitGrams', () => {
+  it('takes an explicit gram amount out of a product name', () => {
+    expect(splitGrams('pintola high protein oats 60g')).toEqual({ name: 'pintola high protein oats', grams: 60 })
+    expect(splitGrams('150 gm epigamia greek yoghurt')).toEqual({ name: 'epigamia greek yoghurt', grams: 150 })
+  })
+
+  it('leaves names without grams, and other units, untouched', () => {
+    expect(splitGrams(' amul masti dahi ')).toEqual({ name: 'amul masti dahi', grams: null })
+    expect(splitGrams('2 scoops whey')).toEqual({ name: '2 scoops whey', grams: null })
+    expect(splitGrams('200ml milk')).toEqual({ name: '200ml milk', grams: null })
   })
 })

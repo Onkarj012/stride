@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Text, TextInput, View } from 'react-native'
 import Animated, { FadeInDown } from 'react-native-reanimated'
-import { useAction, useMutation } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
+import { router } from 'expo-router'
 import { useAuth } from '@clerk/expo'
 import type { FunctionArgs } from 'convex/server'
 import { inferSlot } from '@stride/core'
 import { api } from 'stride-backend/convex/_generated/api'
+import type { Id } from 'stride-backend/convex/_generated/dataModel'
+import type { LabelNutritionCandidate } from 'stride-backend/convex/label_foods'
 import { motion, radii } from '@stride/ui-tokens'
 import { formatClock, formatGrams, formatNumber } from '@/lib/format'
 import {
@@ -15,6 +18,7 @@ import {
   plainError,
   PlainError,
   readAudioBase64,
+  splitGrams,
   uploadPhoto,
   type BarcodeFood,
   type DraftId,
@@ -32,6 +36,9 @@ import { useLog } from './useLog'
 import { Polo, type PoloMood } from './Polo'
 import { Tap } from './Tap'
 import { ThaliPicker } from './ThaliPicker'
+import { LabelReview } from './LabelReview'
+import { UsualMealPicker } from './UsualMealPicker'
+import { ProductSearch } from './ProductSearch'
 
 export type ComposeMode = 'text' | 'voice' | 'photo' | 'barcode'
 
@@ -45,13 +52,21 @@ type Phase =
   | { kind: 'voice' }
   | { kind: 'photo' }
   | { kind: 'barcode' }
+  | { kind: 'label_photo' }
+  | { kind: 'label_review'; storageId: StorageId; photoUri: string; candidate: LabelNutritionCandidate }
+  | { kind: 'usual_meals' }
+  | ({ kind: 'product_search' } & ProductQuery)
+  | { kind: 'label_food'; foodId: Id<'foods'> }
   | { kind: 'thali' }
   | { kind: 'working'; label: string; photoUri?: string }
   | { kind: 'committed'; lines: LogLine[] }
   | { kind: 'draft'; draftId: DraftId }
-  | { kind: 'product'; food: BarcodeFood }
+  | { kind: 'product'; food: BarcodeFood; search?: ProductQuery }
   | { kind: 'empty' }
   | { kind: 'error'; message: string; retry?: () => void }
+
+/** A product name search and the grams typed with it, kept so "Search again" and the amount step reuse them. */
+type ProductQuery = { query: string; grams: number | null }
 
 const EXAMPLES = [
   '2 roti, katori dal, bhindi, chai',
@@ -88,7 +103,10 @@ export function Compose({
   const { getToken } = useAuth()
   const logInput = useAction(api.pipeline.log.logInput)
   const lookupBarcode = useAction(api.pipeline.barcode.lookupBarcode)
+  const readLabel = useAction(api.label_foods.readNutritionLabel)
   const generateUploadUrl = useMutation(api.uploads.generateUploadUrl)
+  const logUsual = useMutation(api.usual_meals.log)
+  const foodShortcutsEnabled = useQuery(api.food_shortcuts.getEnabled, {})
   const [phase, setPhase] = useState<Phase>(() => {
     if (initialDraftId) return { kind: 'draft', draftId: initialDraftId }
     if (prefill?.storageId) return { kind: 'working', label: 'Looking at your plate…' }
@@ -96,6 +114,10 @@ export function Compose({
   })
   const [text, setText] = useState(prefill?.text ?? '')
   const startedPrefill = useRef(false)
+  const usualMealInFlight = useRef(false)
+  const usualMealSubmission = useRef<{ mealId: Id<'usual_meals'>; submissionId: string } | null>(null)
+  const [busyUsualMeal, setBusyUsualMeal] = useState<Id<'usual_meals'> | null>(null)
+  const [pickingBarcode, setPickingBarcode] = useState<string | null>(null)
   const [hops, setHops] = useState(1)
   const alive = useRef(true)
   const now = new Date()
@@ -206,6 +228,56 @@ export function Compose({
     }
   }
 
+  // Caches a searched product by its barcode, then opens the amount step.
+  async function pickProduct(barcode: string, search: ProductQuery) {
+    if (pickingBarcode !== null) return
+    setPickingBarcode(barcode)
+    try {
+      const food = await lookupBarcode({ barcode })
+      go(food ? { kind: 'product', food, search } : { kind: 'error', message: "That product has no usable label values. Try another one." })
+    } catch (err) {
+      go({ kind: 'error', message: plainError(err), retry: () => void pickProduct(barcode, search) })
+    } finally {
+      setPickingBarcode(null)
+    }
+  }
+
+  // Reads a package panel from an owned upload and opens an editable review.
+  async function submitLabelPhoto(uri: string) {
+    go({ kind: 'working', label: 'Reading the nutrition panel…', photoUri: uri })
+    try {
+      const token = await getToken({ template: 'convex' })
+      if (!token) throw new PlainError('You are signed out. Sign in again.')
+      const storageId = await uploadPhoto(await generateUploadUrl({}), uri, token)
+      const candidate = await readLabel({ storageId })
+      go({ kind: 'label_review', storageId, photoUri: uri, candidate })
+    } catch (err) {
+      go({ kind: 'error', message: plainError(err), retry: () => void submitLabelPhoto(uri) })
+    }
+  }
+
+  // Logs a saved meal through the ordinary entry and undo path.
+  async function logUsualMeal(mealId: Id<'usual_meals'>) {
+    if (usualMealInFlight.current) return
+    usualMealInFlight.current = true
+    setBusyUsualMeal(mealId)
+    if (usualMealSubmission.current?.mealId !== mealId) {
+      usualMealSubmission.current = { mealId, submissionId: newSubmissionId() }
+    }
+    const submissionId = usualMealSubmission.current.submissionId
+    try {
+      const entryIds = await logUsual({ mealId, submissionId, ...(defaultSlot ? { slot: defaultSlot } : {}) })
+      usualMealSubmission.current = null
+      toast({ title: 'Usual meal logged', sub: 'Current food values · undo available', undo: undoFor(entryIds) })
+      onClose()
+    } catch (err) {
+      go({ kind: 'error', message: plainError(err), retry: () => void logUsualMeal(mealId) })
+    } finally {
+      usualMealInFlight.current = false
+      setBusyUsualMeal(null)
+    }
+  }
+
   const mood: PoloMood =
     phase.kind === 'committed' ? 'happy' : phase.kind === 'voice' || phase.kind === 'error' || phase.kind === 'empty' ? 'wow' : 'idle'
   const showBox = phase.kind === 'input' || phase.kind === 'empty'
@@ -261,6 +333,16 @@ export function Compose({
           >
             <Text style={s.chipText}>Build a thali</Text>
           </Tap>
+          {foodShortcutsEnabled ? (
+            <View style={s.shortcutRow}>
+              <Button label="Usual meal" variant="ghost" size="sm" onPress={() => go({ kind: 'usual_meals' })} />
+              <Button label="Read a label" variant="ghost" size="sm" onPress={() => go({ kind: 'label_photo' })} />
+              <Button label="Find a product" variant="ghost" size="sm" onPress={() => {
+                const typed = splitGrams(text)
+                go({ kind: 'product_search', query: typed.name, grams: typed.grams })
+              }} />
+            </View>
+          ) : null}
           {phase.kind === 'empty' ? (
             <Text style={s.note}>I didn't catch any food there. Try "2 roti and dal".</Text>
           ) : (
@@ -299,6 +381,53 @@ export function Compose({
       ) : null}
       {phase.kind === 'barcode' ? (
         <BarcodeScanner onCode={(code) => void submitCode(code)} onCancel={() => go({ kind: 'input' })} />
+      ) : null}
+      {phase.kind === 'label_photo' ? (
+        <PhotoCapture quality={0.85} hint="Frame the full nutrition panel. Check the values before saving." onPhoto={(uri) => void submitLabelPhoto(uri)} onCancel={() => go({ kind: 'input' })} />
+      ) : null}
+      {phase.kind === 'label_review' ? (
+        <LabelReview
+          storageId={phase.storageId}
+          photoUri={phase.photoUri}
+          candidate={phase.candidate}
+          onSaved={(foodId) => go({ kind: 'label_food', foodId })}
+          onCancel={() => go({ kind: 'input' })}
+        />
+      ) : null}
+      {phase.kind === 'label_food' ? (
+        <LabelFoodAmount
+          foodId={phase.foodId}
+          defaultSlot={defaultSlot}
+          onLogged={(entryIds, kcal, name) => {
+            toast({ title: `Logged · ${formatNumber(kcal)} kcal`, sub: `${name} · saved from your label`, undo: undoFor(entryIds) })
+            onClose()
+          }}
+          onSaveOnly={() => {
+            toast({ title: 'Personal food saved', sub: 'Unverified label values · nothing logged' })
+            onClose()
+          }}
+          onClose={onClose}
+        />
+      ) : null}
+      {phase.kind === 'product_search' ? (
+        <ProductSearch
+          initialQuery={phase.query}
+          busyBarcode={pickingBarcode}
+          onPick={(barcode, query) => void pickProduct(barcode, { query, grams: phase.grams })}
+          onCancel={() => go({ kind: 'input' })}
+        />
+      ) : null}
+      {phase.kind === 'usual_meals' ? (
+        <UsualMealPicker
+          enabled={foodShortcutsEnabled === true}
+          busyMealId={busyUsualMeal}
+          onLog={(mealId) => void logUsualMeal(mealId)}
+          onManage={() => {
+            onClose()
+            router.push('/usual-meals')
+          }}
+          onCancel={() => go({ kind: 'input' })}
+        />
       ) : null}
 
       {phase.kind === 'thali' ? (
@@ -344,6 +473,9 @@ export function Compose({
         <BarcodeProduct
           food={phase.food}
           defaultSlot={defaultSlot}
+          initialGrams={phase.search?.grams ?? null}
+          entrySource="barcode"
+          backLabel={phase.search ? 'Search again' : 'Scan again'}
           onLogged={(entryIds, kcal) => {
             toast({
               title: `Logged · ${formatNumber(kcal)} kcal`,
@@ -352,7 +484,7 @@ export function Compose({
             })
             onClose()
           }}
-          onRescan={() => go({ kind: 'barcode' })}
+          onBack={() => go(phase.search ? { kind: 'product_search', ...phase.search } : { kind: 'barcode' })}
         />
       ) : null}
 
@@ -400,21 +532,27 @@ export function LineList({ title, lines }: { title: string; lines: LogLine[] }) 
   )
 }
 
-// A scanned product: pick the grams, then log it with addEntries. Nutrients come back from the server.
+// A scanned, searched or label-saved product: pick the grams, then log it with addEntries. Nutrients come back from the server.
 function BarcodeProduct({
   food,
   defaultSlot,
+  initialGrams = null,
+  entrySource,
+  backLabel,
   onLogged,
-  onRescan,
+  onBack,
 }: {
   food: BarcodeFood
   defaultSlot?: MealSlot
+  initialGrams?: number | null
+  entrySource: 'barcode' | 'db'
+  backLabel: string
   onLogged: (entryIds: EntryId[], kcal: number) => void
-  onRescan: () => void
+  onBack: () => void
 }) {
   const s = useStyles()
   const addEntries = useMutation(api.entries.addEntries)
-  const [grams, setGrams] = useState(Math.round(food.servingGrams ?? 100))
+  const [grams, setGrams] = useState(Math.round(initialGrams ?? food.servingGrams ?? 100))
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
   const submissionId = useRef(newSubmissionId())
@@ -427,7 +565,7 @@ function BarcodeProduct({
     setBusy(true)
     setProblem(null)
     try {
-      const ids = await addEntries({ submissionId: submissionId.current, items: [{ foodId: food.foodId, grams, source: 'barcode', ...(defaultSlot ? { slot: defaultSlot } : {}) }] })
+      const ids = await addEntries({ submissionId: submissionId.current, items: [{ foodId: food.foodId, grams, source: entrySource, ...(defaultSlot ? { slot: defaultSlot } : {}) }] })
       onLogged(ids, kcal)
     } catch (err) {
       setProblem(plainError(err))
@@ -452,10 +590,47 @@ function BarcodeProduct({
       </View>
       {problem ? <Text style={s.problem}>{problem}</Text> : null}
       <View style={s.askRow}>
-        <Button label="Scan again" variant="ghost" disabled={busy} onPress={onRescan} />
+        <Button label={backLabel} variant="ghost" disabled={busy} onPress={onBack} />
         <Button label="Log it" variant="coral" busy={busy} onPress={() => void log()} style={s.grow} />
       </View>
     </Animated.View>
+  )
+}
+
+// The amount step for a label food saved a moment ago; skipping it keeps the food saved and logs nothing.
+function LabelFoodAmount({
+  foodId,
+  defaultSlot,
+  onLogged,
+  onSaveOnly,
+  onClose,
+}: {
+  foodId: Id<'foods'>
+  defaultSlot?: MealSlot
+  onLogged: (entryIds: EntryId[], kcal: number, name: string) => void
+  onSaveOnly: () => void
+  onClose: () => void
+}) {
+  const s = useStyles()
+  const food = useQuery(api.label_foods.labelFood, { foodId })
+  if (food === undefined) return <Text style={s.note}>Opening your saved food…</Text>
+  if (food === null) {
+    return (
+      <View style={s.ask}>
+        <Text style={s.askBody}>That food is no longer available.</Text>
+        <Button label="Close" variant="ghost" onPress={onClose} />
+      </View>
+    )
+  }
+  return (
+    <BarcodeProduct
+      food={food}
+      defaultSlot={defaultSlot}
+      entrySource="db"
+      backLabel="Save only"
+      onLogged={(entryIds, kcal) => onLogged(entryIds, kcal, food.name)}
+      onBack={onSaveOnly}
+    />
   )
 }
 
@@ -491,6 +666,7 @@ const useStyles = themedStyles((t) => ({
   },
   chipText: { ...font('secondary'), fontFamily: font('bodyStrong').fontFamily, color: t.c.ink },
   hint: { ...font('caption'), lineHeight: 19, color: t.c.ink3, marginTop: 18 },
+  shortcutRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
   note: { ...font('callout'), color: t.c.ink2, marginTop: 16 },
   result: { marginTop: 18 },
   listHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 },

@@ -102,9 +102,11 @@ export default defineSchema({
     openRouterModel: v.optional(v.string()),
     // UI preferences (synced from usePrefs)
     units: v.optional(v.string()), // metric | imperial
+    plainWorkouts: v.optional(v.boolean()),
     notifications: v.optional(v.boolean()),
     coachingStyle: v.optional(v.string()), // gentle | motivating | analytical
     reduceMotion: v.optional(v.boolean()),
+    webFoodLookupEnabled: v.optional(v.boolean()),
     timezoneOffsetMinutes: v.optional(v.number()), // new Date().getTimezoneOffset() from browser
     // Plan 007 section 3.2 profile fields. Optional so pre-restart rows stay valid.
     timeZone: v.optional(v.string()), // IANA zone, the only input to local dates (D15)
@@ -144,6 +146,7 @@ export default defineSchema({
       appliedLocalDate: v.string(),
       clamped: v.optional(v.union(v.literal("pace_cap"), v.literal("floor"))),
     })),
+    foodShortcutsEnabled: v.optional(v.boolean()),
   }).index("by_user", ["userId"]),
 
   food_cache: defineTable({
@@ -321,6 +324,15 @@ export default defineSchema({
     verified: v.boolean(),
     ownerUserId: v.optional(v.string()), // set on source "user" and "ai_estimate" rows; only that user sees them
     note: v.optional(v.string()), // assumptions behind an AI estimate, shown on the draft card
+    labelProvenance: v.optional(v.object({
+      storageId: v.id("_storage"),
+      basis: v.union(v.literal("per_100g"), v.literal("per_100ml"), v.literal("per_serving")),
+      servingAmount: v.union(v.number(), v.null()),
+      servingUnit: v.union(v.literal("g"), v.literal("ml"), v.null()),
+      densityGramsPer100ml: v.union(v.number(), v.null()),
+      capturedAt: v.number(),
+    })),
+    webSources: v.optional(v.array(v.object({ title: v.string(), url: v.string() }))),
   })
     .index("by_source_and_sourceId", ["source", "sourceId"])
     .index("by_ownerUserId", ["ownerUserId"])
@@ -334,6 +346,21 @@ export default defineSchema({
     description: v.string(), // source label, e.g. "cup, chopped"
     gramsPerMeasure: v.number(),
   }).index("by_foodId_and_description", ["foodId", "description"]),
+
+  usual_meals: defineTable({
+    userId: v.string(),
+    name: v.string(),
+  }).index("by_userId", ["userId"]),
+
+  usual_meal_items: defineTable({
+    userId: v.string(),
+    usualMealId: v.id("usual_meals"),
+    foodId: v.id("foods"),
+    foodName: v.string(),
+    grams: v.number(),
+  })
+    .index("by_usualMealId", ["usualMealId"])
+    .index("by_userId", ["userId"]),
 
   user_measures: defineTable({
     userId: v.string(),
@@ -395,6 +422,8 @@ export default defineSchema({
     name: v.optional(v.string()),
     startedAt: v.number(),
     endedAt: v.optional(v.number()),
+    timing: v.optional(v.union(v.literal("live"), v.literal("logged"))),
+    durationMin: v.optional(v.number()),
     notes: v.optional(v.string()),
     submissionId: v.string(),
     deletedAt: v.optional(v.number()),
@@ -412,6 +441,7 @@ export default defineSchema({
     setIndex: v.number(),
     reps: v.number(),
     weightKg: v.number(),
+    weightBasis: v.optional(v.union(v.literal("total"), v.literal("each"))),
     rpe: v.optional(v.number()),
     revision: v.number(),
     op: v.optional(revisionOpValidator),
@@ -428,6 +458,8 @@ export default defineSchema({
 
   exercises: defineTable({
     sourceId: v.string(),
+    ownerId: v.optional(v.string()),
+    normalizedName: v.optional(v.string()),
     name: v.string(),
     category: v.string(),
     equipment: v.union(v.string(), v.null()),
@@ -438,7 +470,64 @@ export default defineSchema({
   })
     .index("by_sourceId", ["sourceId"])
     .index("by_category_and_name", ["category", "name"])
-    .searchIndex("search_name", { searchField: "name", filterFields: ["category"] }),
+    .index("by_ownerId_and_name", ["ownerId", "name"])
+    .index("by_ownerId_and_category_and_name", ["ownerId", "category", "name"])
+    .index("by_ownerId_and_normalizedName", ["ownerId", "normalizedName"])
+    .searchIndex("search_name", { searchField: "name", filterFields: ["category", "ownerId"] }),
+
+  cardio: defineTable({
+    userId: v.string(),
+    sessionId: v.id("workout_sessions"),
+    exerciseId: v.id("exercises"),
+    position: v.number(),
+    durationMin: v.optional(v.number()),
+    distanceKm: v.optional(v.number()),
+    reportedKcal: v.optional(v.number()),
+    speedKmh: v.optional(v.number()),
+    inclinePct: v.optional(v.number()),
+    revision: v.number(),
+    op: v.optional(revisionOpValidator),
+    supersedes: v.optional(v.id("cardio")),
+    status: revisionStatusValidator,
+    submissionId: v.string(),
+    deletedAt: v.optional(v.number()),
+  }).index("by_sessionId_and_status", ["sessionId", "status"])
+    .index("by_userId_and_submissionId", ["userId", "submissionId"])
+    .index("by_userId_and_status", ["userId", "status"]),
+
+  workout_drafts: defineTable({
+    userId: v.string(),
+    chatId: v.optional(v.id("chats")),
+    messageId: v.optional(v.id("messages")),
+    submissionId: v.string(),
+    status: v.union(v.literal("pending"), v.literal("committed"), v.literal("discarded")),
+    source: v.union(v.literal("text"), v.literal("coach"), v.literal("copy"), v.literal("manual")),
+    inputText: v.string(),
+    mode: v.union(v.literal("new"), v.literal("append"), v.literal("revise")),
+    targetSessionId: v.optional(v.id("workout_sessions")),
+    needsTarget: v.boolean(),
+    localDate: v.string(),
+    startTime: v.optional(v.string()),
+    durationMin: v.optional(v.number()),
+    headSetIds: v.optional(v.array(v.id("sets"))),
+    headCardioIds: v.optional(v.array(v.id("cardio"))),
+    version: v.optional(v.number()),
+    supersedes: v.optional(v.id("workout_drafts")),
+    supersededBy: v.optional(v.id("workout_drafts")),
+    items: v.array(v.object({
+      key: v.string(), name: v.string(), kind: v.union(v.literal("strength"), v.literal("cardio")),
+      exerciseId: v.optional(v.id("exercises")), candidateIds: v.array(v.id("exercises")),
+      sets: v.array(v.object({ setId: v.optional(v.id("sets")), weightKg: v.optional(v.number()), reps: v.optional(v.number()), weightBasis: v.optional(v.union(v.literal("total"), v.literal("each"))) })),
+      cardio: v.optional(v.object({ cardioId: v.optional(v.id("cardio")), durationMin: v.optional(v.number()), distanceKm: v.optional(v.number()), reportedKcal: v.optional(v.number()), speedKmh: v.optional(v.number()), inclinePct: v.optional(v.number()) })),
+      replaceSetIds: v.optional(v.array(v.id("sets"))), replaceCardioIds: v.optional(v.array(v.id("cardio"))),
+      problems: v.array(v.string()),
+    })),
+    committedSubmissionId: v.optional(v.string()),
+    written: v.optional(v.object({ sessionId: v.id("workout_sessions"), createdSession: v.boolean(), setRevisionIds: v.array(v.id("sets")), cardioRevisionIds: v.array(v.id("cardio")), sessionFields: v.optional(v.object({ localDate: v.string(), timeZone: v.string(), startedAt: v.number(), endedAt: v.optional(v.number()), durationMin: v.optional(v.number()), timing: v.optional(v.union(v.literal("live"), v.literal("logged"))) })), previousSession: v.optional(v.object({ localDate: v.string(), timeZone: v.string(), startedAt: v.number(), endedAt: v.optional(v.number()), durationMin: v.optional(v.number()), timing: v.optional(v.union(v.literal("live"), v.literal("logged"))) })) })),
+    undoneAt: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_userId_and_submissionId", ["userId", "submissionId"])
+    .index("by_userId_and_status", ["userId", "status"]),
 
   // One row per user while clearAllData's scheduled ledger deletion runs. Ledger writes refuse meanwhile.
   ledger_clears: defineTable({ userId: v.string() }).index("by_userId", ["userId"]),
@@ -487,6 +576,7 @@ export default defineSchema({
       }),
     ),
     draftIds: v.array(v.id("drafts")),
+    workoutDraftIds: v.optional(v.array(v.id("workout_drafts"))),
     entryIds: v.optional(v.array(v.id("entries"))),
     submissionId: v.optional(v.string()),
     // User messages: when a turn last started work on it. Assistant replies: the same time, fencing their writes to that attempt.

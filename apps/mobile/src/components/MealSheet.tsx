@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Linking, Text, View } from 'react-native'
 import Animated, { FadeOut, LinearTransition } from 'react-native-reanimated'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
@@ -257,6 +257,11 @@ function EntryRow({ entry, last, blocked, onSaving }: {
         <Text style={s.sub}>
           {formatNumber(entry.nutrients.kcal * ratio)} kcal · {Math.round(entry.nutrients.protein * ratio)} g P · {source}
         </Text>
+        {entry.webSources.map((citation) => (
+          <Text key={citation.url} style={s.sub} onPress={() => void Linking.openURL(citation.url)}>
+            Source: {citation.title}
+          </Text>
+        ))}
       </View>
       <Stepper value={formatGrams(grams)} label={entry.foodName} onStep={step} />
       <RoundButton icon="x" label={`Remove ${entry.foodName}`} tone="plain" size={36} disabled={saving || blocked} onPress={() => void remove()} />
