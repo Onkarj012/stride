@@ -69,6 +69,17 @@ The most common bug here is a fix that works on the path you tested and is missi
 - Logic bugs in math, matching, portions, or the ledger get a failing test first, in the module's existing test file, then the fix. Purely visual fixes need no test.
 - The owner checks UI on a phone. Drive a device, emulator, or browser only when asked.
 
+## dev-test
+
+When the owner says `dev-test` with PR numbers (`dev-test 92 95`), put those PRs on the Stride Dev app on their phone. This counts as asking for a dev-channel update. It never touches the alpha testers.
+
+1. Run `gh workflow run phone-test.yml -R Onkarj012/stride -f prs="92 95"`, keeping the owner's order. The workflow merges the PRs onto main, pushes the backend to dev Convex, and publishes to the `dev` channel. The app picks it up the next time it comes to the foreground.
+2. Watch the run with `gh run list --workflow phone-test.yml` and `gh run view`. Report the result and the run URL.
+3. If it fails with "Build a new Stride Dev APK first", native code changed. Tell the owner to plug in the phone, then run `apps/mobile/scripts/dev-build.sh` from the main checkout and rerun step 1.
+4. If a PR conflicts, report which one and stop.
+
+`dev-test` with no numbers means the PRs from the current conversation. Ask if that is unclear. Never add a dev profile to `eas.json`: it changes the alpha's native fingerprint and breaks OTA updates for testers.
+
 ## Pull requests
 
 - Conventional commit titles in plain words: `fix(portions): soymilk chai is not a teacup of chai`.
