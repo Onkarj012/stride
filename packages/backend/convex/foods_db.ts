@@ -1,5 +1,5 @@
 import { hasAtwaterMismatch, normalizeText } from "@stride/core";
-import { ConvexError, v } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import {
@@ -239,6 +239,89 @@ const userFoodValidator = v.object({
   per100g: nutrientsValidator,
 });
 
+const labelProvenanceValidator = v.object({
+  storageId: v.id("_storage"),
+  basis: v.union(v.literal("per_100g"), v.literal("per_100ml"), v.literal("per_serving")),
+  servingAmount: v.union(v.number(), v.null()),
+  servingUnit: v.union(v.literal("g"), v.literal("ml"), v.null()),
+  densityGramsPer100ml: v.union(v.number(), v.null()),
+});
+
+/** Creates or updates a personal food after its caller has validated the source values. */
+export async function saveUserFoodRow(
+  ctx: MutationCtx,
+  userId: string,
+  name: string,
+  aliases: string[],
+  per100g: Doc<"foods">["per100g"],
+  labelProvenance?: Infer<typeof labelProvenanceValidator>,
+): Promise<Id<"foods">> {
+  const key = normalizeText(name);
+  if (key === "" || name.length > 120) throw new ConvexError({ code: "INVALID_FOOD", message: "Food name must be 1-120 characters" });
+  const cleanAliases = aliases.map((a) => a.trim()).filter((a) => a !== "").slice(0, 10);
+  const numbers = [per100g.kcal, per100g.protein, per100g.carbs, per100g.fat, per100g.fiber, per100g.sugar, per100g.sodiumMg];
+  if (numbers.some((n) => n !== null && (!Number.isFinite(n) || n < 0))) throw new ConvexError({ code: "INVALID_FOOD", message: "Nutrients must be finite and not negative" });
+  if (per100g.protein + per100g.carbs + per100g.fat > 100) throw new ConvexError({ code: "INVALID_FOOD", message: "Macros cannot exceed 100 g per 100 g" });
+  if (labelProvenance !== undefined) {
+    const upload = await ctx.db.query("uploads").withIndex("by_storageId", (q) => q.eq("storageId", labelProvenance.storageId)).unique();
+    if (upload === null || upload.userId !== userId || (await ctx.db.system.get("_storage", labelProvenance.storageId)) === null) {
+      throw new ConvexError({ code: "UPLOAD_NOT_FOUND", message: "Label photo not found. Take it again." });
+    }
+  }
+  const row: Omit<Doc<"foods">, "_id" | "_creationTime"> = {
+    name: name.trim(),
+    aliases: cleanAliases,
+    searchText: [name.trim(), ...cleanAliases].join(" "),
+    per100g,
+    source: "user",
+    sourceId: `${userId}:${key}`,
+    verified: labelProvenance === undefined && !hasAtwaterMismatch(per100g),
+    ownerUserId: userId,
+    ...(labelProvenance === undefined ? {} : { note: "Nutrition label photo reviewed by user; values are not independently verified." }),
+    ...(labelProvenance === undefined ? {} : { labelProvenance: { ...labelProvenance, capturedAt: Date.now() } }),
+  };
+  const existing = await ctx.db
+    .query("foods")
+    .withIndex("by_source_and_sourceId", (q) => q.eq("source", "user").eq("sourceId", row.sourceId))
+    .unique();
+  if (existing !== null) {
+    await ctx.db.replace("foods", existing._id, row);
+    await saveLabelServingPortion(ctx, existing._id, labelProvenance);
+    return existing._id;
+  }
+  const owned = await ctx.db
+    .query("foods")
+    .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", userId).eq("source", "user"))
+    .take(MAX_USER_FOODS);
+  if (owned.length >= MAX_USER_FOODS) throw new ConvexError({ code: "FOOD_LIMIT", message: `You can keep at most ${MAX_USER_FOODS} personal foods` });
+  const foodId = await ctx.db.insert("foods", row);
+  await saveLabelServingPortion(ctx, foodId, labelProvenance);
+  return foodId;
+}
+
+/** Saves an explicit package serving as a normal gram-based portion when its mass is known. */
+async function saveLabelServingPortion(
+  ctx: MutationCtx,
+  foodId: Id<"foods">,
+  provenance: Infer<typeof labelProvenanceValidator> | undefined,
+): Promise<void> {
+  const existing = await ctx.db.query("food_portions")
+    .withIndex("by_foodId_and_description", (q) => q.eq("foodId", foodId).eq("description", "1 serving"))
+    .unique();
+  const grams = provenance === undefined || provenance.servingAmount === null || provenance.servingUnit === null
+    ? null
+    : provenance.servingUnit === "g"
+      ? provenance.servingAmount
+      : provenance.densityGramsPer100ml === null ? null : (provenance.servingAmount * provenance.densityGramsPer100ml) / 100;
+  if (grams === null || !Number.isFinite(grams) || grams <= 0) {
+    if (existing !== null) await ctx.db.delete(existing._id);
+    return;
+  }
+  const portion = { foodId, source: "user" as const, measure: "serving", description: "1 serving", gramsPerMeasure: grams };
+  if (existing === null) await ctx.db.insert("food_portions", portion);
+  else await ctx.db.replace("food_portions", existing._id, portion);
+}
+
 /** Saves a personal food (e.g. homemade paneer) with user-stated per-100 g values. Same name again updates it. */
 export const createUserFood = mutation({
   args: { name: v.string(), aliases: v.optional(v.array(v.string())), per100g: nutrientsValidator },
@@ -246,36 +329,7 @@ export const createUserFood = mutation({
   handler: async (ctx, { name, aliases, per100g }): Promise<Id<"foods">> => {
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
-    const key = normalizeText(name);
-    if (key === "" || name.length > 120) throw new ConvexError({ code: "INVALID_FOOD", message: "Food name must be 1-120 characters" });
-    const cleanAliases = (aliases ?? []).map((a) => a.trim()).filter((a) => a !== "").slice(0, 10);
-    const numbers = [per100g.kcal, per100g.protein, per100g.carbs, per100g.fat, per100g.fiber, per100g.sugar, per100g.sodiumMg];
-    if (numbers.some((n) => n !== null && (!Number.isFinite(n) || n < 0))) throw new ConvexError({ code: "INVALID_FOOD", message: "Nutrients must be finite and not negative" });
-    if (per100g.protein + per100g.carbs + per100g.fat > 100) throw new ConvexError({ code: "INVALID_FOOD", message: "Macros cannot exceed 100 g per 100 g" });
-    const row: Omit<Doc<"foods">, "_id" | "_creationTime"> = {
-      name: name.trim(),
-      aliases: cleanAliases,
-      searchText: [name.trim(), ...cleanAliases].join(" "),
-      per100g,
-      source: "user",
-      sourceId: `${userId}:${key}`,
-      verified: !hasAtwaterMismatch(per100g),
-      ownerUserId: userId,
-    };
-    const existing = await ctx.db
-      .query("foods")
-      .withIndex("by_source_and_sourceId", (q) => q.eq("source", "user").eq("sourceId", row.sourceId))
-      .unique();
-    if (existing !== null) {
-      await ctx.db.replace("foods", existing._id, row);
-      return existing._id;
-    }
-    const owned = await ctx.db
-      .query("foods")
-      .withIndex("by_ownerUserId_and_source", (q) => q.eq("ownerUserId", userId).eq("source", "user"))
-      .take(MAX_USER_FOODS);
-    if (owned.length >= MAX_USER_FOODS) throw new ConvexError({ code: "FOOD_LIMIT", message: `You can keep at most ${MAX_USER_FOODS} personal foods` });
-    return await ctx.db.insert("foods", row);
+    return await saveUserFoodRow(ctx, userId, name, aliases ?? [], per100g);
   },
 });
 

@@ -199,7 +199,7 @@ function useFlash() {
 }
 
 // In-sheet camera with a shutter, a gallery button and a back button (mock #/photo).
-export function PhotoCapture({ onPhoto, onCancel }: { onPhoto: (uri: string) => void; onCancel: () => void }) {
+export function PhotoCapture({ onPhoto, onCancel, hint = "Get the whole plate in. I'll estimate, you confirm.", quality = 0.5 }: { onPhoto: (uri: string) => void; onCancel: () => void; hint?: string; quality?: number }) {
   const t = useTheme()
   const s = useStyles()
   const camera = useRef<CameraView>(null)
@@ -211,7 +211,7 @@ export function PhotoCapture({ onPhoto, onCancel }: { onPhoto: (uri: string) => 
   // Opens the gallery and hands back the chosen photo.
   async function pickFromLibrary() {
     try {
-      const picked = await launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.5 })
+      const picked = await launchImageLibraryAsync({ mediaTypes: ['images'], quality })
       const asset = picked.canceled ? undefined : picked.assets[0]
       if (asset) onPhoto(asset.uri)
     } catch {
@@ -225,7 +225,7 @@ export function PhotoCapture({ onPhoto, onCancel }: { onPhoto: (uri: string) => 
     setBusy(true)
     flash.fire()
     try {
-      const picture = await camera.current.takePictureAsync({ quality: 0.5 })
+      const picture = await camera.current.takePictureAsync({ quality })
       onPhoto(picture.uri)
     } catch {
       setProblem("Couldn't take the photo. Try again, or pick one from the gallery.")
@@ -247,7 +247,7 @@ export function PhotoCapture({ onPhoto, onCancel }: { onPhoto: (uri: string) => 
           <View style={s.frame} />
           <Animated.View style={[s.flash, flash.style]} />
         </View>
-        <Text style={s.hint}>{problem ?? "Get the whole plate in. I'll estimate, you confirm."}</Text>
+        <Text style={s.hint}>{problem ?? hint}</Text>
         <View style={s.shutterRow}>
           <RoundButton icon="image" label="Pick from gallery" tone="card" size={46} onPress={() => void pickFromLibrary()} />
           <Tap

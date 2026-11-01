@@ -14,6 +14,8 @@ const LEDGER_TABLES = [
   "uploads",
   "food_links",
   "food_link_events",
+  "usual_meals",
+  "usual_meal_items",
   "user_measures",
   "sets",
   "workout_sessions",
@@ -44,6 +46,10 @@ async function ledgerBatch(ctx: MutationCtx, table: Exclude<LedgerTable, "messag
       return await ctx.db.query("food_links").withIndex("by_userId_and_status_and_key", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
     case "food_link_events":
       return await ctx.db.query("food_link_events").withIndex("by_userId_and_key_and_undoneAt", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "usual_meals":
+      return await ctx.db.query("usual_meals").withIndex("by_userId", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
+    case "usual_meal_items":
+      return await ctx.db.query("usual_meal_items").withIndex("by_userId", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
     case "user_measures":
       return await ctx.db.query("user_measures").withIndex("by_userId_and_measure", (q) => q.eq("userId", userId)).take(CLEAR_LEDGER_BATCH);
     case "sets":
@@ -304,12 +310,14 @@ export const exportAllData = query({
 
     // These tables grow without bound, so each read is capped and `truncated` names the ones that had more rows.
     const take = EXPORT_ROW_LIMIT + 1;
-    const [chats, messages, drafts, food_links, food_link_events, foods, user_measures, workout_sessions, sets, tdee_snapshots] = await Promise.all([
+    const [chats, messages, drafts, food_links, food_link_events, usual_meals, usual_meal_items, foods, user_measures, workout_sessions, sets, tdee_snapshots] = await Promise.all([
       ctx.db.query("chats").withIndex("by_userId_and_updatedAt", (q) => q.eq("userId", userId)).take(take),
       ctx.db.query("messages").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId)).take(EXPORT_MESSAGE_LIMIT + 1),
       ctx.db.query("drafts").withIndex("by_userId_and_status", (q) => q.eq("userId", userId)).take(take),
       ctx.db.query("food_links").withIndex("by_userId_and_status_and_key", (q) => q.eq("userId", userId)).take(take),
       ctx.db.query("food_link_events").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId)).take(take),
+      ctx.db.query("usual_meals").withIndex("by_userId", (q) => q.eq("userId", userId)).take(take),
+      ctx.db.query("usual_meal_items").withIndex("by_userId", (q) => q.eq("userId", userId)).take(take),
       ctx.db.query("foods").withIndex("by_ownerUserId", (q) => q.eq("ownerUserId", userId)).take(take),
       ctx.db.query("user_measures").withIndex("by_userId_and_measure", (q) => q.eq("userId", userId)).take(take),
       ctx.db.query("workout_sessions").withIndex("by_userId_and_localDate", (q) => q.eq("userId", userId)).take(take),
@@ -322,6 +330,8 @@ export const exportAllData = query({
       drafts: capped(drafts, EXPORT_ROW_LIMIT),
       food_links: capped(food_links, EXPORT_ROW_LIMIT),
       food_link_events: capped(food_link_events, EXPORT_ROW_LIMIT),
+      usual_meals: capped(usual_meals, EXPORT_ROW_LIMIT),
+      usual_meal_items: capped(usual_meal_items, EXPORT_ROW_LIMIT),
       foods: capped(foods, EXPORT_ROW_LIMIT),
       user_measures: capped(user_measures, EXPORT_ROW_LIMIT),
       workout_sessions: capped(workout_sessions, EXPORT_ROW_LIMIT),
@@ -344,6 +354,8 @@ export const exportAllData = query({
       drafts: restart.drafts.rows,
       food_links: restart.food_links.rows,
       food_link_events: restart.food_link_events.rows,
+      usual_meals: restart.usual_meals.rows,
+      usual_meal_items: restart.usual_meal_items.rows,
       foods: restart.foods.rows,
       food_portions: portions.rows,
       user_measures: restart.user_measures.rows,
@@ -356,6 +368,8 @@ export const exportAllData = query({
         drafts: restart.drafts.truncated,
         food_links: restart.food_links.truncated,
         food_link_events: restart.food_link_events.truncated,
+        usual_meals: restart.usual_meals.truncated,
+        usual_meal_items: restart.usual_meal_items.truncated,
         foods: restart.foods.truncated,
         food_portions: portions.truncated,
         user_measures: restart.user_measures.truncated,

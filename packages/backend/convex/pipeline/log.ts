@@ -60,6 +60,13 @@ export const photoInfo = internalQuery({
   },
 });
 
+/** Rejects an explicitly supplied MIME type that is not an image before photo data reaches a model. */
+export function assertImageContentType(contentType: string | null): void {
+  if (contentType !== null && !contentType.startsWith("image/")) {
+    throw new ConvexError({ code: "NOT_AN_IMAGE", message: "That file is not an image." });
+  }
+}
+
 /** A signed URL the photo model can fetch for an uploaded image. Rejects oversized or non-image files before any model call. */
 export async function imageUrl(ctx: ActionCtx, storageId: Id<"_storage">): Promise<string> {
   const info: { size: number; contentType: string | null } | null = await ctx.runQuery(internal.pipeline.log.photoInfo, {
@@ -69,10 +76,8 @@ export async function imageUrl(ctx: ActionCtx, storageId: Id<"_storage">): Promi
   if (info.size > AI_INPUT_LIMITS.imageBytes) {
     throw new ConvexError({ code: "PHOTO_TOO_LARGE", message: `Photo is too large. The limit is ${AI_INPUT_LIMITS.imageBytes} bytes.` });
   }
-  // Uploads without a Content-Type have no stored type; the model rejects those if they are not images.
-  if (info.contentType !== null && !info.contentType.startsWith("image/")) {
-    throw new ConvexError({ code: "NOT_AN_IMAGE", message: "That file is not an image." });
-  }
+  // Older uploads may not include a Content-Type, so only reject a declared non-image type.
+  assertImageContentType(info.contentType);
   const url = await ctx.storage.getUrl(storageId);
   if (url === null) throw new ConvexError({ code: "UPLOAD_NOT_FOUND", message: "Photo not found. Upload it again." });
   return url;

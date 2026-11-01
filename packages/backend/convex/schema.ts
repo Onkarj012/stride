@@ -144,6 +144,7 @@ export default defineSchema({
       appliedLocalDate: v.string(),
       clamped: v.optional(v.union(v.literal("pace_cap"), v.literal("floor"))),
     })),
+    foodShortcutsEnabled: v.optional(v.boolean()),
   }).index("by_user", ["userId"]),
 
   food_cache: defineTable({
@@ -321,6 +322,14 @@ export default defineSchema({
     verified: v.boolean(),
     ownerUserId: v.optional(v.string()), // set on source "user" and "ai_estimate" rows; only that user sees them
     note: v.optional(v.string()), // assumptions behind an AI estimate, shown on the draft card
+    labelProvenance: v.optional(v.object({
+      storageId: v.id("_storage"),
+      basis: v.union(v.literal("per_100g"), v.literal("per_100ml"), v.literal("per_serving")),
+      servingAmount: v.union(v.number(), v.null()),
+      servingUnit: v.union(v.literal("g"), v.literal("ml"), v.null()),
+      densityGramsPer100ml: v.union(v.number(), v.null()),
+      capturedAt: v.number(),
+    })),
   })
     .index("by_source_and_sourceId", ["source", "sourceId"])
     .index("by_ownerUserId", ["ownerUserId"])
@@ -334,6 +343,21 @@ export default defineSchema({
     description: v.string(), // source label, e.g. "cup, chopped"
     gramsPerMeasure: v.number(),
   }).index("by_foodId_and_description", ["foodId", "description"]),
+
+  usual_meals: defineTable({
+    userId: v.string(),
+    name: v.string(),
+  }).index("by_userId", ["userId"]),
+
+  usual_meal_items: defineTable({
+    userId: v.string(),
+    usualMealId: v.id("usual_meals"),
+    foodId: v.id("foods"),
+    foodName: v.string(),
+    grams: v.number(),
+  })
+    .index("by_usualMealId", ["usualMealId"])
+    .index("by_userId", ["userId"]),
 
   user_measures: defineTable({
     userId: v.string(),
