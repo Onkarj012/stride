@@ -29,6 +29,7 @@ import type * as pipeline_openrouter from "../pipeline/openrouter.js";
 import type * as pipeline_resolve from "../pipeline/resolve.js";
 import type * as pipeline_tools from "../pipeline/tools.js";
 import type * as pipeline_transcribe from "../pipeline/transcribe.js";
+import type * as pipeline_workout_parse from "../pipeline/workout_parse.js";
 import type * as progress_v2 from "../progress_v2.js";
 import type * as strength from "../strength.js";
 import type * as tdee_recompute from "../tdee_recompute.js";
@@ -37,6 +38,8 @@ import type * as uploads from "../uploads.js";
 import type * as users from "../users.js";
 import type * as weights from "../weights.js";
 import type * as usual_meals from "../usual_meals.js";
+import type * as workouts from "../workouts.js";
+
 
 import type {
   ApiFromModules,
@@ -66,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   "pipeline/resolve": typeof pipeline_resolve;
   "pipeline/tools": typeof pipeline_tools;
   "pipeline/transcribe": typeof pipeline_transcribe;
+  "pipeline/workout_parse": typeof pipeline_workout_parse;
   progress_v2: typeof progress_v2;
   strength: typeof strength;
   tdee_recompute: typeof tdee_recompute;
@@ -74,6 +78,8 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   weights: typeof weights;
   usual_meals: typeof usual_meals;
+  workouts: typeof workouts;
+
 }>;
 
 /**

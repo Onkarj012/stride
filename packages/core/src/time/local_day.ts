@@ -50,9 +50,48 @@ export function localDateTime(instantMs: number, timeZone: string): { date: stri
   };
 }
 
+/** Reads the year, month and day numbers of a YYYY-MM-DD date. */
+function dateParts(value: string): { year: number; month: number; day: number } {
+  return { year: Number(value.slice(0, 4)), month: Number(value.slice(5, 7)), day: Number(value.slice(8, 10)) };
+}
+
+/** Converts a local wall-clock date and time to an instant, choosing the earlier DST overlap. */
+export function instantAt(localDateValue: string, time: string, timeZone: string): number {
+  if (!isLocalDate(localDateValue)) throw new RangeError("localDate must be a valid YYYY-MM-DD date");
+  const match = /^(\d{2}):(\d{2})$/.exec(time);
+  if (!match) throw new RangeError("time must use HH:MM");
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) throw new RangeError("time must use a valid 24-hour time");
+  formatterFor(timeZone);
+  const { year, month, day } = dateParts(localDateValue);
+  const target = Date.UTC(year, month - 1, day, hour, minute);
+  const candidates: number[] = [];
+  const offsets = new Set<number>();
+  for (let delta = -36; delta <= 36; delta += 3) {
+    const sample = target + delta * 60 * 60 * 1000;
+    const local = localDateTime(sample, timeZone);
+    const localParts = dateParts(local.date);
+    offsets.add(Date.UTC(localParts.year, localParts.month - 1, localParts.day, local.hour, local.minute) - sample);
+  }
+  for (const offset of offsets) {
+    const candidate = target - offset;
+    const local = localDateTime(candidate, timeZone);
+    if (local.date === localDateValue && local.hour === hour && local.minute === minute) candidates.push(candidate);
+  }
+  if (candidates.length === 0) throw new RangeError("Local time does not exist in this time zone");
+  return Math.min(...candidates);
+}
+
 /** Local calendar date (YYYY-MM-DD) of an instant in a zone. */
 export function localDate(instantMs: number, timeZone: string): string {
   return localDateTime(instantMs, timeZone).date;
+}
+
+/** Local wall-clock time (HH:MM) of an instant in a zone. */
+export function localTime(instantMs: number, timeZone: string): string {
+  const { hour, minute } = localDateTime(instantMs, timeZone);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 /** First instant of the next local day, including days shortened or extended by DST. */
