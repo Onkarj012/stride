@@ -4,6 +4,7 @@ import { api } from "./_generated/api";
 import schema from "./schema";
 import { normalizeLabelNutrients } from "./label_foods";
 import { assertImageContentType } from "./pipeline/log";
+import { parseOffSearch } from "./pipeline/barcode";
 
 const modules = import.meta.glob("./**/*.*s");
 
@@ -187,4 +188,59 @@ test("label reader rejects oversized and non-image uploads before model calls", 
   await expect(user.action(api.label_foods.readNutritionLabel, { storageId })).rejects.toMatchObject({ data: { code: "PHOTO_TOO_LARGE" } });
   expect(() => assertImageContentType("application/pdf")).toThrow(/not an image/);
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+const pintola = {
+  code: "8906136651968",
+  brands: "Pintola",
+  product_name: "High Protein Oats Chocolate",
+  nutriments: { "energy-kcal_100g": 392, proteins_100g: 25, carbohydrates_100g: 54.6, fat_100g: 8, fiber_100g: 9.6, sugars_100g: 14, sodium_100g: 0.13 },
+  serving_quantity: 50,
+  serving_quantity_unit: "g",
+};
+
+test("product search keeps barcoded products with usable label values, once each", () => {
+  const hits = parseOffSearch({ products: [
+    pintola,
+    pintola,
+    { ...pintola, code: "not-a-code" },
+    { ...pintola, code: "8906136650008", nutriments: { "energy-kcal_100g": 380 } },
+  ] });
+  expect(hits).toHaveLength(1);
+  expect(hits[0]).toMatchObject({ barcode: "8906136651968", name: "Pintola High Protein Oats Chocolate", servingGrams: 50, per100g: { kcal: 392, protein: 25, sodiumMg: 130 } });
+  expect(parseOffSearch({ count: 0 })).toEqual([]);
+});
+
+test("product search needs the opt-in and caches nothing until a product is picked", async () => {
+  const t = convexTest(schema, modules);
+  const user = t.withIdentity({ subject: "user_a" });
+  const fetchMock = vi.fn(async (_url: string) => new Response(JSON.stringify({ products: [pintola] }), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(user.action(api.pipeline.barcode.searchProducts, { query: "pintola oats" })).rejects.toThrow(/Turn on saved meals/);
+  await user.mutation(api.food_shortcuts.setEnabled, { enabled: true });
+  await expect(user.action(api.pipeline.barcode.searchProducts, { query: " " })).rejects.toMatchObject({ data: { code: "INVALID_PRODUCT_QUERY" } });
+  expect(fetchMock).not.toHaveBeenCalled();
+  const hits = await user.action(api.pipeline.barcode.searchProducts, { query: "pintola high protein oats" });
+  expect(hits).toMatchObject([{ barcode: "8906136651968", servingGrams: 50 }]);
+  expect(String(fetchMock.mock.calls[0]?.[0])).toContain("search_terms=pintola+high+protein+oats");
+  expect(await t.run((ctx) => ctx.db.query("foods").collect())).toEqual([]);
+  fetchMock.mockImplementationOnce(async () => new Response("busy", { status: 503 }));
+  await expect(user.action(api.pipeline.barcode.searchProducts, { query: "pintola" })).rejects.toMatchObject({ data: { code: "FOOD_DB_UNAVAILABLE" } });
+});
+
+test("a saved label food comes back with its serving grams only for its owner", async () => {
+  const t = convexTest(schema, modules);
+  const user = t.withIdentity({ subject: "user_a" });
+  await user.mutation(api.food_shortcuts.setEnabled, { enabled: true });
+  const storageId = await t.run(async (ctx) => {
+    const id = await ctx.storage.store(new Blob(["label"], { type: "image/jpeg" }));
+    await ctx.db.insert("uploads", { userId: "user_a", storageId: id, createdAt: Date.now() });
+    return id;
+  });
+  const foodId = await user.mutation(api.label_foods.saveReviewedLabel, {
+    storageId, name: "Greek yoghurt", basis: "per_100g", servingAmount: 100, servingUnit: "g", densityGramsPer100ml: null,
+    energy: 90, energyUnit: "kcal", protein: 10, carbs: 6, fat: 3, fiber: null, sugar: null, sodiumMg: null,
+  });
+  expect(await user.query(api.label_foods.labelFood, { foodId })).toMatchObject({ foodId, name: "Greek yoghurt", servingGrams: 100, per100g: { kcal: 90 } });
+  expect(await t.withIdentity({ subject: "other" }).query(api.label_foods.labelFood, { foodId })).toBeNull();
 });

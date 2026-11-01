@@ -105,6 +105,7 @@ const CODE_MESSAGES: Readonly<Record<string, string | null>> = {
   FOOD_SHORTCUTS_DISABLED: 'Turn on saved meals and label capture in Settings first.',
   LABEL_MASS_REQUIRED: null,
   LABEL_REVIEW_REQUIRED: null,
+  INVALID_PRODUCT_QUERY: null,
   LABEL_UNREADABLE: 'I could not read those label values. Try a clearer photo.',
   MISSING_USUAL_MEAL_FOOD: null,
   INVALID_USUAL_MEAL: null,
@@ -239,4 +240,14 @@ export function linesKcal(lines: LogLine[]): number | null {
     sum += line.kcal
   }
   return Math.round(sum)
+}
+
+const GRAMS_RE = /(\d+(?:\.\d+)?)\s*(?:g|gm|gms|gram|grams)\b/i
+
+/** Splits typed text like "pintola oats 60g" into the product name and an explicit gram amount, if any. */
+export function splitGrams(text: string): { name: string; grams: number | null } {
+  const match = GRAMS_RE.exec(text)
+  const grams = match ? Number(match[1]) : Number.NaN
+  if (!match || !Number.isFinite(grams) || grams <= 0 || grams > 5000) return { name: text.trim(), grams: null }
+  return { name: text.replace(match[0], ' ').replace(/\s+/g, ' ').trim(), grams }
 }
