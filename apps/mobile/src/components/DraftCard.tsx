@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Text, TextInput, View } from 'react-native'
+import { Linking, Text, TextInput, View } from 'react-native'
 import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
@@ -229,6 +229,11 @@ export function DraftCard({
                   {onEstimate ? <Tag text="AI estimate" tone="est" /> : null}
                 </View>
                 {onEstimate && item.note ? <Text style={s.metaText}>{item.note}</Text> : null}
+                {onEstimate ? item.webSources.map((source) => (
+                  <Text key={source.url} style={s.link} onPress={() => void Linking.openURL(source.url)} suppressHighlighting>
+                    Source: {source.title}
+                  </Text>
+                )) : null}
                 {item.reasons.includes('sugar_double_count') && sugarKept && fix.foodId === undefined ? (
                   <Text style={s.why}>This drink may already include sugar. Check the drink or remove the separate sugar.</Text>
                 ) : null}

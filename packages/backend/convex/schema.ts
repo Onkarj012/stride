@@ -105,6 +105,7 @@ export default defineSchema({
     notifications: v.optional(v.boolean()),
     coachingStyle: v.optional(v.string()), // gentle | motivating | analytical
     reduceMotion: v.optional(v.boolean()),
+    webFoodLookupEnabled: v.optional(v.boolean()),
     timezoneOffsetMinutes: v.optional(v.number()), // new Date().getTimezoneOffset() from browser
     // Plan 007 section 3.2 profile fields. Optional so pre-restart rows stay valid.
     timeZone: v.optional(v.string()), // IANA zone, the only input to local dates (D15)
@@ -330,6 +331,7 @@ export default defineSchema({
       densityGramsPer100ml: v.union(v.number(), v.null()),
       capturedAt: v.number(),
     })),
+    webSources: v.optional(v.array(v.object({ title: v.string(), url: v.string() }))),
   })
     .index("by_source_and_sourceId", ["source", "sourceId"])
     .index("by_ownerUserId", ["ownerUserId"])
