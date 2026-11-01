@@ -29,7 +29,6 @@ const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: 'dark', label: 'Dark' },
 ]
 const FOOD_LOOKUP_OPTIONS: { value: 'off' | 'on'; label: string }[] = [
-
   { value: 'off', label: 'Off' },
   { value: 'on', label: 'On' },
 ]
@@ -64,7 +63,6 @@ function Settings() {
   const [lookupError, setLookupError] = useState<string | null>(null)
   const setPlainWorkouts = useMutation(api.progress_v2.setPlainWorkouts)
   const [wordsError, setWordsError] = useState<string | null>(null)
-
   const [dataError, setDataError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [open, setOpen] = useState(false)
@@ -112,7 +110,6 @@ function Settings() {
       await setPlainWorkouts({ on })
     } catch (err) {
       setWordsError(plainError(err))
-
     }
   }
 
@@ -164,7 +161,6 @@ function Settings() {
             options={FOOD_LOOKUP_OPTIONS}
             value={profile?.plainWorkouts === true ? 'on' : 'off'}
             onChange={(next) => void chooseWords(next === 'on')}
-
           />
           <ListRow
             label="Saved meals and label capture"
