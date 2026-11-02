@@ -5,7 +5,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { api } from 'stride-backend/convex/_generated/api'
 import { radii } from '@stride/ui-tokens'
 import { clockOf, formatClock, formatGrams, formatNumber } from '@/lib/format'
-import { SLOTS, SLOT_NAMES, newSubmissionId, plainError, type EntryId, type EntryView, type MealSlot } from '@/lib/log'
+import { SLOTS, SLOT_NAMES, newSubmissionId, plainError, repeatItems, type EntryId, type EntryView, type MealSlot } from '@/lib/log'
 import { useLocalToday } from '@/lib/useLocalToday'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button, RoundButton, Stepper, Thinking } from './Controls'
@@ -24,6 +24,7 @@ export function MealSheet({ localDate, slot, onClose }: { localDate: string; slo
   const today = useLocalToday()
   const editEntry = useMutation(api.entries.editEntry)
   const deleteEntry = useMutation(api.entries.deleteEntry)
+  const addEntries = useMutation(api.entries.addEntries)
   const [busy, setBusy] = useState(false)
   const [savingRows, setSavingRows] = useState(0)
   const locked = busy || savingRows > 0
@@ -47,6 +48,23 @@ export function MealSheet({ localDate, slot, onClose }: { localDate: string; slo
       onClose()
     } catch (err) {
       toast({ title: "Couldn't save that.", sub: plainError(err) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Copies this past meal into today's same slot as one batch, with one undo for all of it.
+  async function logAgain() {
+    if (!meal) return
+    setBusy(true)
+    try {
+      const ids = await addEntries({ submissionId: newSubmissionId(), items: repeatItems(meal.entries) })
+      const count = meal.entries.length
+      // No kcal here: today's entries use the food's current values, which may differ from the old day's.
+      toast({ title: `Logged ${SLOT_NAMES[meal.slot].toLowerCase()} again today`, sub: `${count} ${count === 1 ? 'food' : 'foods'}`, undo: undoFor(ids) })
+      onClose()
+    } catch (err) {
+      toast({ title: "Couldn't log that again.", sub: plainError(err) })
     } finally {
       setBusy(false)
     }
@@ -105,7 +123,19 @@ export function MealSheet({ localDate, slot, onClose }: { localDate: string; slo
         >
           <Text style={s.addText}>+ Add to {name.toLowerCase()}</Text>
         </Tap>
-      ) : null}
+      ) : (
+        <Tap
+          style={s.add}
+          scale={0.98}
+          disabled={locked}
+          onPress={() => void logAgain()}
+          accessibilityRole="button"
+          accessibilityLabel={`Log this ${name.toLowerCase()} again today`}
+          accessibilityState={{ disabled: locked, busy }}
+        >
+          <Text style={s.addText}>Log again today</Text>
+        </Tap>
+      )}
       <Text style={s.hint}>Edits save as you go. Every change keeps the old version, so undo always works.</Text>
       <View style={s.actions}>
         <Button
