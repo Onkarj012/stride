@@ -1221,18 +1221,41 @@ describe("photo amounts are estimates for review", () => {
   });
 });
 
+describe("uncaptioned photos", () => {
+  test("a grams amount is cleared and drafts with the estimated badge", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "roti", quantity: 80, unit: "g", fromPhoto: true, amountFromImage: false }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p-uncaptioned-grams", input: { kind: "photo", storageId: await uploadPhoto(t, user) } });
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await t.run((ctx) => ctx.db.get("drafts", result.draftId));
+    expect(draft?.items[0]?.quantity).toBeUndefined();
+    expect(draft?.items[0]?.unit).toBeUndefined();
+    expect(result.lines[0]?.estimated).toBe(true);
+    expect(await entryRows(t)).toEqual([]);
+  });
+
+  test("model flags cannot make a photo item look stated", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "roti", quantity: 2, unit: "piece", fromPhoto: false, amountFromImage: false }]);
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p-uncaptioned-flags", input: { kind: "photo", storageId: await uploadPhoto(t, user) } });
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    const draft = await t.run((ctx) => ctx.db.get("drafts", result.draftId));
+    expect(draft?.items[0]?.reasons).toContain("photo_amount");
+    expect(result.lines[0]?.estimated).toBe(true);
+  });
+});
+
 describe("photo and voice input", () => {
   test("photo items use the photo model and are flagged estimated", async () => {
-    const { t, user, foods } = await setup();
+    const { t, user } = await setup();
     const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
     await user.mutation(internal.uploads.registerStoredUpload, { storageId });
     llm = () => extraction([{ food: "roti", quantity: 2, fromPhoto: true }]);
     const result = await user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } });
-    expect(result.kind).toBe("committed");
+    expect(result.kind).toBe("draft");
     expect(openRouterBodies[0]?.model).toBe(PHOTO_MODEL);
     expect(JSON.stringify(openRouterBodies[0]?.messages)).toContain("image_url");
-    const [row] = await entryRows(t);
-    expect(row).toMatchObject({ foodId: foods.chapati, flags: ["photo", "estimated"] });
+    expect(await entryRows(t)).toEqual([]);
     expect(result.lines[0]?.estimated).toBe(true);
   });
 
