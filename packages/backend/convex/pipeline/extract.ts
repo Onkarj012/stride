@@ -149,7 +149,9 @@ export async function extractItems(ctx: ActionCtx, userId: string, input: Extrac
     const item = parseItem(raw);
     return item === null ? [] : [item];
   });
-  return input.imageUrl === undefined ? items : items.map(clampPhotoAmount);
+  if (input.imageUrl === undefined) return items;
+  // No caption means no stated amount, so treat every item as estimated from the photo.
+  return items.map((item) => clampPhotoAmount(input.text === "" ? { ...item, fromPhoto: true, amountFromImage: true } : item));
 }
 
 /** An image estimate must use an allowed unit (or none) within its cap. Anything else nulls the amount so the draft asks. Caption amounts pass through. */
