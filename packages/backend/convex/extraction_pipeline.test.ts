@@ -1247,15 +1247,17 @@ describe("uncaptioned photos", () => {
 
 describe("photo and voice input", () => {
   test("photo items use the photo model and are flagged estimated", async () => {
-    const { t, user } = await setup();
+    const { t, user, foods } = await setup();
     const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["jpeg"], { type: "image/jpeg" })));
     await user.mutation(internal.uploads.registerStoredUpload, { storageId });
     llm = () => extraction([{ food: "roti", quantity: 2, fromPhoto: true }]);
-    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId } });
-    expect(result.kind).toBe("draft");
+    // The caption states the amount, so the item can commit and still carries the photo flags.
+    const result = await user.action(api.pipeline.log.logInput, { submissionId: "p1", input: { kind: "photo", storageId, text: "2 roti" } });
+    expect(result.kind).toBe("committed");
     expect(openRouterBodies[0]?.model).toBe(PHOTO_MODEL);
     expect(JSON.stringify(openRouterBodies[0]?.messages)).toContain("image_url");
-    expect(await entryRows(t)).toEqual([]);
+    const [row] = await entryRows(t);
+    expect(row).toMatchObject({ foodId: foods.chapati, flags: ["photo", "estimated"] });
     expect(result.lines[0]?.estimated).toBe(true);
   });
 
