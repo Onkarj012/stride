@@ -1,7 +1,7 @@
 import { Pressable, Text, View } from 'react-native'
 import Animated, { FadeInDown } from 'react-native-reanimated'
 import { radii } from '@stride/ui-tokens'
-import { clockOf, formatClock, formatNumber } from '@/lib/format'
+import { clockOf, formatClock, formatNumber, mealRowLabel } from '@/lib/format'
 import { SLOT_NAMES, type EntryView, type MealSlot } from '@/lib/log'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Tag } from './Controls'
@@ -41,7 +41,7 @@ export function MealRow({ meal, first, onPress }: { meal: Meal; first: boolean; 
         disabled={!onPress}
         style={({ pressed }) => [s.meal, !first && s.divider, pressed && s.pressed]}
         accessibilityRole="button"
-        accessibilityLabel={`${SLOT_NAMES[meal.slot]}, ${formatNumber(meal.kcal)} kcal`}
+        accessibilityLabel={mealRowLabel(SLOT_NAMES[meal.slot], meal.entries.map((e) => e.foodName), meal.kcal, meal.estimated)}
       >
         <Text style={s.time}>{formatClock(clockOf(meal.firstAt))}</Text>
         <View style={s.main}>
