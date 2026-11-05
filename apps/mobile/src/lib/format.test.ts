@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatClock, formatGrams, formatNumber } from './format'
+import { formatClock, formatGrams, formatNumber, mealRowLabel } from './format'
 
 describe('formatNumber', () => {
   it('groups digits in Indian style', () => {
@@ -31,5 +31,15 @@ describe('formatGrams', () => {
   it('shows one decimal under 10 g and whole grams above', () => {
     expect(formatGrams(9.26)).toBe('9.3 g')
     expect(formatGrams(42.4)).toBe('42 g')
+  })
+})
+
+describe('mealRowLabel', () => {
+  it('reads the slot, foods, and kcal', () => {
+    expect(mealRowLabel('Lunch', ['Dal', 'Rice', 'Roti'], 1240, false)).toBe('Lunch, Dal, Rice, Roti, 1,240 kcal')
+  })
+
+  it('says estimated when a food is a guess', () => {
+    expect(mealRowLabel('Dinner', ['Paneer tikka'], 320, true)).toBe('Dinner, Paneer tikka, 320 kcal, estimated')
   })
 })

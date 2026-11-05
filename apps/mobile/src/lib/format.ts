@@ -55,3 +55,10 @@ export function clockOf(ms: number): string {
 export function formatGrams(g: number): string {
   return g < 10 ? `${Math.round(g * 10) / 10} g` : `${Math.round(g)} g`
 }
+
+// Screen-reader label for a meal row: the slot, its foods, kcal, and "estimated" when any food is a guess.
+export function mealRowLabel(slot: string, foods: string[], kcal: number, estimated: boolean): string {
+  const parts = [slot, ...(foods.length > 0 ? [foods.join(', ')] : []), `${formatNumber(kcal)} kcal`]
+  if (estimated) parts.push('estimated')
+  return parts.join(', ')
+}
