@@ -3,6 +3,7 @@ import { Text, View } from 'react-native'
 import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSpring } from 'react-native-reanimated'
 import { motion, radii, type } from '@stride/ui-tokens'
 import { formatNumber } from '@/lib/format'
+import { macroLabel } from '@/lib/speech'
 import { font, themedStyles, useTheme } from '@/theme'
 
 const HERO = type.hero.size
@@ -86,7 +87,7 @@ export function Macro({ name, eaten, target, color }: { name: string; eaten: num
   const s = useStyles()
   const grow = useGrow(Math.min(100, (eaten / target) * 100), 120)
   return (
-    <View style={s.macro}>
+    <View style={s.macro} accessible accessibilityLabel={macroLabel(name, eaten, target)}>
       <View style={s.macroKey}>
         <View style={[s.dot, { backgroundColor: color }]} />
         <Text style={s.macroName}>{name}</Text>
