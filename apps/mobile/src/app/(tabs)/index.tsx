@@ -17,6 +17,7 @@ import { Polo } from '@/components/Polo'
 import { Screen, Section } from '@/components/Screen'
 import { Tap } from '@/components/Tap'
 import { formatDateline, formatNumber, greeting } from '@/lib/format'
+import { kcalHeroLabel } from '@/lib/speech'
 import { SUMMARY_DAYS, plainError, targetsFor, type MealSlot } from '@/lib/log'
 import { kgLabel, savedUnits, stepKg, weightNumber, weightToKg, weightUnit, type Units } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
@@ -102,15 +103,20 @@ export default function TodayScreen() {
         {header}
 
         <View style={s.hero}>
-          <View style={s.heroLabel}>
-            <Text style={s.eyebrow}>Left today</Text>
-            <Text style={s.faintSmall}>{formatNumber(eaten.kcal)} eaten</Text>
-          </View>
-          <View style={s.bignum}>
-            <Odometer value={Math.abs(left)} />
-            <Text style={s.of}>
-              {left >= 0 ? `of ${formatNumber(targets.kcal)}\nkcal` : `over\n${formatNumber(targets.kcal)} kcal`}
-            </Text>
+          {/* Read as one sentence: the odometer alone says "234" whether that is left or over. */}
+          <View accessible accessibilityLabel={kcalHeroLabel(targets.kcal, eaten.kcal)}>
+            <View importantForAccessibility="no-hide-descendants">
+              <View style={s.heroLabel}>
+                <Text style={s.eyebrow}>Left today</Text>
+                <Text style={s.faintSmall}>{formatNumber(eaten.kcal)} eaten</Text>
+              </View>
+              <View style={s.bignum}>
+                <Odometer value={Math.abs(left)} />
+                <Text style={s.of}>
+                  {left >= 0 ? `of ${formatNumber(targets.kcal)}\nkcal` : `over\n${formatNumber(targets.kcal)} kcal`}
+                </Text>
+              </View>
+            </View>
           </View>
           <DayBar meals={meals.map((m) => ({ key: m.slot, kcal: m.kcal }))} target={targets.kcal} />
           <View style={s.macros}>
