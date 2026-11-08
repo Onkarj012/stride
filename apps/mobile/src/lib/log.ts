@@ -1,6 +1,6 @@
 import { ConvexError } from 'convex/values'
 import { DEFAULT_MACRO_REFERENCE, scaleMacroTargets } from '@stride/core'
-import type { FunctionReturnType } from 'convex/server'
+import type { FunctionArgs, FunctionReturnType } from 'convex/server'
 import { getCalendars } from 'expo-localization'
 import { File } from 'expo-file-system'
 import type { api } from 'stride-backend/convex/_generated/api'
@@ -15,6 +15,7 @@ export type AmountUnit = AmountSet['units'][number]
 export type EntryView = FunctionReturnType<typeof api.entries.entriesForDay>[number]
 export type MealSlot = EntryView['slot']
 export type BarcodeFood = NonNullable<FunctionReturnType<typeof api.pipeline.barcode.lookupBarcode>>
+export type NewEntry = FunctionArgs<typeof api.entries.addEntries>['items'][number]
 export type EntryId = Id<'entries'>
 export type FoodId = Id<'foods'>
 export type StorageId = Id<'_storage'>
@@ -222,6 +223,18 @@ export async function uploadPhoto(uploadUrl: string, uri: string, token: string)
     throw new PlainError('Photo upload failed. Try again.')
   // Convex ids are branded strings; this one comes straight from the storage upload response.
   return body.storageId as StorageId
+}
+
+// New entries that log a past meal again: same foods, grams, slot and labels, dated by the server as now.
+export function repeatItems(entries: readonly EntryView[]): NewEntry[] {
+  return entries.map((e) => ({
+    foodId: e.foodId,
+    grams: e.grams,
+    source: e.source,
+    slot: e.slot,
+    confidence: e.confidence,
+    flags: [...e.flags],
+  }))
 }
 
 // Total kcal of the lines, summed unrounded and rounded once; null when any line is still unknown.
