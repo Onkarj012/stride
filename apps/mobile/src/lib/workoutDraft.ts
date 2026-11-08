@@ -6,6 +6,11 @@ export type WorkoutDraftId = Id<'workout_drafts'>
 export type WorkoutDraftView = FunctionReturnType<typeof api.workouts.draft>
 export type WorkoutItem = WorkoutDraftView['draft']['items'][number]
 
+// Text a review number field shows, at most two decimals: a parsed "22 lb" is 9.97903214 kg and reads 9.98.
+export function fieldText(value: number | undefined): string {
+  return value === undefined ? '' : String(Math.round(value * 100) / 100)
+}
+
 // The first item problem that stops a save, in plain words, or null when every item is complete.
 export function saveBlocker(items: WorkoutItem[]): string | null {
   for (const item of items) {

@@ -7,7 +7,7 @@ import { api } from 'stride-backend/convex/_generated/api'
 import { formatDayTitle } from '@/lib/format'
 import { newSubmissionId, plainError } from '@/lib/log'
 import type { ExerciseId, SessionId, WeightBasis } from '@/lib/strength'
-import { saveBlocker, type WorkoutDraftId, type WorkoutDraftView, type WorkoutItem } from '@/lib/workoutDraft'
+import { fieldText, saveBlocker, type WorkoutDraftId, type WorkoutDraftView, type WorkoutItem } from '@/lib/workoutDraft'
 import { font, themedStyles, useTheme } from '@/theme'
 import { Button, RoundButton, Thinking } from './Controls'
 import { ExercisePicker } from './ExercisePicker'
@@ -74,11 +74,6 @@ function durationOk(text: string): boolean {
 function withMatch(item: WorkoutItem, exercise: ExerciseLike | null): WorkoutItem {
   const { exerciseId: _previous, ...rest } = item
   return exercise === null ? rest : { ...rest, exerciseId: exercise._id }
-}
-
-// Text shown in a number field for a value.
-function textOf(value: number | undefined): string {
-  return value === undefined ? '' : String(value)
 }
 
 // True when the typed text already means the value, so an outside change does not overwrite it.
@@ -548,10 +543,10 @@ function Field({ label, flex = 1, children }: { label: string; flex?: number; ch
 // A number typed in place, with its unit. Blank means no value. Text that is not a number keeps the last good value.
 function NumberField({ value, onChange, label, suffix, decimal = true }: { value: number | undefined; onChange: (next: number | undefined) => void; label: string; suffix: string; decimal?: boolean }) {
   const s = useStyles()
-  const [text, setText] = useState(textOf(value))
+  const [text, setText] = useState(fieldText(value))
   // Follows outside changes to the value, but keeps text the user is still typing when it already means the value.
   useEffect(() => {
-    setText((typed) => (meansSame(typed, value) ? typed : textOf(value)))
+    setText((typed) => (meansSame(typed, value) ? typed : fieldText(value)))
   }, [value])
 
   // Passes on a typed number, or a blank. Unreadable text changes only what is shown.
