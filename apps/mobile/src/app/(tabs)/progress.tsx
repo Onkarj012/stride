@@ -19,6 +19,7 @@ import { formatDayTitle, formatNumber, weekdayOf } from '@/lib/format'
 import { SUMMARY_DAYS } from '@/lib/log'
 import { kgLabel, savedUnits, signedRateLabel, weightNumber, weightUnit, type Units } from '@/lib/profile'
 import { useLocalToday } from '@/lib/useLocalToday'
+import { weekBarLabel } from '@/lib/weekBars'
 import { font, themedStyles, useTheme } from '@/theme'
 
 type Summary = FunctionReturnType<typeof api.progress_v2.summary>
@@ -324,14 +325,24 @@ function WeekCard({ summary }: { summary: Summary }) {
       </Text>
       <View style={s.week}>
         {target ? (
-          <View style={[s.targetLine, { bottom: (target.kcal / top) * BARS_HEIGHT + 22 }]}>
+          // Hidden from screen readers: the card header already reads the target, and a lone "2,000" here means nothing.
+          <View
+            style={[s.targetLine, { bottom: (target.kcal / top) * BARS_HEIGHT + 22 }]}
+            importantForAccessibility="no-hide-descendants"
+            accessibilityElementsHidden
+          >
             <Text style={s.targetLabel}>{formatNumber(target.kcal)}</Text>
           </View>
         ) : null}
         {week.map((date, i) => {
           const kcal = byDate.get(date)
           return (
-            <View key={date} style={s.col}>
+            <View
+              key={date}
+              style={s.col}
+              accessible
+              accessibilityLabel={weekBarLabel(date, localDate, kcal, target?.kcal ?? null)}
+            >
               <DayBar index={i} height={kcal === undefined ? 0 : (kcal / top) * BARS_HEIGHT} today={date === localDate} empty={kcal === undefined} />
               <Text style={s.colLabel}>{date === localDate ? 'Now' : WEEK_LETTERS[weekdayOf(date)]}</Text>
             </View>
