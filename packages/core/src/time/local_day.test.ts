@@ -8,9 +8,11 @@ import {
   daysIn,
   daysBetween,
   inferSlot,
+  instantAt,
   isValidTimeZone,
   localDate,
   localDateTime,
+  localTime,
   nextLocalMidnight,
   slotAt,
   shiftMonth,
@@ -23,6 +25,10 @@ const NY = "America/New_York";
 const at = (iso: string) => Date.parse(iso);
 
 describe("IST midnight boundary", () => {
+  it("resolves a local date and time through IST and DST", () => {
+    expect(instantAt("2026-10-06", "08:15", IST)).toBe(at("2026-10-06T02:45:00Z"));
+    expect(instantAt("2026-03-08", "03:30", NY)).toBe(at("2026-03-08T07:30:00Z"));
+  });
   it("finds the next midnight to the millisecond, including month rollover", () => {
     expect(nextLocalMidnight(at("2026-10-31T18:29:59.999Z"), IST)).toBe(at("2026-10-31T18:30:00Z"));
     expect(nextLocalMidnight(at("2026-10-31T18:30:00Z"), IST)).toBe(at("2026-11-01T18:30:00Z"));
@@ -31,6 +37,10 @@ describe("IST midnight boundary", () => {
   it("rolls the date at 18:30 UTC", () => {
     expect(localDate(at("2026-10-05T18:29:59.999Z"), IST)).toBe("2026-10-05");
     expect(localDate(at("2026-10-05T18:30:00.000Z"), IST)).toBe("2026-10-06");
+  });
+
+  it("formats local wall-clock time as HH:MM", () => {
+    expect(localTime(at("2026-10-05T18:30:00Z"), IST)).toBe("00:00");
   });
 
   it("puts 23:59 IST in dinner and 00:00 IST in next-day breakfast", () => {

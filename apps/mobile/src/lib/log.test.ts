@@ -18,6 +18,11 @@ describe('plainError', () => {
     expect(plainError(new ConvexError({ code: 'NOT_FOUND' }))).toBe("That's no longer there.")
   })
 
+  it('shows the server message for a workout code', () => {
+    const err = new ConvexError({ code: 'WORKOUT_NEEDS_REVIEW', message: 'Fix every workout item and choose a target before saving.' })
+    expect(plainError(err)).toBe('Fix every workout item and choose a target before saving.')
+  })
+
   it('uses the server message for DRAFT_ITEM', () => {
     const err = new ConvexError({ code: 'DRAFT_ITEM', message: 'Item 2: Rice has no kcal, so set grams instead' })
     expect(plainError(err)).toBe('Item 2: Rice has no kcal, so set grams instead')

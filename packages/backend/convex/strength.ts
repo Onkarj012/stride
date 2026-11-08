@@ -8,6 +8,7 @@ import { localDateOrToday, requireUserId, resolveLocalDay } from "./time_zone";
 import { assertLedgerWritable } from "./users";
 
 const MAX_SESSION_SETS = 200;
+export const MAX_SESSION_CARDIO = 100;
 // Shared by all exercises in one sessionDetail query. Each set read can also cost a session read, so this stays under Convex's 4,096 range limit.
 const MAX_HISTORY_SETS = 1000;
 const RECENT_SET_SCAN = 200;
@@ -16,7 +17,7 @@ const RECENT_WORKOUT_SCAN = 30;
 const MAX_RECENT_WORKOUTS = 5;
 type RevisionOp = Infer<typeof revisionOpValidator>;
 type SessionCache = Map<Id<"workout_sessions">, Doc<"workout_sessions"> | null>;
-type SetContent = Pick<Doc<"sets">, "sessionId" | "exerciseId" | "setIndex" | "weightKg" | "reps" | "rpe" | "deletedAt">;
+type SetContent = Pick<Doc<"sets">, "sessionId" | "exerciseId" | "setIndex" | "weightKg" | "reps" | "weightBasis" | "rpe" | "deletedAt">;
 type ReadCtx = QueryCtx | MutationCtx;
 
 /** Rejects empty or oversized submission ids. */
@@ -46,7 +47,7 @@ async function requireSession(ctx: ReadCtx, userId: string, sessionId: Id<"worko
 /** Loads a shared exercise and rejects missing library rows. */
 async function requireExercise(ctx: ReadCtx, exerciseId: Id<"exercises">): Promise<Doc<"exercises">> {
   const exercise = await ctx.db.get("exercises", exerciseId);
-  if (exercise === null) throw new ConvexError({ code: "NOT_FOUND", message: "Exercise not found" });
+  if (exercise === null || (exercise.ownerId !== undefined && exercise.ownerId !== (await requireUserId(ctx)))) throw new ConvexError({ code: "NOT_FOUND", message: "Exercise not found" });
   return exercise;
 }
 
@@ -58,12 +59,34 @@ async function requireSet(ctx: ReadCtx, userId: string, setId: Id<"sets">): Prom
   return set;
 }
 
+/** Validates cardio measurements and requires duration or distance. */
+function checkCardio(args: { durationMin?: number; distanceKm?: number; reportedKcal?: number; speedKmh?: number; inclinePct?: number }): void {
+  const bounded = (value: number | undefined, min: number, max: number, integer = false) => value === undefined || (Number.isFinite(value) && value >= min && value <= max && (!integer || Number.isInteger(value)));
+  if (!bounded(args.durationMin, 1, 1440, true) || !bounded(args.distanceKm, 0, 500) || !bounded(args.reportedKcal, 0, 5000) || !bounded(args.speedKmh, 0, 50) || !bounded(args.inclinePct, 0, 40) || (args.durationMin === undefined && args.distanceKm === undefined)) {
+    throw new ConvexError({ code: "INVALID_CARDIO", message: "Add a duration or distance and check the cardio values." });
+  }
+}
+
+/** Returns an existing cardio revision for an exact retry and rejects reused submission ids. */
+async function cardioReplay(ctx: MutationCtx, userId: string, submissionId: string, op: "edit" | "delete" | "undo", cardioId: Id<"cardio">): Promise<Id<"cardio"> | null> {
+  checkSubmissionId(submissionId);
+  const prior = await ctx.db.query("cardio").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).eq("submissionId", submissionId)).unique();
+  if (prior === null) return null;
+  if (prior.op !== op || prior.supersedes !== cardioId) throw new Error("submissionId already used for a different cardio change");
+  return prior._id;
+}
+
 /** Reads current rows for a session and refuses a partial set list. */
 async function sessionSets(ctx: ReadCtx, sessionId: Id<"workout_sessions">, userId: string): Promise<Doc<"sets">[]> {
   const rows = await ctx.db.query("sets").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(MAX_SESSION_SETS + 1);
   if (rows.length > MAX_SESSION_SETS) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 200 sets" });
   if (rows.some((row) => row.userId !== userId)) throw new Error("Set ownership mismatch");
   return rows.sort((a, b) => a.setIndex - b.setIndex);
+}
+
+/** Reads up to the cardio cap of live rows; a full result means the session is at the limit. */
+async function liveCardio(ctx: ReadCtx, sessionId: Id<"workout_sessions">): Promise<Doc<"cardio">[]> {
+  return await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "live")).take(MAX_SESSION_CARDIO);
 }
 
 /** Reads recent live sets and their sessions, reporting when older history is omitted. */
@@ -93,7 +116,7 @@ async function exerciseHistory(ctx: ReadCtx, userId: string, exerciseId: Id<"exe
 
 /** Returns a set with a deterministic Epley estimate, or null outside its valid rep range. */
 function setView(set: Doc<"sets">) {
-  return { _id: set._id, revision: set.revision, setIndex: set.setIndex, weightKg: set.weightKg, reps: set.reps, ...(set.rpe === undefined ? {} : { rpe: set.rpe }), e1rmKg: epley(set.weightKg, set.reps) };
+  return { _id: set._id, revision: set.revision, setIndex: set.setIndex, weightKg: set.weightKg, reps: set.reps, ...(set.weightBasis === undefined ? {} : { weightBasis: set.weightBasis }), ...(set.rpe === undefined ? {} : { rpe: set.rpe }), e1rmKg: epley(set.weightKg, set.reps) };
 }
 
 /** Finds the latest completed session before the current workout for one exercise. */
@@ -109,7 +132,7 @@ function previousSets(sets: Doc<"sets">[], sessions: Map<Id<"workout_sessions">,
 
 /** Extracts the editable content without copying revision metadata. */
 function contentOf(set: Doc<"sets">): SetContent {
-  return { sessionId: set.sessionId, exerciseId: set.exerciseId, setIndex: set.setIndex, weightKg: set.weightKg, reps: set.reps, ...(set.rpe === undefined ? {} : { rpe: set.rpe }), ...(set.deletedAt === undefined ? {} : { deletedAt: set.deletedAt }) };
+  return { sessionId: set.sessionId, exerciseId: set.exerciseId, setIndex: set.setIndex, weightKg: set.weightKg, reps: set.reps, ...(set.weightBasis === undefined ? {} : { weightBasis: set.weightBasis }), ...(set.rpe === undefined ? {} : { rpe: set.rpe }), ...(set.deletedAt === undefined ? {} : { deletedAt: set.deletedAt }) };
 }
 
 /** Returns the original revision on an exact mutation retry. */
@@ -169,14 +192,15 @@ export const endSession = mutation({
 
 /** Adds a set once and preserves stable per-exercise ordering. */
 export const addSet = mutation({
-  args: { submissionId: v.string(), sessionId: v.id("workout_sessions"), exerciseId: v.id("exercises"), weightKg: v.number(), reps: v.number(), rpe: v.optional(v.number()) },
+  args: { submissionId: v.string(), sessionId: v.id("workout_sessions"), exerciseId: v.id("exercises"), weightKg: v.number(), reps: v.number(), weightBasis: v.optional(v.union(v.literal("total"), v.literal("each"))), rpe: v.optional(v.number()) },
   returns: v.id("sets"),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
     await assertLedgerWritable(ctx, userId);
     checkSubmissionId(args.submissionId);
     const session = await requireSession(ctx, userId, args.sessionId);
-    await requireExercise(ctx, args.exerciseId);
+    const exercise = await requireExercise(ctx, args.exerciseId);
+    if (exercise.category === "cardio") throw new ConvexError({ code: "INVALID_EXERCISE", message: "Choose a strength exercise." });
     const prior = await ctx.db.query("sets").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).eq("submissionId", args.submissionId)).unique();
     if (prior !== null) {
       if (prior.op !== "add" || prior.sessionId !== session._id || prior.exerciseId !== args.exerciseId) throw new Error("submissionId already used for a different change");
@@ -188,13 +212,89 @@ export const addSet = mutation({
     if (rows.length >= MAX_SESSION_SETS) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 200 sets" });
     const last = await ctx.db.query("sets").withIndex("by_sessionId_and_exerciseId_and_setIndex", (q) => q.eq("sessionId", session._id).eq("exerciseId", args.exerciseId)).order("desc").first();
     const setIndex = (last?.setIndex ?? 0) + 1;
-    return await ctx.db.insert("sets", { userId, sessionId: session._id, exerciseId: args.exerciseId, setIndex, reps: args.reps, weightKg: args.weightKg, ...(args.rpe === undefined ? {} : { rpe: args.rpe }), revision: 1, op: "add", status: "live", submissionId: args.submissionId });
+    return await ctx.db.insert("sets", { userId, sessionId: session._id, exerciseId: args.exerciseId, setIndex, reps: args.reps, weightKg: args.weightKg, ...(args.weightBasis === undefined ? {} : { weightBasis: args.weightBasis }), ...(args.rpe === undefined ? {} : { rpe: args.rpe }), revision: 1, op: "add", status: "live", submissionId: args.submissionId });
+  },
+});
+
+/** Adds one cardio record without changing strength totals or calorie targets. */
+export const addCardio = mutation({
+  args: { submissionId: v.string(), sessionId: v.id("workout_sessions"), exerciseId: v.id("exercises"), durationMin: v.optional(v.number()), distanceKm: v.optional(v.number()), reportedKcal: v.optional(v.number()), speedKmh: v.optional(v.number()), inclinePct: v.optional(v.number()) },
+  returns: v.id("cardio"),
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
+    checkSubmissionId(args.submissionId);
+    const session = await requireSession(ctx, userId, args.sessionId);
+    const exercise = await requireExercise(ctx, args.exerciseId);
+    if (exercise.category !== "cardio") throw new ConvexError({ code: "INVALID_EXERCISE", message: "Choose a cardio activity." });
+    checkCardio(args);
+    const prior = await ctx.db.query("cardio").withIndex("by_userId_and_submissionId", (q) => q.eq("userId", userId).eq("submissionId", args.submissionId)).unique();
+    if (prior !== null) {
+      if (prior.sessionId !== session._id || prior.exerciseId !== args.exerciseId) throw new Error("submissionId already used for a different change");
+      return prior._id;
+    }
+    if (session.endedAt !== undefined) throw new ConvexError({ code: "SESSION_FINISHED", message: "Session is finished" });
+    const rows = await liveCardio(ctx, session._id);
+    if (rows.length >= MAX_SESSION_CARDIO) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 100 cardio entries" });
+    return await ctx.db.insert("cardio", { userId, sessionId: session._id, exerciseId: args.exerciseId, position: rows.length, durationMin: args.durationMin, distanceKm: args.distanceKm, reportedKcal: args.reportedKcal, speedKmh: args.speedKmh, inclinePct: args.inclinePct, revision: 1, op: "add", status: "live", submissionId: args.submissionId });
+  },
+});
+
+/** Edits cardio values as a new revision. */
+export const editCardio = mutation({
+  args: { submissionId: v.string(), cardioId: v.id("cardio"), durationMin: v.optional(v.union(v.number(), v.null())), distanceKm: v.optional(v.union(v.number(), v.null())), reportedKcal: v.optional(v.union(v.number(), v.null())), speedKmh: v.optional(v.union(v.number(), v.null())), inclinePct: v.optional(v.union(v.number(), v.null())) },
+  returns: v.id("cardio"),
+  handler: async (ctx, args) => {
+    const userId = await requireUserId(ctx);
+    await assertLedgerWritable(ctx, userId);
+    const prior = await cardioReplay(ctx, userId, args.submissionId, "edit", args.cardioId);
+    if (prior !== null) return prior;
+    const head = await ctx.db.get("cardio", args.cardioId);
+    if (head === null || head.userId !== userId) throw new ConvexError({ code: "NOT_FOUND", message: "Cardio record not found" });
+    const session = await requireSession(ctx, userId, head.sessionId);
+    if (head.status !== "live") throw new ConvexError({ code: "STALE_REVISION", message: "Cardio record has a newer revision." });
+    const fields = ["durationMin", "distanceKm", "reportedKcal", "speedKmh", "inclinePct"] as const;
+    const content = Object.fromEntries(fields.map((field) => [field, args[field] === null ? undefined : args[field] ?? head[field]])) as Pick<Doc<"cardio">, typeof fields[number]>;
+    checkCardio(content);
+    await ctx.db.patch("cardio", head._id, { status: "superseded" });
+    return await ctx.db.insert("cardio", { ...content, userId, sessionId: session._id, exerciseId: head.exerciseId, position: head.position, revision: head.revision + 1, supersedes: head._id, op: "edit", status: "live", submissionId: args.submissionId });
+  },
+});
+
+/** Soft-deletes one cardio record as a revision. */
+export const deleteCardio = mutation({
+  args: { submissionId: v.string(), cardioId: v.id("cardio") }, returns: v.id("cardio"),
+  handler: async (ctx, { submissionId, cardioId }) => {
+    const userId = await requireUserId(ctx); await assertLedgerWritable(ctx, userId);
+    const prior = await cardioReplay(ctx, userId, submissionId, "delete", cardioId); if (prior !== null) return prior;
+    const head = await ctx.db.get("cardio", cardioId);
+    if (head === null || head.userId !== userId || head.status !== "live") throw new ConvexError({ code: "NOT_FOUND", message: "Cardio record not found" });
+    await requireSession(ctx, userId, head.sessionId);
+    await ctx.db.patch("cardio", head._id, { status: "superseded" });
+    return await ctx.db.insert("cardio", { userId, sessionId: head.sessionId, exerciseId: head.exerciseId, position: head.position, durationMin: head.durationMin, distanceKm: head.distanceKm, reportedKcal: head.reportedKcal, speedKmh: head.speedKmh, inclinePct: head.inclinePct, revision: head.revision + 1, supersedes: head._id, op: "delete", status: "deleted", deletedAt: Date.now(), submissionId });
+  },
+});
+
+/** Reverts a cardio change by restoring its previous revision. */
+export const undoCardioRevision = mutation({
+  args: { submissionId: v.string(), cardioId: v.id("cardio") }, returns: v.id("cardio"),
+  handler: async (ctx, { submissionId, cardioId }) => {
+    const userId = await requireUserId(ctx); await assertLedgerWritable(ctx, userId);
+    const prior = await cardioReplay(ctx, userId, submissionId, "undo", cardioId); if (prior !== null) return prior;
+    const head = await ctx.db.get("cardio", cardioId);
+    if (head === null || head.userId !== userId || head.status === "superseded") throw new ConvexError({ code: "NOT_FOUND", message: "Cardio record not found" });
+    const previous = head.supersedes === undefined ? null : await ctx.db.get("cardio", head.supersedes);
+    const gone = previous === null;
+    if (!gone && head.status !== "live" && (await liveCardio(ctx, head.sessionId)).length >= MAX_SESSION_CARDIO) throw new ConvexError({ code: "LIMIT_REACHED", message: "Session exceeds 100 cardio entries" });
+    await ctx.db.patch("cardio", head._id, { status: "superseded" });
+    const content = previous ?? head;
+    return await ctx.db.insert("cardio", { userId, sessionId: content.sessionId, exerciseId: content.exerciseId, position: content.position, ...(content.durationMin === undefined ? {} : { durationMin: content.durationMin }), ...(content.distanceKm === undefined ? {} : { distanceKm: content.distanceKm }), ...(content.reportedKcal === undefined ? {} : { reportedKcal: content.reportedKcal }), ...(content.speedKmh === undefined ? {} : { speedKmh: content.speedKmh }), ...(content.inclinePct === undefined ? {} : { inclinePct: content.inclinePct }), revision: head.revision + 1, supersedes: head._id, op: "undo", status: gone ? "deleted" : "live", ...(gone ? { deletedAt: Date.now() } : {}), submissionId });
   },
 });
 
 /** Edits a current set by appending a revision; null clears its optional RPE. */
 export const editSet = mutation({
-  args: { submissionId: v.string(), setId: v.id("sets"), weightKg: v.optional(v.number()), reps: v.optional(v.number()), rpe: v.optional(v.union(v.number(), v.null())) },
+  args: { submissionId: v.string(), setId: v.id("sets"), weightKg: v.optional(v.number()), reps: v.optional(v.number()), weightBasis: v.optional(v.union(v.literal("total"), v.literal("each"), v.null())), rpe: v.optional(v.union(v.number(), v.null())) },
   returns: v.id("sets"),
   handler: async (ctx, args) => {
     const userId = await requireUserId(ctx);
@@ -203,10 +303,12 @@ export const editSet = mutation({
     const prior = await replay(ctx, userId, args.submissionId, "edit", head._id);
     if (prior !== null) return prior;
     if (head.status === "deleted") throw new ConvexError({ code: "ALREADY_DELETED", message: "Set is deleted. Undo the delete first." });
-    if (args.weightKg === undefined && args.reps === undefined && args.rpe === undefined) throw new Error("editSet needs at least one change");
+    if (args.weightKg === undefined && args.reps === undefined && args.rpe === undefined && args.weightBasis === undefined) throw new Error("editSet needs at least one change");
     const content = contentOf(head);
     content.weightKg = args.weightKg ?? content.weightKg;
     content.reps = args.reps ?? content.reps;
+    if (args.weightBasis === null) delete content.weightBasis;
+    else if (args.weightBasis !== undefined) content.weightBasis = args.weightBasis;
     if (args.rpe === null) delete content.rpe;
     else if (args.rpe !== undefined) content.rpe = args.rpe;
     checkSet(content.weightKg, content.reps, content.rpe);
@@ -298,6 +400,8 @@ export const sessionDetail = query({
     const userId = await requireUserId(ctx);
     const session = await requireSession(ctx, userId, args.sessionId);
     const sets = await sessionSets(ctx, session._id, userId);
+    const cardioRows = await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", session._id).eq("status", "live")).take(100);
+    const cardio = await Promise.all(cardioRows.map(async (row) => ({ ...row, exercise: await requireExercise(ctx, row.exerciseId) })));
     const cache: SessionCache = new Map();
     let budget = MAX_HISTORY_SETS;
     let historyLimited = false;
@@ -315,7 +419,7 @@ export const sessionDetail = query({
       const previous = Math.max(0, ...olderSets.map((set) => epley(set.weightKg, set.reps) ?? 0));
       if (!past.historyLimited && best > previous) newBests.push({ exerciseId, name: exercise.name, e1rmKg: best, previousBestKg: previous === 0 ? null : previous });
     }
-    return { session, exercises, historyLimited, historySetLimit: MAX_HISTORY_SETS, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests } };
+    return { session, exercises, cardio, historyLimited, historySetLimit: MAX_HISTORY_SETS, summary: { setCount: sets.length, volumeKg: sets.reduce((total, set) => total + set.weightKg * set.reps, 0), newBests, cardioCount: cardio.length, reportedKcal: cardio.some((row) => row.reportedKcal !== undefined) ? cardio.reduce((total, row) => total + (row.reportedKcal ?? 0), 0) : null } };
   },
 });
 
@@ -334,6 +438,13 @@ export const recentExercises = query({
       if (!session || session.userId !== userId || session.deletedAt !== undefined) continue;
       latestWorkout.set(set.exerciseId, Math.max(latestWorkout.get(set.exerciseId) ?? session.startedAt, session.startedAt));
     }
+    const cardio = await ctx.db.query("cardio").withIndex("by_userId_and_status", (q) => q.eq("userId", userId).eq("status", "live")).order("desc").take(RECENT_SET_SCAN);
+    for (const row of cardio) {
+      if (!cache.has(row.sessionId)) cache.set(row.sessionId, await ctx.db.get("workout_sessions", row.sessionId));
+      const session = cache.get(row.sessionId);
+      if (!session || session.userId !== userId || session.deletedAt !== undefined) continue;
+      latestWorkout.set(row.exerciseId, Math.max(latestWorkout.get(row.exerciseId) ?? session.startedAt, session.startedAt));
+    }
     // Map keeps first-seen order and sort is stable, so ties keep the newest-set scan order.
     return [...latestWorkout].sort((a, b) => b[1] - a[1]).slice(0, RECENT_EXERCISE_LIMIT).map(([exerciseId]) => exerciseId);
   },
@@ -351,12 +462,13 @@ export const recentWorkouts = query({
       if (workouts.length >= args.limit) break;
       if (session.endedAt === undefined) continue;
       const sets = await sessionSets(ctx, session._id, userId);
-      if (sets.length === 0) continue;
+      const cardio = await ctx.db.query("cardio").withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", session._id).eq("status", "live")).take(100);
+      if (sets.length === 0 && cardio.length === 0) continue;
       const counts = new Map<Id<"exercises">, number>();
       for (const set of sets) counts.set(set.exerciseId, (counts.get(set.exerciseId) ?? 0) + 1);
       const exercises = [];
       for (const [exerciseId, count] of counts) exercises.push({ exercise: await requireExercise(ctx, exerciseId), sets: count });
-      workouts.push({ sessionId: session._id, name: session.name, localDate: session.localDate, exercises });
+      workouts.push({ sessionId: session._id, name: session.name, localDate: session.localDate, exercises, cardioCount: cardio.length });
     }
     return workouts;
   },

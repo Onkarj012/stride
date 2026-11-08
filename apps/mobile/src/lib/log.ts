@@ -121,6 +121,14 @@ const CODE_MESSAGES: Readonly<Record<string, string | null>> = {
   KEY_REJECTED: 'OpenRouter rejected that key.',
   KEY_CHECK_FAILED: "Couldn't reach OpenRouter to check the key. Try again.",
   KEY_SAVE_CANCELLED: 'Your data was cleared. Add the key again.',
+  BAD_WORKOUT_OUTPUT: null,
+  FEATURE_OFF: null,
+  INVALID_DRAFT: null,
+  WORKOUT_NEEDS_REVIEW: null,
+  INVALID_TARGET: null,
+  EXERCISE_KIND_CONFLICT: null,
+  INVALID_CARDIO: null,
+  INVALID_EXERCISE: null,
 }
 
 // Fallback text patterns for errors with no known code, such as plain Errors in dev. The first match wins.
