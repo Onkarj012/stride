@@ -1,7 +1,8 @@
+import type { MealSlot } from "@stride/core";
 import { ConvexError, v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { action, internalQuery, type ActionCtx } from "../_generated/server";
+import { action, internalAction, internalQuery, type ActionCtx } from "../_generated/server";
 import { AI_INPUT_LIMITS, assertMaxChars } from "../ai_guard";
 import { mealSlotValidator } from "../ledger_validators";
 import { requireOwnUpload } from "../uploads";
@@ -98,12 +99,10 @@ export const logInput = action({
     const identity = await ctx.auth.getUserIdentity();
     if (identity === null) throw new ConvexError({ code: "UNAUTHENTICATED", message: "Unauthenticated" });
     const userId = identity.subject;
-    if (submissionId.length === 0 || submissionId.length > 128) throw new Error("submissionId must be 1-128 characters");
     if (input.kind === "photo") await requireOwnUpload(ctx, userId, input.storageId);
-    const prior: LogResult | null = await ctx.runQuery(internal.pipeline.resolve.findLog, { userId, submissionId });
+    const prior = await priorLog(ctx, userId, submissionId);
     if (prior !== null) return prior;
 
-    const today = await ctx.runQuery(internal.pipeline.resolve.logContext, { userId });
     let text: string;
     let photoUrl: string | undefined;
     if (input.kind === "text") text = input.text;
@@ -112,20 +111,56 @@ export const logInput = action({
       text = input.text ?? "";
       photoUrl = await imageUrl(ctx, input.storageId);
     }
-    text = text.trim();
-    assertMaxChars(text, AI_INPUT_LIMITS.textChars, "text");
-    if (text === "" && photoUrl === undefined) return { kind: "empty", submissionId, lines: [] };
-
-    const items = await extractItems(ctx, userId, {
-      text,
-      today: today.localDate,
-      slot: defaultSlot ?? today.slot,
-      ...(photoUrl === undefined ? {} : { imageUrl: photoUrl }),
-    });
-    return await runPipeline(ctx, userId, {
-      submissionId,
-      inputKind: input.kind,
-      items: items.map((item) => ({ ...item, slot: item.slot ?? defaultSlot ?? null })),
-    });
+    return await extractAndLog(ctx, userId, { submissionId, inputKind: input.kind, text, photoUrl, defaultSlot });
   },
 });
+
+/**
+ * Text logging for a user the caller has already identified, for a future authenticated agent route (Grok Bot,
+ * Codex Dots). Internal only: the userId must come from a verified credential, never from request JSON.
+ */
+export const logTextForUser = internalAction({
+  args: { userId: v.string(), submissionId: v.string(), text: v.string(), defaultSlot: v.optional(mealSlotValidator) },
+  returns: logResultValidator,
+  handler: async (ctx, { userId, submissionId, text, defaultSlot }): Promise<LogResult> => {
+    const prior = await priorLog(ctx, userId, submissionId);
+    if (prior !== null) return prior;
+    return await extractAndLog(ctx, userId, { submissionId, inputKind: "text", text, defaultSlot });
+  },
+});
+
+/** Checks the submissionId and returns the earlier result for it, so a retry never pays for the model again. */
+async function priorLog(ctx: ActionCtx, userId: string, submissionId: string): Promise<LogResult | null> {
+  if (submissionId.length === 0 || submissionId.length > 128) throw new Error("submissionId must be 1-128 characters");
+  return await ctx.runQuery(internal.pipeline.resolve.findLog, { userId, submissionId });
+}
+
+/** Input text (and an optional photo) after transcription, ready for extraction. */
+interface LogText {
+  submissionId: string;
+  inputKind: InputKind;
+  text: string;
+  photoUrl?: string;
+  defaultSlot?: MealSlot;
+}
+
+/** Extracts items from the text and runs the shared pipeline. One path for the input bar and agent logging. */
+async function extractAndLog(ctx: ActionCtx, userId: string, input: LogText): Promise<LogResult> {
+  const { submissionId, photoUrl, defaultSlot } = input;
+  const text = input.text.trim();
+  assertMaxChars(text, AI_INPUT_LIMITS.textChars, "text");
+  if (text === "" && photoUrl === undefined) return { kind: "empty", submissionId, lines: [] };
+
+  const today = await ctx.runQuery(internal.pipeline.resolve.logContext, { userId });
+  const items = await extractItems(ctx, userId, {
+    text,
+    today: today.localDate,
+    slot: defaultSlot ?? today.slot,
+    ...(photoUrl === undefined ? {} : { imageUrl: photoUrl }),
+  });
+  return await runPipeline(ctx, userId, {
+    submissionId,
+    inputKind: input.inputKind,
+    items: items.map((item) => ({ ...item, slot: item.slot ?? defaultSlot ?? null })),
+  });
+}

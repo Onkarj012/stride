@@ -1836,3 +1836,65 @@ describe("saved foods are never crowded out by AI estimates", () => {
     expect((await entryRows(t)).at(-1)).toMatchObject({ foodId: saved, source: "db", grams: 100 });
   });
 });
+
+describe("agent logging: logTextForUser runs the input bar's text path for a given user", () => {
+  test("a confident log commits under the given user, the same as the input bar", async () => {
+    const { t, foods } = await setup();
+    llm = (body) => (kind(body) === "extract" ? extraction([{ food: "roti", quantity: 2 }]) : { content: "" });
+    const result = await t.action(internal.pipeline.log.logTextForUser, { userId: "user_a", submissionId: "bot-1", text: " 2 rotis " });
+
+    expect(result.kind).toBe("committed");
+    const rows = await entryRows(t);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ userId: "user_a", foodId: foods.chapati, grams: 80, source: "db", status: "live" });
+    await expectComputedFromFoods(t);
+  });
+
+  test("a retry with the same submissionId returns the first result without another model call", async () => {
+    const { t } = await setup();
+    llm = (body) => (kind(body) === "extract" ? extraction([{ food: "roti", quantity: 2 }]) : { content: "" });
+    const args = { userId: "user_a", submissionId: "bot-retry", text: "2 rotis" };
+    const a = await t.action(internal.pipeline.log.logTextForUser, args);
+    const b = await t.action(internal.pipeline.log.logTextForUser, args);
+
+    expect(b).toEqual(a);
+    expect(await entryRows(t)).toHaveLength(1);
+    expect(openRouterBodies).toHaveLength(1);
+  });
+
+  test("an unsure log becomes a draft owned by the given user, writing no entries", async () => {
+    const { t, user } = await setup();
+    llm = () => extraction([{ food: "paneer tikka", quantity: 1, unit: "plate" }]);
+    const result = await t.action(internal.pipeline.log.logTextForUser, {
+      userId: "user_a",
+      submissionId: "bot-draft",
+      text: "a plate of paneer tikka",
+      defaultSlot: "dinner",
+    });
+
+    if (result.kind !== "draft") throw new Error("expected a draft");
+    expect(await entryRows(t)).toHaveLength(0);
+    expect(await user.query(api.pipeline.drafts.getDraft, { draftId: result.draftId })).not.toBeNull();
+    await expect(
+      t.withIdentity({ subject: "user_b" }).query(api.pipeline.drafts.getDraft, { draftId: result.draftId }),
+    ).resolves.toBeNull();
+  });
+
+  test("text over the input limit is rejected before any model call", async () => {
+    const { t } = await setup();
+    const text = "r".repeat(AI_INPUT_LIMITS.textChars + 1);
+    await expect(t.action(internal.pipeline.log.logTextForUser, { userId: "user_a", submissionId: "bot-long", text })).rejects.toThrow(/INPUT_TOO_LARGE/);
+    expect(openRouterBodies).toHaveLength(0);
+  });
+
+  test("blank text returns empty and a bad submissionId is refused", async () => {
+    const { t } = await setup();
+    await expect(t.action(internal.pipeline.log.logTextForUser, { userId: "user_a", submissionId: "bot-empty", text: "   " })).resolves.toEqual({
+      kind: "empty",
+      submissionId: "bot-empty",
+      lines: [],
+    });
+    await expect(t.action(internal.pipeline.log.logTextForUser, { userId: "user_a", submissionId: "", text: "2 rotis" })).rejects.toThrow(/submissionId/);
+    expect(openRouterBodies).toHaveLength(0);
+  });
+});
