@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, FlatList, Image, ScrollView, Text, TextInput, View, type ListRenderItemInfo } from 'react-native'
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated'
 import { router, useLocalSearchParams } from 'expo-router'
@@ -26,6 +26,9 @@ type ChatSummary = NonNullable<FunctionReturnType<typeof api.chats.getChat>>
 
 // One send: the text and photo, with the submission id that keeps a retry from running twice.
 type Attempt = { submissionId: string; text: string; photoUri?: string }
+
+// Which photo picker the + menu asked for.
+type PhotoSource = 'camera' | 'library'
 
 // What the starter prompts look at: today's intake against target, and the weight trend.
 type DayContext = {
@@ -142,6 +145,14 @@ function Thread({ chat }: { chat: ChatSummary }) {
   const [attempts, setAttempts] = useState<Map<string, Attempt>>(new Map())
   const [problem, setProblem] = useState<{ text: string; retry?: Attempt } | null>(null)
   const [regenerating, setRegenerating] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  // The composer owns the pickers. This ref is how the sheet, which renders outside the composer, calls them.
+  const pickPhoto = useRef<(source: PhotoSource) => void>(() => {})
+  const bindPick = useCallback((pick: (source: PhotoSource) => void) => {
+    pickPhoto.current = pick
+  }, [])
+  const openPhotoMenu = useCallback(() => setMenuOpen(true), [])
+  const closePhotoMenu = useCallback(() => setMenuOpen(false), [])
 
   const messages = useMemo(() => page.results.filter((m) => m.role !== 'tool'), [page.results])
   const latestIndex = messages.findIndex((m) => m.role === 'assistant')
@@ -233,63 +244,106 @@ function Thread({ chat }: { chat: ChatSummary }) {
     [latestReplyId, askedWithPhoto, regenerating, attempts, regenerateReply, retry],
   )
 
+  // Closes the menu, then runs the pick the composer registered.
+  function choosePhoto(source: PhotoSource) {
+    setMenuOpen(false)
+    pickPhoto.current(source)
+  }
+
+  // The photo sheet is a sibling of the lifted column. That column's padding already clears the keyboard, and Sheet translates by the keyboard height too, so a sheet inside the column would sit a keyboard too high.
   return (
-    <Animated.View style={[s.flex, lift]}>
-      <Header title={chat.title} />
+    <View style={s.flex}>
+      <Animated.View style={[s.flex, lift]}>
+        <Header title={chat.title} />
 
-      {page.status === 'LoadingFirstPage' ? (
-        <View style={s.center}>
-          <Polo size={56} />
-          <Text style={s.note}>Opening the chat…</Text>
-        </View>
-      ) : messages.length === 0 ? (
-        <NewChat disabled={sending} onPick={(prompt) => void send({ submissionId: newSubmissionId(), text: prompt })} />
-      ) : (
-        <FlatList
-          inverted
-          data={messages}
-          keyExtractor={keyForMessage}
-          renderItem={renderMessage}
-          contentContainerStyle={s.list}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          showsVerticalScrollIndicator={false}
-          onEndReachedThreshold={0.3}
-          onEndReached={() => {
-            if (page.status === 'CanLoadMore') page.loadMore(20)
-          }}
-          ListFooterComponent={page.status === 'LoadingMore' ? <ActivityIndicator color={t.c.ink3} style={s.more} /> : null}
+        {page.status === 'LoadingFirstPage' ? (
+          <View style={s.center}>
+            <Polo size={56} />
+            <Text style={s.note}>Opening the chat…</Text>
+          </View>
+        ) : messages.length === 0 ? (
+          <NewChat disabled={sending} onPick={(prompt) => void send({ submissionId: newSubmissionId(), text: prompt })} />
+        ) : (
+          <FlatList
+            inverted
+            data={messages}
+            keyExtractor={keyForMessage}
+            renderItem={renderMessage}
+            contentContainerStyle={s.list}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
+            onEndReachedThreshold={0.3}
+            onEndReached={() => {
+              if (page.status === 'CanLoadMore') page.loadMore(20)
+            }}
+            ListFooterComponent={page.status === 'LoadingMore' ? <ActivityIndicator color={t.c.ink3} style={s.more} /> : null}
+          />
+        )}
+
+        {problem ? (
+          <Animated.View entering={FadeIn} style={s.problemRow}>
+            <Text style={s.problem}>{problem.text}</Text>
+            {failedAttempt ? <Button label="Try again" size="sm" variant="ghost" onPress={() => void send(failedAttempt)} /> : null}
+          </Animated.View>
+        ) : null}
+
+        <Composer
+          streaming={streaming}
+          sending={sending}
+          menuOpen={menuOpen}
+          onOpenMenu={openPhotoMenu}
+          bindPick={bindPick}
+          onSubmit={submitTyped}
+          onStop={stop}
+          onProblem={reportProblem}
         />
-      )}
-
-      {problem ? (
-        <Animated.View entering={FadeIn} style={s.problemRow}>
-          <Text style={s.problem}>{problem.text}</Text>
-          {failedAttempt ? <Button label="Try again" size="sm" variant="ghost" onPress={() => void send(failedAttempt)} /> : null}
-        </Animated.View>
-      ) : null}
-
-      <Composer streaming={streaming} sending={sending} onSubmit={submitTyped} onStop={stop} onProblem={reportProblem} />
-    </Animated.View>
+      </Animated.View>
+      <Sheet open={menuOpen} onClose={closePhotoMenu} modal>
+        <View style={s.menu}>
+          <Button label="Take photo" icon="cam" variant="ghost" size="block" onPress={() => choosePhoto('camera')} />
+          <Button label="Choose photo" icon="image" variant="ghost" size="block" onPress={() => choosePhoto('library')} />
+        </View>
+      </Sheet>
+    </View>
   )
 }
 
 type ComposerProps = {
   streaming: boolean
   sending: boolean
+  menuOpen: boolean
+  onOpenMenu: () => void
+  bindPick: (pick: (source: PhotoSource) => void) => void
   onSubmit: (text: string, photoUri?: string) => void
   onStop: () => void
   onProblem: (text: string) => void
 }
 
-// The message box: text, an optional photo picked from the + menu, and send or stop. It keeps its own text and menu state, so typing doesn't re-render the thread.
-const Composer = memo(function Composer({ streaming, sending, onSubmit, onStop, onProblem }: ComposerProps) {
+// The message box: text, an optional photo, and send or stop. It keeps its own text, so typing doesn't re-render the thread.
+const Composer = memo(function Composer({ streaming, sending, menuOpen, onOpenMenu, bindPick, onSubmit, onStop, onProblem }: ComposerProps) {
   const s = useStyles()
   const t = useTheme()
   const [text, setText] = useState('')
   const [photoUri, setPhotoUri] = useState<string | null>(null)
-  const [menuOpen, setMenuOpen] = useState(false)
   const canSend = (text.trim() !== '' || photoUri !== null) && !sending
+  const picking = useRef(false)
+  const pickers = useRef<{ takePhoto: () => Promise<void>; attach: () => Promise<void> }>({
+    takePhoto: async () => {},
+    attach: async () => {},
+  })
+
+  // Registers the pickers with the sheet. A second tap while a picker is open does nothing.
+  useEffect(() => {
+    bindPick((source) => {
+      if (picking.current) return
+      picking.current = true
+      const run = source === 'camera' ? pickers.current.takePhoto : pickers.current.attach
+      void run().finally(() => {
+        picking.current = false
+      })
+    })
+  }, [bindPick])
 
   // Sends what is in the box and clears it.
   function submitTyped() {
@@ -327,62 +381,58 @@ const Composer = memo(function Composer({ streaming, sending, onSubmit, onStop, 
     }
   }
 
-  // Closes the + menu, then runs one of its photo picks.
-  function pick(choose: () => Promise<void>) {
-    setMenuOpen(false)
-    void choose()
-  }
+  // The sheet calls these later, so they stay current without re-registering on each keystroke.
+  pickers.current = { takePhoto, attach }
 
   return (
-    <>
-      <View style={s.composer}>
-        {photoUri ? (
-          <Animated.View entering={FadeIn} style={s.pendingPhoto}>
-            <Image source={{ uri: photoUri }} style={s.pendingThumb} accessibilityLabel="Photo to send" />
-            <View style={s.removePhoto}>
-              <RoundButton icon="x" label="Remove photo" tone="card" size={26} onPress={() => setPhotoUri(null)} />
-            </View>
-          </Animated.View>
-        ) : null}
-        <View style={s.inputRow}>
-          <RoundButton icon="plus" label="Add a photo" tone="card" size={46} onPress={() => setMenuOpen(true)} />
-          <View style={s.field}>
-            <TextInput
-              style={s.input}
-              value={text}
-              onChangeText={setText}
-              placeholder="Message Polo"
-              placeholderTextColor={t.c.ink3}
-              multiline
-              accessibilityLabel="Message"
-            />
-            {streaming ? (
-              <Tap style={[s.send, s.stopButton]} scale={motion.press.iconScale} onPress={onStop} accessibilityRole="button" accessibilityLabel="Stop the reply">
-                <View style={s.stopGlyph} />
-              </Tap>
-            ) : (
-              <Tap
-                style={[s.send, canSend ? s.sendOn : s.sendOff]}
-                scale={motion.press.iconScale}
-                disabled={!canSend}
-                onPress={submitTyped}
-                accessibilityRole="button"
-                accessibilityLabel="Send"
-                accessibilityState={{ disabled: !canSend, busy: sending }}
-              >
-                {sending ? <ActivityIndicator size="small" color={t.c.ink3} /> : <Icon name="up" size={18} color={canSend ? t.c.onPolo : t.c.ink3} />}
-              </Tap>
-            )}
+    <View style={s.composer}>
+      {photoUri ? (
+        <Animated.View entering={FadeIn} style={s.pendingPhoto}>
+          <Image source={{ uri: photoUri }} style={s.pendingThumb} accessibilityLabel="Photo to send" />
+          <View style={s.removePhoto}>
+            <RoundButton icon="x" label="Remove photo" tone="card" size={26} hitSlop={11} onPress={() => setPhotoUri(null)} />
           </View>
+        </Animated.View>
+      ) : null}
+      <View style={s.inputRow}>
+        <RoundButton
+          icon="plus"
+          label="Add a photo"
+          tone="card"
+          size={46}
+          onPress={onOpenMenu}
+          accessibilityState={{ expanded: menuOpen }}
+        />
+        <View style={s.field}>
+          <TextInput
+            style={s.input}
+            value={text}
+            onChangeText={setText}
+            placeholder="Message Polo"
+            placeholderTextColor={t.c.ink3}
+            multiline
+            accessibilityLabel="Message"
+          />
+          {streaming ? (
+            <Tap style={[s.send, s.stopButton]} scale={motion.press.iconScale} onPress={onStop} accessibilityRole="button" accessibilityLabel="Stop the reply">
+              <View style={s.stopGlyph} />
+            </Tap>
+          ) : (
+            <Tap
+              style={[s.send, canSend ? s.sendOn : s.sendOff]}
+              scale={motion.press.iconScale}
+              disabled={!canSend}
+              onPress={submitTyped}
+              accessibilityRole="button"
+              accessibilityLabel="Send"
+              accessibilityState={{ disabled: !canSend, busy: sending }}
+            >
+              {sending ? <ActivityIndicator size="small" color={t.c.ink3} /> : <Icon name="up" size={18} color={canSend ? t.c.onPolo : t.c.ink3} />}
+            </Tap>
+          )}
         </View>
       </View>
-      <Sheet open={menuOpen} onClose={() => setMenuOpen(false)}>
-        <View style={s.menu}>
-          <Button label="Take photo" icon="cam" variant="ghost" size="block" onPress={() => pick(takePhoto)} />
-          <Button label="Choose photo" icon="image" variant="ghost" size="block" onPress={() => pick(attach)} />
-        </View>
-      </Sheet>
-    </>
+    </View>
   )
 })
 
