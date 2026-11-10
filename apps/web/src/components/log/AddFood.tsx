@@ -28,25 +28,35 @@ export function AddFood({ localDate }: { localDate: string }) {
   const [problem, setProblem] = useState<string | null>(null);
   const pending = useRef<Submission>(null);
   const opener = useRef<HTMLButtonElement>(null);
+  const closedByUser = useRef(false);
 
+  const grams = Number(gramsText);
+  const valid = food !== null && Number.isFinite(grams) && grams > 0;
+
+  // The panel unmounts on close, so focus goes back to the button that opened it. Never on first render.
   useEffect(() => {
-    if (!open) opener.current?.focus();
+    if (open || !closedByUser.current) return;
+    closedByUser.current = false;
+    opener.current?.focus();
   }, [open]);
+
+  // Closes the panel and hands focus back to the opener.
+  function close() {
+    closedByUser.current = true;
+    setOpen(false);
+  }
 
   // Closes the panel on Escape unless an input method is composing text.
   function handlePanelKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
-    setOpen(false);
+    close();
   }
 
-  // Prevents invalid form submissions and adds a valid food.
+  // Enter in the grams field lands here. Adds only a valid food.
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (valid && !busy) void add();
   }
-
-  const grams = Number(gramsText);
-  const valid = food !== null && Number.isFinite(grams) && grams > 0;
 
   // Writes the entry. A retry of the same food, grams and meal reuses its submission id.
   async function add() {
@@ -60,7 +70,7 @@ export function AddFood({ localDate }: { localDate: string }) {
         items: [{ foodId: food._id, grams, source: "db", slot, localDate }],
       });
       pending.current = null;
-      setOpen(false);
+      close();
       setFood(null);
       setGramsText("100");
       showLogged({ title: "Logged", sub: `${food.name} · ${grams} g · ${SLOT_NAMES[slot]}`, entryIds });
@@ -100,7 +110,7 @@ export function AddFood({ localDate }: { localDate: string }) {
         <button
           type="button"
           aria-label="Close"
-          onClick={() => setOpen(false)}
+          onClick={close}
           className="grid size-9 place-items-center rounded-pill text-ink3 transition-colors hover:bg-card2 hover:text-ink"
         >
           <X className="size-[18px]" strokeWidth={1.9} />

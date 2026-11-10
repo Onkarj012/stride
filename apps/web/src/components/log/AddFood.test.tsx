@@ -14,15 +14,23 @@ describe("AddFood keyboard controls", () => {
     render(<AddFood localDate="2026-11-11" />);
     fireEvent.click(screen.getByRole("button", { name: /Add food/ }));
     fireEvent.click(await screen.findByRole("button", { name: /Rice/ }));
-    fireEvent.keyDown(screen.getByRole("searchbox", { name: "Search foods" }), { key: "Enter" });
-    expect(mocks.addEntries).not.toHaveBeenCalled();
+    const form = screen.getByLabelText("Grams").closest("form");
+    // Browsers submit a form when Enter is pressed in one of its text fields, so this is what Enter does.
+    expect(form).not.toBeNull();
+    expect(form).toContainElement(screen.getByRole("button", { name: "Add" }));
+    expect(screen.getByRole("button", { name: "Add" })).toHaveAttribute("type", "submit");
+    expect(form).not.toContainElement(screen.getByRole("searchbox", { name: "Search foods" }));
     fireEvent.change(screen.getByLabelText("Grams"), { target: { value: "0" } });
-    fireEvent.submit(screen.getByLabelText("Grams").closest("form")!);
+    fireEvent.submit(form!);
     expect(mocks.addEntries).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText("Grams"), { target: { value: "100" } });
-    fireEvent.keyDown(screen.getByLabelText("Grams"), { key: "Enter" });
-    fireEvent.submit(screen.getByLabelText("Grams").closest("form")!);
-    await waitFor(() => expect(mocks.addEntries).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ grams: 100 })] })));
+    fireEvent.change(screen.getByLabelText("Grams"), { target: { value: "150" } });
+    fireEvent.submit(form!);
+    await waitFor(() => expect(mocks.addEntries).toHaveBeenCalledWith(expect.objectContaining({ items: [expect.objectContaining({ foodId: "food", grams: 150 })] })));
+  });
+
+  it("leaves focus alone on first render", () => {
+    render(<AddFood localDate="2026-11-11" />);
+    expect(screen.getByRole("button", { name: /Add food/ })).not.toHaveFocus();
   });
 
   it("closes on Escape and restores focus to Add food", () => {
