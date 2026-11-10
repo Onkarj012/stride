@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useMutation } from "convex/react";
 import { Plus, X } from "lucide-react";
 import { api } from "@convex/_generated/api";
@@ -27,9 +27,36 @@ export function AddFood({ localDate }: { localDate: string }) {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const pending = useRef<Submission>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  const closedByUser = useRef(false);
 
   const grams = Number(gramsText);
   const valid = food !== null && Number.isFinite(grams) && grams > 0;
+
+  // The panel unmounts on close, so focus goes back to the button that opened it. Never on first render.
+  useEffect(() => {
+    if (open || !closedByUser.current) return;
+    closedByUser.current = false;
+    opener.current?.focus();
+  }, [open]);
+
+  // Closes the panel and hands focus back to the opener.
+  function close() {
+    closedByUser.current = true;
+    setOpen(false);
+  }
+
+  // Closes the panel on Escape unless an input method is composing text.
+  function handlePanelKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+    close();
+  }
+
+  // Enter in the grams field lands here. Adds only a valid food.
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (valid && !busy) void add();
+  }
 
   // Writes the entry. A retry of the same food, grams and meal reuses its submission id.
   async function add() {
@@ -43,7 +70,7 @@ export function AddFood({ localDate }: { localDate: string }) {
         items: [{ foodId: food._id, grams, source: "db", slot, localDate }],
       });
       pending.current = null;
-      setOpen(false);
+      close();
       setFood(null);
       setGramsText("100");
       showLogged({ title: "Logged", sub: `${food.name} · ${grams} g · ${SLOT_NAMES[slot]}`, entryIds });
@@ -57,6 +84,7 @@ export function AddFood({ localDate }: { localDate: string }) {
   if (!open) {
     return (
       <button
+        ref={opener}
         type="button"
         onClick={() => {
           setSlot(currentSlot());
@@ -76,13 +104,13 @@ export function AddFood({ localDate }: { localDate: string }) {
   }
 
   return (
-    <section className="flex flex-col gap-5 rounded-card bg-card p-6 shadow-card">
+    <section onKeyDown={handlePanelKeyDown} className="flex flex-col gap-5 rounded-card bg-card p-6 shadow-card">
       <div className="flex items-center justify-between gap-4">
         <h2 className="type-card-title">Add food</h2>
         <button
           type="button"
           aria-label="Close"
-          onClick={() => setOpen(false)}
+          onClick={close}
           className="grid size-9 place-items-center rounded-pill text-ink3 transition-colors hover:bg-card2 hover:text-ink"
         >
           <X className="size-[18px]" strokeWidth={1.9} />
@@ -96,7 +124,7 @@ export function AddFood({ localDate }: { localDate: string }) {
         onPick={(foodId, foodName) => setFood({ _id: foodId, name: foodName })}
       />
 
-      <div className="flex flex-wrap items-end gap-3 border-t border-line pt-5">
+      <form onSubmit={handleSubmit} className="flex flex-wrap items-end gap-3 border-t border-line pt-5">
         <label className="flex flex-col gap-1.5 type-label text-ink2">
           Grams
           <input
@@ -125,10 +153,10 @@ export function AddFood({ localDate }: { localDate: string }) {
             ))}
           </Select>
         </label>
-        <Button className="ml-auto" disabled={!valid || busy} onClick={() => void add()}>
+        <Button type="submit" className="ml-auto" disabled={!valid || busy}>
           {busy ? "Adding…" : "Add"}
         </Button>
-      </div>
+      </form>
 
       {food && !valid ? <p className="-mt-2 type-caption text-polo-ink">Enter an amount above 0 g.</p> : null}
       {problem ? (

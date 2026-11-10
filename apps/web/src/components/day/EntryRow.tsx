@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
@@ -10,12 +10,14 @@ import { cn } from "@/lib/utils";
 // One logged food. Click it to open an inline editor for grams, meal slot and delete.
 export function EntryRow({ entry }: { entry: EntryView }) {
   const [editing, setEditing] = useState(false);
+  const rowButton = useRef<HTMLButtonElement>(null);
   const amount = Math.round(entry.grams * 10) / 10;
   const { protein, carbs, fat, kcal } = entry.nutrients;
 
   return (
     <li className={cn("rounded-sm transition-colors", editing ? "bg-card2" : "hover:bg-card2/60")}>
       <button
+        ref={rowButton}
         type="button"
         aria-expanded={editing}
         onClick={() => setEditing((open) => !open)}
@@ -45,7 +47,7 @@ export function EntryRow({ entry }: { entry: EntryView }) {
             transition={smoothSpring}
             className="overflow-hidden"
           >
-            <EntryEditor entry={entry} onDone={() => setEditing(false)} />
+            <EntryEditor entry={entry} onDone={() => setEditing(false)} onCancel={() => { setEditing(false); rowButton.current?.focus(); }} />
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -64,7 +66,7 @@ function MacroDot({ className, value, label }: { className: string; value: numbe
 }
 
 // Edits one entry's grams and slot, or deletes it. Each save writes a revision with an undo toast.
-function EntryEditor({ entry, onDone }: { entry: EntryView; onDone: () => void }) {
+function EntryEditor({ entry, onDone, onCancel }: { entry: EntryView; onDone: () => void; onCancel: () => void }) {
   const toast = useToast();
   const editEntry = useMutation(api.entries.editEntry);
   const deleteEntry = useMutation(api.entries.deleteEntry);
@@ -129,6 +131,12 @@ function EntryEditor({ entry, onDone }: { entry: EntryView; onDone: () => void }
 
   return (
     <form
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
       className="flex flex-col gap-3 px-3 pt-1 pb-3"
       onSubmit={(e) => {
         e.preventDefault();
@@ -169,7 +177,7 @@ function EntryEditor({ entry, onDone }: { entry: EntryView; onDone: () => void }
           <Button variant="danger" size="sm" disabled={busy} onClick={() => void remove()}>
             Delete
           </Button>
-          <Button variant="quiet" size="sm" onClick={onDone}>
+          <Button variant="quiet" size="sm" onClick={onCancel}>
             Cancel
           </Button>
           <Button type="submit" size="sm" disabled={busy || !gramsValid}>
