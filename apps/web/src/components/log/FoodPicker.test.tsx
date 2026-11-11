@@ -56,10 +56,17 @@ describe("FoodPicker", () => {
         ];
       }
       if (text === "dal") return [{ _id: "toor", name: "Toor dal", per100g: { kcal: 340 } }];
+      if (text === "same") {
+        return [
+          { _id: dal, name: "Dal", per100g: { kcal: 100 } },
+          { _id: roti, name: "Roti", per100g: { kcal: 80 } },
+        ];
+      }
       return [];
     });
   });
 
+  // Renders the picker with two suggestions and returns the pick callback.
   function renderPicker(onPick = vi.fn()) {
     render(
       <FoodPicker
@@ -75,6 +82,7 @@ describe("FoodPicker", () => {
     return onPick;
   }
 
+  // The search box the arrow keys and Enter act on.
   function searchBox() {
     return screen.getByRole("combobox", { name: "Search foods" });
   }
@@ -149,6 +157,25 @@ describe("FoodPicker", () => {
     fireEvent.change(searchBox(), { target: { value: "" } });
     await waitFor(() => expect(screen.getByRole("option", { name: "Dal" })).toBeInTheDocument());
     expect(searchBox()).not.toHaveAttribute("aria-activedescendant");
+    fireEvent.keyDown(searchBox(), { key: "Enter" });
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it("does not pick the previous match when Enter comes before the search catches up", async () => {
+    const onPick = renderPicker();
+    fireEvent.change(searchBox(), { target: { value: "rice" } });
+    await screen.findByRole("option", { name: /Rice, raw/ });
+    fireEvent.change(searchBox(), { target: { value: "rice x" } });
+    fireEvent.keyDown(searchBox(), { key: "Enter" });
+    expect(onPick).not.toHaveBeenCalled();
+  });
+
+  it("drops a search highlight when the same foods return as suggestions", async () => {
+    const onPick = renderPicker();
+    fireEvent.change(searchBox(), { target: { value: "same" } });
+    await screen.findByRole("option", { name: /Dal/ });
+    fireEvent.change(searchBox(), { target: { value: "" } });
+    await waitFor(() => expect(searchBox()).not.toHaveAttribute("aria-activedescendant"));
     fireEvent.keyDown(searchBox(), { key: "Enter" });
     expect(onPick).not.toHaveBeenCalled();
   });

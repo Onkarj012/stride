@@ -52,8 +52,8 @@ export function FoodPicker({
     ? (results ?? []).map((food) => ({ _id: food._id, name: food.name, sub: `${Math.round(food.per100g.kcal)} kcal / 100 g` }))
     : candidates.map((candidate) => ({ ...candidate, sub: null }));
 
-  // A new list must not keep the previous row. Search starts on the top match so Enter can take it.
-  const optionKey = options.map((option) => option._id).join("\n");
+  // A new list must not keep the previous row. Search and suggestions are different lists even when the foods match.
+  const optionKey = `${searching ? "search" : "suggestions"}\n${options.map((option) => option._id).join("\n")}`;
   const [listKey, setListKey] = useState(optionKey);
   const listChanged = listKey !== optionKey;
   if (listChanged) {
@@ -68,6 +68,8 @@ export function FoodPicker({
       ? highlight
       : -1;
   const showList = !loading && options.length > 0;
+  // The list still shows the last search until the debounce catches up. Enter must not take that stale row.
+  const queryPending = query.trim() !== debounced;
 
   useEffect(() => {
     activeRow.current?.scrollIntoView({ block: "nearest" });
@@ -83,6 +85,11 @@ export function FoodPicker({
       return;
     }
     if (key !== "Enter") return;
+    // The visible list can still be the previous search. Wait until this text is the one being shown.
+    if (queryPending) {
+      event.preventDefault();
+      return;
+    }
     const option = options[active];
     if (!option) return;
     event.preventDefault();
