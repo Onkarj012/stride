@@ -12,6 +12,7 @@ import { useLocalToday } from "@/lib/useLocalToday";
 import { SUMMARY_DAYS } from "@/lib/log";
 import { savedUnits } from "@/lib/units";
 import { cn } from "@/lib/utils";
+import { usePageTitle } from "@/lib/usePageTitle";
 
 const RANGES = [
   { label: "2W", days: SUMMARY_DAYS },
@@ -21,6 +22,7 @@ const RANGES = [
 
 // Progress page: weight trend and logging, daily burn, target, and strength, in a grid that reads left to right.
 export function ProgressPage() {
+  usePageTitle("Progress");
   const [range, setRange] = useState<number>(SUMMARY_DAYS);
   const today = useLocalToday();
   const summary = useQuery(api.progress_v2.summary, { rangeDays: range, localDate: today });
