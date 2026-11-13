@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import { Eyebrow, Skeleton, pressSpring } from "@/components/ui";
 import { SLOT_NAMES, targetsFor, type MealSlot } from "@/lib/log";
+import { dayBarLabel, kcalHeroLabel, macroLabel } from "@/lib/speech";
 import { cn } from "@/lib/utils";
 
 type Targets = ReturnType<typeof targetsFor>;
@@ -28,17 +29,21 @@ export function TotalsCard({
 
   return (
     <section className="rounded-card bg-card p-7 shadow-card" aria-label="Day totals">
-      <div className="flex items-baseline justify-between gap-4">
-        <Eyebrow className={over ? "text-polo-ink" : undefined}>{over ? "Over" : isToday ? "Left today" : "Left"}</Eyebrow>
-        <span className="type-caption text-ink3">{NUMBER.format(eaten)} eaten</span>
-      </div>
-      <div className="mt-3 flex items-end">
-        <Odometer value={Math.abs(left)} className={over ? "text-polo-ink" : "text-ink"} />
-        <span className="mb-2.5 ml-3 type-hero-unit text-ink3">
-          {over ? "over" : "of"}
-          <br />
-          {NUMBER.format(targets.kcal)} kcal
-        </span>
+      {/* The odometer is only the absolute number, so "over" would otherwise read as kcal left. */}
+      <p className="sr-only">{kcalHeroLabel(targets.kcal, nutrients.kcal)}</p>
+      <div aria-hidden="true">
+        <div className="flex items-baseline justify-between gap-4">
+          <Eyebrow className={over ? "text-polo-ink" : undefined}>{over ? "Over" : isToday ? "Left today" : "Left"}</Eyebrow>
+          <span className="type-caption text-ink3">{NUMBER.format(eaten)} eaten</span>
+        </div>
+        <div className="mt-3 flex items-end">
+          <Odometer value={Math.abs(left)} className={over ? "text-polo-ink" : "text-ink"} />
+          <span className="mb-2.5 ml-3 type-hero-unit text-ink3">
+            {over ? "over" : "of"}
+            <br />
+            {NUMBER.format(targets.kcal)} kcal
+          </span>
+        </div>
       </div>
       <DayBar meals={meals} target={targets.kcal} />
       <div className="mt-7 grid grid-cols-3 gap-4">
@@ -54,10 +59,7 @@ export function TotalsCard({
 function Odometer({ value, className }: { value: number; className?: string }) {
   const chars = NUMBER.format(value).split("");
   return (
-    <span
-      aria-label={NUMBER.format(value)}
-      className={cn("inline-flex h-[92px] overflow-hidden type-hero [font-variation-settings:'opsz'_96]", className)}
-    >
+    <span className={cn("inline-flex h-[92px] overflow-hidden type-hero [font-variation-settings:'opsz'_96]", className)}>
       {chars.map((ch, i) =>
         /\d/.test(ch) ? (
           <span key={`d${chars.length - i}`} aria-hidden className="h-[1em] w-[0.6em] overflow-hidden text-center">
@@ -84,9 +86,11 @@ function DayBar({ meals, target }: { meals: { slot: MealSlot; kcal: number }[]; 
   const reduce = useReducedMotion();
   const total = meals.reduce((sum, meal) => sum + meal.kcal, 0);
   const scale = Math.max(target, total, 1);
+  const spoken = dayBarLabel(meals.map((meal) => ({ name: SLOT_NAMES[meal.slot], kcal: meal.kcal })));
   return (
     <div className="mt-5">
-      <div className="flex h-3.5 gap-[3px] overflow-hidden rounded-[8px] bg-card2">
+      {spoken ? <p className="sr-only">{spoken}</p> : null}
+      <div aria-hidden="true" className="flex h-3.5 gap-[3px] overflow-hidden rounded-[8px] bg-card2">
         {meals.map((meal, i) => (
           <motion.div
             key={meal.slot}
@@ -98,7 +102,7 @@ function DayBar({ meals, target }: { meals: { slot: MealSlot; kcal: number }[]; 
           />
         ))}
       </div>
-      <div className="mt-2 flex justify-between type-label text-ink3">
+      <div aria-hidden={spoken === "" ? undefined : true} className="mt-2 flex justify-between type-label text-ink3">
         <span>{meals.length === 0 ? "No meals yet" : meals.map((meal) => SLOT_NAMES[meal.slot]).join(" · ")}</span>
         <span>{NUMBER.format(target)}</span>
       </div>
@@ -112,21 +116,24 @@ function Macro({ name, eaten, target, dot }: { name: string; eaten: number; targ
   const pct = target > 0 ? Math.min(100, (eaten / target) * 100) : 0;
   return (
     <div>
-      <div className="flex items-center gap-1.5 type-label text-ink2">
-        <i className={cn("size-[7px] rounded-pill", dot)} />
-        {name}
-      </div>
-      <p className="mt-1 type-metric">
-        {Math.round(eaten)}
-        <span className="type-label text-ink3"> / {target} g</span>
-      </p>
-      <div className="mt-2 h-1 overflow-hidden rounded-[4px] bg-card2">
-        <motion.div
-          className={cn("h-full rounded-[4px]", dot)}
-          initial={reduce ? false : { width: 0 }}
-          animate={{ width: `${pct}%` }}
-          transition={{ ...pressSpring, delay: 0.12 }}
-        />
+      <p className="sr-only">{macroLabel(name, eaten, target)}</p>
+      <div aria-hidden="true">
+        <div className="flex items-center gap-1.5 type-label text-ink2">
+          <i className={cn("size-[7px] rounded-pill", dot)} />
+          {name}
+        </div>
+        <p className="mt-1 type-metric">
+          {Math.round(eaten)}
+          <span className="type-label text-ink3"> / {target} g</span>
+        </p>
+        <div className="mt-2 h-1 overflow-hidden rounded-[4px] bg-card2">
+          <motion.div
+            className={cn("h-full rounded-[4px]", dot)}
+            initial={reduce ? false : { width: 0 }}
+            animate={{ width: `${pct}%` }}
+            transition={{ ...pressSpring, delay: 0.12 }}
+          />
+        </div>
       </div>
     </div>
   );
