@@ -5,6 +5,7 @@ import { useSignIn, useSignUp } from "@clerk/react";
 import { ArrowLeft, Eye, EyeOff, KeyRound, Loader2, Lock, Mail, User } from "lucide-react";
 import { Button, Polo, StrideMark, smoothSpring } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { usePageTitle } from "@/lib/usePageTitle";
 
 type ErrorField = "email" | "password" | null;
 
@@ -257,6 +258,7 @@ function Divider() {
 
 // Sign in with email and password or Google, plus the reset-password steps.
 export function SignInPage() {
+  usePageTitle("Sign in");
   const { signIn } = useSignIn();
   const [view, setView] = useState<"signin" | "forgot_email" | "forgot_code" | "forgot_newpwd">("signin");
   const [email, setEmail] = useState("");
@@ -494,6 +496,7 @@ export function SignInPage() {
 
 // Sign up with name, email and password or Google, then verify the email code.
 export function SignUpPage() {
+  usePageTitle("Sign up");
   const { signUp } = useSignUp();
   const [step, setStep] = useState<"form" | "verify">("form");
   const [firstName, setFirstName] = useState("");
