@@ -1,4 +1,10 @@
 import { useEffect } from "react";
+import { formatDayLabel } from "./date";
+
+// Names the day page for its browser tab.
+export function dayPageName(localDate: string, today: string): string {
+  return localDate === today ? "Today" : formatDayLabel(localDate);
+}
 
 // Formats a page name for the browser tab and history.
 export function pageTitle(name: string): string {

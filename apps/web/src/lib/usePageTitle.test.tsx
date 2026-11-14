@@ -1,6 +1,18 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { pageTitle, usePageTitle } from "./usePageTitle";
+import { formatDayLabel } from "./date";
+import { dayPageName, pageTitle, usePageTitle } from "./usePageTitle";
+
+describe("day page name", () => {
+  it("returns Today for the current day", () => {
+    expect(dayPageName("2026-11-15", "2026-11-15")).toBe("Today");
+  });
+
+  it("formats a past day as its date label", () => {
+    const localDate = "2026-11-10";
+    expect(dayPageName(localDate, "2026-11-15")).toBe(formatDayLabel(localDate));
+  });
+});
 
 function TitleSetter({ name }: { name: string }) {
   usePageTitle(name);
