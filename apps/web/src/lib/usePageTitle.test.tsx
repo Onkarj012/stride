@@ -14,6 +14,7 @@ describe("day page name", () => {
   });
 });
 
+// Mounts the page title hook for the tests.
 function TitleSetter({ name }: { name: string }) {
   usePageTitle(name);
   return null;
