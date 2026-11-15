@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { ConvexError } from 'convex/values'
-import { PlainError, linesKcal, plainError, type LogLine } from './log'
+import { PlainError, linesKcal, nextSlot, plainError, type LogLine } from './log'
 
 // Native modules that cannot load in Node. plainError and linesKcal never call them.
 vi.mock('expo-localization', () => ({ getCalendars: () => [] }))
@@ -58,5 +58,17 @@ describe('linesKcal', () => {
   it('sums unrounded kcal and rounds once at the total', () => {
     // 100.4 + 200.4 = 300.8 rounds to 301; rounding each line first would give 300.
     expect(linesKcal([logLine(100.4), logLine(200.4)])).toBe(301)
+  })
+})
+
+describe('nextSlot', () => {
+  it('steps breakfast, lunch, snack, dinner in order', () => {
+    expect(nextSlot('breakfast')).toBe('lunch')
+    expect(nextSlot('lunch')).toBe('snack')
+    expect(nextSlot('snack')).toBe('dinner')
+  })
+
+  it('wraps from dinner back to breakfast', () => {
+    expect(nextSlot('dinner')).toBe('breakfast')
   })
 })

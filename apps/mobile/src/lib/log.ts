@@ -23,6 +23,11 @@ export type DraftId = Id<'drafts'>
 export const SLOTS: MealSlot[] = ['breakfast', 'lunch', 'snack', 'dinner']
 export const SLOT_NAMES: Record<MealSlot, string> = { breakfast: 'Breakfast', lunch: 'Lunch', snack: 'Snack', dinner: 'Dinner' }
 
+// The slot after this one in SLOTS order, wrapping from dinner back to breakfast.
+export function nextSlot(slot: MealSlot): MealSlot {
+  return SLOTS[(SLOTS.indexOf(slot) + 1) % SLOTS.length]
+}
+
 // Fallback daily targets while the backend has no target for the user yet.
 export const DEFAULT_TARGETS = DEFAULT_MACRO_REFERENCE
 

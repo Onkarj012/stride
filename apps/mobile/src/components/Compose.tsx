@@ -12,6 +12,7 @@ import {
   SLOT_NAMES,
   linesKcal,
   newSubmissionId,
+  nextSlot,
   plainError,
   PlainError,
   readAudioBase64,
@@ -99,7 +100,13 @@ export function Compose({
   const [hops, setHops] = useState(1)
   const alive = useRef(true)
   const now = new Date()
-  const slot = SLOT_NAMES[defaultSlot ?? inferSlot(now.getHours(), now.getMinutes())]
+  // Undefined until the prop or a tap picks one, so the server falls back to the user's time zone.
+  const [chosenSlot, setChosenSlot] = useState<MealSlot | undefined>(defaultSlot)
+  // Retry closures come from an earlier render, so run() reads the latest choice from here.
+  const chosenSlotRef = useRef(chosenSlot)
+  chosenSlotRef.current = chosenSlot
+  const shownSlot = chosenSlot ?? inferSlot(now.getHours(), now.getMinutes())
+  const slot = SLOT_NAMES[shownSlot]
   const clock = formatClock(`${now.getHours()}:${now.getMinutes()}`, true)
 
   useEffect(() => {
@@ -146,7 +153,8 @@ export function Compose({
   async function run(input: LogInput, label: string, submissionId = newSubmissionId(), photoUri?: string) {
     go({ kind: 'working', label, photoUri })
     try {
-      handle(await logInput({ submissionId, input, ...(defaultSlot ? { defaultSlot } : {}) }))
+      const picked = chosenSlotRef.current
+      handle(await logInput({ submissionId, input, ...(picked ? { defaultSlot: picked } : {}) }))
     } catch (err) {
       go({ kind: 'error', message: plainError(err), retry: () => void run(input, label, submissionId, photoUri) })
     }
@@ -209,6 +217,12 @@ export function Compose({
   const mood: PoloMood =
     phase.kind === 'committed' ? 'happy' : phase.kind === 'voice' || phase.kind === 'error' || phase.kind === 'empty' ? 'wow' : 'idle'
   const showBox = phase.kind === 'input' || phase.kind === 'empty'
+  const canPickSlot = phase.kind !== 'working' && phase.kind !== 'committed' && phase.kind !== 'draft'
+  const slotLine = (
+    <Text style={s.slot}>
+      Logging to <Text style={s.slotName}>{slot}</Text> · {clock}
+    </Text>
+  )
 
   return (
     <View>
@@ -224,9 +238,20 @@ export function Compose({
                   ? "What's on the plate?"
                   : 'What did you have?'}
           </Text>
-          <Text style={s.slot}>
-            Logging to <Text style={s.slotName}>{slot}</Text> · {clock}
-          </Text>
+          {canPickSlot ? (
+            <Tap
+              style={s.slotTap}
+              hitSlop={12}
+              onPress={() => setChosenSlot(nextSlot(shownSlot))}
+              accessibilityRole="button"
+              accessibilityLabel={`Logging to ${slot}`}
+              accessibilityHint="Changes the meal"
+            >
+              {slotLine}
+            </Tap>
+          ) : (
+            slotLine
+          )}
         </View>
       </View>
 
@@ -343,7 +368,7 @@ export function Compose({
       {phase.kind === 'product' ? (
         <BarcodeProduct
           food={phase.food}
-          defaultSlot={defaultSlot}
+          defaultSlot={chosenSlot}
           onLogged={(entryIds, kcal) => {
             toast({
               title: `Logged · ${formatNumber(kcal)} kcal`,
@@ -465,6 +490,7 @@ const useStyles = themedStyles((t) => ({
   headText: { flex: 1 },
   headTitle: { ...font('emptyTitle'), fontSize: 21, color: t.c.ink },
   slot: { ...font('link'), fontFamily: font('secondary').fontFamily, color: t.c.ink2, marginTop: 2 },
+  slotTap: { alignSelf: 'flex-start' },
   slotName: { color: t.c.ink, textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
   box: {
     ...font('emptyTitle'),
