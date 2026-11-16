@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { Check } from "lucide-react";
 import { api } from "@convex/_generated/api";
@@ -13,6 +13,7 @@ export function LogWeightCard({ localDate, units }: { localDate: string; units: 
   const logWeight = useMutation(api.weights.logWeight);
   const [value, setValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const pending = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const unit = units === undefined ? "" : weightUnit(units);
   const todayKg = today?.kg ?? null;
@@ -25,12 +26,13 @@ export function LogWeightCard({ localDate, units }: { localDate: string; units: 
   // Saves the typed weight as kg for today, replacing any weigh-in already logged today.
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (units === undefined) return;
+    if (units === undefined || pending.current) return;
     const typed = Number(value);
     if (value.trim() === "" || !Number.isFinite(typed)) {
       setError("Enter your weight as a number.");
       return;
     }
+    pending.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -39,6 +41,7 @@ export function LogWeightCard({ localDate, units }: { localDate: string; units: 
     } catch (err) {
       setError(plainError(err));
     } finally {
+      pending.current = false;
       setSaving(false);
     }
   }
@@ -71,7 +74,7 @@ export function LogWeightCard({ localDate, units }: { localDate: string; units: 
               step="0.1"
               min="0"
               value={value}
-              disabled={units === undefined}
+              disabled={units === undefined || saving}
               onChange={(event) => setValue(event.target.value)}
               aria-label={`Weight in ${unit}`}
               aria-invalid={error !== null}
