@@ -28,6 +28,11 @@ describe('plainError', () => {
     expect(plainError(err)).toBe('Item 2: Rice has no kcal, so set grams instead')
   })
 
+  it('uses the server message when a workout could not be read', () => {
+    const err = new ConvexError({ code: 'AI_UNAVAILABLE', message: 'The workout could not be read. Try again or enter it by hand.' })
+    expect(plainError(err)).toBe('The workout could not be read. Try again or enter it by hand.')
+  })
+
   it('returns a PlainError message as is', () => {
     expect(plainError(new PlainError('Photo upload failed (500). Try again.'))).toBe('Photo upload failed (500). Try again.')
   })
